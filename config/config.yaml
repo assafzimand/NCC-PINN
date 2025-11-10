@@ -9,6 +9,10 @@ eval_only: false
 resume_from: null
 bins: 6
 
+# training control
+print_every: 100  # print training info every N epochs
+save_every: 500  # save checkpoint every N epochs
+
 # reproducibility
 seed: 42
 
