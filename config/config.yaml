@@ -1,0 +1,33 @@
+problem: problem1
+architecture: [2, 50, 100, 50, 2]
+activation: tanh
+epochs: 2000
+batch_size: 512
+lr: 0.001
+cuda: true
+eval_only: false
+resume_from: null
+bins: 6
+
+# reproducibility
+seed: 42
+
+# problem-specific domains
+problem1:
+  spatial_dim: 1
+  spatial_domain: [[0.0, 1.0]]  # list of [min, max] for each spatial dimension
+  temporal_domain: [0.0, 1.0]  # [min, max] for time
+
+problem2:
+  spatial_dim: 1
+  spatial_domain: [[0.0, 1.0]]
+  temporal_domain: [0.0, 1.0]
+
+# dataset sizes
+n_residual_train: 20000
+n_initial_train: 50
+n_boundary_train: 50
+n_residual_eval: 5000
+n_initial_eval: 20
+n_boundary_eval: 20
+
