@@ -5,19 +5,19 @@ architecture:
 - 100
 - 50
 - 2
-batch_size: 512
+batch_size: 128
 bins: 6
 cuda: true
-epochs: 2000
-eval_only: true
+epochs: 10
+eval_only: false
 lr: 0.001
-n_boundary_eval: 20
-n_boundary_train: 50
-n_initial_eval: 20
-n_initial_train: 50
-n_residual_eval: 5000
-n_residual_train: 20000
-print_every: 100
+n_boundary_eval: 30
+n_boundary_train: 100
+n_initial_eval: 30
+n_initial_train: 100
+n_residual_eval: 300
+n_residual_train: 1000
+print_every: 2
 problem: problem1
 problem1:
   loss_weights:
@@ -44,5 +44,5 @@ problem2:
   - 0.0
   - 1.0
 resume_from: null
-save_every: 500
+save_every: 5
 seed: 42

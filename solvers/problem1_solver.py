@@ -33,6 +33,53 @@ def solve_ground_truth(x: torch.Tensor, t: torch.Tensor, seed: int = 42) -> torc
     return u
 
 
+def initial_condition(x: torch.Tensor, seed: int = 42) -> torch.Tensor:
+    """
+    Placeholder initial condition: u(x, t=0).
+    
+    Args:
+        x: Spatial coordinates (N, spatial_dim) on CUDA
+        seed: Random seed for deterministic output
+        
+    Returns:
+        u: Initial values (N, out_dim=2) on CUDA
+    """
+    N = x.shape[0]
+    device = x.device
+    
+    generator = torch.Generator(device=device)
+    generator.manual_seed(seed + 100)  # Different seed for IC
+    
+    # Placeholder: deterministic random IC
+    u_ic = torch.randn(N, 2, generator=generator, device=device)
+    
+    return u_ic
+
+
+def boundary_condition(x: torch.Tensor, t: torch.Tensor, seed: int = 42) -> torch.Tensor:
+    """
+    Placeholder boundary condition: u(x_boundary, t).
+    
+    Args:
+        x: Spatial coordinates at boundary (N, spatial_dim) on CUDA
+        t: Temporal coordinates (N, 1) on CUDA
+        seed: Random seed for deterministic output
+        
+    Returns:
+        u: Boundary values (N, out_dim=2) on CUDA
+    """
+    N = x.shape[0]
+    device = x.device
+    
+    generator = torch.Generator(device=device)
+    generator.manual_seed(seed + 200)  # Different seed for BC
+    
+    # Placeholder: deterministic random BC
+    u_bc = torch.randn(N, 2, generator=generator, device=device)
+    
+    return u_bc
+
+
 def generate_dataset(
     n_residual: int,
     n_ic: int,
@@ -114,9 +161,6 @@ def generate_dataset(
             x[idx:idx + n_bc, d] = torch.rand(n_bc, device=device) * (x_max - x_min) + x_min
         t[idx:idx + n_bc, 0] = torch.rand(n_bc, device=device) * (t_max - t_min) + t_min
     
-    # Generate ground truth
-    u_gt = solve_ground_truth(x, t, seed=seed)
-    
     # Create masks
     mask_residual = torch.zeros(N, dtype=torch.bool, device=device)
     mask_residual[:n_residual] = True
@@ -126,6 +170,20 @@ def generate_dataset(
     
     mask_bc = torch.zeros(N, dtype=torch.bool, device=device)
     mask_bc[n_residual + n_ic:] = True
+    
+    # Generate ground truth using appropriate functions
+    u_gt = torch.zeros(N, 2, device=device)
+    
+    # Residual points: use general solution
+    u_gt[mask_residual] = solve_ground_truth(
+        x[mask_residual], t[mask_residual], seed=seed
+    )
+    
+    # Initial condition points: use IC function
+    u_gt[mask_ic] = initial_condition(x[mask_ic], seed=seed)
+    
+    # Boundary condition points: use BC function
+    u_gt[mask_bc] = boundary_condition(x[mask_bc], t[mask_bc], seed=seed)
     
     return {
         "x": x,
