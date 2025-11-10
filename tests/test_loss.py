@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils.io import load_config
-from losses.problem1_loss import build_loss as build_loss_problem1
+from losses.schrodinger_loss import build_loss as build_loss_schrodinger
 from losses.problem2_loss import build_loss as build_loss_problem2
 
 
@@ -63,9 +63,9 @@ def create_tiny_batch(n_points: int, spatial_dim: int, device: torch.device):
     return batch
 
 
-def test_loss_problem1():
-    """Test problem1 loss function."""
-    print("Testing problem1 loss function...")
+def test_loss_schrodinger():
+    """Test schrodinger loss function."""
+    print("Testing schrodinger loss function...")
 
     # Load config
     config = load_config()
@@ -74,10 +74,10 @@ def test_loss_problem1():
     print(f"  Device: {device}")
 
     # Build loss
-    loss_fn = build_loss_problem1(**config)
+    loss_fn = build_loss_schrodinger(**config)
 
     # Create tiny model
-    spatial_dim = config['problem1']['spatial_dim']
+    spatial_dim = config['schrodinger']['spatial_dim']
     input_dim = spatial_dim + 1  # x + t
     output_dim = 2
     model = SimpleFCNet(input_dim, 20, output_dim).to(device)
@@ -171,10 +171,10 @@ def test_loss_components():
                           torch.cuda.is_available() else 'cpu')
 
     # Build loss
-    loss_fn = build_loss_problem1(**config)
+    loss_fn = build_loss_schrodinger(**config)
 
     # Create model
-    spatial_dim = config['problem1']['spatial_dim']
+    spatial_dim = config['schrodinger']['spatial_dim']
     input_dim = spatial_dim + 1
     model = SimpleFCNet(input_dim, 20, 2).to(device)
 
@@ -199,15 +199,123 @@ def test_loss_components():
     print(f"    IC-only loss: {loss_ic_only:.4f}")
 
 
+def test_physics_informed_gradients():
+    """Test that physics-informed loss gradients flow correctly."""
+    print("\nTesting physics-informed loss gradients (Schrödinger)...")
+    
+    config = load_config()
+    config['problem'] = 'schrodinger'
+    device = torch.device('cuda' if config['cuda'] and
+                          torch.cuda.is_available() else 'cpu')
+    
+    # Build physics-informed loss
+    loss_fn = build_loss_schrodinger(**config)
+    
+    # Create model
+    spatial_dim = config['schrodinger']['spatial_dim']
+    input_dim = spatial_dim + 1
+    model = SimpleFCNet(input_dim, 30, 2).to(device)
+    
+    # Create batch with points in the Schrödinger domain
+    n_points = 50
+    n_residual = 30
+    n_ic = 10
+    n_bc = 10
+    
+    x_min, x_max = config['schrodinger']['spatial_domain'][0]
+    t_min, t_max = config['schrodinger']['temporal_domain']
+    
+    x = torch.rand(n_points, spatial_dim, device=device) * (x_max - x_min) + x_min
+    t = torch.rand(n_points, 1, device=device) * (t_max - t_min) + t_min
+    
+    # Set IC points to t=0
+    t[n_residual:n_residual+n_ic] = t_min
+    
+    # Set BC points to boundaries (paired)
+    x[n_residual+n_ic:n_residual+n_ic+n_bc//2, 0] = x_min  # Left
+    x[n_residual+n_ic+n_bc//2:, 0] = x_max  # Right
+    
+    # Ground truth (not used for residual, but needed for IC/BC)
+    u_gt = torch.randn(n_points, 2, device=device)
+    
+    # Create masks
+    mask_residual = torch.zeros(n_points, dtype=torch.bool, device=device)
+    mask_residual[:n_residual] = True
+    
+    mask_ic = torch.zeros(n_points, dtype=torch.bool, device=device)
+    mask_ic[n_residual:n_residual+n_ic] = True
+    
+    mask_bc = torch.zeros(n_points, dtype=torch.bool, device=device)
+    mask_bc[n_residual+n_ic:] = True
+    
+    batch = {
+        'x': x,
+        't': t,
+        'u_gt': u_gt,
+        'mask': {
+            'residual': mask_residual,
+            'IC': mask_ic,
+            'BC': mask_bc
+        }
+    }
+    
+    # Test forward pass
+    loss = loss_fn(model, batch)
+    assert loss.dim() == 0, "Loss should be scalar"
+    assert loss.item() >= 0, "Loss should be non-negative"
+    assert not torch.isnan(loss), "Loss should not be NaN"
+    
+    print(f"  ✓ Physics-informed loss computed: {loss.item():.4f}")
+    
+    # Test backward pass
+    loss.backward()
+    
+    # Check that all model parameters have gradients
+    has_grad = all(p.grad is not None for p in model.parameters())
+    assert has_grad, "All parameters should have gradients"
+    
+    # Check that gradients are not NaN or infinite
+    grad_finite = all(torch.isfinite(p.grad).all() for p in model.parameters())
+    assert grad_finite, "All gradients should be finite"
+    
+    # Check that gradients are non-zero (model is learning)
+    grad_nonzero = any((p.grad.abs() > 1e-8).any() for p in model.parameters())
+    assert grad_nonzero, "At least some gradients should be non-zero"
+    
+    print(f"  ✓ Gradients flow correctly through autograd")
+    
+    # Test optimization for a few steps
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    losses = []
+    
+    for step in range(20):
+        optimizer.zero_grad()
+        loss = loss_fn(model, batch)
+        loss.backward()
+        optimizer.step()
+        losses.append(loss.item())
+    
+    # Check that loss decreased or stayed stable
+    print(f"  ✓ Loss after 20 steps: {losses[0]:.4f} → {losses[-1]:.4f}")
+    
+    # Just check that the optimization runs without errors
+    # (Loss might not always decrease with physics-informed loss due to competing terms)
+    assert all(not torch.isnan(torch.tensor(l)) for l in losses), \
+        "Loss should remain finite during optimization"
+    
+    print(f"  ✓ Physics-informed optimization runs successfully")
+
+
 if __name__ == "__main__":
     print("=" * 60)
-    print("Step 3 — Placeholder losses — Tests")
+    print("Step 3 — Loss Functions — Tests")
     print("=" * 60)
 
     try:
-        test_loss_problem1()
+        test_loss_schrodinger()
         test_loss_problem2()
         test_loss_components()
+        test_physics_informed_gradients()
 
         print("\n" + "=" * 60)
         print("✓ All tests passed!")

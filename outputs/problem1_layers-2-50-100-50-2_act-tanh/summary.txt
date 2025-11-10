@@ -9,11 +9,11 @@ Batch size: 128
 Learning rate: 0.001
 Device: cpu
 
-Final train loss: 6.211622
-Final eval loss: 3.269380
-Final train rel-L2: 1.002457
-Final eval rel-L2: 1.002557
-Best eval loss: 3.258207
+Final train loss: 0.115164
+Final eval loss: 0.069950
+Final train rel-L2: 0.794031
+Final eval rel-L2: 0.735226
+Best eval loss: 0.066641
 
 Best checkpoint: checkpoints\problem1\best_model.pt
 Final checkpoint: checkpoints\problem1\final_model.pt

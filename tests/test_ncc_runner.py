@@ -29,7 +29,7 @@ def test_ncc_runner():
 
     test_config = config.copy()
     test_config['architecture'] = architecture
-    test_config['problem'] = 'problem1'
+    test_config['problem'] = 'schrodinger'
 
     model = FCNet(architecture, activation, test_config)
     model = model.to(device)
@@ -38,7 +38,7 @@ def test_ncc_runner():
 
     # Create synthetic eval data
     N = 100
-    spatial_dim = test_config['problem1']['spatial_dim']
+    spatial_dim = test_config['schrodinger']['spatial_dim']
     output_dim = architecture[-1]
 
     eval_data = {
@@ -151,14 +151,14 @@ def test_ncc_with_different_bins():
         test_config = config.copy()
         test_config['architecture'] = architecture
         test_config['bins'] = bins
-        test_config['problem'] = 'problem1'
+        test_config['problem'] = 'schrodinger'
 
         model = FCNet(architecture, activation='tanh', config=test_config)
         model = model.to(device)
 
         # Create eval data
         N = 50
-        spatial_dim = test_config['problem1']['spatial_dim']
+        spatial_dim = test_config['schrodinger']['spatial_dim']
         output_dim = architecture[-1]
 
         eval_data = {

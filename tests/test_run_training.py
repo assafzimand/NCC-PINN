@@ -25,7 +25,7 @@ def test_training_orchestrator():
     test_config['batch_size'] = 64
     test_config['print_every'] = 1
     test_config['save_every'] = 1
-    test_config['problem'] = 'problem1'
+    test_config['problem'] = 'schrodinger'
     test_config['eval_only'] = False
     test_config['resume_from'] = None
 
@@ -153,7 +153,7 @@ def test_eval_only_mode():
     test_config['batch_size'] = 64
     test_config['print_every'] = 1
     test_config['save_every'] = 1
-    test_config['problem'] = 'problem1'
+    test_config['problem'] = 'schrodinger'
     test_config['eval_only'] = False
     test_config['resume_from'] = None
     test_config['n_residual_train'] = 100
@@ -166,7 +166,7 @@ def test_eval_only_mode():
     # Generate datasets and train briefly
     from utils.dataset_gen import generate_and_save_datasets
     from models.fc_model import FCNet
-    from losses.problem1_loss import build_loss
+    from losses.schrodinger_loss import build_loss
     from trainer.trainer import train
     from utils.io import make_run_dir
 

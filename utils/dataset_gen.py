@@ -52,6 +52,14 @@ def generate_and_save_datasets(config: Dict) -> None:
 
         stats_path = dataset_dir / "training_data_statistics.png"
         plot_dataset_statistics(train_data, str(stats_path))
+        
+        # Problem-specific visualization
+        try:
+            from utils.problem_specific import get_visualization_module
+            visualize_dataset, _ = get_visualization_module(problem)
+            visualize_dataset(train_data, dataset_dir, config, 'training')
+        except ValueError:
+            pass  # No custom visualization for this problem
     else:
         print(f"Training data already exists: {train_path}")
 
@@ -75,6 +83,14 @@ def generate_and_save_datasets(config: Dict) -> None:
 
         stats_path = dataset_dir / "eval_data_statistics.png"
         plot_dataset_statistics(eval_data, str(stats_path))
+        
+        # Problem-specific visualization
+        try:
+            from utils.problem_specific import get_visualization_module
+            visualize_dataset, _ = get_visualization_module(problem)
+            visualize_dataset(eval_data, dataset_dir, config, 'evaluation')
+        except ValueError:
+            pass  # No custom visualization for this problem
     else:
         print(f"Evaluation data already exists: {eval_path}")
 

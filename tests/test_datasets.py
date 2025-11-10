@@ -11,13 +11,13 @@ from utils.io import load_config
 from utils.dataset_gen import generate_and_save_datasets, load_dataset
 
 
-def test_dataset_generation_problem1():
-    """Test dataset generation for problem1 with small counts."""
-    print("Testing dataset generation for problem1...")
+def test_dataset_generation_schrodinger():
+    """Test dataset generation for schrodinger with small counts."""
+    print("Testing dataset generation for schrodinger...")
     
     # Load config and override with small test values
     config = load_config()
-    config['problem'] = 'problem1'
+    config['problem'] = 'schrodinger'
     
     # Use tiny counts for fast testing
     n_residual = 50
@@ -36,7 +36,7 @@ def test_dataset_generation_problem1():
     print(f"  Device: {device}")
     
     # Import solver
-    from solvers.problem1_solver import generate_dataset
+    from solvers.schrodinger_solver import generate_dataset
     
     # Generate dataset
     data = generate_dataset(n_residual, n_ic, n_bc, device, config)
@@ -91,6 +91,59 @@ def test_dataset_generation_problem1():
         at_boundaries = (torch.abs(x_bc - x_min) < 1e-6) | (torch.abs(x_bc - x_max) < 1e-6)
         assert at_boundaries.all(), "BC points should be at domain boundaries"
     
+    # Schrödinger-specific checks (only for schrodinger)
+    if config['problem'] == 'schrodinger':
+        print("  Checking Schrödinger equation specific constraints...")
+        
+        # Check IC: h(x,0) should be approximately 2*sech(x) (real-valued)
+        ic_mask = data['mask']['IC']
+        x_ic = data['x'][ic_mask, 0].cpu().numpy()
+        u_ic_real = data['u_gt'][ic_mask, 0].cpu().numpy()  # Real part
+        u_ic_imag = data['u_gt'][ic_mask, 1].cpu().numpy()  # Imag part
+        
+        # Expected IC: 2*sech(x)
+        import numpy as np
+        h_expected = 2.0 / np.cosh(x_ic)
+        
+        # Check real part matches expected IC
+        max_error_real = np.abs(u_ic_real - h_expected).max()
+        print(f"    IC real part max error: {max_error_real:.6f}")
+        assert max_error_real < 0.01, f"IC real part error too large: {max_error_real}"
+        
+        # Check imaginary part is near zero (IC is real-valued)
+        max_error_imag = np.abs(u_ic_imag).max()
+        print(f"    IC imag part max error: {max_error_imag:.6f}")
+        assert max_error_imag < 0.01, f"IC imaginary part should be ~0: {max_error_imag}"
+        
+        # Check BC: paired boundary points (first half left, second half right)
+        bc_mask = data['mask']['BC']
+        n_bc_points = bc_mask.sum().item()
+        n_bc_left = n_bc_points // 2
+        
+        bc_indices = torch.where(bc_mask)[0]
+        x_bc_left = data['x'][bc_indices[:n_bc_left], 0]
+        x_bc_right = data['x'][bc_indices[n_bc_left:], 0]
+        t_bc_left = data['t'][bc_indices[:n_bc_left], 0]
+        t_bc_right = data['t'][bc_indices[n_bc_left:], 0]
+        
+        # Check left boundary is at x_min
+        x_min, x_max = problem_config['spatial_domain'][0]
+        assert torch.allclose(x_bc_left, torch.tensor(x_min, device=device)), \
+            "Left BC points should be at x_min"
+        
+        # Check right boundary is at x_max
+        assert torch.allclose(x_bc_right, torch.tensor(x_max, device=device)), \
+            "Right BC points should be at x_max"
+        
+        # Check times are paired (first n_bc_right times should match)
+        n_pairs = min(len(t_bc_left), len(t_bc_right))
+        if n_pairs > 0:
+            assert torch.allclose(t_bc_left[:n_pairs], t_bc_right[:n_pairs], atol=1e-6), \
+                "BC times should be paired between left and right boundaries"
+            print(f"    ✓ BC points properly paired at boundaries")
+        
+        print("  ✓ Schrödinger-specific constraints verified")
+    
     print("  ✓ Dataset generation successful")
     print(f"  ✓ Shapes: x{data['x'].shape}, t{data['t'].shape}, u_gt{data['u_gt'].shape}")
     print(f"  ✓ Mask sums: residual={n_residual}, IC={n_ic}, BC={n_bc}")
@@ -102,8 +155,8 @@ def test_dataset_save_and_load():
     
     # Clean up test datasets if they exist
     test_paths = [
-        Path("datasets/problem1/training_data.pt"),
-        Path("datasets/problem1/eval_data.pt")
+        Path("datasets/schrodinger/training_data.pt"),
+        Path("datasets/schrodinger/eval_data.pt")
     ]
     for p in test_paths:
         if p.exists():
@@ -112,7 +165,7 @@ def test_dataset_save_and_load():
     
     # Load config with tiny counts
     config = load_config()
-    config['problem'] = 'problem1'
+    config['problem'] = 'schrodinger'
     config['n_residual_train'] = 50
     config['n_initial_train'] = 10
     config['n_boundary_train'] = 10
@@ -174,7 +227,7 @@ if __name__ == "__main__":
     print("=" * 60)
     
     try:
-        test_dataset_generation_problem1()
+        test_dataset_generation_schrodinger()
         test_dataset_save_and_load()
         test_problem2_solver()
         

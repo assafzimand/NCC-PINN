@@ -1,0 +1,48 @@
+activation: tanh
+architecture:
+- 2
+- 50
+- 100
+- 50
+- 2
+batch_size: 128
+bins: 6
+cuda: true
+epochs: 10
+eval_only: false
+lr: 0.001
+n_boundary_eval: 30
+n_boundary_train: 100
+n_initial_eval: 30
+n_initial_train: 100
+n_residual_eval: 300
+n_residual_train: 1000
+print_every: 2
+problem: schrodinger
+problem2:
+  loss_weights:
+    bc: 1.0
+    ic: 1.0
+    residual: 1.0
+  spatial_dim: 1
+  spatial_domain:
+  - - 0.0
+    - 1.0
+  temporal_domain:
+  - 0.0
+  - 1.0
+resume_from: null
+save_every: 5
+schrodinger:
+  loss_weights:
+    bc: 1.0
+    ic: 1.0
+    residual: 1.0
+  spatial_dim: 1
+  spatial_domain:
+  - - -5.0
+    - 5.0
+  temporal_domain:
+  - 0.0
+  - 1.5707963267948966
+seed: 42

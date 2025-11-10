@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.io import load_config, make_run_dir
 from utils.dataset_gen import generate_and_save_datasets
 from models.fc_model import FCNet
-from losses.problem1_loss import build_loss
+from losses.schrodinger_loss import build_loss
 from trainer.trainer import train
 
 
@@ -25,7 +25,7 @@ def test_trainer_small_run():
     config['batch_size'] = 32
     config['print_every'] = 1
     config['save_every'] = 2
-    config['problem'] = 'problem1'
+    config['problem'] = 'schrodinger'
 
     # Use tiny dataset for testing
     config['n_residual_train'] = 200
@@ -43,15 +43,15 @@ def test_trainer_small_run():
     print("  Generating test datasets...")
     
     # Clean up any existing test data
-    test_data_dir = Path("datasets") / "problem1_test"
+    test_data_dir = Path("datasets") / "schrodinger_test"
     if test_data_dir.exists():
         shutil.rmtree(test_data_dir)
     
     config_test = config.copy()
-    config_test['problem'] = 'problem1'
+    config_test['problem'] = 'schrodinger'
     
     # Generate datasets using solver
-    from solvers.problem1_solver import generate_dataset
+    from solvers.schrodinger_solver import generate_dataset
     
     train_data = generate_dataset(
         n_residual=config['n_residual_train'],
@@ -179,7 +179,7 @@ def test_cuda_batching():
                           torch.cuda.is_available() else 'cpu')
 
     # Create tiny batch
-    from solvers.problem1_solver import generate_dataset
+    from solvers.schrodinger_solver import generate_dataset
     data = generate_dataset(
         n_residual=100,
         n_ic=10,
