@@ -12,16 +12,24 @@ bins: 6
 # reproducibility
 seed: 42
 
-# problem-specific domains
+# problem-specific domains and loss weights
 problem1:
   spatial_dim: 1
   spatial_domain: [[0.0, 1.0]]  # list of [min, max] for each spatial dimension
   temporal_domain: [0.0, 1.0]  # [min, max] for time
+  loss_weights:
+    residual: 1.0
+    ic: 1.0
+    bc: 1.0
 
 problem2:
   spatial_dim: 1
   spatial_domain: [[0.0, 1.0]]
   temporal_domain: [0.0, 1.0]
+  loss_weights:
+    residual: 1.0
+    ic: 1.0
+    bc: 1.0
 
 # dataset sizes
 n_residual_train: 20000
