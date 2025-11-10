@@ -24,7 +24,7 @@ def test_run_ncc_with_training():
     test_config['batch_size'] = 32
     test_config['print_every'] = 1
     test_config['save_every'] = 1
-    test_config['problem'] = 'problem1'
+    test_config['problem'] = 'schrodinger'
     test_config['eval_only'] = False
     test_config['resume_from'] = None
     test_config['bins'] = 4
@@ -127,7 +127,7 @@ def test_run_ncc_eval_only():
     test_config['batch_size'] = 32
     test_config['print_every'] = 1
     test_config['save_every'] = 1
-    test_config['problem'] = 'problem1'
+    test_config['problem'] = 'schrodinger'
     test_config['n_residual_train'] = 100
     test_config['n_initial_train'] = 10
     test_config['n_boundary_train'] = 10
@@ -143,7 +143,7 @@ def test_run_ncc_eval_only():
     # Generate datasets and train
     from utils.dataset_gen import generate_and_save_datasets
     from models.fc_model import FCNet
-    from losses.problem1_loss import build_loss
+    from losses.schrodinger_loss import build_loss
     from trainer.trainer import train
     from utils.io import make_run_dir
 

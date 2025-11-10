@@ -133,17 +133,20 @@ def train(
         eval_rel_l2 = 0.0
         n_eval_batches = 0
 
-        with torch.no_grad():
-            for batch in eval_loader:
-                loss = loss_fn(model, batch)
+        for batch in eval_loader:
+            # Note: For physics-informed losses, we need gradients w.r.t. inputs
+            # even during evaluation (for computing derivatives in PDE residuals).
+            # We still use model.eval() to disable dropout/batchnorm training behavior.
+            loss = loss_fn(model, batch)
 
+            with torch.no_grad():
                 inputs = torch.cat([batch['x'], batch['t']], dim=1)
                 u_pred = model(inputs)
                 rel_l2 = compute_relative_l2_error(u_pred, batch['u_gt'])
 
-                eval_loss += loss.item()
-                eval_rel_l2 += rel_l2.item()
-                n_eval_batches += 1
+            eval_loss += loss.item()
+            eval_rel_l2 += rel_l2.item()
+            n_eval_batches += 1
 
         eval_loss /= n_eval_batches
         eval_rel_l2 /= n_eval_batches
@@ -240,6 +243,17 @@ def train(
     with open(config_path, 'w') as f:
         yaml.dump(cfg, f, default_flow_style=False)
     print(f"  ✓ Config saved to {config_path}")
+    
+    # Problem-specific final evaluation visualization
+    print("\nGenerating problem-specific evaluation visualizations...")
+    try:
+        from utils.problem_specific import get_visualization_module
+        _, visualize_evaluation = get_visualization_module(cfg['problem'])
+        visualize_evaluation(model, eval_data_path, run_dir, cfg)
+    except ValueError:
+        print(f"  (No custom evaluation visualization for {cfg['problem']})")
+    except Exception as e:
+        print(f"  Warning: Could not generate evaluation visualization: {e}")
 
     return best_checkpoint_path
 

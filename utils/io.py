@@ -30,7 +30,7 @@ def make_run_dir(problem: str, layers: list, act: str) -> Path:
     Create a run directory with standardized naming.
 
     Args:
-        problem: Problem name (e.g., "problem1")
+        problem: Problem name (e.g., "schrodinger")
         layers: List of layer sizes (e.g., [2, 50, 100, 50, 2])
         act: Activation function name (e.g., "tanh")
 

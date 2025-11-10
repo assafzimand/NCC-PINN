@@ -28,9 +28,9 @@ print("=" * 70)
 # Clean up any previous test data
 print("\n1. Cleaning up previous test data...")
 cleanup_paths = [
-    Path("datasets/problem1"),
-    Path("outputs/problem1_layers-2-50-100-50-2_act-tanh"),
-    Path("checkpoints/problem1")
+    Path("datasets/schrodinger"),
+    Path("outputs/schrodinger_layers-2-50-100-50-2_act-tanh"),
+    Path("checkpoints/schrodinger")
 ]
 
 for path in cleanup_paths:
@@ -49,7 +49,7 @@ config = load_config()
 
 # Small test configuration
 test_config = config.copy()
-test_config['problem'] = 'problem1'
+test_config['problem'] = 'schrodinger'
 test_config['epochs'] = 10  # Just 10 epochs
 test_config['batch_size'] = 128
 test_config['print_every'] = 2

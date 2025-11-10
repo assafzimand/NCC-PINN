@@ -1,4 +1,4 @@
-problem: problem1
+problem: schrodinger
 architecture: [2, 50, 100, 50, 2]
 activation: tanh
 epochs: 2000
@@ -17,10 +17,10 @@ save_every: 500  # save checkpoint every N epochs
 seed: 42
 
 # problem-specific domains and loss weights
-problem1:
+schrodinger:
   spatial_dim: 1
-  spatial_domain: [[0.0, 1.0]]  # list of [min, max] for each spatial dimension
-  temporal_domain: [0.0, 1.0]  # [min, max] for time
+  spatial_domain: [[-5.0, 5.0]]  # list of [min, max] for each spatial dimension
+  temporal_domain: [0.0, 1.5707963267948966]  # [min, max] for time (π/2)
   loss_weights:
     residual: 1.0
     ic: 1.0
