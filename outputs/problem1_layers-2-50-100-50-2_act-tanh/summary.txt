@@ -1,0 +1,19 @@
+Training Summary
+============================================================
+
+Problem: problem1
+Architecture: [2, 50, 100, 50, 2]
+Activation: tanh
+Epochs: 10
+Batch size: 128
+Learning rate: 0.001
+Device: cpu
+
+Final train loss: 6.211622
+Final eval loss: 3.269380
+Final train rel-L2: 1.002457
+Final eval rel-L2: 1.002557
+Best eval loss: 3.258207
+
+Best checkpoint: checkpoints\problem1\best_model.pt
+Final checkpoint: checkpoints\problem1\final_model.pt
