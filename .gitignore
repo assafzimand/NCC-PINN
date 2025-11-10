@@ -1,4 +1,4 @@
-/mlruns/
-/data/
-/cursor/
-/.venv/
+mlruns/
+data/
+cursor/
+.venv/
