@@ -91,8 +91,9 @@ def train(
     best_eval_loss = float('inf')
     best_checkpoint_path = None
 
-    # Create checkpoint directory
-    checkpoint_dir = Path("checkpoints") / cfg['problem']
+    # Create checkpoint directory (with architecture subdirectory like outputs)
+    architecture_str = "-".join(map(str, cfg['architecture']))
+    checkpoint_dir = Path("checkpoints") / cfg['problem'] / f"layers-{architecture_str}_act-{cfg['activation']}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # Training loop

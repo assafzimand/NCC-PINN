@@ -20,7 +20,7 @@ def run_ncc(
 
     Args:
         model: Trained neural network model
-        eval_data_path: Path to evaluation data (.pt file)
+        eval_data_path: Path to NCC data (.pt file) - stratified dataset
         cfg: Configuration dictionary
         run_dir: Output directory for this run
 
@@ -40,8 +40,8 @@ def run_ncc(
     model = model.to(device)
     model.eval()
 
-    # Load evaluation data
-    print(f"\nLoading evaluation data from: {eval_data_path}")
+    # Load NCC data (stratified dataset)
+    print(f"\nLoading NCC data from: {eval_data_path}")
     eval_data = torch.load(eval_data_path)
 
     # Move data to device
@@ -50,7 +50,7 @@ def run_ncc(
     u_gt = eval_data['u_gt'].to(device)
 
     N = x.shape[0]
-    print(f"  Evaluation samples: {N}")
+    print(f"  NCC samples: {N}")
 
     # Get bins parameter
     bins = cfg['bins']

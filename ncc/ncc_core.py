@@ -282,7 +282,7 @@ def compute_confusion_matrix(
     num_classes: int
 ) -> torch.Tensor:
     """
-    Compute confusion matrix.
+    Compute confusion matrix (row normalized).
 
     Args:
         predictions: Predicted labels (N,)
@@ -290,23 +290,29 @@ def compute_confusion_matrix(
         num_classes: Number of classes
 
     Returns:
-        confusion_matrix: (num_classes, num_classes) normalized by row
+        confusion_matrix: (num_classes, num_classes) normalized by row (true class)
+                         confusion[i, j] = fraction of true class i samples predicted as class j
+                         Diagonal values represent recall for each class
     """
     device = predictions.device
 
     # Initialize confusion matrix
     confusion = torch.zeros(num_classes, num_classes, device=device)
 
-    # Fill confusion matrix
+    # Fill confusion matrix with raw counts
     for i in range(len(predictions)):
         true_c = true_labels[i].item()
         pred_c = predictions[i].item()
         confusion[true_c, pred_c] += 1
 
-    # Normalize by row (true class)
+    # Normalize by row (true class) - each row sums to 1.0
     row_sums = confusion.sum(dim=1, keepdim=True)
-    row_sums[row_sums == 0] = 1  # Avoid division by zero
-    confusion_normalized = confusion / row_sums
+    # For classes with samples, normalize; for empty classes, keep as zeros
+    confusion_normalized = torch.where(
+        row_sums > 0,
+        confusion / row_sums,
+        confusion  # Keep zeros for empty classes
+    )
 
     return confusion_normalized
 

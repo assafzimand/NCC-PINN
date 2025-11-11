@@ -2,6 +2,7 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from pathlib import Path
 from typing import Dict
 import seaborn as sns
@@ -208,7 +209,7 @@ def plot_margin(
 def plot_confusion_matrices(
     layer_metrics: Dict,
     save_dir: Path,
-    max_classes_display: int = 20
+    max_classes_display: int = None
 ) -> None:
     """
     Plot confusion matrices for each layer.
@@ -216,7 +217,7 @@ def plot_confusion_matrices(
     Args:
         layer_metrics: Dict mapping layer_name -> metrics
         save_dir: Directory to save plots
-        max_classes_display: Maximum number of classes to display
+        max_classes_display: Maximum number of classes to display (None = show all)
     """
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -238,22 +239,21 @@ def plot_confusion_matrices(
         ax = axes[idx]
         confusion = layer_metrics[layer_name]['confusion_matrix']
 
-        # Limit display if too many classes
-        if confusion.shape[0] > max_classes_display:
-            # Show top classes by frequency
-            confusion_subset = confusion[:max_classes_display, :max_classes_display]
-            title_suffix = f" (showing {max_classes_display}/{confusion.shape[0]} classes)"
-        else:
-            confusion_subset = confusion
-            title_suffix = ""
+        # Show all classes (no limiting)
+        confusion_subset = confusion
+        title_suffix = ""
 
-        # Plot heatmap
-        sns.heatmap(confusion_subset, annot=False, fmt='.2f', cmap='Blues',
-                    cbar=True, ax=ax, vmin=0, vmax=1)
+        # Plot heatmap with row normalization
+        # Convert to numpy
+        confusion_np = confusion_subset.cpu().numpy() if torch.is_tensor(confusion_subset) else confusion_subset
+        
+        # Row normalized: each row sums to 1.0, so vmax=1.0
+        sns.heatmap(confusion_np, annot=False, cmap='Blues',
+                    cbar=True, ax=ax, vmin=0, vmax=1.0)
 
         ax.set_xlabel('Predicted Class', fontsize=10)
         ax.set_ylabel('True Class', fontsize=10)
-        ax.set_title(f'{layer_name}{title_suffix}',
+        ax.set_title(f'{layer_name}{title_suffix}\n(row normalized)',
                     fontsize=11, fontweight='bold')
 
     # Hide unused subplots

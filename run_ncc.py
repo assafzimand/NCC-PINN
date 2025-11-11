@@ -60,8 +60,9 @@ def main():
         dataset_dir = Path("datasets") / problem
         train_data_path = dataset_dir / "training_data.pt"
         eval_data_path = dataset_dir / "eval_data.pt"
+        ncc_data_path = dataset_dir / "ncc_data.pt"
 
-        if not train_data_path.exists() or not eval_data_path.exists():
+        if not train_data_path.exists() or not eval_data_path.exists() or not ncc_data_path.exists():
             print("  Datasets not found. Generating...")
             from utils.dataset_gen import generate_and_save_datasets
             generate_and_save_datasets(config)
@@ -69,6 +70,7 @@ def main():
             print(f"  ✓ Datasets found:")
             print(f"    Train: {train_data_path}")
             print(f"    Eval: {eval_data_path}")
+            print(f"    NCC: {ncc_data_path}")
 
         # Build model
         print("\n5. Building model...")
@@ -113,17 +115,17 @@ def main():
 
         print(f"  ✓ Using checkpoint: {checkpoint_path}")
 
-        # Check eval dataset
-        print("\n4. Checking evaluation dataset...")
+        # Check NCC dataset
+        print("\n4. Checking NCC dataset...")
         dataset_dir = Path("datasets") / problem
-        eval_data_path = dataset_dir / "eval_data.pt"
+        ncc_data_path = dataset_dir / "ncc_data.pt"
 
-        if not eval_data_path.exists():
-            print("  Evaluation data not found. Generating...")
+        if not ncc_data_path.exists():
+            print("  NCC data not found. Generating...")
             from utils.dataset_gen import generate_and_save_datasets
             generate_and_save_datasets(config)
         else:
-            print(f"  ✓ Eval data found: {eval_data_path}")
+            print(f"  ✓ NCC data found: {ncc_data_path}")
 
     # Run NCC analysis
     print(f"\n{'8' if not eval_only else '5'}. Running NCC analysis...")
@@ -137,13 +139,13 @@ def main():
     model.load_state_dict(checkpoint['model_state_dict'])
     print(f"  ✓ Model weights loaded")
 
-    # Get eval data path
-    eval_data_path = Path("datasets") / problem / "eval_data.pt"
+    # Get NCC data path
+    ncc_data_path = Path("datasets") / problem / "ncc_data.pt"
 
     # Run NCC
     ncc_metrics = run_ncc(
         model=model,
-        eval_data_path=str(eval_data_path),
+        eval_data_path=str(ncc_data_path),  # Using stratified NCC dataset
         cfg=config,
         run_dir=run_dir
     )

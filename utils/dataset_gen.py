@@ -94,6 +94,59 @@ def generate_and_save_datasets(config: Dict) -> None:
     else:
         print(f"Evaluation data already exists: {eval_path}")
 
+    # Generate NCC data if missing (stratified)
+    ncc_path = dataset_dir / "ncc_data.pt"
+    if not ncc_path.exists():
+        print(f"Generating stratified NCC data for {problem}...")
+        
+        # Generate large dataset for stratification (10x target size)
+        n_large = config['n_samples_ncc'] * 10
+        print(f"  Generating large dataset ({n_large} samples) for stratification...")
+        large_data = solver_module.generate_dataset(
+            n_residual=n_large,
+            n_ic=0,  # NCC only needs residual points
+            n_bc=0,
+            device=device,
+            config=config
+        )
+        
+        # Determine output dimension (generic: check u_gt shape)
+        output_dim = large_data['u_gt'].shape[1]
+        
+        # Apply stratified sampling
+        print(f"  Applying stratified sampling (target: {config['n_samples_ncc']} samples)...")
+        from utils.stratified_sampling import stratify_by_bins
+        ncc_data = stratify_by_bins(
+            large_data, 
+            bins=config['bins'],
+            output_dim=output_dim,
+            target_size=config['n_samples_ncc'],
+            min_samples_per_class=config['rarest_bin_samples_num'],
+            device=device
+        )
+        
+        torch.save(ncc_data, ncc_path)
+        print(f"  ✓ Saved {len(ncc_data['x'])} samples to {ncc_path}")
+        print(f"  ✓ All {config['bins']**output_dim} classes should be represented")
+        
+        # Create visualizations
+        plot_path = dataset_dir / "ncc_data_visualization.png"
+        title = f"{problem} - NCC Data (Stratified)"
+        plot_dataset(ncc_data, str(plot_path), title=title)
+        
+        stats_path = dataset_dir / "ncc_data_statistics.png"
+        plot_dataset_statistics(ncc_data, str(stats_path))
+        
+        # Problem-specific visualization
+        try:
+            from utils.problem_specific import get_visualization_module
+            visualize_dataset, _ = get_visualization_module(problem)
+            visualize_dataset(ncc_data, dataset_dir, config, 'ncc')
+        except ValueError:
+            pass  # No custom visualization for this problem
+    else:
+        print(f"NCC data already exists: {ncc_path}")
+
 
 def load_dataset(
     path: str,
