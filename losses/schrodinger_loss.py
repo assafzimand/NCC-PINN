@@ -272,13 +272,18 @@ def build_loss(**cfg) -> Callable:
             # Periodic BC: h(-5,t) = h(5,t) and h_x(-5,t) = h_x(5,t)
             # Only compare paired points (min of left/right counts)
             n_pairs = min(len(h_left), len(h_right))
-            diff_value = h_left[:n_pairs] - h_right[:n_pairs]
-            mse_value = torch.mean(diff_value.real ** 2 + diff_value.imag ** 2)
             
-            diff_derivative = h_x_left[:n_pairs] - h_x_right[:n_pairs]
-            mse_derivative = torch.mean(diff_derivative.real ** 2 + diff_derivative.imag ** 2)
-            
-            mse_bc = mse_value + mse_derivative
+            if n_pairs == 0:
+                # No paired BC points in this batch (e.g., batch has only 1 BC point)
+                mse_bc = torch.tensor(0.0, device=device)
+            else:
+                diff_value = h_left[:n_pairs] - h_right[:n_pairs]
+                mse_value = torch.mean(diff_value.real ** 2 + diff_value.imag ** 2)
+                
+                diff_derivative = h_x_left[:n_pairs] - h_x_right[:n_pairs]
+                mse_derivative = torch.mean(diff_derivative.real ** 2 + diff_derivative.imag ** 2)
+                
+                mse_bc = mse_value + mse_derivative
         else:
             mse_bc = torch.tensor(0.0, device=device)
         

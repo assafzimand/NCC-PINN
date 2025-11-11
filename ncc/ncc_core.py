@@ -52,16 +52,13 @@ def create_class_labels_from_regression(
         bin_indices[:, d] = torch.clamp(bin_indices[:, d], 0, bins - 1)
 
     # Create class labels from multi-dimensional bin indices
-    # Map (bin_d0, bin_d1, ...) to single integer class label
-    class_map = []
-    bin_tuples_to_class = {}
-
-    for i in range(N):
-        bin_tuple = tuple(bin_indices[i].cpu().tolist())
-        if bin_tuple not in bin_tuples_to_class:
-            class_id = len(class_map)
-            class_map.append(bin_tuple)
-            bin_tuples_to_class[bin_tuple] = class_id
+    # Pre-create ALL possible bin combinations: bins^output_dim classes
+    import itertools
+    class_map = list(itertools.product(range(bins), repeat=output_dim))
+    bin_tuples_to_class = {bin_tuple: i for i, bin_tuple in enumerate(class_map)}
+    
+    num_classes = bins ** output_dim
+    print(f"  Created {num_classes} classes (bins^output_dim = {bins}^{output_dim})")
 
     # Convert to class labels
     class_labels = torch.zeros(N, dtype=torch.long, device=device)

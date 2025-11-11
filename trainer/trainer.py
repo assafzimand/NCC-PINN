@@ -78,9 +78,11 @@ def train(
     save_every = cfg['save_every']
 
     # Metrics storage
+    # Note: train_loss is stored every epoch, eval metrics only every print_every
     metrics = {
-        'epochs': [],
-        'train_loss': [],
+        'train_loss_epochs': [],  # All epochs
+        'train_loss': [],          # All epochs
+        'epochs': [],              # Evaluation epochs only
         'eval_loss': [],
         'train_rel_l2': [],
         'eval_rel_l2': []
@@ -101,7 +103,6 @@ def train(
         # Train phase
         model.train()
         train_loss = 0.0
-        train_rel_l2 = 0.0
         n_train_batches = 0
 
         for batch in train_loader:
@@ -114,52 +115,72 @@ def train(
             loss.backward()
             optimizer.step()
 
-            # Compute metrics
-            with torch.no_grad():
-                inputs = torch.cat([batch['x'], batch['t']], dim=1)
-                u_pred = model(inputs)
-                rel_l2 = compute_relative_l2_error(u_pred, batch['u_gt'])
-
             train_loss += loss.item()
-            train_rel_l2 += rel_l2.item()
             n_train_batches += 1
 
         train_loss /= n_train_batches
-        train_rel_l2 /= n_train_batches
-
-        # Eval phase
-        model.eval()
-        eval_loss = 0.0
-        eval_rel_l2 = 0.0
-        n_eval_batches = 0
-
-        for batch in eval_loader:
-            # Note: For physics-informed losses, we need gradients w.r.t. inputs
-            # even during evaluation (for computing derivatives in PDE residuals).
-            # We still use model.eval() to disable dropout/batchnorm training behavior.
-            loss = loss_fn(model, batch)
-
-            with torch.no_grad():
-                inputs = torch.cat([batch['x'], batch['t']], dim=1)
-                u_pred = model(inputs)
-                rel_l2 = compute_relative_l2_error(u_pred, batch['u_gt'])
-
-            eval_loss += loss.item()
-            eval_rel_l2 += rel_l2.item()
-            n_eval_batches += 1
-
-        eval_loss /= n_eval_batches
-        eval_rel_l2 /= n_eval_batches
-
-        # Store metrics
-        metrics['epochs'].append(epoch)
+        
+        # Store train loss every epoch
+        metrics['train_loss_epochs'].append(epoch)
         metrics['train_loss'].append(train_loss)
-        metrics['eval_loss'].append(eval_loss)
-        metrics['train_rel_l2'].append(train_rel_l2)
-        metrics['eval_rel_l2'].append(eval_rel_l2)
+
+        # Compute evaluation metrics only every print_every epochs or last epoch
+        # This speeds up training significantly for physics-informed losses
+        should_evaluate = (epoch % print_every == 0 or epoch == 1 or epoch == epochs)
+        
+        # Initialize metrics for this epoch (will be updated if we evaluate)
+        eval_loss = None
+        eval_rel_l2 = None
+        train_rel_l2 = None
+        
+        if should_evaluate:
+            # Compute train rel-L2 error
+            model.train()
+            train_rel_l2 = 0.0
+            n_train_batches_l2 = 0
+            
+            for batch in train_loader:
+                with torch.no_grad():
+                    inputs = torch.cat([batch['x'], batch['t']], dim=1)
+                    u_pred = model(inputs)
+                    rel_l2 = compute_relative_l2_error(u_pred, batch['u_gt'])
+                    train_rel_l2 += rel_l2.item()
+                    n_train_batches_l2 += 1
+            
+            train_rel_l2 /= n_train_batches_l2
+            
+            # Eval phase
+            model.eval()
+            eval_loss = 0.0
+            eval_rel_l2 = 0.0
+            n_eval_batches = 0
+
+            for batch in eval_loader:
+                # Note: For physics-informed losses, we need gradients w.r.t. inputs
+                # even during evaluation (for computing derivatives in PDE residuals).
+                # We still use model.eval() to disable dropout/batchnorm training behavior.
+                loss = loss_fn(model, batch)
+
+                with torch.no_grad():
+                    inputs = torch.cat([batch['x'], batch['t']], dim=1)
+                    u_pred = model(inputs)
+                    rel_l2 = compute_relative_l2_error(u_pred, batch['u_gt'])
+
+                eval_loss += loss.item()
+                eval_rel_l2 += rel_l2.item()
+                n_eval_batches += 1
+
+            eval_loss /= n_eval_batches
+            eval_rel_l2 /= n_eval_batches
+
+            # Store evaluation metrics (train_loss already stored above for all epochs)
+            metrics['epochs'].append(epoch)
+            metrics['eval_loss'].append(eval_loss)
+            metrics['train_rel_l2'].append(train_rel_l2)
+            metrics['eval_rel_l2'].append(eval_rel_l2)
 
         # Print progress
-        if epoch % print_every == 0 or epoch == 1:
+        if should_evaluate:
             elapsed = time.time() - start_time
             print(f"Epoch [{epoch}/{epochs}] ({elapsed:.1f}s) | "
                   f"Train Loss: {train_loss:.6f} | "
@@ -167,15 +188,15 @@ def train(
                   f"Train Rel-L2: {train_rel_l2:.6f} | "
                   f"Eval Rel-L2: {eval_rel_l2:.6f}")
 
-        # Save checkpoint periodically
-        if epoch % save_every == 0:
+        # Save checkpoint periodically (only when we have eval metrics)
+        if epoch % save_every == 0 and eval_loss is not None:
             checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch}.pt"
             _save_checkpoint(checkpoint_path, model, optimizer, epoch,
                            train_loss, eval_loss, cfg, metrics)
             print(f"  → Checkpoint saved: {checkpoint_path}")
 
-        # Save best model
-        if eval_loss < best_eval_loss:
+        # Save best model (only when we have eval metrics)
+        if eval_loss is not None and eval_loss < best_eval_loss:
             best_eval_loss = eval_loss
             best_checkpoint_path = checkpoint_dir / "best_model.pt"
             _save_checkpoint(best_checkpoint_path, model, optimizer, epoch,
