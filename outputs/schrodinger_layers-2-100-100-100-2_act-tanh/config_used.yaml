@@ -4,13 +4,11 @@ architecture:
 - 100
 - 100
 - 100
-- 100
-- 100
 - 2
 batch_size: 512
-bins: 15
+bins: 6
 cuda: true
-epochs: 10
+epochs: 100
 eval_only: false
 lr: 0.0001
 n_boundary_eval: 20
@@ -19,8 +17,8 @@ n_initial_eval: 20
 n_initial_train: 50
 n_residual_eval: 1000
 n_residual_train: 20000
-n_samples_ncc: 5000
-print_every: 1
+n_samples_ncc: 2000
+print_every: 10
 problem: schrodinger
 problem2:
   loss_weights:
@@ -34,9 +32,9 @@ problem2:
   temporal_domain:
   - 0.0
   - 1.0
-rarest_bin_samples_num: 10
+rarest_bin_samples_num: 5
 resume_from: null
-save_every: 5
+save_every: 50
 schrodinger:
   loss_weights:
     bc: 1.0
