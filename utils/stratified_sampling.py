@@ -57,7 +57,7 @@ def stratify_by_bins(
     # Step 2: Ensure minimums (add samples to rare bins)
     samples_per_class = torch.maximum(
         samples_per_class, 
-        torch.full((num_classes,), min_samples_per_class, dtype=torch.int32)
+        torch.full((num_classes,), min_samples_per_class, dtype=torch.int32, device=device)
     )
     
     # Step 3: Sample indices for each class
@@ -77,7 +77,7 @@ def stratify_by_bins(
         n_to_sample = samples_per_class[c].item()
         if len(class_indices) >= n_to_sample:
             # Sample without replacement
-            sampled = class_indices[torch.randperm(len(class_indices))[:n_to_sample]]
+            sampled = class_indices[torch.randperm(len(class_indices), device=device)[:n_to_sample]]
         else:
             # Sample with replacement to reach minimum
             sampled = class_indices[torch.randint(0, len(class_indices), (n_to_sample,), device=device)]
