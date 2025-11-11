@@ -51,20 +51,19 @@ def create_class_labels_from_regression(
         # Clamp to valid range [0, bins-1]
         bin_indices[:, d] = torch.clamp(bin_indices[:, d], 0, bins - 1)
 
-    # Create class labels from multi-dimensional bin indices
+    # Create class labels from multi-dimensional bin indices (vectorized)
     # Pre-create ALL possible bin combinations: bins^output_dim classes
     import itertools
     class_map = list(itertools.product(range(bins), repeat=output_dim))
-    bin_tuples_to_class = {bin_tuple: i for i, bin_tuple in enumerate(class_map)}
     
     num_classes = bins ** output_dim
     print(f"  Created {num_classes} classes (bins^output_dim = {bins}^{output_dim})")
 
-    # Convert to class labels
-    class_labels = torch.zeros(N, dtype=torch.long, device=device)
-    for i in range(N):
-        bin_tuple = tuple(bin_indices[i].cpu().tolist())
-        class_labels[i] = bin_tuples_to_class[bin_tuple]
+    # Convert to class labels using polynomial encoding (vectorized)
+    # class_id = bin_0 * bins^(d-1) + bin_1 * bins^(d-2) + ... + bin_(d-1)
+    multipliers = torch.tensor([bins ** (output_dim - 1 - d) for d in range(output_dim)], 
+                               dtype=torch.long, device=device)
+    class_labels = (bin_indices * multipliers).sum(dim=1)
 
     bin_info = {
         'bin_edges': bin_edges_list,
@@ -80,9 +79,11 @@ def compute_class_centers(
     embeddings: torch.Tensor,
     class_labels: torch.Tensor,
     num_classes: int
-) -> torch.Tensor:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Compute class centers (centroids) for NCC.
+    
+    Empty classes (no samples) get centers at zero but are marked as invalid.
 
     Args:
         embeddings: Layer activations (N, embedding_dim)
@@ -91,30 +92,37 @@ def compute_class_centers(
 
     Returns:
         centers: Class centers (num_classes, embedding_dim)
+        valid_mask: Boolean mask indicating which classes have samples (num_classes,)
     """
     N, embedding_dim = embeddings.shape
     device = embeddings.device
 
     centers = torch.zeros(num_classes, embedding_dim, device=device)
+    valid_mask = torch.zeros(num_classes, dtype=torch.bool, device=device)
 
     for c in range(num_classes):
         mask = (class_labels == c)
         if mask.sum() > 0:
             centers[c] = embeddings[mask].mean(dim=0)
+            valid_mask[c] = True
 
-    return centers
+    return centers, valid_mask
 
 
 def compute_ncc_predictions(
     embeddings: torch.Tensor,
-    centers: torch.Tensor
+    centers: torch.Tensor,
+    valid_mask: torch.Tensor
 ) -> torch.Tensor:
     """
     Predict classes using nearest class centroid.
+    
+    Empty classes (marked as invalid) are excluded from predictions.
 
     Args:
         embeddings: Layer activations (N, embedding_dim)
         centers: Class centers (num_classes, embedding_dim)
+        valid_mask: Boolean mask indicating valid classes (num_classes,)
 
     Returns:
         predictions: Predicted class labels (N,)
@@ -123,7 +131,11 @@ def compute_ncc_predictions(
     # distances[i, c] = ||embedding[i] - center[c]||_2
     distances = torch.cdist(embeddings, centers, p=2)  # (N, num_classes)
 
-    # Nearest center
+    # Set distances to invalid (empty) classes to infinity
+    # This ensures they are never selected as nearest
+    distances[:, ~valid_mask] = float('inf')
+
+    # Nearest center (will never choose invalid classes)
     predictions = distances.argmin(dim=1)  # (N,)
 
     return predictions
@@ -282,7 +294,7 @@ def compute_confusion_matrix(
     num_classes: int
 ) -> torch.Tensor:
     """
-    Compute confusion matrix (row normalized).
+    Compute confusion matrix (row normalized) - vectorized GPU implementation.
 
     Args:
         predictions: Predicted labels (N,)
@@ -296,14 +308,15 @@ def compute_confusion_matrix(
     """
     device = predictions.device
 
-    # Initialize confusion matrix
-    confusion = torch.zeros(num_classes, num_classes, device=device)
-
-    # Fill confusion matrix with raw counts
-    for i in range(len(predictions)):
-        true_c = true_labels[i].item()
-        pred_c = predictions[i].item()
-        confusion[true_c, pred_c] += 1
+    # Vectorized confusion matrix computation using bincount
+    # Convert 2D indices (true, pred) to 1D indices: idx = true * num_classes + pred
+    indices = true_labels * num_classes + predictions
+    
+    # Count occurrences - this is vectorized on GPU
+    counts = torch.bincount(indices, minlength=num_classes * num_classes)
+    
+    # Reshape to confusion matrix
+    confusion = counts.reshape(num_classes, num_classes).float()
 
     # Normalize by row (true class) - each row sums to 1.0
     row_sums = confusion.sum(dim=1, keepdim=True)
@@ -350,11 +363,11 @@ def compute_all_ncc_metrics(
 
     # Compute metrics for each layer
     for layer_name, embeddings in embeddings_dict.items():
-        # Compute centers
-        centers = compute_class_centers(embeddings, class_labels, num_classes)
+        # Compute centers and valid mask
+        centers, valid_mask = compute_class_centers(embeddings, class_labels, num_classes)
 
-        # Compute predictions
-        predictions = compute_ncc_predictions(embeddings, centers)
+        # Compute predictions (excluding invalid/empty classes)
+        predictions = compute_ncc_predictions(embeddings, centers, valid_mask)
 
         # Compute accuracy
         accuracy = compute_ncc_accuracy(predictions, class_labels)
