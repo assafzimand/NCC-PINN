@@ -11,23 +11,25 @@ def plot_training_curves(metrics: Dict[str, List[float]], save_dir: Path) -> Non
     Plot training and evaluation curves.
 
     Args:
-        metrics: Dictionary with keys 'train_loss', 'eval_loss',
-                'train_rel_l2', 'eval_rel_l2', 'epochs'
+        metrics: Dictionary with keys:
+                - 'train_loss_epochs', 'train_loss' (all epochs)
+                - 'epochs', 'eval_loss', 'train_rel_l2', 'eval_rel_l2' (eval epochs only)
         save_dir: Directory to save plots
     """
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    epochs = metrics['epochs']
+    train_loss_epochs = metrics['train_loss_epochs']
+    eval_epochs = metrics['epochs']
 
     # Create figure with 2 subplots
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # Plot 1: Loss curves
     ax = axes[0]
-    ax.plot(epochs, metrics['train_loss'], 'b-', label='Train Loss',
+    ax.plot(train_loss_epochs, metrics['train_loss'], 'b-', label='Train Loss',
             linewidth=2, alpha=0.8)
-    ax.plot(epochs, metrics['eval_loss'], 'r-', label='Eval Loss',
+    ax.plot(eval_epochs, metrics['eval_loss'], 'r-', label='Eval Loss',
             linewidth=2, alpha=0.8)
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Loss', fontsize=12)
@@ -38,9 +40,9 @@ def plot_training_curves(metrics: Dict[str, List[float]], save_dir: Path) -> Non
 
     # Plot 2: Relative L2 error
     ax = axes[1]
-    ax.plot(epochs, metrics['train_rel_l2'], 'b-', label='Train Rel. L2',
+    ax.plot(eval_epochs, metrics['train_rel_l2'], 'b-', label='Train Rel. L2',
             linewidth=2, alpha=0.8)
-    ax.plot(epochs, metrics['eval_rel_l2'], 'r-', label='Eval Rel. L2',
+    ax.plot(eval_epochs, metrics['eval_rel_l2'], 'r-', label='Eval Rel. L2',
             linewidth=2, alpha=0.8)
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Relative L2 Error', fontsize=12)
