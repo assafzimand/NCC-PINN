@@ -63,66 +63,81 @@ def create_class_labels_from_regression(
     # class_id = bin_0 * bins^(d-1) + bin_1 * bins^(d-2) + ... + bin_(d-1)
     multipliers = torch.tensor([bins ** (output_dim - 1 - d) for d in range(output_dim)], 
                                dtype=torch.long, device=device)
-    class_labels = (bin_indices * multipliers).sum(dim=1)
+    class_labels_full = (bin_indices * multipliers).sum(dim=1)
+
+    # Filter empty classes: only keep classes that have samples
+    unique_classes = torch.unique(class_labels_full).cpu()
+    non_empty_classes = unique_classes.tolist()
+    num_non_empty = len(non_empty_classes)
+    
+    print(f"  Filtering to {num_non_empty} non-empty classes (removed {num_classes - num_non_empty} empty classes)")
+
+    # Create mapping from old class IDs to new contiguous class IDs
+    old_to_new = {old_id: new_id for new_id, old_id in enumerate(non_empty_classes)}
+    
+    # Remap class labels to contiguous range [0, num_non_empty - 1]
+    class_labels = torch.zeros_like(class_labels_full)
+    for old_id, new_id in old_to_new.items():
+        class_labels[class_labels_full == old_id] = new_id
+    
+    # Filter class_map to only include non-empty classes
+    filtered_class_map = [class_map[old_id] for old_id in non_empty_classes]
 
     bin_info = {
         'bin_edges': bin_edges_list,
         'bins': bins,
         'output_dim': output_dim,
-        'num_classes': len(class_map)
+        'num_classes': num_non_empty,  # Only non-empty classes
+        'original_num_classes': num_classes,  # Keep track of original for reference
+        'non_empty_class_ids': non_empty_classes  # Map to original class IDs
     }
 
-    return class_labels, class_map, bin_info
+    return class_labels, filtered_class_map, bin_info
 
 
 def compute_class_centers(
     embeddings: torch.Tensor,
     class_labels: torch.Tensor,
     num_classes: int
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """
     Compute class centers (centroids) for NCC.
     
-    Empty classes (no samples) get centers at zero but are marked as invalid.
+    All classes are guaranteed to have samples (empty classes filtered out).
 
     Args:
         embeddings: Layer activations (N, embedding_dim)
         class_labels: Class labels (N,)
-        num_classes: Number of classes
+        num_classes: Number of classes (all non-empty)
 
     Returns:
         centers: Class centers (num_classes, embedding_dim)
-        valid_mask: Boolean mask indicating which classes have samples (num_classes,)
     """
     N, embedding_dim = embeddings.shape
     device = embeddings.device
 
     centers = torch.zeros(num_classes, embedding_dim, device=device)
-    valid_mask = torch.zeros(num_classes, dtype=torch.bool, device=device)
 
     for c in range(num_classes):
         mask = (class_labels == c)
-        if mask.sum() > 0:
-            centers[c] = embeddings[mask].mean(dim=0)
-            valid_mask[c] = True
+        # All classes guaranteed to have samples after filtering
+        centers[c] = embeddings[mask].mean(dim=0)
 
-    return centers, valid_mask
+    return centers
 
 
 def compute_ncc_predictions(
     embeddings: torch.Tensor,
-    centers: torch.Tensor,
-    valid_mask: torch.Tensor
+    centers: torch.Tensor
 ) -> torch.Tensor:
     """
     Predict classes using nearest class centroid.
     
-    Empty classes (marked as invalid) are excluded from predictions.
+    All classes are valid (empty classes filtered out).
 
     Args:
         embeddings: Layer activations (N, embedding_dim)
         centers: Class centers (num_classes, embedding_dim)
-        valid_mask: Boolean mask indicating valid classes (num_classes,)
 
     Returns:
         predictions: Predicted class labels (N,)
@@ -131,11 +146,7 @@ def compute_ncc_predictions(
     # distances[i, c] = ||embedding[i] - center[c]||_2
     distances = torch.cdist(embeddings, centers, p=2)  # (N, num_classes)
 
-    # Set distances to invalid (empty) classes to infinity
-    # This ensures they are never selected as nearest
-    distances[:, ~valid_mask] = float('inf')
-
-    # Nearest center (will never choose invalid classes)
+    # Nearest center
     predictions = distances.argmin(dim=1)  # (N,)
 
     return predictions
@@ -363,11 +374,11 @@ def compute_all_ncc_metrics(
 
     # Compute metrics for each layer
     for layer_name, embeddings in embeddings_dict.items():
-        # Compute centers and valid mask
-        centers, valid_mask = compute_class_centers(embeddings, class_labels, num_classes)
+        # Compute centers (all classes have samples after filtering)
+        centers = compute_class_centers(embeddings, class_labels, num_classes)
 
-        # Compute predictions (excluding invalid/empty classes)
-        predictions = compute_ncc_predictions(embeddings, centers, valid_mask)
+        # Compute predictions
+        predictions = compute_ncc_predictions(embeddings, centers)
 
         # Compute accuracy
         accuracy = compute_ncc_accuracy(predictions, class_labels)

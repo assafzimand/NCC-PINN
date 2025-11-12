@@ -1,17 +1,17 @@
 problem: schrodinger
 architecture: [2, 100, 100, 100, 100, 100, 2]
 activation: tanh
-epochs: 100
+epochs: 30000
 batch_size: 512
 lr: 0.0001
 cuda: true
-eval_only: true
-resume_from: checkpoints/final_model.pt
+eval_only: false
+resume_from: null
 bins: 10
 
 # training control
-print_every: 10  # print training info every N epochs
-save_every: 50  # save checkpoint every N epochs
+print_every: 300  # print training info every N epochs
+save_every: 1000  # save checkpoint every N epochs
 
 # reproducibility
 seed: 42
@@ -43,7 +43,6 @@ n_residual_eval: 1000
 n_initial_eval: 20
 n_boundary_eval: 20
 
-# NCC dataset (stratified sampling to ensure all bins are represented)
-n_samples_ncc: 5000  # target total NCC dataset size
-rarest_bin_samples_num: 10  # minimum samples per class/bin
+# NCC dataset (uniform sampling - equal samples per non-empty class)
+n_samples_ncc: 5000  # total samples, divided equally among non-empty classes
 
