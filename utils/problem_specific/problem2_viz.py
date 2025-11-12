@@ -30,3 +30,30 @@ def visualize_evaluation(model, eval_data_path, save_dir, config):
     """
     pass
 
+
+def visualize_ncc_dataset(ncc_data, dataset_dir, config, prefix='ncc'):
+    """
+    Placeholder - no custom NCC dataset visualization for problem2 yet.
+    
+    Args:
+        ncc_data: NCC dataset dictionary with u_gt tensor
+        dataset_dir: Directory to save visualization
+        config: Configuration dictionary with 'bins'
+        prefix: Prefix for filename
+    """
+    pass
+
+
+def visualize_ncc_classification(u_gt, class_labels, predictions_dict, bins, save_path):
+    """
+    Placeholder - no custom NCC classification visualization for problem2 yet.
+    
+    Args:
+        u_gt: Ground truth outputs (N, output_dim)
+        class_labels: True class labels (N,)
+        predictions_dict: Dict mapping layer_name -> predictions (N,)
+        bins: Number of bins per dimension
+        save_path: Path to save figure
+    """
+    pass
+

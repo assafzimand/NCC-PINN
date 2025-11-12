@@ -106,6 +106,26 @@ def run_ncc(
     print(f"\nGenerating NCC plots...")
     generate_all_ncc_plots(ncc_results, ncc_plots_dir)
 
+    # Generate problem-specific NCC classification diagnostic
+    print("\nGenerating NCC classification diagnostic...")
+    try:
+        from utils.problem_specific import get_visualization_module
+        _, _, _, visualize_ncc_classification = get_visualization_module(cfg['problem'])
+        
+        # Extract class labels from results (already a tensor on device)
+        class_labels = ncc_results['class_labels']
+        
+        predictions_dict = {
+            ln: torch.tensor(ncc_results['layer_metrics'][ln]['predictions'], device=device)
+            for ln in hidden_layers
+        }
+        
+        viz_path = ncc_plots_dir / "ncc_classification_diagnostic.png"
+        visualize_ncc_classification(u_gt, class_labels, predictions_dict, bins, viz_path)
+        print(f"  ✓ Classification diagnostic saved to {viz_path}")
+    except (ValueError, AttributeError) as e:
+        print(f"  ⚠ Problem-specific NCC visualization not available: {e}")
+
     # Save metrics summary as JSON
     metrics_summary = {
         'bins': bins,

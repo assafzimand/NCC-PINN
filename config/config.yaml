@@ -1,17 +1,17 @@
 problem: schrodinger
 architecture: [2, 100, 100, 100, 100, 100, 2]
 activation: tanh
-epochs: 15000
+epochs: 100
 batch_size: 512
 lr: 0.0001
 cuda: true
-eval_only: false
-resume_from: null
-bins: 15
+eval_only: true
+resume_from: checkpoints/final_model.pt
+bins: 10
 
 # training control
-print_every: 100  # print training info every N epochs
-save_every: 500  # save checkpoint every N epochs
+print_every: 10  # print training info every N epochs
+save_every: 50  # save checkpoint every N epochs
 
 # reproducibility
 seed: 42

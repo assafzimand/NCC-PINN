@@ -56,7 +56,7 @@ def generate_and_save_datasets(config: Dict) -> None:
         # Problem-specific visualization
         try:
             from utils.problem_specific import get_visualization_module
-            visualize_dataset, _ = get_visualization_module(problem)
+            visualize_dataset, _, _, _ = get_visualization_module(problem)
             visualize_dataset(train_data, dataset_dir, config, 'training')
         except ValueError:
             pass  # No custom visualization for this problem
@@ -87,7 +87,7 @@ def generate_and_save_datasets(config: Dict) -> None:
         # Problem-specific visualization
         try:
             from utils.problem_specific import get_visualization_module
-            visualize_dataset, _ = get_visualization_module(problem)
+            visualize_dataset, _, _, _ = get_visualization_module(problem)
             visualize_dataset(eval_data, dataset_dir, config, 'evaluation')
         except ValueError:
             pass  # No custom visualization for this problem
@@ -137,13 +137,13 @@ def generate_and_save_datasets(config: Dict) -> None:
         stats_path = dataset_dir / "ncc_data_statistics.png"
         plot_dataset_statistics(ncc_data, str(stats_path))
         
-        # Problem-specific visualization
+        # Problem-specific NCC visualization
         try:
             from utils.problem_specific import get_visualization_module
-            visualize_dataset, _ = get_visualization_module(problem)
-            visualize_dataset(ncc_data, dataset_dir, config, 'ncc')
+            _, _, visualize_ncc_dataset, _ = get_visualization_module(problem)
+            visualize_ncc_dataset(ncc_data, dataset_dir, config, 'ncc')
         except ValueError:
-            pass  # No custom visualization for this problem
+            pass  # No custom NCC visualization for this problem
     else:
         print(f"NCC data already exists: {ncc_path}")
 
