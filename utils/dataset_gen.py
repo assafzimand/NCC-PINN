@@ -113,15 +113,14 @@ def generate_and_save_datasets(config: Dict) -> None:
         # Determine output dimension (generic: check u_gt shape)
         output_dim = large_data['u_gt'].shape[1]
         
-        # Apply stratified sampling
-        print(f"  Applying stratified sampling (target: {config['n_samples_ncc']} samples)...")
+        # Apply uniform sampling
+        print(f"  Applying uniform sampling (target: {config['n_samples_ncc']} samples)...")
         from utils.stratified_sampling import stratify_by_bins
         ncc_data = stratify_by_bins(
             large_data, 
             bins=config['bins'],
             output_dim=output_dim,
             target_size=config['n_samples_ncc'],
-            min_samples_per_class=config['rarest_bin_samples_num'],
             device=device
         )
         
