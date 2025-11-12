@@ -243,3 +243,155 @@ def visualize_evaluation(model, eval_data_path: str, save_dir: Path, config: Dic
     
     print(f"  ✓ Fixed-time plots saved to {save_path2}")
 
+
+def visualize_ncc_dataset(ncc_data: Dict, dataset_dir: Path, config: Dict, prefix: str = 'ncc'):
+    """
+    Visualize NCC dataset distribution in (u, v) output space with bin grid.
+    
+    Creates scatter plot showing:
+    - Sample distribution on (u, v) grid
+    - Bin boundaries as grid lines
+    - Color-coded by class ID
+    
+    Args:
+        ncc_data: NCC dataset dictionary with 'u_gt' tensor (N, 2)
+        dataset_dir: Directory to save visualization
+        config: Configuration dictionary with 'bins'
+        prefix: Prefix for filename
+    """
+    # Extract u, v values
+    u_gt = ncc_data['u_gt'].cpu().numpy()  # (N, 2)
+    u = u_gt[:, 0]
+    v = u_gt[:, 1]
+    
+    bins = config['bins']
+    N = len(u)
+    
+    # Compute bin edges
+    u_min, u_max = u.min(), u.max()
+    v_min, v_max = v.min(), v.max()
+    u_edges = np.linspace(u_min, u_max, bins + 1)
+    v_edges = np.linspace(v_min, v_max, bins + 1)
+    
+    # Assign samples to classes for coloring
+    u_bin = np.clip(np.digitize(u, u_edges) - 1, 0, bins - 1)
+    v_bin = np.clip(np.digitize(v, v_edges) - 1, 0, bins - 1)
+    class_ids = u_bin * bins + v_bin  # Flatten to class ID
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(10, 9))
+    
+    # Scatter plot colored by class ID
+    scatter = ax.scatter(u, v, c=class_ids, cmap='tab20', s=20, alpha=0.6, 
+                        edgecolors='none')
+    
+    # Draw bin grid lines
+    for u_edge in u_edges:
+        ax.axvline(u_edge, color='gray', linestyle='--', linewidth=0.8, alpha=0.5)
+    for v_edge in v_edges:
+        ax.axhline(v_edge, color='gray', linestyle='--', linewidth=0.8, alpha=0.5)
+    
+    ax.set_xlabel('u (Real part)', fontsize=13)
+    ax.set_ylabel('v (Imaginary part)', fontsize=13)
+    ax.set_title(f'NCC Dataset Distribution ({bins}×{bins} bins, {N} samples)', 
+                fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.2)
+    
+    # Add colorbar
+    cbar = plt.colorbar(scatter, ax=ax)
+    cbar.set_label('Class ID', fontsize=11)
+    
+    plt.tight_layout()
+    
+    # Save
+    save_path = Path(dataset_dir) / f"{prefix}_ncc_distribution_with_bins.png"
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  ✓ NCC distribution visualization saved to {save_path}")
+
+
+def visualize_ncc_classification(
+    u_gt: torch.Tensor,
+    class_labels: torch.Tensor,
+    predictions_dict: Dict[str, torch.Tensor],
+    bins: int,
+    save_path: Path
+):
+    """
+    Visualize NCC classification correctness per layer in (u, v) output space.
+    
+    Creates multi-panel figure with one subplot per layer showing:
+    - Green dots: correctly classified samples
+    - Red dots: misclassified samples
+    - Bin grid overlay
+    
+    Args:
+        u_gt: Ground truth outputs (N, 2) with u, v values
+        class_labels: True class labels (N,)
+        predictions_dict: Dict mapping layer_name -> predictions (N,)
+        bins: Number of bins per dimension
+        save_path: Path to save figure
+    """
+    # Extract u, v values
+    u_gt_np = u_gt.cpu().numpy()
+    u = u_gt_np[:, 0]
+    v = u_gt_np[:, 1]
+    
+    class_labels_np = class_labels.cpu().numpy()
+    
+    # Compute bin edges
+    u_min, u_max = u.min(), u.max()
+    v_min, v_max = v.min(), v.max()
+    u_edges = np.linspace(u_min, u_max, bins + 1)
+    v_edges = np.linspace(v_min, v_max, bins + 1)
+    
+    # Setup subplots (3 columns)
+    layer_names = list(predictions_dict.keys())
+    n_layers = len(layer_names)
+    n_cols = 3
+    n_rows = int(np.ceil(n_layers / n_cols))
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
+    
+    if n_layers == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+    
+    for idx, layer_name in enumerate(layer_names):
+        ax = axes[idx]
+        predictions = predictions_dict[layer_name].cpu().numpy()
+        
+        # Determine correctness
+        correct = (predictions == class_labels_np)
+        accuracy = correct.mean()
+        
+        # Plot correct (green) and incorrect (red)
+        ax.scatter(u[correct], v[correct], c='green', s=15, alpha=0.6, 
+                  label='Correct', edgecolors='none')
+        ax.scatter(u[~correct], v[~correct], c='red', s=15, alpha=0.6, 
+                  label='Incorrect', edgecolors='none')
+        
+        # Draw bin grid
+        for u_edge in u_edges:
+            ax.axvline(u_edge, color='gray', linestyle='--', linewidth=0.6, alpha=0.4)
+        for v_edge in v_edges:
+            ax.axhline(v_edge, color='gray', linestyle='--', linewidth=0.6, alpha=0.4)
+        
+        ax.set_xlabel('u (Real part)', fontsize=11)
+        ax.set_ylabel('v (Imaginary part)', fontsize=11)
+        ax.set_title(f'{layer_name} (Acc: {accuracy:.2%})', 
+                    fontsize=12, fontweight='bold')
+        ax.legend(fontsize=9, loc='upper right')
+        ax.grid(True, alpha=0.2)
+    
+    # Hide unused subplots
+    for idx in range(n_layers, len(axes)):
+        axes[idx].axis('off')
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  ✓ NCC classification diagnostic saved to {save_path}")
+

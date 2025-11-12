@@ -4,16 +4,16 @@ Training Summary
 Problem: schrodinger
 Architecture: [2, 100, 100, 100, 100, 100, 2]
 Activation: tanh
-Epochs: 10
+Epochs: 100
 Batch size: 512
 Learning rate: 0.0001
 Device: cpu
 
-Final train loss: 0.095288
-Final eval loss: 0.075807
-Final train rel-L2: 0.865733
-Final eval rel-L2: 1.276787
-Best eval loss: 0.075807
+Final train loss: 0.042923
+Final eval loss: 0.036273
+Final train rel-L2: 0.961353
+Final eval rel-L2: 1.081875
+Best eval loss: 0.035825
 
 Best checkpoint: checkpoints\schrodinger\layers-2-100-100-100-100-100-2_act-tanh\best_model.pt
 Final checkpoint: checkpoints\schrodinger\layers-2-100-100-100-100-100-2_act-tanh\final_model.pt
