@@ -22,7 +22,7 @@ schrodinger:
   spatial_domain: [[-5.0, 5.0]]  # list of [min, max] for each spatial dimension
   temporal_domain: [0.0, 1.5707963267948966]  # [min, max] for time (π/2)
   loss_weights:
-    residual: 1.0
+    residual: 10.0
     ic: 1.0
     bc: 1.0
 
