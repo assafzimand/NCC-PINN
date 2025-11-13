@@ -77,6 +77,56 @@ def main():
         model = FCNet(architecture, activation, config)
         print(f"  ✓ Model created: {len(model.get_layer_names())} layers")
 
+        # Load checkpoint if resume_from is specified
+        if resume_from is not None:
+            print(f"\n  Loading checkpoint from: {resume_from}")
+            resume_checkpoint_path = Path(resume_from)
+
+            if not resume_checkpoint_path.exists():
+                raise FileNotFoundError(f"Checkpoint not found: {resume_from}")
+
+            # Load checkpoint (with legacy support)
+            try:
+                checkpoint = torch.load(resume_checkpoint_path,
+                                        map_location='cpu')
+            except Exception:
+                print("  ⚠ Standard load failed, trying legacy mode...")
+                checkpoint = torch.load(resume_checkpoint_path,
+                                        map_location='cpu',
+                                        weights_only=False)
+                print("  ✓ Legacy checkpoint loaded")
+
+            # Extract state dict
+            if 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
+            elif 'model' in checkpoint:
+                state_dict = checkpoint['model']
+            else:
+                state_dict = checkpoint
+
+            # Remap keys for legacy checkpoints
+            remapped_state_dict = {}
+            for key, value in state_dict.items():
+                if key.startswith('layer_') or key.startswith('output.'):
+                    if key.startswith('output.'):
+                        layer_num = len(architecture) - 1
+                        new_key = key.replace('output.',
+                                              f'network.layer_{layer_num}.')
+                    else:
+                        new_key = f'network.{key}'
+                    remapped_state_dict[new_key] = value
+                else:
+                    remapped_state_dict[key] = value
+
+            # Load weights
+            try:
+                model.load_state_dict(remapped_state_dict)
+                print("  ✓ Model weights loaded - continuing from checkpoint")
+            except RuntimeError:
+                print("  ⚠ Remapped keys didn't match, trying original...")
+                model.load_state_dict(state_dict)
+                print("  ✓ Model weights loaded - continuing from checkpoint")
+
         # Build loss
         print("\n6. Building loss function...")
         loss_module = importlib.import_module(f"losses.{problem}_loss")
@@ -132,12 +182,56 @@ def main():
 
     # Load checkpoint
     print(f"  Loading checkpoint: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    try:
+        # Try loading with default settings (weights_only=True in PyTorch 2.6+)
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    except Exception:
+        # Fallback for legacy checkpoints with custom classes
+        print("  ⚠ Standard load failed, trying legacy mode...")
+        checkpoint = torch.load(checkpoint_path, map_location='cpu',
+                                weights_only=False)
+        print("  ✓ Legacy checkpoint loaded")
 
     # Build model
     model = FCNet(architecture, activation, config)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    print(f"  ✓ Model weights loaded")
+
+    # Load model weights - handle different checkpoint formats
+    if 'model_state_dict' in checkpoint:
+        state_dict = checkpoint['model_state_dict']
+    elif 'model' in checkpoint:
+        state_dict = checkpoint['model']
+    else:
+        # Checkpoint might be just the state dict itself
+        state_dict = checkpoint
+
+    # Remap keys for legacy checkpoints with different layer naming
+    # Old: layer_1.weight, layer_2.weight, ..., output.weight
+    # New: network.layer_1.weight, ..., network.layer_6.weight
+    remapped_state_dict = {}
+    for key, value in state_dict.items():
+        if key.startswith('layer_') or key.startswith('output.'):
+            # Remap layer_N or output to network.layer_N or network.layer_M
+            if key.startswith('output.'):
+                # Output layer is the last layer in the new architecture
+                layer_num = len(architecture) - 1
+                new_key = key.replace('output.', f'network.layer_{layer_num}.')
+            else:
+                # Regular hidden layer - add network. prefix
+                new_key = f'network.{key}'
+            remapped_state_dict[new_key] = value
+        else:
+            # Already in correct format or doesn't need remapping
+            remapped_state_dict[key] = value
+
+    # Try loading with remapped keys
+    try:
+        model.load_state_dict(remapped_state_dict)
+        print("  ✓ Model weights loaded")
+    except RuntimeError:
+        # If remapping didn't work, try original state dict
+        print("  ⚠ Remapped keys didn't match, trying original...")
+        model.load_state_dict(state_dict)
+        print("  ✓ Model weights loaded")
 
     # Get NCC data path
     ncc_data_path = Path("datasets") / problem / "ncc_data.pt"
