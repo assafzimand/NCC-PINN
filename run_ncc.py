@@ -150,6 +150,26 @@ def main():
         run_dir=run_dir
     )
 
+    # In eval-only mode, also run problem-specific evaluation visualization
+    if eval_only:
+        print("\nGenerating problem-specific evaluation visualizations...")
+
+        # Check if eval data exists
+        eval_data_path = Path("datasets") / problem / "eval_data.pt"
+        if not eval_data_path.exists():
+            print("  Eval data not found. Generating...")
+            from utils.dataset_gen import generate_and_save_datasets
+            generate_and_save_datasets(config)
+
+        try:
+            from utils.problem_specific import get_visualization_module
+            _, visualize_evaluation, _, _ = get_visualization_module(problem)
+            visualize_evaluation(model, str(eval_data_path), run_dir, config)
+        except ValueError:
+            print(f"  (No custom evaluation visualization for {problem})")
+        except Exception as e:
+            print(f"  Warning: Could not generate evaluation visualization: {e}")
+
     # Final summary
     print("\n" + "=" * 60)
     print("✓ Complete!")
