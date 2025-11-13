@@ -10,7 +10,7 @@ architecture:
 batch_size: 512
 bins: 10
 cuda: true
-epochs: 30000
+epochs: 10
 eval_only: true
 lr: 0.0001
 n_boundary_eval: 20
@@ -20,7 +20,7 @@ n_initial_train: 50
 n_residual_eval: 1000
 n_residual_train: 20000
 n_samples_ncc: 5000
-print_every: 300
+print_every: 1
 problem: schrodinger
 problem2:
   loss_weights:
@@ -34,8 +34,8 @@ problem2:
   temporal_domain:
   - 0.0
   - 1.0
-resume_from: checkpoints/final_model.pt
-save_every: 1000
+resume_from: checkpoints/5_layers_100_each_15k_ep.pt
+save_every: 5
 schrodinger:
   loss_weights:
     bc: 1.0
