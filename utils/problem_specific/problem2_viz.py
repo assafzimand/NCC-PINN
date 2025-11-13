@@ -57,3 +57,17 @@ def visualize_ncc_classification(u_gt, class_labels, predictions_dict, bins, sav
     """
     pass
 
+
+def visualize_ncc_classification_input_space(x, t, class_labels, predictions_dict, save_path):
+    """
+    Placeholder - no custom NCC input space classification visualization for problem2 yet.
+    
+    Args:
+        x: Spatial coordinates (N, spatial_dim)
+        t: Temporal coordinates (N, 1)
+        class_labels: True class labels (N,)
+        predictions_dict: Dict mapping layer_name -> predictions (N,)
+        save_path: Path to save figure
+    """
+    pass
+

@@ -83,7 +83,11 @@ def visualize_evaluation(model, eval_data_path: str, save_dir: Path, config: Dic
        - Row 1: |h| - Ground truth, Prediction, Error
        - Row 2: arg(h) - Ground truth, Prediction, Error
        
-    2. Six fixed-time plots (2 rows × 3 columns):
+    2. Six heatmaps for u and v components (2 rows × 3 columns):
+       - Row 1: u (real) - Ground truth, Prediction, Error
+       - Row 2: v (imaginary) - Ground truth, Prediction, Error
+       
+    3. Six fixed-time plots (2 rows × 3 columns):
        - Row 1: |h| at t=0, π/4, π/2
        - Row 2: arg(h) at t=0, π/4, π/2
        
@@ -205,7 +209,67 @@ def visualize_evaluation(model, eval_data_path: str, save_dir: Path, config: Dic
     print(f"  ✓ Heatmaps saved to {save_path1}")
     
     # ==================================================================
-    # FIGURE 2: FIXED-TIME PLOTS (2 rows × 3 columns)
+    # FIGURE 2: U AND V COMPONENT HEATMAPS (2 rows × 3 columns)
+    # ==================================================================
+    # Compute errors for u and v
+    u_error = np.abs(u_pred - u_true)
+    v_error = np.abs(v_pred - v_true)
+    
+    fig_uv, axes_uv = plt.subplots(2, 3, figsize=(15, 8))
+    
+    # Row 1: u (Real component)
+    im_u0 = axes_uv[0, 0].contourf(X, T, u_true, levels=50, cmap='RdBu_r')
+    axes_uv[0, 0].set_title('u (Real) - Ground Truth', fontsize=12,
+                            fontweight='bold')
+    axes_uv[0, 0].set_xlabel('x')
+    axes_uv[0, 0].set_ylabel('t')
+    plt.colorbar(im_u0, ax=axes_uv[0, 0])
+    
+    im_u1 = axes_uv[0, 1].contourf(X, T, u_pred, levels=50, cmap='RdBu_r')
+    axes_uv[0, 1].set_title('u (Real) - Prediction', fontsize=12,
+                            fontweight='bold')
+    axes_uv[0, 1].set_xlabel('x')
+    axes_uv[0, 1].set_ylabel('t')
+    plt.colorbar(im_u1, ax=axes_uv[0, 1])
+    
+    im_u2 = axes_uv[0, 2].contourf(X, T, u_error, levels=50, cmap='Reds')
+    axes_uv[0, 2].set_title('u (Real) - Absolute Error', fontsize=12,
+                            fontweight='bold')
+    axes_uv[0, 2].set_xlabel('x')
+    axes_uv[0, 2].set_ylabel('t')
+    plt.colorbar(im_u2, ax=axes_uv[0, 2])
+    
+    # Row 2: v (Imaginary component)
+    im_v0 = axes_uv[1, 0].contourf(X, T, v_true, levels=50, cmap='RdBu_r')
+    axes_uv[1, 0].set_title('v (Imaginary) - Ground Truth', fontsize=12,
+                            fontweight='bold')
+    axes_uv[1, 0].set_xlabel('x')
+    axes_uv[1, 0].set_ylabel('t')
+    plt.colorbar(im_v0, ax=axes_uv[1, 0])
+    
+    im_v1 = axes_uv[1, 1].contourf(X, T, v_pred, levels=50, cmap='RdBu_r')
+    axes_uv[1, 1].set_title('v (Imaginary) - Prediction', fontsize=12,
+                            fontweight='bold')
+    axes_uv[1, 1].set_xlabel('x')
+    axes_uv[1, 1].set_ylabel('t')
+    plt.colorbar(im_v1, ax=axes_uv[1, 1])
+    
+    im_v2 = axes_uv[1, 2].contourf(X, T, v_error, levels=50, cmap='Reds')
+    axes_uv[1, 2].set_title('v (Imaginary) - Absolute Error', fontsize=12,
+                            fontweight='bold')
+    axes_uv[1, 2].set_xlabel('x')
+    axes_uv[1, 2].set_ylabel('t')
+    plt.colorbar(im_v2, ax=axes_uv[1, 2])
+    
+    plt.tight_layout()
+    save_path_uv = Path(save_dir) / "schrodinger_uv_components.png"
+    plt.savefig(save_path_uv, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  ✓ u/v component heatmaps saved to {save_path_uv}")
+    
+    # ==================================================================
+    # FIGURE 3: FIXED-TIME PLOTS (2 rows × 3 columns)
     # ==================================================================
     # Fixed times: t=0, π/4, π/2
     t_snapshots = [0.0, np.pi/4, np.pi/2]
@@ -394,4 +458,74 @@ def visualize_ncc_classification(
     plt.close()
     
     print(f"  ✓ NCC classification diagnostic saved to {save_path}")
+
+
+def visualize_ncc_classification_input_space(
+    x: torch.Tensor,
+    t: torch.Tensor,
+    class_labels: torch.Tensor,
+    predictions_dict: Dict[str, torch.Tensor],
+    save_path: Path
+):
+    """
+    Visualize NCC classification correctness per layer in (x, t) input space.
+    
+    Creates multi-panel figure with one subplot per layer showing:
+    - Green dots: correctly classified samples
+    - Red dots: misclassified samples
+    
+    Args:
+        x: Spatial coordinates (N, 1)
+        t: Temporal coordinates (N, 1)
+        class_labels: True class labels (N,)
+        predictions_dict: Dict mapping layer_name -> predictions (N,)
+        save_path: Path to save figure
+    """
+    # Extract x, t values
+    x_np = x.cpu().numpy().flatten()
+    t_np = t.cpu().numpy().flatten()
+    class_labels_np = class_labels.cpu().numpy()
+    
+    # Setup subplots (3 columns)
+    layer_names = list(predictions_dict.keys())
+    n_layers = len(layer_names)
+    n_cols = 3
+    n_rows = int(np.ceil(n_layers / n_cols))
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
+    
+    if n_layers == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+    
+    for idx, layer_name in enumerate(layer_names):
+        ax = axes[idx]
+        predictions = predictions_dict[layer_name].cpu().numpy()
+        
+        # Determine correctness
+        correct = (predictions == class_labels_np)
+        accuracy = correct.mean()
+        
+        # Plot correct (green) and incorrect (red)
+        ax.scatter(x_np[correct], t_np[correct], c='green', s=15, alpha=0.6,
+                  label='Correct', edgecolors='none')
+        ax.scatter(x_np[~correct], t_np[~correct], c='red', s=15, alpha=0.6,
+                  label='Incorrect', edgecolors='none')
+        
+        ax.set_xlabel('x (spatial)', fontsize=11)
+        ax.set_ylabel('t (time)', fontsize=11)
+        ax.set_title(f'{layer_name} (Acc: {accuracy:.2%})',
+                    fontsize=12, fontweight='bold')
+        ax.legend(fontsize=9, loc='upper right')
+        ax.grid(True, alpha=0.2)
+    
+    # Hide unused subplots
+    for idx in range(n_layers, len(axes)):
+        axes[idx].axis('off')
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  ✓ Input space classification diagnostic saved to {save_path}")
 
