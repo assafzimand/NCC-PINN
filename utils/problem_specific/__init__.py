@@ -13,17 +13,24 @@ def get_visualization_module(problem_name: str):
         problem_name: Name of the problem (e.g., 'schrodinger', 'problem2')
         
     Returns:
-        Tuple of (visualize_dataset, visualize_evaluation, visualize_ncc_dataset, visualize_ncc_classification) functions
+        Tuple of (visualize_dataset, visualize_evaluation, visualize_ncc_dataset, 
+                  visualize_ncc_classification, visualize_ncc_classification_input_space) functions
         
     Raises:
         ValueError: If problem name is unknown
     """
     if problem_name == 'schrodinger':
-        from .schrodinger_viz import visualize_dataset, visualize_evaluation, visualize_ncc_dataset, visualize_ncc_classification
-        return visualize_dataset, visualize_evaluation, visualize_ncc_dataset, visualize_ncc_classification
+        from .schrodinger_viz import (visualize_dataset, visualize_evaluation, 
+                                      visualize_ncc_dataset, visualize_ncc_classification,
+                                      visualize_ncc_classification_input_space)
+        return (visualize_dataset, visualize_evaluation, visualize_ncc_dataset, 
+                visualize_ncc_classification, visualize_ncc_classification_input_space)
     elif problem_name == 'problem2':
-        from .problem2_viz import visualize_dataset, visualize_evaluation, visualize_ncc_dataset, visualize_ncc_classification
-        return visualize_dataset, visualize_evaluation, visualize_ncc_dataset, visualize_ncc_classification
+        from .problem2_viz import (visualize_dataset, visualize_evaluation, 
+                                   visualize_ncc_dataset, visualize_ncc_classification,
+                                   visualize_ncc_classification_input_space)
+        return (visualize_dataset, visualize_evaluation, visualize_ncc_dataset, 
+                visualize_ncc_classification, visualize_ncc_classification_input_space)
     else:
         raise ValueError(f"Unknown problem: {problem_name}")
 

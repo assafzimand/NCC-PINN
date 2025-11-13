@@ -110,7 +110,7 @@ def run_ncc(
     print("\nGenerating NCC classification diagnostic...")
     try:
         from utils.problem_specific import get_visualization_module
-        _, _, _, visualize_ncc_classification = get_visualization_module(cfg['problem'])
+        _, _, _, visualize_ncc_classification, visualize_ncc_classification_input_space = get_visualization_module(cfg['problem'])
         
         # Extract class labels from results (already a tensor on device)
         class_labels = ncc_results['class_labels']
@@ -120,9 +120,15 @@ def run_ncc(
             for ln in hidden_layers
         }
         
+        # Output space visualization (u, v)
         viz_path = ncc_plots_dir / "ncc_classification_diagnostic.png"
         visualize_ncc_classification(u_gt, class_labels, predictions_dict, bins, viz_path)
         print(f"  ✓ Classification diagnostic saved to {viz_path}")
+        
+        # Input space visualization (x, t)
+        viz_path_input = ncc_plots_dir / "ncc_classification_input_space.png"
+        visualize_ncc_classification_input_space(x, t, class_labels, predictions_dict, viz_path_input)
+        print(f"  ✓ Input space classification diagnostic saved to {viz_path_input}")
     except (ValueError, AttributeError) as e:
         print(f"  ⚠ Problem-specific NCC visualization not available: {e}")
 
