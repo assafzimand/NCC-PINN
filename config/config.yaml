@@ -1,9 +1,9 @@
 problem: schrodinger
 architecture: [2, 100, 100, 100, 100, 100, 2]
 activation: tanh
-epochs: 2000
+epochs: 3000
 batch_size: 512
-lr: 0.0001
+lr: 0.00001
 cuda: true
 eval_only: false
 resume_from: checkpoints/5_layers_100_each_original.pt
@@ -22,7 +22,7 @@ schrodinger:
   spatial_domain: [[-5.0, 5.0]]  # list of [min, max] for each spatial dimension
   temporal_domain: [0.0, 1.5707963267948966]  # [min, max] for time (π/2)
   loss_weights:
-    residual: 2.0
+    residual: 1.0
     ic: 1.0
     bc: 1.0
 
