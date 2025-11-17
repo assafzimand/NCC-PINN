@@ -48,7 +48,7 @@ def stratify_by_bins(
     
     # Filter classes that don't have 80% of required samples
     # Note: We keep samples_per_class fixed - total samples may be less than target
-    min_samples_threshold = int(samples_per_class_value * 0.8)
+    min_samples_threshold = int(samples_per_class_value * 0.05)
     valid_classes = []
     
     for c in range(num_classes):
