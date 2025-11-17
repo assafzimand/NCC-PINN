@@ -43,7 +43,7 @@ def generate_and_save_datasets(config: Dict) -> None:
             config=config
         )
         torch.save(train_data, train_path)
-        print(f"  ✓ Saved to {train_path}")
+        print(f"  Saved to {train_path}")
 
         # Create visualizations
         plot_path = dataset_dir / "training_data_visualization.png"
@@ -74,7 +74,7 @@ def generate_and_save_datasets(config: Dict) -> None:
             config=config
         )
         torch.save(eval_data, eval_path)
-        print(f"  ✓ Saved to {eval_path}")
+        print(f"  Saved to {eval_path}")
 
         # Create visualizations
         plot_path = dataset_dir / "eval_data_visualization.png"
@@ -125,8 +125,8 @@ def generate_and_save_datasets(config: Dict) -> None:
         )
         
         torch.save(ncc_data, ncc_path)
-        print(f"  ✓ Saved {len(ncc_data['x'])} samples to {ncc_path}")
-        print(f"  ✓ All {config['bins']**output_dim} classes should be represented")
+        print(f"  Saved {len(ncc_data['x'])} samples to {ncc_path}")
+        print(f"  All {config['bins']**output_dim} classes should be represented")
         
         # Create visualizations
         plot_path = dataset_dir / "ncc_data_visualization.png"

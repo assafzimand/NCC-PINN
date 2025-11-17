@@ -42,11 +42,7 @@ def main():
     config_path = run_dir / "config_used.yaml"
     with open(config_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False)
-    print(f"  ✓ Config saved to {config_path}")
-
-    # Setup device
-    device = torch.device('cuda' if config['cuda'] and
-                          torch.cuda.is_available() else 'cpu')
+    print(f"  Config saved to {config_path}")
 
     # Determine checkpoint path
     checkpoint_path = None
@@ -67,7 +63,7 @@ def main():
             from utils.dataset_gen import generate_and_save_datasets
             generate_and_save_datasets(config)
         else:
-            print(f"  ✓ Datasets found:")
+            print(f"  Datasets found:")
             print(f"    Train: {train_data_path}")
             print(f"    Eval: {eval_data_path}")
             print(f"    NCC: {ncc_data_path}")
@@ -75,7 +71,7 @@ def main():
         # Build model
         print("\n5. Building model...")
         model = FCNet(architecture, activation, config)
-        print(f"  ✓ Model created: {len(model.get_layer_names())} layers")
+        print(f"  Model created: {len(model.get_layer_names())} layers")
 
         # Load checkpoint if resume_from is specified
         if resume_from is not None:
@@ -90,11 +86,11 @@ def main():
                 checkpoint = torch.load(resume_checkpoint_path,
                                         map_location='cpu')
             except Exception:
-                print("  ⚠ Standard load failed, trying legacy mode...")
+                print("  Warning: Standard load failed, trying legacy mode...")
                 checkpoint = torch.load(resume_checkpoint_path,
                                         map_location='cpu',
                                         weights_only=False)
-                print("  ✓ Legacy checkpoint loaded")
+                print("  Legacy checkpoint loaded")
 
             # Extract state dict
             if 'model_state_dict' in checkpoint:
@@ -121,17 +117,17 @@ def main():
             # Load weights
             try:
                 model.load_state_dict(remapped_state_dict)
-                print("  ✓ Model weights loaded - continuing from checkpoint")
+                print("  Model weights loaded - continuing from checkpoint")
             except RuntimeError:
-                print("  ⚠ Remapped keys didn't match, trying original...")
+                print("  Warning: Remapped keys didn't match, trying original...")
                 model.load_state_dict(state_dict)
-                print("  ✓ Model weights loaded - continuing from checkpoint")
+                print("  Model weights loaded - continuing from checkpoint")
 
         # Build loss
         print("\n6. Building loss function...")
         loss_module = importlib.import_module(f"losses.{problem}_loss")
         loss_fn = loss_module.build_loss(**config)
-        print(f"  ✓ Loss function built for {problem}")
+        print(f"  Loss function built for {problem}")
 
         # Train
         print("\n7. Training...")
@@ -144,7 +140,7 @@ def main():
             run_dir=run_dir
         )
 
-        print(f"\n  ✓ Training complete")
+        print(f"\n  Training complete")
         print(f"  Best checkpoint: {checkpoint_path}")
 
     else:
@@ -163,7 +159,7 @@ def main():
                 f"Checkpoint not found: {resume_from}"
             )
 
-        print(f"  ✓ Using checkpoint: {checkpoint_path}")
+        print(f"  Using checkpoint: {checkpoint_path}")
 
         # Check NCC dataset
         print("\n4. Checking NCC dataset...")
@@ -175,7 +171,7 @@ def main():
             from utils.dataset_gen import generate_and_save_datasets
             generate_and_save_datasets(config)
         else:
-            print(f"  ✓ NCC data found: {ncc_data_path}")
+            print(f"  NCC data found: {ncc_data_path}")
 
     # Run NCC analysis
     print(f"\n{'8' if not eval_only else '5'}. Running NCC analysis...")
@@ -187,10 +183,10 @@ def main():
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
     except Exception:
         # Fallback for legacy checkpoints with custom classes
-        print("  ⚠ Standard load failed, trying legacy mode...")
+        print("  Warning: Standard load failed, trying legacy mode...")
         checkpoint = torch.load(checkpoint_path, map_location='cpu',
                                 weights_only=False)
-        print("  ✓ Legacy checkpoint loaded")
+        print("  Legacy checkpoint loaded")
 
     # Build model
     model = FCNet(architecture, activation, config)
@@ -226,12 +222,12 @@ def main():
     # Try loading with remapped keys
     try:
         model.load_state_dict(remapped_state_dict)
-        print("  ✓ Model weights loaded")
+        print("  Model weights loaded")
     except RuntimeError:
         # If remapping didn't work, try original state dict
-        print("  ⚠ Remapped keys didn't match, trying original...")
+        print("  Warning: Remapped keys didn't match, trying original...")
         model.load_state_dict(state_dict)
-        print("  ✓ Model weights loaded")
+        print("  Model weights loaded")
 
     # Get NCC data path
     ncc_data_path = Path("datasets") / problem / "ncc_data.pt"
@@ -266,7 +262,7 @@ def main():
 
     # Final summary
     print("\n" + "=" * 60)
-    print("✓ Complete!")
+    print("Complete!")
     print("=" * 60)
     print(f"Output directory: {run_dir}")
     print(f"  - config_used.yaml")
@@ -289,7 +285,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        print(f"\nERROR: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

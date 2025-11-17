@@ -121,7 +121,7 @@ def plot_dataset(data: Dict[str, torch.Tensor], save_path: str, title: str = "Da
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"  ✓ Dataset visualization saved to {save_path}")
+    print(f"  Dataset visualization saved to {save_path}")
 
 
 def plot_dataset_statistics(data: Dict[str, torch.Tensor], save_path: str) -> None:
@@ -189,5 +189,5 @@ def plot_dataset_statistics(data: Dict[str, torch.Tensor], save_path: str) -> No
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"  ✓ Dataset statistics saved to {save_path}")
+    print(f"  Dataset statistics saved to {save_path}")
 

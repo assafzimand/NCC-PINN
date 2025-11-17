@@ -71,7 +71,7 @@ def visualize_dataset(data_dict: Dict, save_dir: Path, config: Dict, split_name:
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"  ✓ Schrödinger visualization saved to {save_path}")
+    print(f"  Schrodinger visualization saved to {save_path}")
 
 
 def visualize_evaluation(model, eval_data_path: str, save_dir: Path, config: Dict):
@@ -206,7 +206,7 @@ def visualize_evaluation(model, eval_data_path: str, save_dir: Path, config: Dic
     plt.savefig(save_path1, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"  ✓ Heatmaps saved to {save_path1}")
+    print(f"  Heatmaps saved to {save_path1}")
     
     # ==================================================================
     # FIGURE 2: U AND V COMPONENT HEATMAPS (2 rows × 3 columns)
@@ -266,7 +266,7 @@ def visualize_evaluation(model, eval_data_path: str, save_dir: Path, config: Dic
     plt.savefig(save_path_uv, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"  ✓ u/v component heatmaps saved to {save_path_uv}")
+    print(f"  u/v component heatmaps saved to {save_path_uv}")
     
     # ==================================================================
     # FIGURE 3: FIXED-TIME PLOTS (2 rows × 3 columns)
@@ -305,7 +305,7 @@ def visualize_evaluation(model, eval_data_path: str, save_dir: Path, config: Dic
     plt.savefig(save_path2, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"  ✓ Fixed-time plots saved to {save_path2}")
+    print(f"  Fixed-time plots saved to {save_path2}")
 
 
 def visualize_ncc_dataset(ncc_data: Dict, dataset_dir: Path, config: Dict, prefix: str = 'ncc'):
@@ -372,7 +372,7 @@ def visualize_ncc_dataset(ncc_data: Dict, dataset_dir: Path, config: Dict, prefi
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"  ✓ NCC distribution visualization saved to {save_path}")
+    print(f"  NCC distribution visualization saved to {save_path}")
 
 
 def visualize_ncc_classification(
@@ -457,7 +457,7 @@ def visualize_ncc_classification(
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"  ✓ NCC classification diagnostic saved to {save_path}")
+    print(f"  NCC classification diagnostic saved to {save_path}")
 
 
 def visualize_ncc_classification_input_space(
@@ -527,5 +527,5 @@ def visualize_ncc_classification_input_space(
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"  ✓ Input space classification diagnostic saved to {save_path}")
+    print(f"  Input space classification diagnostic saved to {save_path}")
 
