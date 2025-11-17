@@ -13,7 +13,8 @@ def run_ncc(
     model: torch.nn.Module,
     eval_data_path: str,
     cfg: Dict,
-    run_dir: Path
+    run_dir: Path,
+    epoch_suffix: str = ""
 ) -> Dict:
     """
     Run complete NCC analysis on a trained model.
@@ -23,6 +24,7 @@ def run_ncc(
         eval_data_path: Path to NCC data (.pt file) - stratified dataset
         cfg: Configuration dictionary
         run_dir: Output directory for this run
+        epoch_suffix: Optional suffix for epoch-specific analysis (e.g., "_epoch_1000")
 
     Returns:
         Dictionary with NCC metrics summary
@@ -64,7 +66,7 @@ def run_ncc(
     # Register hooks to capture activations
     print("\nRegistering hooks...")
     handles = model.register_ncc_hooks(hidden_layers)
-    print(f"  ✓ Hooks registered on {len(handles)} layers")
+    print(f"  Hooks registered on {len(handles)} layers")
 
     # Forward pass to collect activations
     print("\nRunning forward pass to collect activations...")
@@ -74,7 +76,7 @@ def run_ncc(
 
     # Get activations from model
     embeddings_dict = model.activations.copy()
-    print(f"  ✓ Collected activations from {len(embeddings_dict)} layers")
+    print(f"  Collected activations from {len(embeddings_dict)} layers")
 
     # Verify activations
     for layer_name, activations in embeddings_dict.items():
@@ -93,7 +95,7 @@ def run_ncc(
     )
 
     num_classes = ncc_results['bin_info']['num_classes']
-    print(f"  ✓ Created {num_classes} classes from regression outputs")
+    print(f"  Created {num_classes} classes from regression outputs")
 
     # Print metrics summary
     print("\n  Per-layer NCC accuracy:")
@@ -102,7 +104,14 @@ def run_ncc(
         print(f"    {layer_name}: {acc:.4f}")
 
     # Generate plots
-    ncc_plots_dir = run_dir / "ncc_plots"
+    if epoch_suffix:
+        # Periodic NCC: save inside ncc_plots/ncc_plots_epoch_X/
+        ncc_plots_dir = run_dir / "ncc_plots" / f"ncc_plots{epoch_suffix}"
+    else:
+        # Final NCC: save directly in ncc_plots/
+        ncc_plots_dir = run_dir / "ncc_plots"
+    
+    ncc_plots_dir.mkdir(parents=True, exist_ok=True)
     print(f"\nGenerating NCC plots...")
     generate_all_ncc_plots(ncc_results, ncc_plots_dir)
 
@@ -123,14 +132,14 @@ def run_ncc(
         # Output space visualization (u, v)
         viz_path = ncc_plots_dir / "ncc_classification_diagnostic.png"
         visualize_ncc_classification(u_gt, class_labels, predictions_dict, bins, viz_path)
-        print(f"  ✓ Classification diagnostic saved to {viz_path}")
+        print(f"  Classification diagnostic saved to {viz_path}")
         
         # Input space visualization (x, t)
         viz_path_input = ncc_plots_dir / "ncc_classification_input_space.png"
         visualize_ncc_classification_input_space(x, t, class_labels, predictions_dict, viz_path_input)
-        print(f"  ✓ Input space classification diagnostic saved to {viz_path_input}")
+        print(f"  Input space classification diagnostic saved to {viz_path_input}")
     except (ValueError, AttributeError) as e:
-        print(f"  ⚠ Problem-specific NCC visualization not available: {e}")
+        print(f"  Warning: Problem-specific NCC visualization not available: {e}")
 
     # Save metrics summary as JSON
     metrics_summary = {
@@ -160,13 +169,13 @@ def run_ncc(
         }
     }
 
-    ncc_metrics_path = run_dir / "ncc_metrics.json"
+    ncc_metrics_path = ncc_plots_dir / "ncc_metrics.json"
     with open(ncc_metrics_path, 'w') as f:
         json.dump(metrics_summary, f, indent=2)
-    print(f"  ✓ NCC metrics saved to {ncc_metrics_path}")
+    print(f"  NCC metrics saved to {ncc_metrics_path}")
 
     print("\n" + "=" * 60)
-    print("✓ NCC Analysis Complete")
+    print("NCC Analysis Complete")
     print("=" * 60)
     print(f"Results saved to: {ncc_plots_dir}")
     print("  - ncc_layer_accuracy.png")

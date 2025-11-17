@@ -266,7 +266,7 @@ def plot_confusion_matrices(
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
 
-    print(f"  ✓ Confusion matrices saved to {save_path}")
+    print(f"  Confusion matrices saved to {save_path}")
 
 
 def generate_all_ncc_plots(
@@ -292,28 +292,28 @@ def generate_all_ncc_plots(
         layer_metrics,
         save_dir / 'ncc_layer_accuracy.png'
     )
-    print(f"    ✓ Layer accuracy plot saved")
+    print(f"    Layer accuracy plot saved")
 
     # Plot 2: Compactness
     plot_compactness(
         layer_metrics,
         save_dir / 'ncc_compactness.png'
     )
-    print(f"    ✓ Compactness plot saved")
+    print(f"    Compactness plot saved")
 
     # Plot 3: Center geometry
     plot_center_geometry(
         layer_metrics,
         save_dir / 'ncc_center_geometry.png'
     )
-    print(f"    ✓ Center geometry plot saved")
+    print(f"    Center geometry plot saved")
 
     # Plot 4: Margin
     plot_margin(
         layer_metrics,
         save_dir / 'ncc_margin.png'
     )
-    print(f"    ✓ Margin plot saved")
+    print(f"    Margin plot saved")
 
     # Plot 5: Confusion matrices
     plot_confusion_matrices(

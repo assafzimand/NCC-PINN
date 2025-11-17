@@ -46,14 +46,32 @@ def stratify_by_bins(
     # Uniform sampling: equal samples per class (all classes have samples after filtering)
     samples_per_class_value = target_size // num_classes
     
-    # Sample indices for each class (all classes have samples after filtering)
-    selected_indices = []
+    # Filter classes that don't have 80% of required samples
+    min_samples_threshold = int(samples_per_class_value * 0.8)
+    valid_classes = []
     
     for c in range(num_classes):
         class_mask = (class_labels == c)
         class_indices = torch.where(class_mask)[0]
         
-        # All classes should have samples after filtering
+        if len(class_indices) >= min_samples_threshold:
+            valid_classes.append(c)
+    
+    # Recalculate samples per class based on valid classes only
+    num_valid_classes = len(valid_classes)
+    samples_per_class_value = target_size // num_valid_classes
+    
+    print(f"  Filtered {num_classes - num_valid_classes} sparse classes (< 80% threshold)")
+    print(f"  Using {num_valid_classes} classes with sufficient samples")
+    
+    # Sample indices only from valid classes
+    selected_indices = []
+    
+    for c in valid_classes:
+        class_mask = (class_labels == c)
+        class_indices = torch.where(class_mask)[0]
+        
+        # Sample from this valid class
         n_to_sample = samples_per_class_value
         
         if len(class_indices) >= n_to_sample:
@@ -68,8 +86,8 @@ def stratify_by_bins(
     # Concatenate all selected indices
     selected_indices = torch.cat(selected_indices)
     
-    print(f"  ✓ Uniform sampling complete:")
-    print(f"    - Classes sampled: {num_classes} (all non-empty classes)")
+    print(f"  Uniform sampling complete:")
+    print(f"    - Classes sampled: {num_valid_classes} (filtered from {num_classes})")
     print(f"    - Total samples: {len(selected_indices)}")
     print(f"    - Target size: {target_size}")
     print(f"    - Samples per class: {samples_per_class_value}")

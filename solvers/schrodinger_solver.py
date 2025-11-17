@@ -198,11 +198,11 @@ def _get_interpolator(config: Dict) -> NLSEInterpolator:
             nt=800
         )
         
-        print(f"  ✓ Solution computed: {h_solution.shape[0]}×{h_solution.shape[1]} grid")
+        print(f"  Solution computed: {h_solution.shape[0]}x{h_solution.shape[1]} grid")
         
         # Create interpolator
         _interpolator = NLSEInterpolator(x_grid, t_grid, h_solution)
-        print("  ✓ Interpolator ready")
+        print("  Interpolator ready")
     
     return _interpolator
 
@@ -380,7 +380,7 @@ def generate_dataset(
     u_gt[:, 0] = torch.from_numpy(h_interp.real.astype(np.float32)).to(device)
     u_gt[:, 1] = torch.from_numpy(h_interp.imag.astype(np.float32)).to(device)
     
-    print("  ✓ Dataset generated successfully")
+    print("  Dataset generated successfully")
     
     return {
         "x": x,

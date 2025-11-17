@@ -96,6 +96,10 @@ def train(
     checkpoint_dir = Path("checkpoints") / cfg['problem'] / f"layers-{architecture_str}_act-{cfg['activation']}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    # Create ncc_plots directory for periodic NCC analysis
+    ncc_plots_parent = run_dir / "ncc_plots"
+    ncc_plots_parent.mkdir(exist_ok=True)
+
     # Training loop
     print(f"\nTraining for {epochs} epochs...")
     start_time = time.time()
@@ -194,7 +198,7 @@ def train(
             checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch}.pt"
             _save_checkpoint(checkpoint_path, model, optimizer, epoch,
                            train_loss, eval_loss, cfg, metrics)
-            print(f"  → Checkpoint saved: {checkpoint_path}")
+            print(f"  Checkpoint saved: {checkpoint_path}")
 
         # Save best model (only when we have eval metrics)
         if eval_loss is not None and eval_loss < best_eval_loss:
@@ -203,12 +207,18 @@ def train(
             _save_checkpoint(best_checkpoint_path, model, optimizer, epoch,
                            train_loss, eval_loss, cfg, metrics)
 
+        # Periodic NCC analysis
+        ncc_eval_every = cfg.get('ncc_eval_every', 0)
+        if ncc_eval_every > 0 and epoch % ncc_eval_every == 0:
+            print(f"\n  Running NCC analysis at epoch {epoch}...")
+            _run_intermediate_ncc(model, cfg, run_dir, epoch)
+
     # Save final model
     final_checkpoint_path = checkpoint_dir / "final_model.pt"
     _save_checkpoint(final_checkpoint_path, model, optimizer, epochs,
                     train_loss, eval_loss, cfg, metrics)
 
-    print(f"\n✓ Training completed in {time.time() - start_time:.1f}s")
+    print(f"\nTraining completed in {time.time() - start_time:.1f}s")
     print(f"  Best eval loss: {best_eval_loss:.6f}")
     print(f"  Best checkpoint: {best_checkpoint_path}")
     print(f"  Final checkpoint: {final_checkpoint_path}")
@@ -236,7 +246,7 @@ def train(
     metrics_path = run_dir / "metrics.json"
     with open(metrics_path, 'w') as f:
         json.dump(metrics, f, indent=2)
-    print(f"  ✓ Metrics saved to {metrics_path}")
+    print(f"  Metrics saved to {metrics_path}")
 
     # Save summary
     summary_path = run_dir / "summary.txt"
@@ -257,14 +267,14 @@ def train(
         f.write(f"Best eval loss: {best_eval_loss:.6f}\n\n")
         f.write(f"Best checkpoint: {best_checkpoint_path}\n")
         f.write(f"Final checkpoint: {final_checkpoint_path}\n")
-    print(f"  ✓ Summary saved to {summary_path}")
+    print(f"  Summary saved to {summary_path}")
 
     # Save config used
     config_path = run_dir / "config_used.yaml"
     import yaml
     with open(config_path, 'w') as f:
         yaml.dump(cfg, f, default_flow_style=False)
-    print(f"  ✓ Config saved to {config_path}")
+    print(f"  Config saved to {config_path}")
     
     # Problem-specific final evaluation visualization
     print("\nGenerating problem-specific evaluation visualizations...")
@@ -272,10 +282,13 @@ def train(
         from utils.problem_specific import get_visualization_module
         _, visualize_evaluation, _, _, _ = get_visualization_module(cfg['problem'])
         visualize_evaluation(model, eval_data_path, run_dir, cfg)
-    except ValueError:
+    except ValueError as e:
         print(f"  (No custom evaluation visualization for {cfg['problem']})")
+        print(f"  ValueError details: {e}")
     except Exception as e:
-        print(f"  Warning: Could not generate evaluation visualization: {e}")
+        print(f"  Warning: Could not generate evaluation visualization: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
 
     return best_checkpoint_path
 
@@ -372,4 +385,21 @@ def _save_checkpoint(
         'metrics': metrics
     }
     torch.save(checkpoint, path)
+
+
+def _run_intermediate_ncc(model, cfg, run_dir, epoch):
+    """Run NCC analysis at intermediate epoch."""
+    from ncc.ncc_runner import run_ncc
+    
+    # Get NCC data path
+    ncc_data_path = Path("datasets") / cfg['problem'] / "ncc_data.pt"
+    
+    # Run NCC with epoch-specific output dir nested inside ncc_plots
+    run_ncc(
+        model=model,
+        eval_data_path=str(ncc_data_path),
+        cfg=cfg,
+        run_dir=run_dir,
+        epoch_suffix=f"_epoch_{epoch}"
+    )
 

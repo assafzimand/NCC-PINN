@@ -1,0 +1,61 @@
+# Experiment plan configuration
+experiment_name: "architecture_search"
+
+# Base configuration (will be used for all experiments)
+base_config:
+  problem: schrodinger
+  activation: tanh
+  epochs: 5
+  batch_size: 512
+  lr: 0.0001
+  cuda: true
+  eval_only: false
+  resume_from: null
+  bins: 5
+  print_every: 1
+  save_every: 2
+  ncc_eval_every: 3
+  seed: 42
+  
+  # Problem-specific domains and loss weights
+  schrodinger:
+    spatial_dim: 1
+    spatial_domain: [[-5.0, 5.0]]
+    temporal_domain: [0.0, 1.5707963267948966]
+    loss_weights:
+      residual: 1.0
+      ic: 1.0
+      bc: 1.0
+  
+  problem2:
+    spatial_dim: 1
+    spatial_domain: [[0.0, 1.0]]
+    temporal_domain: [0.0, 1.0]
+    loss_weights:
+      residual: 1.0
+      ic: 1.0
+      bc: 1.0
+  
+  # Dataset sizes
+  n_residual_train: 20000
+  n_initial_train: 50
+  n_boundary_train: 50
+  n_residual_eval: 1000
+  n_initial_eval: 20
+  n_boundary_eval: 20
+  n_samples_ncc: 5000
+
+# Experiments to run (only architecture varies)
+experiments:
+  - name: "50-50-50"
+    architecture: [2, 50, 50, 50, 2]
+  
+  - name: "100-100-100-100"
+    architecture: [2, 100, 100, 100, 100, 2]
+  
+  - name: "50-100-100-100-50"
+    architecture: [2, 50, 100, 100, 100, 50, 2]
+  
+  - name: "100-100-100-100-100-100"
+    architecture: [2, 100, 100, 100, 100, 100, 100, 2]
+

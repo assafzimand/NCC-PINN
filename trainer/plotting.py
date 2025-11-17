@@ -58,7 +58,7 @@ def plot_training_curves(metrics: Dict[str, List[float]], save_dir: Path) -> Non
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
 
-    print(f"  ✓ Training curves saved to {save_path}")
+    print(f"  Training curves saved to {save_path}")
 
 
 def plot_final_comparison(
@@ -128,5 +128,5 @@ def plot_final_comparison(
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         plt.close()
 
-        print(f"  ✓ Final predictions saved to {save_path}")
+        print(f"  Final predictions saved to {save_path}")
 

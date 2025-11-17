@@ -1,17 +1,18 @@
 problem: schrodinger
 architecture: [2, 100, 100, 100, 100, 100, 2]
 activation: tanh
-epochs: 3000
+epochs: 10
 batch_size: 512
 lr: 0.00001
 cuda: true
 eval_only: false
-resume_from: checkpoints/5_layers_100_each_original.pt
+resume_from: null
 bins: 5
 
 # training control
-print_every: 100  # print training info every N epochs
-save_every: 500  # save checkpoint every N epochs
+print_every: 1  # print training info every N epochs
+save_every: 5  # save checkpoint every N epochs
+ncc_eval_every: 3  # run NCC analysis every N epochs (0 = only at end)
 
 # reproducibility
 seed: 42

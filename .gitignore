@@ -2,3 +2,4 @@ mlruns/
 data/
 cursor/
 .venv/
+outputs/
