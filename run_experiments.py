@@ -59,17 +59,12 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
         with open('config/config.yaml', 'w') as f:
             yaml.dump(config, f, default_flow_style=False)
         
-        # Run training + NCC
-        result = subprocess.run([sys.executable, 'run_ncc.py'], 
-                              capture_output=True, text=True)
+        # Run training + NCC (with real-time output)
+        result = subprocess.run([sys.executable, 'run_ncc.py'])
         
         if result.returncode != 0:
-            print(f"ERROR in {exp_name}:")
-            print(result.stderr)
+            print(f"\nERROR in {exp_name}: Process exited with code {result.returncode}")
             return None
-        
-        # Print stdout for monitoring
-        print(result.stdout)
         
         # Move outputs to experiment directory
         # Find latest architecture directory matching this experiment
