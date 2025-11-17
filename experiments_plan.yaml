@@ -1,20 +1,20 @@
 # Experiment plan configuration
-experiment_name: "architecture_search"
+experiment_name: "5_layers_mid_size_100_symmetric"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 5
+  epochs: 1500
   batch_size: 512
   lr: 0.0001
   cuda: true
   eval_only: false
   resume_from: null
   bins: 5
-  print_every: 1
-  save_every: 2
-  ncc_eval_every: 3
+  print_every: 100
+  save_every: 500
+  ncc_eval_every: 300
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -46,16 +46,15 @@ base_config:
   n_samples_ncc: 5000
 
 # Experiments to run (only architecture varies)
-experiments:
-  - name: "50-50-50"
-    architecture: [2, 50, 50, 50, 2]
+experiments:  
+  - name: "flat"
+    architecture: [2, 100, 100, 100, 100, 100, 2]
   
-  - name: "100-100-100-100"
-    architecture: [2, 100, 100, 100, 100, 2]
-  
-  - name: "50-100-100-100-50"
+  - name: "linear_slope"
     architecture: [2, 50, 100, 100, 100, 50, 2]
   
-  - name: "100-100-100-100-100-100"
-    architecture: [2, 100, 100, 100, 100, 100, 100, 2]
+  - name: "increasing_slope"
+    architecture: [2, 25, 100, 100, 100, 25, 2]
 
+  - name: "decreasing_slope"
+    architecture: [2, 75, 100, 100, 100, 75, 2]
