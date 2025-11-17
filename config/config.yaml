@@ -1,12 +1,12 @@
 problem: schrodinger
 architecture: [2, 100, 100, 100, 100, 100, 2]
 activation: tanh
-epochs: 10
+epochs: 1500
 batch_size: 512
-lr: 0.00001
+lr: 0.0001
 cuda: true
-eval_only: false
-resume_from: null
+eval_only: true
+resume_from: checkpoints/5_layers_100_each_original.pt
 bins: 5
 
 # training control
