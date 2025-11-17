@@ -45,7 +45,7 @@ def create_class_labels_from_regression(
         # Use digitize-like operation
         bin_indices[:, d] = torch.searchsorted(
             bin_edges_list[d][:-1],
-            outputs[:, d],
+            outputs[:, d].contiguous(),  # Ensure contiguous for performance
             right=False
         )
         # Clamp to valid range [0, bins-1]

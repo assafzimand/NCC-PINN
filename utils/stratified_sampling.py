@@ -43,10 +43,11 @@ def stratify_by_bins(
     
     print(f"  Using {num_classes} non-empty classes (out of {bin_info['original_num_classes']} total)")
     
-    # Uniform sampling: equal samples per class (all classes have samples after filtering)
+    # Uniform sampling: equal samples per class (based on all non-empty classes)
     samples_per_class_value = target_size // num_classes
     
     # Filter classes that don't have 80% of required samples
+    # Note: We keep samples_per_class fixed - total samples may be less than target
     min_samples_threshold = int(samples_per_class_value * 0.8)
     valid_classes = []
     
@@ -57,12 +58,10 @@ def stratify_by_bins(
         if len(class_indices) >= min_samples_threshold:
             valid_classes.append(c)
     
-    # Recalculate samples per class based on valid classes only
     num_valid_classes = len(valid_classes)
-    samples_per_class_value = target_size // num_valid_classes
     
-    print(f"  Filtered {num_classes - num_valid_classes} sparse classes (< 80% threshold)")
-    print(f"  Using {num_valid_classes} classes with sufficient samples")
+    print(f"  Filtered {num_classes - num_valid_classes} sparse classes (< {min_samples_threshold} samples)")
+    print(f"  Using {num_valid_classes} classes with {samples_per_class_value} samples each")
     
     # Sample indices only from valid classes
     selected_indices = []
