@@ -5,7 +5,7 @@ experiment_name: "5_layers_decrease_mid_symmetric"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 2000
+  epochs: 6000
   batch_size: 512
   lr: 0.0001
   cuda: true
@@ -13,8 +13,8 @@ base_config:
   resume_from: null
   bins: 5
   print_every: 200
-  save_every: 500
-  ncc_eval_every: 400
+  save_every: 1000
+  ncc_eval_every: 1500
   seed: 42
   
   # Problem-specific domains and loss weights
