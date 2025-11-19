@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "5_layers_decrease_mid_symmetric"
+experiment_name: "5_layers_mid_size_50_different_mid_structure_symmetric"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -47,20 +47,14 @@ base_config:
 
 # Experiments to run (only architecture varies)
 experiments:  
-  - name: "1_mid_layer_50"
-    architecture: [2, 100, 100, 50, 100, 100, 2]
-
-  - name: "1_mid_layer_75"
-    architecture: [2, 100, 100, 75, 100, 100, 2]
-
-  - name: "1_mid_layer_25"
-    architecture: [2, 100, 100, 25, 100, 100, 2]
+  - name: "flat"
+    architecture: [2, 50, 50, 50, 50, 50, 2]
   
-  - name: "3_mid_layer_50"
-    architecture: [2, 100, 50, 50, 50, 100, 2]
-
-  - name: "decreasing_mid_layer_to_50"
-    architecture: [2, 100, 75, 50, 75, 100, 2]
+  - name: "linear_slope"
+    architecture: [2, 25, 50, 50, 50, 25, 2]
+  
+  - name: "1_mid_layer_37"
+    architecture: [2, 50, 50, 37, 50, 50, 2]
 
   - name: "decreasing_mid_layer_to_25"
-    architecture: [2, 100, 50, 25, 50, 100, 2]
+    architecture: [2, 50, 37, 25, 37, 50, 2]
