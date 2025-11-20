@@ -84,6 +84,25 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
                     shutil.rmtree(exp_output_dir)  # Remove if exists (shouldn't happen)
                 shutil.move(str(latest_arch_dir), str(exp_output_dir))
                 
+                # Also move corresponding checkpoints to experiment folder
+                checkpoints_root = Path("checkpoints") / config['problem']
+                if checkpoints_root.exists():
+                    layers_str = "-".join(map(str, config['architecture']))
+                    checkpoint_pattern = f"layers-{layers_str}_act-{config['activation']}"
+                    checkpoint_dirs = list(checkpoints_root.glob(checkpoint_pattern))
+                    
+                    if checkpoint_dirs:
+                        checkpoint_dir = checkpoint_dirs[0]
+                        # Create checkpoints folder in experiment directory
+                        exp_checkpoints_dir = exp_output_dir / "checkpoints"
+                        exp_checkpoints_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        # Move checkpoint directory
+                        dest_checkpoint = exp_checkpoints_dir / checkpoint_dir.name
+                        if dest_checkpoint.exists():
+                            shutil.rmtree(dest_checkpoint)
+                        shutil.move(str(checkpoint_dir), str(dest_checkpoint))
+                
                 # Find the timestamp directory inside the moved architecture folder
                 timestamp_dirs = sorted(exp_output_dir.glob("*/"), 
                                       key=lambda x: x.stat().st_mtime)
