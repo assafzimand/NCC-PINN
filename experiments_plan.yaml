@@ -1,11 +1,11 @@
 # Experiment plan configuration
-experiment_name: "5_layers_mid_size_200_different_mid_structure_symmetric"
+experiment_name: "5_layers_mid_size_100_symmetric"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 6000
+  epochs: 10000
   batch_size: 512
   lr: 0.0001
   cuda: true
@@ -14,7 +14,7 @@ base_config:
   bins: 5
   print_every: 200
   save_every: 1000
-  ncc_eval_every: 1500
+  ncc_eval_every: 2500
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -48,13 +48,13 @@ base_config:
 # Experiments to run (only architecture varies)
 experiments:  
   - name: "flat"
-    architecture: [2, 200, 200, 200, 200, 200, 2]
+    architecture: [2, 100, 100, 100, 100, 100, 2]
   
   - name: "linear_slope"
-    architecture: [2, 100, 200, 200, 200, 100, 2]
+    architecture: [2, 50, 100, 100, 100, 50, 2]
   
-  - name: "1_mid_layer_37"
-    architecture: [2, 200, 200, 150, 200, 200, 2]
+  - name: "increasing_slope"
+    architecture: [2, 25, 100, 100, 100, 25, 2]
 
-  - name: "decreasing_mid_layer_to_25"
-    architecture: [2, 200, 150, 100, 150, 200, 2]
+  - name: "decreasing_slope"
+    architecture: [2, 75, 100, 100, 100, 75, 2]

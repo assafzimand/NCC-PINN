@@ -104,8 +104,11 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
                         shutil.move(str(checkpoint_dir), str(dest_checkpoint))
                 
                 # Find the timestamp directory inside the moved architecture folder
-                timestamp_dirs = sorted(exp_output_dir.glob("*/"), 
-                                      key=lambda x: x.stat().st_mtime)
+                # Exclude the checkpoints directory we just created
+                timestamp_dirs = sorted(
+                    [d for d in exp_output_dir.glob("*/") if d.name != "checkpoints"], 
+                    key=lambda x: x.stat().st_mtime
+                )
                 if timestamp_dirs:
                     return timestamp_dirs[-1]
         
