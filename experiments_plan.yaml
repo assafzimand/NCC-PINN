@@ -5,16 +5,16 @@ experiment_name: "5_layers_mid_size_100_symmetric"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 10
+  epochs: 10000
   batch_size: 512
   lr: 0.0001
   cuda: true
   eval_only: false
   resume_from: null
   bins: 5
-  print_every: 2
-  save_every: 5
-  ncc_eval_every: 5
+  print_every: 200
+  save_every: 1000
+  ncc_eval_every: 2500
   seed: 42
   
   # Problem-specific domains and loss weights
