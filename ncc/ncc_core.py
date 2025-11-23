@@ -202,6 +202,7 @@ def compute_compactness_metrics(
             intra_dists.append(dists.mean().item())
 
     intra_class_dist = np.mean(intra_dists) if intra_dists else 0.0
+    intra_class_std = np.std(intra_dists) if intra_dists else 0.0
 
     # Inter-class distances (pairwise distances between centers)
     if num_classes > 1:
@@ -218,6 +219,7 @@ def compute_compactness_metrics(
 
     return {
         'intra_class_dist': intra_class_dist,
+        'intra_class_std': intra_class_std,
         'inter_class_mean': inter_class_mean,
         'inter_class_std': inter_class_std
     }

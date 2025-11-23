@@ -12,6 +12,32 @@ from trainer.plotting import plot_training_curves, plot_final_comparison
 from trainer.utils import compute_relative_l2_error
 
 
+def _create_adam_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer:
+    """Create Adam optimizer with config parameters."""
+    betas = tuple(cfg.get('adam_betas', [0.9, 0.999]))
+    eps = cfg.get('adam_eps', 1e-8)
+    return torch.optim.Adam(
+        model.parameters(),
+        lr=cfg['lr'],
+        betas=betas,
+        eps=eps
+    )
+
+
+def _create_lbfgs_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer:
+    """Create LBFGS optimizer. Should be used with full-batch training."""
+    return torch.optim.LBFGS(
+        model.parameters(),
+        lr=cfg.get('lbfgs_lr', 1.0),
+        max_iter=cfg.get('lbfgs_max_iter', 20),
+        max_eval=None,  # Default: max_iter * 1.25
+        history_size=cfg.get('lbfgs_history_size', 100),
+        line_search_fn=cfg.get('lbfgs_line_search', 'strong_wolfe'),
+        tolerance_grad=cfg.get('lbfgs_tolerance_grad', 1e-7),
+        tolerance_change=cfg.get('lbfgs_tolerance_change', 1e-9)
+    )
+
+
 def train(
     model: nn.Module,
     loss_fn: Callable,
@@ -69,11 +95,25 @@ def train(
     eval_loader = _create_dataloader(eval_data, cfg['batch_size'],
                                      shuffle=False)
 
-    # Setup optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg['lr'])
+    # Determine switch epoch and optimizer strategy
+    switch_at_fraction = cfg.get('optimizer_switch_at', 1.0)
+    epochs = cfg['epochs']
+    switch_epoch = int(epochs * switch_at_fraction) + 1
+
+    # Setup initial optimizer
+    if switch_at_fraction == 0.0:
+        optimizer = _create_lbfgs_optimizer(model, cfg)
+        current_optimizer_name = 'LBFGS'
+        print(f"Using LBFGS optimizer (full-batch) for all epochs")
+    else:
+        optimizer = _create_adam_optimizer(model, cfg)
+        current_optimizer_name = 'Adam'
+        if switch_at_fraction < 1.0:
+            print(f"Using Adam (mini-batch) until epoch {switch_epoch}, then LBFGS (full-batch)")
+        else:
+            print(f"Using Adam optimizer (mini-batch) for all epochs")
 
     # Training setup
-    epochs = cfg['epochs']
     print_every = cfg['print_every']
     save_every = cfg['save_every']
 
@@ -110,20 +150,89 @@ def train(
         train_loss = 0.0
         n_train_batches = 0
 
-        for batch in train_loader:
-            optimizer.zero_grad()
+        if current_optimizer_name == 'Adam':
+            # Adam: Mini-batch training (GPU parallelized)
+            for batch in train_loader:
+                optimizer.zero_grad()
+                loss = loss_fn(model, batch)
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
+                n_train_batches += 1
 
-            # Compute loss
-            loss = loss_fn(model, batch)
-
-            # Backward pass
-            loss.backward()
-            optimizer.step()
-
-            train_loss += loss.item()
-            n_train_batches += 1
+        else:
+            # LBFGS: Full-batch training with memory error handling
+            def closure():
+                optimizer.zero_grad()
+                total_loss = 0.0
+                n_batches = 0
+                
+                # Compute loss over entire training set (on GPU)
+                for batch in train_loader:
+                    loss = loss_fn(model, batch)
+                    total_loss += loss
+                    n_batches += 1
+                
+                avg_loss = total_loss / n_batches
+                avg_loss.backward()
+                return avg_loss
+            
+            try:
+                # LBFGS step processes entire dataset via closure
+                loss = optimizer.step(closure)
+                train_loss = loss.item()
+                n_train_batches = 1
+            
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    # GPU OOM - fallback to Adam with persistent warning
+                    error_msg = (
+                        f"\n{'='*60}\n"
+                        f"MEMORY ERROR at epoch {epoch}\n"
+                        f"LBFGS ran out of GPU memory. Falling back to Adam.\n"
+                        f"Consider: reducing batch_size, dataset size, or\n"
+                        f"setting optimizer_switch_at=1.0 to disable LBFGS.\n"
+                        f"{'='*60}\n"
+                    )
+                    print(error_msg)
+                    
+                    # Save warning to persistent file
+                    warning_log = run_dir / "optimizer_fallback_warning.txt"
+                    with open(warning_log, 'a') as f:
+                        from datetime import datetime
+                        f.write(f"[{datetime.now()}] Epoch {epoch}:\n")
+                        f.write(error_msg)
+                        f.write(f"Error details: {str(e)}\n\n")
+                    
+                    # Clear GPU cache and fallback
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
+                    optimizer = _create_adam_optimizer(model, cfg)
+                    current_optimizer_name = 'Adam'
+                    
+                    # Continue with Adam on first batch
+                    optimizer.zero_grad()
+                    batch = next(iter(train_loader))
+                    loss = loss_fn(model, batch)
+                    loss.backward()
+                    optimizer.step()
+                    train_loss = loss.item()
+                    n_train_batches = 1
+                else:
+                    raise  # Re-raise other errors
 
         train_loss /= n_train_batches
+        
+        # Check for optimizer switch
+        if epoch == switch_epoch and switch_at_fraction < 1.0 and current_optimizer_name == 'Adam':
+            print(f"\n{'='*60}")
+            print(f"OPTIMIZER SWITCH: Adam -> LBFGS at epoch {epoch}")
+            print(f"Switching to full-batch LBFGS for fine-tuning")
+            print(f"{'='*60}\n")
+            
+            optimizer = _create_lbfgs_optimizer(model, cfg)
+            current_optimizer_name = 'LBFGS'
         
         # Store train loss every epoch
         metrics['train_loss_epochs'].append(epoch)
@@ -187,7 +296,8 @@ def train(
         # Print progress
         if should_evaluate:
             elapsed = time.time() - start_time
-            print(f"Epoch [{epoch}/{epochs}] ({elapsed:.1f}s) | "
+            batch_mode = "mini" if current_optimizer_name == 'Adam' else "full"
+            print(f"Epoch [{epoch}/{epochs}] ({elapsed:.1f}s) [{current_optimizer_name}/{batch_mode}] | "
                   f"Train Loss: {train_loss:.6f} | "
                   f"Eval Loss: {eval_loss:.6f} | "
                   f"Train Rel-L2: {train_rel_l2:.6f} | "
@@ -196,7 +306,7 @@ def train(
         # Save checkpoint periodically (only when we have eval metrics)
         if epoch % save_every == 0 and eval_loss is not None:
             checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch}.pt"
-            _save_checkpoint(checkpoint_path, model, optimizer, epoch,
+            _save_checkpoint(checkpoint_path, model, optimizer, current_optimizer_name, epoch,
                            train_loss, eval_loss, cfg, metrics)
             print(f"  Checkpoint saved: {checkpoint_path}")
 
@@ -204,7 +314,7 @@ def train(
         if eval_loss is not None and eval_loss < best_eval_loss:
             best_eval_loss = eval_loss
             best_checkpoint_path = checkpoint_dir / "best_model.pt"
-            _save_checkpoint(best_checkpoint_path, model, optimizer, epoch,
+            _save_checkpoint(best_checkpoint_path, model, optimizer, current_optimizer_name, epoch,
                            train_loss, eval_loss, cfg, metrics)
 
         # Periodic NCC analysis
@@ -215,7 +325,7 @@ def train(
 
     # Save final model
     final_checkpoint_path = checkpoint_dir / "final_model.pt"
-    _save_checkpoint(final_checkpoint_path, model, optimizer, epochs,
+    _save_checkpoint(final_checkpoint_path, model, optimizer, current_optimizer_name, epochs,
                     train_loss, eval_loss, cfg, metrics)
 
     print(f"\nTraining completed in {time.time() - start_time:.1f}s")
@@ -226,7 +336,9 @@ def train(
     # Plot training curves
     print(f"\nGenerating training plots...")
     training_plots_dir = run_dir / "training_plots"
-    plot_training_curves(metrics, training_plots_dir)
+    # Pass optimizer switch epoch if there was a switch
+    switch_epoch_to_plot = switch_epoch if switch_at_fraction < 1.0 else None
+    plot_training_curves(metrics, training_plots_dir, optimizer_switch_epoch=switch_epoch_to_plot)
 
     # Plot final predictions
     model.eval()
@@ -368,6 +480,7 @@ def _save_checkpoint(
     path: Path,
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
+    optimizer_name: str,
     epoch: int,
     train_loss: float,
     eval_loss: float,
@@ -378,6 +491,7 @@ def _save_checkpoint(
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
+        'optimizer': optimizer_name,
         'optimizer_state_dict': optimizer.state_dict(),
         'train_loss': train_loss,
         'eval_loss': eval_loss,
