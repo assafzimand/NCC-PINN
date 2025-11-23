@@ -59,6 +59,8 @@ def plot_compactness(
     layer_names = list(layer_metrics.keys())
     intra_dists = [layer_metrics[ln]['compactness']['intra_class_dist']
                    for ln in layer_names]
+    intra_stds = [layer_metrics[ln]['compactness']['intra_class_std']
+                  for ln in layer_names]
     inter_means = [layer_metrics[ln]['compactness']['inter_class_mean']
                    for ln in layer_names]
     inter_stds = [layer_metrics[ln]['compactness']['inter_class_std']
@@ -67,8 +69,9 @@ def plot_compactness(
     fig, ax = plt.subplots(figsize=(10, 6))
 
     x = np.arange(len(layer_names))
-    ax.plot(x, intra_dists, 'o-', linewidth=2, markersize=8,
-            label='Intra-class distance', color='#E63946')
+    ax.errorbar(x, intra_dists, yerr=intra_stds, fmt='o-', linewidth=2,
+                markersize=8, label='Intra-class distance (mean ± std)',
+                color='#E63946', capsize=5)
     ax.errorbar(x, inter_means, yerr=inter_stds, fmt='o-', linewidth=2,
                 markersize=8, label='Inter-class distance (mean ± std)',
                 color='#06A77D', capsize=5)

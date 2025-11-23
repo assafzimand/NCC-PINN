@@ -6,7 +6,11 @@ from typing import List, Dict
 import numpy as np
 
 
-def plot_training_curves(metrics: Dict[str, List[float]], save_dir: Path) -> None:
+def plot_training_curves(
+    metrics: Dict[str, List[float]], 
+    save_dir: Path,
+    optimizer_switch_epoch: int = None
+) -> None:
     """
     Plot training and evaluation curves.
 
@@ -15,6 +19,8 @@ def plot_training_curves(metrics: Dict[str, List[float]], save_dir: Path) -> Non
                 - 'train_loss_epochs', 'train_loss' (all epochs)
                 - 'epochs', 'eval_loss', 'train_rel_l2', 'eval_rel_l2' (eval epochs only)
         save_dir: Directory to save plots
+        optimizer_switch_epoch: Epoch where optimizer switched (e.g., Adam to LBFGS).
+                               If provided, a vertical line is drawn at this epoch.
     """
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -31,6 +37,12 @@ def plot_training_curves(metrics: Dict[str, List[float]], save_dir: Path) -> Non
             linewidth=2, alpha=0.8)
     ax.plot(eval_epochs, metrics['eval_loss'], 'r-', label='Eval Loss',
             linewidth=2, alpha=0.8)
+    
+    # Add optimizer switch marker
+    if optimizer_switch_epoch is not None:
+        ax.axvline(x=optimizer_switch_epoch, color='green', linestyle='--', 
+                   linewidth=2, alpha=0.7, label='Optimizer Switch (Adam→LBFGS)')
+    
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Loss', fontsize=12)
     ax.set_title('Training and Evaluation Loss', fontsize=14, fontweight='bold')
@@ -44,6 +56,12 @@ def plot_training_curves(metrics: Dict[str, List[float]], save_dir: Path) -> Non
             linewidth=2, alpha=0.8)
     ax.plot(eval_epochs, metrics['eval_rel_l2'], 'r-', label='Eval Rel. L2',
             linewidth=2, alpha=0.8)
+    
+    # Add optimizer switch marker
+    if optimizer_switch_epoch is not None:
+        ax.axvline(x=optimizer_switch_epoch, color='green', linestyle='--', 
+                   linewidth=2, alpha=0.7, label='Optimizer Switch (Adam→LBFGS)')
+    
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Relative L2 Error', fontsize=12)
     ax.set_title('Relative L2 Error', fontsize=14, fontweight='bold')

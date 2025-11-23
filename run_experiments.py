@@ -70,47 +70,48 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
         # Find latest architecture directory matching this experiment
         outputs_root = Path("outputs")
         if outputs_root.exists():
-            # Build glob pattern to match architecture folder
-            arch_pattern = f"{config['problem']}_layers-*_act-{config['activation']}"
-            arch_dirs = sorted(outputs_root.glob(arch_pattern), 
-                             key=lambda x: x.stat().st_mtime)
+            # Build pattern to match architecture folder
+            layers_str = "-".join(map(str, config['architecture']))
+            arch_folder_name = f"{config['problem']}_layers-{layers_str}_act-{config['activation']}"
+            arch_dir = outputs_root / arch_folder_name
             
-            if arch_dirs:
-                # Get the most recent architecture directory
-                latest_arch_dir = arch_dirs[-1]
-                
-                # Move entire architecture directory to experiment folder
-                if exp_output_dir.exists():
-                    shutil.rmtree(exp_output_dir)  # Remove if exists (shouldn't happen)
-                shutil.move(str(latest_arch_dir), str(exp_output_dir))
-                
-                # Also move corresponding checkpoints to experiment folder
-                checkpoints_root = Path("checkpoints") / config['problem']
-                if checkpoints_root.exists():
-                    layers_str = "-".join(map(str, config['architecture']))
-                    checkpoint_pattern = f"layers-{layers_str}_act-{config['activation']}"
-                    checkpoint_dirs = list(checkpoints_root.glob(checkpoint_pattern))
-                    
-                    if checkpoint_dirs:
-                        checkpoint_dir = checkpoint_dirs[0]
-                        # Create checkpoints folder in experiment directory
-                        exp_checkpoints_dir = exp_output_dir / "checkpoints"
-                        exp_checkpoints_dir.mkdir(parents=True, exist_ok=True)
-                        
-                        # Move checkpoint directory
-                        dest_checkpoint = exp_checkpoints_dir / checkpoint_dir.name
-                        if dest_checkpoint.exists():
-                            shutil.rmtree(dest_checkpoint)
-                        shutil.move(str(checkpoint_dir), str(dest_checkpoint))
-                
-                # Find the timestamp directory inside the moved architecture folder
-                # Exclude the checkpoints directory we just created
+            if arch_dir.exists():
+                # Find the LATEST timestamp directory within the architecture folder
                 timestamp_dirs = sorted(
-                    [d for d in exp_output_dir.glob("*/") if d.name != "checkpoints"], 
+                    [d for d in arch_dir.glob("*/") if d.is_dir()], 
                     key=lambda x: x.stat().st_mtime
                 )
+                
                 if timestamp_dirs:
-                    return timestamp_dirs[-1]
+                    latest_timestamp_dir = timestamp_dirs[-1]
+                    
+                    # Move only the latest timestamp directory to experiment folder
+                    exp_output_dir.mkdir(parents=True, exist_ok=True)
+                    dest_dir = exp_output_dir / latest_timestamp_dir.name
+                    if dest_dir.exists():
+                        shutil.rmtree(dest_dir)
+                    shutil.move(str(latest_timestamp_dir), str(dest_dir))
+                    
+                    # Also move corresponding checkpoints to experiment folder
+                    checkpoints_root = Path("checkpoints") / config['problem']
+                    if checkpoints_root.exists():
+                        checkpoint_pattern = f"layers-{layers_str}_act-{config['activation']}"
+                        checkpoint_dirs = list(checkpoints_root.glob(checkpoint_pattern))
+                        
+                        if checkpoint_dirs:
+                            checkpoint_dir = checkpoint_dirs[0]
+                            # Create checkpoints folder in experiment directory
+                            exp_checkpoints_dir = exp_output_dir / "checkpoints"
+                            exp_checkpoints_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            # Move checkpoint directory
+                            dest_checkpoint = exp_checkpoints_dir / checkpoint_dir.name
+                            if dest_checkpoint.exists():
+                                shutil.rmtree(dest_checkpoint)
+                            shutil.move(str(checkpoint_dir), str(dest_checkpoint))
+                    
+                    # Return the moved timestamp directory
+                    return dest_dir
         
         return None
         
@@ -167,13 +168,21 @@ def generate_comparison_report(parent_dir, results):
         
         # Store for table
         final_ncc = ncc_epochs.get('final', list(ncc_epochs.values())[-1])
+        
+        # Extract margin SNR for final layer
+        final_layer = list(final_ncc['layer_accuracies'].keys())[-1]
+        margin_mean = final_ncc['layer_margins'][final_layer]['mean_margin']
+        margin_std = final_ncc['layer_margins'][final_layer]['std_margin']
+        margin_snr = margin_mean / margin_std if margin_std > 0 else 0
+        
         metrics_data.append({
             'experiment': exp_name,
             'final_train_loss': train_metrics['train_loss'][-1],
             'final_eval_loss': train_metrics['eval_loss'][-1],
             'final_train_rel_l2': train_metrics['train_rel_l2'][-1],
             'final_eval_rel_l2': train_metrics['eval_rel_l2'][-1],
-            'ncc_final_accuracy': final_ncc['layer_accuracies'][list(final_ncc['layer_accuracies'].keys())[-1]]
+            'ncc_final_accuracy': final_ncc['layer_accuracies'][list(final_ncc['layer_accuracies'].keys())[-1]],
+            'margin_snr': margin_snr
         })
         
         # Store for NCC plots
@@ -190,8 +199,11 @@ def generate_comparison_report(parent_dir, results):
     
     # Generate the three plots
     _generate_training_results_plot(parent_dir, df)
-    _generate_ncc_classification_plot(parent_dir, ncc_data)
-    _generate_ncc_compactness_plot(parent_dir, ncc_data)
+    
+    # Use shared comparison plot functions
+    from utils.comparison_plots import generate_ncc_classification_plot, generate_ncc_compactness_plot
+    generate_ncc_classification_plot(parent_dir, ncc_data)
+    generate_ncc_compactness_plot(parent_dir, ncc_data)
     
     print(f"\nComparison report saved to {parent_dir}")
 
@@ -224,7 +236,7 @@ def _generate_training_results_plot(parent_dir, df):
     
     # Create colored table
     table_data = []
-    col_labels = ['Experiment', 'Train Loss', 'Eval Loss', 'Train Rel-L2', 'Eval Rel-L2', 'NCC Final Acc']
+    col_labels = ['Experiment', 'Train Loss', 'Eval Loss', 'Train Rel-L2', 'Eval Rel-L2', 'NCC Final Acc', 'Margin SNR']
     
     for _, row in df.iterrows():
         table_data.append([
@@ -233,7 +245,8 @@ def _generate_training_results_plot(parent_dir, df):
             f"{row['final_eval_loss']:.6f}",
             f"{row['final_train_rel_l2']:.6f}",
             f"{row['final_eval_rel_l2']:.6f}",
-            f"{row['ncc_final_accuracy']:.6f}"
+            f"{row['ncc_final_accuracy']:.6f}",
+            f"{row['margin_snr']:.2f}"
         ])
     
     table = ax3.table(cellText=table_data, colLabels=col_labels,
@@ -251,11 +264,11 @@ def _generate_training_results_plot(parent_dir, df):
     # Create green-to-red colormap
     cmap = LinearSegmentedColormap.from_list('GreenRed', ['#2ecc71', '#f1c40f', '#e74c3c'])
     
-    for col_idx in range(1, 6):  # Skip experiment name column
+    for col_idx in range(1, 7):  # Skip experiment name column (now 7 columns total)
         values = df.iloc[:, col_idx].values
         
-        # For losses/errors, lower is better; for accuracy, higher is better
-        if col_idx == 5:  # NCC accuracy - higher is better
+        # For losses/errors, lower is better; for accuracy and margin SNR, higher is better
+        if col_idx == 5 or col_idx == 6:  # NCC accuracy and Margin SNR - higher is better
             norm_values = 1 - (values - values.min()) / (values.max() - values.min() + 1e-10)
         else:  # Losses and errors - lower is better
             norm_values = (values - values.min()) / (values.max() - values.min() + 1e-10)
@@ -267,7 +280,7 @@ def _generate_training_results_plot(parent_dir, df):
             cell.set_alpha(0.7)
     
     # Style header
-    for col_idx in range(6):
+    for col_idx in range(7):
         cell = table[(0, col_idx)]
         cell.set_facecolor('#34495e')
         cell.set_text_props(weight='bold', color='white')
@@ -279,108 +292,6 @@ def _generate_training_results_plot(parent_dir, df):
     print(f"  Training and results comparison saved to training_and_results_comparison.png")
 
 
-def _generate_ncc_classification_plot(parent_dir, ncc_data):
-    """Generate NCC classification accuracy comparison across layers and epochs."""
-    fig, ax = plt.subplots(figsize=(14, 8))
-    
-    # Define color families for models
-    color_families = [
-        ['#ffcccc', '#ff9999', '#ff6666', '#ff3333', '#cc0000'],  # Reds
-        ['#cce5ff', '#99ccff', '#66b3ff', '#3399ff', '#0066cc'],  # Blues
-        ['#ccffcc', '#99ff99', '#66ff66', '#33cc33', '#009900'],  # Greens
-        ['#ffe5cc', '#ffcc99', '#ffb366', '#ff9933', '#cc6600'],  # Oranges
-        ['#e5ccff', '#cc99ff', '#b366ff', '#9933ff', '#6600cc'],  # Purples
-    ]
-    
-    model_names = list(ncc_data.keys())
-    
-    for model_idx, (model_name, epochs_data) in enumerate(ncc_data.items()):
-        color_family = color_families[model_idx % len(color_families)]
-        
-        # Sort epochs (numeric first, then 'final')
-        sorted_epochs = sorted([e for e in epochs_data.keys() if isinstance(e, int)])
-        if 'final' in epochs_data:
-            sorted_epochs.append('final')
-        
-        for epoch_idx, epoch_key in enumerate(sorted_epochs):
-            ncc_metrics = epochs_data[epoch_key]
-            layers = ncc_metrics['layers_analyzed']
-            accuracies = [ncc_metrics['layer_accuracies'][layer] for layer in layers]
-            
-            # Darker color for later epochs
-            color_idx = min(epoch_idx, len(color_family) - 1)
-            color = color_family[color_idx]
-            
-            epoch_label = f"Epoch {epoch_key}" if isinstance(epoch_key, int) else "Final"
-            label = f"{model_name}" if epoch_idx == 0 else None
-            
-            ax.plot(layers, accuracies, marker='o', color=color, 
-                   linewidth=2, markersize=6, alpha=0.8, label=label)
-    
-    ax.set_xlabel('Layer', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Accuracy', fontsize=12, fontweight='bold')
-    ax.set_title('NCC Classification Accuracy Comparison\n(Darker shades = later epochs)', 
-                fontsize=14, fontweight='bold')
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc='best', fontsize=10)
-    ax.set_ylim([0, 1])
-    
-    plt.tight_layout()
-    plt.savefig(parent_dir / "ncc_classification_comparison.png", dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"  NCC classification comparison saved to ncc_classification_comparison.png")
-
-
-def _generate_ncc_compactness_plot(parent_dir, ncc_data):
-    """Generate NCC compactness (margin) comparison across layers and epochs."""
-    fig, ax = plt.subplots(figsize=(14, 8))
-    
-    # Define color families for models
-    color_families = [
-        ['#ffcccc', '#ff9999', '#ff6666', '#ff3333', '#cc0000'],  # Reds
-        ['#cce5ff', '#99ccff', '#66b3ff', '#3399ff', '#0066cc'],  # Blues
-        ['#ccffcc', '#99ff99', '#66ff66', '#33cc33', '#009900'],  # Greens
-        ['#ffe5cc', '#ffcc99', '#ffb366', '#ff9933', '#cc6600'],  # Oranges
-        ['#e5ccff', '#cc99ff', '#b366ff', '#9933ff', '#6600cc'],  # Purples
-    ]
-    
-    model_names = list(ncc_data.keys())
-    
-    for model_idx, (model_name, epochs_data) in enumerate(ncc_data.items()):
-        color_family = color_families[model_idx % len(color_families)]
-        
-        # Sort epochs (numeric first, then 'final')
-        sorted_epochs = sorted([e for e in epochs_data.keys() if isinstance(e, int)])
-        if 'final' in epochs_data:
-            sorted_epochs.append('final')
-        
-        for epoch_idx, epoch_key in enumerate(sorted_epochs):
-            ncc_metrics = epochs_data[epoch_key]
-            layers = ncc_metrics['layers_analyzed']
-            margins = [ncc_metrics['layer_margins'][layer]['mean_margin'] for layer in layers]
-            
-            # Darker color for later epochs
-            color_idx = min(epoch_idx, len(color_family) - 1)
-            color = color_family[color_idx]
-            
-            epoch_label = f"Epoch {epoch_key}" if isinstance(epoch_key, int) else "Final"
-            label = f"{model_name}" if epoch_idx == 0 else None
-            
-            ax.plot(layers, margins, marker='o', color=color, 
-                   linewidth=2, markersize=6, alpha=0.8, label=label)
-    
-    ax.set_xlabel('Layer', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Mean Margin', fontsize=12, fontweight='bold')
-    ax.set_title('NCC Compactness (Mean Margin) Comparison\n(Darker shades = later epochs)', 
-                fontsize=14, fontweight='bold')
-    ax.grid(True, alpha=0.3)
-    ax.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.5)
-    ax.legend(loc='best', fontsize=10)
-    
-    plt.tight_layout()
-    plt.savefig(parent_dir / "ncc_compactness_comparison.png", dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"  NCC compactness comparison saved to ncc_compactness_comparison.png")
 
 
 def main():
