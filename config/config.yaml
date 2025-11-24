@@ -1,7 +1,7 @@
 problem: schrodinger
 architecture: [2, 100, 100, 100, 100, 100, 2]
 activation: tanh
-epochs: 10000
+epochs: 100
 batch_size: 512
 lr: 0.0001
 
@@ -14,11 +14,11 @@ adam_eps: 0.00000001
 
 # LBFGS hyperparameters
 lbfgs_lr: 1.0  # LBFGS typically uses lr=1.0
-lbfgs_max_iter: 20
+lbfgs_max_iter: 10  # Reduced from 20 for faster training
 lbfgs_history_size: 100
 lbfgs_line_search: 'strong_wolfe'  # or null
-lbfgs_tolerance_grad: 0.0000001
-lbfgs_tolerance_change: 0.000000001
+lbfgs_tolerance_grad: 0.00001  # Relaxed from 0.0000001
+lbfgs_tolerance_change: 0.00001  # Relaxed from 0.000000001
 
 cuda: true
 eval_only: false
@@ -37,9 +37,9 @@ resume_from: null
 bins: 5
 
 # training control
-print_every: 500  # print training info every N epochs
-save_every: 2500  # save checkpoint every N epochs
-ncc_eval_every: 2500  # run NCC analysis every N epochs (0 = only at end)
+print_every: 10  # print training info every N epochs
+save_every: 50  # save checkpoint every N epochs
+ncc_eval_every: 25  # run NCC analysis every N epochs (0 = only at end)
 
 # reproducibility
 seed: 42
