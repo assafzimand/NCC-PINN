@@ -162,20 +162,13 @@ def train(
 
         else:
             # LBFGS: Full-batch training with memory error handling
+            # Process entire dataset in single forward pass (no batching)
             def closure():
                 optimizer.zero_grad()
-                total_loss = 0.0
-                n_batches = 0
-                
-                # Compute loss over entire training set (on GPU)
-                for batch in train_loader:
-                    loss = loss_fn(model, batch)
-                    total_loss += loss
-                    n_batches += 1
-                
-                avg_loss = total_loss / n_batches
-                avg_loss.backward()
-                return avg_loss
+                # Single forward pass with ALL training data at once
+                loss = loss_fn(model, train_data)
+                loss.backward()
+                return loss
             
             try:
                 # LBFGS step processes entire dataset via closure
