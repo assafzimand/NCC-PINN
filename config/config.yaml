@@ -1,7 +1,7 @@
 problem: schrodinger
 architecture: [2, 100, 100, 100, 100, 100, 2]
 activation: tanh
-epochs: 3000
+epochs: 10000
 batch_size: 512
 lr: 0.0001
 
@@ -38,8 +38,8 @@ bins: 5
 
 # training control
 print_every: 500  # print training info every N epochs
-save_every: 1000  # save checkpoint every N epochs
-ncc_eval_every: 1000  # run NCC analysis every N epochs (0 = only at end)
+save_every: 2500  # save checkpoint every N epochs
+ncc_eval_every: 2500  # run NCC analysis every N epochs (0 = only at end)
 
 # reproducibility
 seed: 42
