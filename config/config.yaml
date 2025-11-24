@@ -6,7 +6,7 @@ batch_size: 512
 lr: 0.0001
 
 # Optimizer settings
-optimizer_switch_at: 0.8  # Switch from Adam to LBFGS (0=LBFGS only, 1=Adam only)
+optimizer_switch_at: 0.5  # Switch from Adam to LBFGS (0=LBFGS only, 1=Adam only)
 
 # Adam hyperparameters
 adam_betas: [0.9, 0.999]
