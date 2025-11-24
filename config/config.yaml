@@ -1,12 +1,12 @@
 problem: schrodinger
 architecture: [2, 100, 100, 100, 100, 100, 2]
 activation: tanh
-epochs: 10000
+epochs: 20000
 batch_size: 512
 lr: 0.0001
 
 # Optimizer settings
-optimizer_switch_at: 0.5  # Switch from Adam to LBFGS (0=LBFGS only, 1=Adam only)
+optimizer_switch_at: 0.8  # Switch from Adam to LBFGS (0=LBFGS only, 1=Adam only)
 
 # Adam hyperparameters
 adam_betas: [0.9, 0.999]
@@ -14,11 +14,11 @@ adam_eps: 0.00000001
 
 # LBFGS hyperparameters
 lbfgs_lr: 1.0  # LBFGS typically uses lr=1.0
-lbfgs_max_iter: 10  # Reduced from 20 for faster training
+lbfgs_max_iter: 30  # Reduced from 20 for faster training
 lbfgs_history_size: 100
 lbfgs_line_search: 'strong_wolfe'  # or null
-lbfgs_tolerance_grad: 0.00001  # Relaxed from 0.0000001
-lbfgs_tolerance_change: 0.00001  # Relaxed from 0.000000001
+lbfgs_tolerance_grad: 0.0001  # Relaxed from 0.0000001
+lbfgs_tolerance_change: 0.0001  # Relaxed from 0.000000001
 
 cuda: true
 eval_only: false
