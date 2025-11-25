@@ -17,8 +17,8 @@ lbfgs_lr: 1.0  # LBFGS typically uses lr=1.0
 lbfgs_max_iter: 30  # Reduced from 20 for faster training
 lbfgs_history_size: 100
 lbfgs_line_search: 'strong_wolfe'  # or null
-lbfgs_tolerance_grad: 0.0001  # Relaxed from 0.0000001
-lbfgs_tolerance_change: 0.0001  # Relaxed from 0.000000001
+lbfgs_tolerance_grad: 0.000000000001  # Relaxed from 0.0000001
+lbfgs_tolerance_change: 0.000000000001  # Relaxed from 0.000000001
 
 cuda: true
 eval_only: false
