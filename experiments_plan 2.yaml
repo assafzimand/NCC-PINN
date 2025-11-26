@@ -1,20 +1,36 @@
 # Experiment plan configuration
-experiment_name: "5_layers_decrease_mid_symmetric"
+experiment_name: "40,000_params_smaller_mid_size_vs_flat"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 6000
+  epochs: 10000
   batch_size: 512
   lr: 0.0001
+  
+  # Optimizer settings
+  optimizer_switch_at: 0.9  # Switch from Adam to LBFGS at 90%
+  
+  # Adam hyperparameters
+  adam_betas: [0.9, 0.999]
+  adam_eps: 1.0e-8
+  
+  # LBFGS hyperparameters
+  lbfgs_lr: 1.0
+  lbfgs_max_iter: 20
+  lbfgs_history_size: 20
+  lbfgs_line_search: 'strong_wolfe'
+  lbfgs_tolerance_grad: 0.000000000000001
+  lbfgs_tolerance_change: 0.000000000000001
+  
   cuda: true
   eval_only: false
   resume_from: null
   bins: 5
-  print_every: 200
-  save_every: 1000
-  ncc_eval_every: 1500
+  print_every: 1000
+  save_every: 5000
+  ncc_eval_every: 3400
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -47,20 +63,14 @@ base_config:
 
 # Experiments to run (only architecture varies)
 experiments:  
-  - name: "1_mid_layer_50"
-    architecture: [2, 100, 100, 50, 100, 100, 2]
-
-  - name: "1_mid_layer_75"
-    architecture: [2, 100, 100, 75, 100, 100, 2]
-
-  - name: "1_mid_layer_25"
-    architecture: [2, 100, 100, 25, 100, 100, 2]
+  - name: "flat"
+    architecture: [2, 100, 100, 100, 100, 100, 2]
   
-  - name: "3_mid_layer_50"
-    architecture: [2, 100, 50, 50, 50, 100, 2]
+  - name: "mid_half_size_less_params"
+    architecture: [2, 100, 100, 50, 100, 100, 2]
+  
+  - name: "mid_half_size_same_params_same_layers"
+    architecture: [2, 114, 114, 57, 114, 114, 2]
 
-  - name: "decreasing_mid_layer_to_50"
-    architecture: [2, 100, 75, 50, 75, 100, 2]
-
-  - name: "decreasing_mid_layer_to_25"
-    architecture: [2, 100, 50, 25, 50, 100, 2]
+  - name: "mid_half_size_same_params_more_layers"
+    architecture: [2, 90, 90, 90, 45, 90, 90, 90, 2]
