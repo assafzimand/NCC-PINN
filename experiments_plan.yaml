@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "40,000_params_smaller_mid_size_vs_flat"
+experiment_name: "40,000_params_8_layers_linear_slope_vs_flat"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -64,13 +64,13 @@ base_config:
 # Experiments to run (only architecture varies)
 experiments:  
   - name: "flat"
-    architecture: [2, 100, 100, 100, 100, 100, 2]
+    architecture: [2, 75, 75, 75, 75, 75, 75, 75, 75, 2]
   
-  - name: "mid_half_size_less_params"
-    architecture: [2, 100, 100, 50, 100, 100, 2]
+  - name: "linear_slope_less_params"
+    architecture: [2, 37, 75, 75, 75, 75, 75, 75, 37, 2]
   
-  - name: "mid_half_size_same_params_same_layers"
-    architecture: [2, 114, 114, 57, 114, 114, 2]
+  - name: "linear_slope_same_params_same_layers"
+    architecture: [2, 41, 82, 82, 82, 82, 82, 82, 41, 2]
 
-  - name: "mid_half_size_same_params_more_layers"
-    architecture: [2, 90, 90, 90, 45, 90, 90, 90, 2]
+  - name: "linear_slope_same_params_more_layers"
+    architecture: [2, 37, 75, 75, 75, 75, 75, 75, 75, 37, 2]
