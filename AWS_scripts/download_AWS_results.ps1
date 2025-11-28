@@ -2,9 +2,11 @@ param(
     # Default EC2 public IP - you can override on each run
     [string]$Ec2Ip = "13.60.229.209",
     # Path to your SSH key (relative to repo root by default)
-    [string]$PemPath = "$PSScriptRoot\NCC-PINN-ASSAF.pem",
+    [string]$PemPath = "$PSScriptRoot\..\NCC-PINN-ASSAF.pem",
     # Remote outputs root on EC2
     [string]$RemoteRoot = "/home/ubuntu/NCC-PINN/outputs",
+    # Experiments root (where run_experiments.py writes)
+    [string]$ExperimentsRoot = "/home/ubuntu/NCC-PINN/outputs/experiments",
     # Local folder where results will be downloaded
     [string]$LocalTarget = "$PSScriptRoot\aws_outputs"
 )
@@ -15,20 +17,6 @@ Write-Host ""
 Write-Host "Current EC2 Public IP: $Ec2Ip"
 $ipInput = Read-Host "Enter EC2 Public IP (or press Enter to keep current)"
 if ($ipInput) { $Ec2Ip = $ipInput }
-
-$subPath = Read-Host "Enter path under outputs/ to download (e.g. 'experiments/...', or 'schrodinger_layers-.../TIMESTAMP')"
-if (-not $subPath) {
-    Write-Error "No path provided. Exiting."
-    exit 1
-}
-
-$remotePath = "$RemoteRoot/$subPath"
-
-Write-Host ""
-Write-Host "Remote path:" -ForegroundColor Cyan
-Write-Host "  ubuntu@$Ec2Ip:$remotePath"
-Write-Host "Local destination:" -ForegroundColor Cyan
-Write-Host "  $LocalTarget"
 Write-Host ""
 
 if (-not (Test-Path $PemPath)) {
@@ -36,10 +24,36 @@ if (-not (Test-Path $PemPath)) {
     exit 1
 }
 
-# Ensure destination directory exists
+# Find the most recently modified experiment under outputs/experiments on EC2
+Write-Host "Querying EC2 for latest experiment under outputs/experiments/ ..." -ForegroundColor Cyan
+try {
+    # This assumes OpenSSH client is installed on Windows
+    $lastFolder = (& ssh -i $PemPath ubuntu@$Ec2Ip "cd $ExperimentsRoot && ls -1t | head -1").Trim()
+} catch {
+    Write-Error "Failed to query EC2 via ssh. Make sure ssh is installed and the IP/key are correct."
+    exit 1
+}
+
+if (-not $lastFolder) {
+    Write-Error "Could not determine latest folder under '$ExperimentsRoot' on EC2."
+    exit 1
+}
+
+$remotePath = "$ExperimentsRoot/$lastFolder"
+
+Write-Host "Latest folder detected:" -ForegroundColor Cyan
+Write-Host "  $lastFolder"
+Write-Host ""
+Write-Host "Remote path:" -ForegroundColor Cyan
+Write-Host "  ubuntu@${Ec2Ip}:${remotePath}"
+Write-Host "Local destination:" -ForegroundColor Cyan
+Write-Host "  $LocalTarget"
+Write-Host ""
+
+# Ensure destination directory exists locally
 New-Item -ItemType Directory -Force -Path $LocalTarget | Out-Null
 
-$scpCmd = "scp -i `"$PemPath`" -r ubuntu@$Ec2Ip:`"$remotePath`" `"$LocalTarget`""
+$scpCmd = "scp -i `"$PemPath`" -r ubuntu@${Ec2Ip}:`"$remotePath`" `"$LocalTarget`""
 
 Write-Host "Running:" -ForegroundColor Yellow
 Write-Host "  $scpCmd"
@@ -53,5 +67,3 @@ try {
 catch {
     Write-Error "scp failed: $_"
 }
-
-
