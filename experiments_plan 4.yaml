@@ -1,20 +1,36 @@
 # Experiment plan configuration
-experiment_name: "5_layers_mid_size_200_different_mid_structure_symmetric"
+experiment_name: "40,000_params_linear_slope_vs_flat_3_layers"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 6000
+  epochs: 10000
   batch_size: 512
   lr: 0.0001
+  
+  # Optimizer settings
+  optimizer_switch_at: 0.9  # Switch from Adam to LBFGS at 90%
+  
+  # Adam hyperparameters
+  adam_betas: [0.9, 0.999]
+  adam_eps: 1.0e-8
+  
+  # LBFGS hyperparameters
+  lbfgs_lr: 1.0
+  lbfgs_max_iter: 20
+  lbfgs_history_size: 20
+  lbfgs_line_search: 'strong_wolfe'
+  lbfgs_tolerance_grad: 0.000000000000001
+  lbfgs_tolerance_change: 0.000000000000001
+  
   cuda: true
   eval_only: false
   resume_from: null
   bins: 5
-  print_every: 200
-  save_every: 1000
-  ncc_eval_every: 1500
+  print_every: 1000
+  save_every: 5000
+  ncc_eval_every: 3400
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -48,13 +64,13 @@ base_config:
 # Experiments to run (only architecture varies)
 experiments:  
   - name: "flat"
-    architecture: [2, 200, 200, 200, 200, 200, 2]
+    architecture: [2, 140, 140, 140, 2]
   
-  - name: "linear_slope"
-    architecture: [2, 100, 200, 200, 200, 100, 2]
+  - name: "linear_slope_less_params"
+    architecture: [2, 70, 140, 70, 2]
   
-  - name: "1_mid_layer_37"
-    architecture: [2, 200, 200, 150, 200, 200, 2]
+  - name: "linear_slope_same_params_same_layers"
+    architecture: [2, 100, 200, 100, 2]
 
-  - name: "decreasing_mid_layer_to_25"
-    architecture: [2, 200, 150, 100, 150, 200, 2]
+  - name: "linear_slope_same_params_more_layers"
+    architecture: [2, 71, 142, 142, 71, 2]
