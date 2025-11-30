@@ -9,7 +9,7 @@ import json
 import time
 
 from trainer.plotting import plot_training_curves, plot_final_comparison
-from trainer.utils import compute_relative_l2_error
+from trainer.utils import compute_relative_l2_error, compute_infinity_norm_error
 
 
 def _create_adam_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer:
@@ -125,7 +125,9 @@ def train(
         'epochs': [],              # Evaluation epochs only
         'eval_loss': [],
         'train_rel_l2': [],
-        'eval_rel_l2': []
+        'eval_rel_l2': [],
+        'train_inf_norm': [],
+        'eval_inf_norm': []
     }
 
     best_eval_loss = float('inf')
@@ -239,11 +241,14 @@ def train(
         eval_loss = None
         eval_rel_l2 = None
         train_rel_l2 = None
+        train_inf_norm = None
+        eval_inf_norm = None
         
         if should_evaluate:
-            # Compute train rel-L2 error
+            # Compute train rel-L2 and infinity norm errors
             model.train()
             train_rel_l2 = 0.0
+            train_inf_norm = 0.0
             n_train_batches_l2 = 0
             
             for batch in train_loader:
@@ -251,15 +256,19 @@ def train(
                     inputs = torch.cat([batch['x'], batch['t']], dim=1)
                     u_pred = model(inputs)
                     rel_l2 = compute_relative_l2_error(u_pred, batch['u_gt'])
+                    inf_norm = compute_infinity_norm_error(u_pred, batch['u_gt'])
                     train_rel_l2 += rel_l2.item()
+                    train_inf_norm += inf_norm.item()
                     n_train_batches_l2 += 1
             
             train_rel_l2 /= n_train_batches_l2
+            train_inf_norm /= n_train_batches_l2
             
             # Eval phase
             model.eval()
             eval_loss = 0.0
             eval_rel_l2 = 0.0
+            eval_inf_norm = 0.0
             n_eval_batches = 0
 
             for batch in eval_loader:
@@ -272,19 +281,24 @@ def train(
                     inputs = torch.cat([batch['x'], batch['t']], dim=1)
                     u_pred = model(inputs)
                     rel_l2 = compute_relative_l2_error(u_pred, batch['u_gt'])
+                    inf_norm = compute_infinity_norm_error(u_pred, batch['u_gt'])
 
                 eval_loss += loss.item()
                 eval_rel_l2 += rel_l2.item()
+                eval_inf_norm += inf_norm.item()
                 n_eval_batches += 1
 
             eval_loss /= n_eval_batches
             eval_rel_l2 /= n_eval_batches
+            eval_inf_norm /= n_eval_batches
 
             # Store evaluation metrics (train_loss already stored above for all epochs)
             metrics['epochs'].append(epoch)
             metrics['eval_loss'].append(eval_loss)
             metrics['train_rel_l2'].append(train_rel_l2)
             metrics['eval_rel_l2'].append(eval_rel_l2)
+            metrics['train_inf_norm'].append(train_inf_norm)
+            metrics['eval_inf_norm'].append(eval_inf_norm)
 
         # Print progress
         if should_evaluate:
@@ -294,7 +308,9 @@ def train(
                   f"Train Loss: {train_loss:.6f} | "
                   f"Eval Loss: {eval_loss:.6f} | "
                   f"Train Rel-L2: {train_rel_l2:.6f} | "
-                  f"Eval Rel-L2: {eval_rel_l2:.6f}")
+                  f"Eval Rel-L2: {eval_rel_l2:.6f} | "
+                  f"Train Inf: {train_inf_norm:.6f} | "
+                  f"Eval Inf: {eval_inf_norm:.6f}")
 
         # Save checkpoint periodically (only when we have eval metrics)
         if epoch % save_every == 0 and eval_loss is not None:
@@ -369,6 +385,8 @@ def train(
         f.write(f"Final eval loss: {eval_loss:.6f}\n")
         f.write(f"Final train rel-L2: {train_rel_l2:.6f}\n")
         f.write(f"Final eval rel-L2: {eval_rel_l2:.6f}\n")
+        f.write(f"Final train inf-norm: {train_inf_norm:.6f}\n")
+        f.write(f"Final eval inf-norm: {eval_inf_norm:.6f}\n")
         f.write(f"Best eval loss: {best_eval_loss:.6f}\n\n")
         f.write(f"Best checkpoint: {best_checkpoint_path}\n")
         f.write(f"Final checkpoint: {final_checkpoint_path}\n")

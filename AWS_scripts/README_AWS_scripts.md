@@ -14,7 +14,7 @@ This folder contains helper scripts to make it easier to run NCC-PINN on an AWS 
   ```powershell
   # From your local Windows machine (PowerShell)
   cd C:\Users\assaf\Desktop\Coding\Msc\Master\NCC-PINN
-  ssh -i .\NCC-PINN-ASSAF.pem ubuntu@<EC2_PUBLIC_IP>
+  ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
   # for now - ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
   ```
 
@@ -31,7 +31,7 @@ chmod +x ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh
 1. **From your local machine**, SSH into EC2:
 
 ```powershell
-ssh -i .\NCC-PINN-ASSAF.pem ubuntu@<EC2_PUBLIC_IP>
+ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
 ```
 
 2. **On the EC2 shell**, run:

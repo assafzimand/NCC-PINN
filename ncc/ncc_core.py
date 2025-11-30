@@ -6,6 +6,7 @@ All operations are CUDA-compatible and vectorized.
 import torch
 from typing import Dict, Tuple, List
 import numpy as np
+import math
 
 
 def create_class_labels_from_regression(
@@ -190,23 +191,26 @@ def compute_compactness_metrics(
         Dictionary with intra_class_dist, inter_class_mean, inter_class_std
     """
     device = embeddings.device
+    _, embedding_dim = embeddings.shape
+    # Normalize all Euclidean distances by sqrt(d) so they are comparable across layers
+    norm_scale = math.sqrt(embedding_dim) if embedding_dim > 0 else 1.0
 
-    # Intra-class distances (average distance within each class to center)
+    # Intra-class distances (average distance within each class to center), normalized
     intra_dists = []
     for c in range(num_classes):
         mask = (class_labels == c)
         if mask.sum() > 0:
             class_embeddings = embeddings[mask]
             center = centers[c]
-            dists = torch.norm(class_embeddings - center, p=2, dim=1)
+            dists = torch.norm(class_embeddings - center, p=2, dim=1) / norm_scale
             intra_dists.append(dists.mean().item())
 
     intra_class_dist = np.mean(intra_dists) if intra_dists else 0.0
     intra_class_std = np.std(intra_dists) if intra_dists else 0.0
 
-    # Inter-class distances (pairwise distances between centers)
+    # Inter-class distances (pairwise distances between centers), normalized
     if num_classes > 1:
-        center_dists = torch.cdist(centers, centers, p=2)  # (C, C)
+        center_dists = torch.cdist(centers, centers, p=2) / norm_scale  # (C, C)
         # Get upper triangle (excluding diagonal)
         mask = torch.triu(torch.ones_like(center_dists), diagonal=1).bool()
         pairwise_dists = center_dists[mask]
@@ -237,11 +241,14 @@ def compute_center_geometry_metrics(
     Returns:
         Dictionary with center norms and pairwise distances
     """
-    # Center norms
-    center_norms = torch.norm(centers, p=2, dim=1)  # (num_classes,)
+    _, embedding_dim = centers.shape
+    norm_scale = math.sqrt(embedding_dim) if embedding_dim > 0 else 1.0
 
-    # Pairwise distances between centers
-    pairwise_dists = torch.cdist(centers, centers, p=2)  # (C, C)
+    # Center norms (normalized by sqrt(d))
+    center_norms = torch.norm(centers, p=2, dim=1) / norm_scale  # (num_classes,)
+
+    # Pairwise distances between centers (normalized by sqrt(d))
+    pairwise_dists = torch.cdist(centers, centers, p=2) / norm_scale  # (C, C)
 
     return {
         'center_norms': center_norms.cpu().numpy(),
@@ -271,11 +278,14 @@ def compute_margin_metrics(
     Returns:
         Dictionary with margins and fraction_positive
     """
-    N = embeddings.shape[0]
+    N, embedding_dim = embeddings.shape
     device = embeddings.device
 
-    # Compute all distances
-    distances = torch.cdist(embeddings, centers, p=2)  # (N, num_classes)
+    # Normalize all distances by sqrt(d) for comparability across layers
+    norm_scale = math.sqrt(embedding_dim) if embedding_dim > 0 else 1.0
+
+    # Compute all distances (normalized)
+    distances = torch.cdist(embeddings, centers, p=2) / norm_scale  # (N, num_classes)
 
     margins = torch.zeros(N, device=device)
 

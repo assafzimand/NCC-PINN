@@ -1,6 +1,7 @@
 """NCC analysis orchestrator for trained models."""
 
 import sys
+import os
 import torch
 import importlib
 from pathlib import Path
@@ -9,6 +10,29 @@ from utils.io import load_config, make_run_dir
 from models.fc_model import FCNet
 from ncc.ncc_runner import run_ncc
 from trainer.trainer import train
+
+
+def fix_long_path(path):
+    """
+    Fix Windows long path issues by adding \\?\ prefix when needed.
+    Only applies on Windows for absolute paths longer than 260 chars.
+    """
+    if sys.platform != 'win32':
+        return path
+    
+    # Convert to Path object if string
+    if isinstance(path, str):
+        path = Path(path)
+    
+    # Get absolute path
+    abs_path = path.resolve()
+    abs_path_str = str(abs_path)
+    
+    # If path is too long and doesn't already have the prefix
+    if len(abs_path_str) > 260 and not abs_path_str.startswith('\\\\?\\'):
+        return Path(f'\\\\?\\{abs_path_str}')
+    
+    return abs_path
 
 
 def run_multi_eval(checkpoints_dict, config, run_dir):
@@ -33,7 +57,7 @@ def run_multi_eval(checkpoints_dict, config, run_dir):
         print(f"\n[{model_idx}/{len(checkpoints_dict)}] Processing {model_name}...")
         print(f"  Checkpoint: {checkpoint_path}")
         
-        checkpoint_path = Path(checkpoint_path)
+        checkpoint_path = fix_long_path(Path(checkpoint_path))
         if not checkpoint_path.exists():
             print(f"  ERROR: Checkpoint not found, skipping...")
             continue
@@ -258,7 +282,7 @@ def main():
         # Load checkpoint if resume_from is specified
         if resume_from is not None:
             print(f"\n  Loading checkpoint from: {resume_from}")
-            resume_checkpoint_path = Path(resume_from)
+            resume_checkpoint_path = fix_long_path(Path(resume_from))
 
             if not resume_checkpoint_path.exists():
                 raise FileNotFoundError(f"Checkpoint not found: {resume_from}")
@@ -335,7 +359,7 @@ def main():
                 "Please specify the path to a trained model checkpoint."
             )
 
-        checkpoint_path = Path(resume_from)
+        checkpoint_path = fix_long_path(Path(resume_from))
         if not checkpoint_path.exists():
             raise FileNotFoundError(
                 f"Checkpoint not found: {resume_from}"
