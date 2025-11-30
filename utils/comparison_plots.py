@@ -130,3 +130,94 @@ def generate_ncc_comparison_plots_only(save_dir, ncc_data):
     generate_ncc_compactness_plot(save_dir, ncc_data)
     print(f"Comparison plots saved to {save_dir}")
 
+
+def generate_probe_comparison_plots(save_dir, probe_data):
+    """
+    Generate linear probe comparison plots across experiments.
+    
+    Args:
+        save_dir: Directory to save plots
+        probe_data: Dict of {experiment_name: probe_metrics}
+                   where probe_metrics has 'train'/'eval' with 'rel_l2' and 'inf_norm' lists
+    """
+    print("\nGenerating probe comparison plots...")
+    
+    # Define colors for different experiments
+    colors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c']
+    
+    # Create figure with 2 subplots (one for train, one for eval)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    for exp_idx, (exp_name, metrics) in enumerate(probe_data.items()):
+        color = colors[exp_idx % len(colors)]
+        
+        # Number of layers
+        num_layers = len(metrics['train']['rel_l2'])
+        layer_numbers = list(range(1, num_layers + 1))
+        
+        # Plot training metrics
+        ax1.plot(layer_numbers, metrics['train']['rel_l2'], 
+                marker='o', color=color, linewidth=2, markersize=7,
+                label=exp_name, alpha=0.8)
+        
+        # Plot evaluation metrics
+        ax2.plot(layer_numbers, metrics['eval']['rel_l2'], 
+                marker='s', color=color, linewidth=2, markersize=7,
+                label=exp_name, alpha=0.8)
+    
+    # Configure training plot
+    ax1.set_xlabel('Layer Number', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Probe Rel-L2 Error', fontsize=12, fontweight='bold')
+    ax1.set_title('Linear Probe Performance - Training Data', 
+                  fontsize=14, fontweight='bold')
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(fontsize=10, loc='best')
+    
+    # Configure evaluation plot
+    ax2.set_xlabel('Layer Number', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('Probe Rel-L2 Error', fontsize=12, fontweight='bold')
+    ax2.set_title('Linear Probe Performance - Evaluation Data', 
+                  fontsize=14, fontweight='bold')
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(fontsize=10, loc='best')
+    
+    plt.tight_layout()
+    
+    # Save plot
+    save_path = Path(save_dir) / "probe_comparison.png"
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Probe comparison plot saved to {save_path}")
+    
+    # Also create a plot comparing final layer probe performance
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    exp_names = list(probe_data.keys())
+    train_final = [probe_data[name]['train']['rel_l2'][-1] for name in exp_names]
+    eval_final = [probe_data[name]['eval']['rel_l2'][-1] for name in exp_names]
+    
+    x = range(len(exp_names))
+    width = 0.35
+    
+    ax.bar([i - width/2 for i in x], train_final, width, label='Train', 
+           color='#3498db', alpha=0.7)
+    ax.bar([i + width/2 for i in x], eval_final, width, label='Eval', 
+           color='#e74c3c', alpha=0.7)
+    
+    ax.set_xlabel('Experiment', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Final Layer Probe Rel-L2 Error', fontsize=12, fontweight='bold')
+    ax.set_title('Final Layer Linear Probe Performance Comparison', 
+                 fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(exp_names, rotation=45, ha='right')
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    plt.tight_layout()
+    
+    save_path = Path(save_dir) / "probe_final_layer_comparison.png"
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Final layer probe comparison saved to {save_path}")

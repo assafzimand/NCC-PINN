@@ -63,8 +63,18 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
         result = subprocess.run([sys.executable, 'run_ncc.py'])
         
         if result.returncode != 0:
-            print(f"\nERROR in {exp_name}: Process exited with code {result.returncode}")
+            print(f"\nERROR in {exp_name} NCC: Process exited with code {result.returncode}")
             return None
+        
+        # Run probes analysis
+        print(f"\n{'='*70}")
+        print(f"Running Probe Analysis for: {exp_name}")
+        print(f"{'='*70}\n")
+        result_probes = subprocess.run([sys.executable, 'run_probes.py'])
+        
+        if result_probes.returncode != 0:
+            print(f"\nWARNING in {exp_name} Probes: Process exited with code {result_probes.returncode}")
+            # Don't return None - probes are optional, continue with NCC results
         
         # Move outputs to experiment directory
         # Find latest architecture directory matching this experiment
@@ -76,21 +86,37 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             arch_dir = outputs_root / arch_folder_name
             
             if arch_dir.exists():
-                # Find the LATEST timestamp directory within the architecture folder
+                # Find the TWO LATEST timestamp directories (one from NCC, one from probes)
                 timestamp_dirs = sorted(
                     [d for d in arch_dir.glob("*/") if d.is_dir()], 
                     key=lambda x: x.stat().st_mtime
                 )
                 
-                if timestamp_dirs:
-                    latest_timestamp_dir = timestamp_dirs[-1]
+                if len(timestamp_dirs) >= 2:
+                    # Get the two most recent directories (NCC and Probes)
+                    ncc_dir = timestamp_dirs[-2]  # Second to last (NCC ran first)
+                    probe_dir = timestamp_dirs[-1]  # Last (Probes ran second)
                     
-                    # Move only the latest timestamp directory to experiment folder
+                    # Create experiment output directory
                     exp_output_dir.mkdir(parents=True, exist_ok=True)
-                    dest_dir = exp_output_dir / latest_timestamp_dir.name
+                    dest_dir = exp_output_dir / ncc_dir.name
+                    
+                    # Move NCC results
                     if dest_dir.exists():
                         shutil.rmtree(dest_dir)
-                    shutil.move(str(latest_timestamp_dir), str(dest_dir))
+                    shutil.move(str(ncc_dir), str(dest_dir))
+                    
+                    # Merge probe results into the same directory
+                    probe_plots_src = probe_dir / "probe_plots"
+                    if probe_plots_src.exists():
+                        probe_plots_dest = dest_dir / "probe_plots"
+                        if probe_plots_dest.exists():
+                            shutil.rmtree(probe_plots_dest)
+                        shutil.move(str(probe_plots_src), str(probe_plots_dest))
+                    
+                    # Clean up the probe directory (we've moved what we need)
+                    if probe_dir.exists():
+                        shutil.rmtree(probe_dir)
                     
                     # Also move corresponding checkpoints to experiment folder
                     checkpoints_root = Path("checkpoints") / config['problem']
@@ -130,6 +156,7 @@ def generate_comparison_report(parent_dir, results):
     # Collect training metrics
     metrics_data = []
     ncc_data = {}  # Store all NCC data for periodic plots
+    probe_data = {}  # Store all probe data for comparison plots
     
     for exp_name, result_path in results.items():
         if result_path is None:
@@ -169,13 +196,22 @@ def generate_comparison_report(parent_dir, results):
         # Store for table
         final_ncc = ncc_epochs.get('final', list(ncc_epochs.values())[-1])
         
+        # Load probe metrics
+        probe_file = result_path / "probe_plots" / "probe_metrics.json"
+        probe_metrics = None
+        if probe_file.exists():
+            with open(probe_file) as f:
+                probe_metrics = json.load(f)
+                probe_data[exp_name] = probe_metrics
+        
         # Extract margin SNR for final layer
         final_layer = list(final_ncc['layer_accuracies'].keys())[-1]
         margin_mean = final_ncc['layer_margins'][final_layer]['mean_margin']
         margin_std = final_ncc['layer_margins'][final_layer]['std_margin']
         margin_snr = margin_mean / margin_std if margin_std > 0 else 0
         
-        metrics_data.append({
+        # Build metrics data row
+        metrics_row = {
             'experiment': exp_name,
             'final_train_loss': train_metrics['train_loss'][-1],
             'final_eval_loss': train_metrics['eval_loss'][-1],
@@ -185,7 +221,14 @@ def generate_comparison_report(parent_dir, results):
             'final_eval_inf_norm': train_metrics['eval_inf_norm'][-1],
             'ncc_final_accuracy': final_ncc['layer_accuracies'][list(final_ncc['layer_accuracies'].keys())[-1]],
             'margin_snr': margin_snr
-        })
+        }
+        
+        # Add probe metrics if available (last layer probe)
+        if probe_metrics:
+            metrics_row['probe_final_train_rel_l2'] = probe_metrics['train']['rel_l2'][-1]
+            metrics_row['probe_final_eval_rel_l2'] = probe_metrics['eval']['rel_l2'][-1]
+        
+        metrics_data.append(metrics_row)
         
         # Store for NCC plots
         ncc_data[exp_name] = ncc_epochs
@@ -206,6 +249,11 @@ def generate_comparison_report(parent_dir, results):
     from utils.comparison_plots import generate_ncc_classification_plot, generate_ncc_compactness_plot
     generate_ncc_classification_plot(parent_dir, ncc_data)
     generate_ncc_compactness_plot(parent_dir, ncc_data)
+    
+    # Generate probe comparison plots if probe data available
+    if probe_data:
+        from utils.comparison_plots import generate_probe_comparison_plots
+        generate_probe_comparison_plots(parent_dir, probe_data)
     
     print(f"\nComparison report saved to {parent_dir}")
 
