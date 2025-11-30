@@ -180,7 +180,9 @@ def generate_comparison_report(parent_dir, results):
             'final_train_loss': train_metrics['train_loss'][-1],
             'final_eval_loss': train_metrics['eval_loss'][-1],
             'final_train_rel_l2': train_metrics['train_rel_l2'][-1],
+            'final_train_inf_norm': train_metrics['train_inf_norm'][-1],
             'final_eval_rel_l2': train_metrics['eval_rel_l2'][-1],
+            'final_eval_inf_norm': train_metrics['eval_inf_norm'][-1],
             'ncc_final_accuracy': final_ncc['layer_accuracies'][list(final_ncc['layer_accuracies'].keys())[-1]],
             'margin_snr': margin_snr
         })
@@ -236,7 +238,7 @@ def _generate_training_results_plot(parent_dir, df):
     
     # Create colored table
     table_data = []
-    col_labels = ['Experiment', 'Train Loss', 'Eval Loss', 'Train Rel-L2', 'Eval Rel-L2', 'NCC Final Acc', 'Margin SNR']
+    col_labels = ['Experiment', 'Train Loss', 'Eval Loss', 'Train Rel-L2', 'Train Inf', 'Eval Rel-L2', 'Eval Inf', 'NCC Final Acc', 'Margin SNR']
     
     for _, row in df.iterrows():
         table_data.append([
@@ -244,7 +246,9 @@ def _generate_training_results_plot(parent_dir, df):
             f"{row['final_train_loss']:.6f}",
             f"{row['final_eval_loss']:.6f}",
             f"{row['final_train_rel_l2']:.6f}",
+            f"{row['final_train_inf_norm']:.6f}",
             f"{row['final_eval_rel_l2']:.6f}",
+            f"{row['final_eval_inf_norm']:.6f}",
             f"{row['ncc_final_accuracy']:.6f}",
             f"{row['margin_snr']:.2f}"
         ])
@@ -264,11 +268,11 @@ def _generate_training_results_plot(parent_dir, df):
     # Create green-to-red colormap
     cmap = LinearSegmentedColormap.from_list('GreenRed', ['#2ecc71', '#f1c40f', '#e74c3c'])
     
-    for col_idx in range(1, 7):  # Skip experiment name column (now 7 columns total)
+    for col_idx in range(1, 9):  # Skip experiment name column (now 9 columns total)
         values = df.iloc[:, col_idx].values
         
         # For losses/errors, lower is better; for accuracy and margin SNR, higher is better
-        if col_idx == 5 or col_idx == 6:  # NCC accuracy and Margin SNR - higher is better
+        if col_idx == 7 or col_idx == 8:  # NCC accuracy and Margin SNR - higher is better
             norm_values = 1 - (values - values.min()) / (values.max() - values.min() + 1e-10)
         else:  # Losses and errors - lower is better
             norm_values = (values - values.min()) / (values.max() - values.min() + 1e-10)
@@ -280,7 +284,7 @@ def _generate_training_results_plot(parent_dir, df):
             cell.set_alpha(0.7)
     
     # Style header
-    for col_idx in range(7):
+    for col_idx in range(9):
         cell = table[(0, col_idx)]
         cell.set_facecolor('#34495e')
         cell.set_text_props(weight='bold', color='white')

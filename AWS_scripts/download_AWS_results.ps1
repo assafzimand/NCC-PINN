@@ -2,7 +2,9 @@ param(
     # Default EC2 public IP - you can override on each run
     [string]$Ec2Ip = "13.60.229.209",
     # Path to your SSH key (relative to repo root by default)
-    [string]$PemPath = "$PSScriptRoot\..\NCC-PINN-ASSAF.pem",
+    # Repo structure: Master\NCC-PINN-ASSAF.pem and Master\NCC-PINN\AWS_scripts\this_file
+    # So from $PSScriptRoot (NCC-PINN\AWS_scripts) we need to go up two levels.
+    [string]$PemPath = "$PSScriptRoot\..\..\NCC-PINN-ASSAF.pem",
     # Remote outputs root on EC2
     [string]$RemoteRoot = "/home/ubuntu/NCC-PINN/outputs",
     # Experiments root (where run_experiments.py writes)

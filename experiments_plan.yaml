@@ -1,16 +1,16 @@
 # Experiment plan configuration
-experiment_name: "40,000_params_linear_slope_vs_flat_3_layers"
+experiment_name: "40,000_params_flat_many_layers"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 10000
+  epochs: 10
   batch_size: 512
   lr: 0.0001
   
   # Optimizer settings
-  optimizer_switch_at: 0.9  # Switch from Adam to LBFGS at 90%
+  optimizer_switch_at: 0.2
   
   # Adam hyperparameters
   adam_betas: [0.9, 0.999]
@@ -21,16 +21,16 @@ base_config:
   lbfgs_max_iter: 20
   lbfgs_history_size: 20
   lbfgs_line_search: 'strong_wolfe'
-  lbfgs_tolerance_grad: 0.000000000000001
-  lbfgs_tolerance_change: 0.000000000000001
+  lbfgs_tolerance_grad: 0.0  # Set to 0 to disable gradient-based convergence check
+  lbfgs_tolerance_change: 0.0  # Set to 0 to disable loss change convergence check
   
   cuda: true
   eval_only: false
   resume_from: null
   bins: 5
-  print_every: 1000
-  save_every: 5000
-  ncc_eval_every: 3400
+  print_every: 1
+  save_every: 5
+  ncc_eval_every: 5
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -54,23 +54,20 @@ base_config:
   
   # Dataset sizes
   n_residual_train: 20000
-  n_initial_train: 50
-  n_boundary_train: 50
-  n_residual_eval: 1000
-  n_initial_eval: 20
-  n_boundary_eval: 20
-  n_samples_ncc: 5000
+  n_initial_train: 100
+  n_boundary_train: 100
+  n_residual_eval: 5000
+  n_initial_eval: 25
+  n_boundary_eval: 25
+  n_samples_ncc: 5000  # to
 
 # Experiments to run (only architecture varies)
 experiments:  
-  - name: "flat"
+  - name: "5_layers"
+    architecture: [2, 100, 100, 100, 100, 100, 2]
+  
+  - name: "3_layers"
     architecture: [2, 140, 140, 140, 2]
   
-  - name: "linear_slope_less_params"
-    architecture: [2, 70, 140, 70, 2]
-  
-  - name: "linear_slope_same_params_same_layers"
-    architecture: [2, 100, 200, 100, 2]
-
-  - name: "linear_slope_same_params_more_layers"
-    architecture: [2, 71, 142, 142, 71, 2]
+  - name: "line7_layers"
+    architecture: [2, 80, 80, 80, 80, 80, 80, 80, 2]
