@@ -68,6 +68,14 @@ def train(
     device = torch.device('cuda' if cfg['cuda'] and
                           torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
+    
+    # GPU optimization and monitoring
+    if device.type == 'cuda':
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"GPU Memory Available: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+        print(f"Initial GPU Memory Allocated: {torch.cuda.memory_allocated()/1e9:.3f} GB")
+        torch.backends.cudnn.benchmark = True
+        print("CUDNN benchmark enabled for GPU optimization")
 
     # Set seed for reproducibility
     torch.manual_seed(cfg['seed'])
@@ -458,13 +466,14 @@ def _create_dataloader(
     )
 
     # Custom collate function to reconstruct dict format
+    # Optimized for GPU: use tuple instead of list for better performance
     def collate_fn(batch_list):
-        x_batch = torch.stack([item[0] for item in batch_list])
-        t_batch = torch.stack([item[1] for item in batch_list])
-        u_gt_batch = torch.stack([item[2] for item in batch_list])
-        mask_res_batch = torch.stack([item[3] for item in batch_list])
-        mask_ic_batch = torch.stack([item[4] for item in batch_list])
-        mask_bc_batch = torch.stack([item[5] for item in batch_list])
+        x_batch = torch.stack(tuple(item[0] for item in batch_list))
+        t_batch = torch.stack(tuple(item[1] for item in batch_list))
+        u_gt_batch = torch.stack(tuple(item[2] for item in batch_list))
+        mask_res_batch = torch.stack(tuple(item[3] for item in batch_list))
+        mask_ic_batch = torch.stack(tuple(item[4] for item in batch_list))
+        mask_bc_batch = torch.stack(tuple(item[5] for item in batch_list))
 
         return {
             'x': x_batch,
