@@ -13,8 +13,9 @@ This folder contains helper scripts to make it easier to run NCC-PINN on an AWS 
 
   ```powershell
   # From your local Windows machine (PowerShell)
-  ssh -i ..\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
-  # for now - ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
+  # Navigate to the Master folder first:
+  cd C:\Users\assaf\Desktop\Coding\Msc\Master
+  ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
   ```
 
 - On a **fresh instance** or whenever you want to make sure the environment + repo are ready.
@@ -30,6 +31,8 @@ chmod +x ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh
 1. **From your local machine**, SSH into EC2:
 
 ```powershell
+# Make sure you're in the Master directory where the .pem file is
+cd C:\Users\assaf\Desktop\Coding\Msc\Master
 ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
 ```
 
@@ -51,11 +54,11 @@ This will:
 
 ```bash
 # Start a new screen session
-cd ~/NCC-PINN
 screen -S ncc_experiment
 
-# Inside the screen session:
+# Inside the screen session, activate venv and navigate to repo:
 source ~/.venv_ncc_pinn/bin/activate
+cd ~/NCC-PINN
 python run_experiments.py              # or: python run_ncc.py
 
 # To detach (leave it running): Press Ctrl+A, then D
@@ -65,11 +68,10 @@ python run_experiments.py              # or: python run_ncc.py
 4. **Later: Check on your running experiment**:
 
 ```bash
-# SSH back into EC2
+# SSH back into EC2 (from Master directory on your PC)
 ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
 
 # Reattach to your screen session to see live progress
-cd ~/NCC-PINN
 screen -r ncc_experiment
 
 # When done viewing: Press Ctrl+A, then D to detach again
@@ -96,7 +98,7 @@ You can safely re-run `prepare_AWS_run.sh` on the same instance; it will just re
 - Your `.pem` key accessible (default in script: `NCC-PINN-ASSAF.pem` in repo root).
 
 #### Usage
-1. Open **PowerShell** in your local repo folder:
+1. Open **PowerShell** and navigate to your repo folder:
 
 ```powershell
 cd C:\Users\assaf\Desktop\Coding\Msc\Master\NCC-PINN
@@ -110,7 +112,7 @@ cd C:\Users\assaf\Desktop\Coding\Msc\Master\NCC-PINN
 
 3. It will:
    - Build the remote path to the latest experiment
-  PINN - Copy that directory to a local folder named `AWS_scripts\aws_outputs` in the repo root
+   - Copy that directory to a local folder named `AWS_scripts\aws_outputs` in the repo root
 
 After it finishes, you'll find your experiment results at:
 
