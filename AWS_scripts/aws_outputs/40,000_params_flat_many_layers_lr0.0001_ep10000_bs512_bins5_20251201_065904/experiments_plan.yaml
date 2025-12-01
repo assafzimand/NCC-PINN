@@ -1,0 +1,73 @@
+# Experiment plan configuration
+experiment_name: "40,000_params_flat_many_layers"
+
+# Base configuration (will be used for all experiments)
+base_config:
+  problem: schrodinger
+  activation: tanh
+  epochs: 10000
+  batch_size: 512
+  lr: 0.0001
+  
+  # Optimizer settings
+  optimizer_switch_at: 0.5
+  
+  # Adam hyperparameters
+  adam_betas: [0.9, 0.999]
+  adam_eps: 1.0e-8
+  
+  # LBFGS hyperparameters
+  lbfgs_lr: 0.1
+  lbfgs_max_iter: 5
+  lbfgs_history_size: 10
+  lbfgs_line_search: 'strong_wolfe'
+  lbfgs_tolerance_grad: 0.0  # Set to 0 to disable gradient-based convergence check
+  lbfgs_tolerance_change: 0.0  # Set to 0 to disable loss change convergence check
+  
+  cuda: true
+  eval_only: false
+  resume_from: null
+  bins: 5
+  print_every: 500
+  save_every: 5000
+  ncc_eval_every: 5000
+  seed: 42
+  
+  # Problem-specific domains and loss weights
+  schrodinger:
+    spatial_dim: 1
+    spatial_domain: [[-5.0, 5.0]]
+    temporal_domain: [0.0, 1.5707963267948966]
+    loss_weights:
+      residual: 1.0
+      ic: 1.0
+      bc: 1.0
+  
+  problem2:
+    spatial_dim: 1
+    spatial_domain: [[0.0, 1.0]]
+    temporal_domain: [0.0, 1.0]
+    loss_weights:
+      residual: 1.0
+      ic: 1.0
+      bc: 1.0
+  
+  # Dataset sizes
+  n_residual_train: 20000
+  n_initial_train: 100
+  n_boundary_train: 100
+  n_residual_eval: 5000
+  n_initial_eval: 25
+  n_boundary_eval: 25
+  n_samples_ncc: 5000  # to
+
+# Experiments to run (only architecture varies)
+experiments:  
+  - name: "5_layers"
+    architecture: [2, 100, 100, 100, 100, 100, 2]
+  
+  - name: "3_layers"
+    architecture: [2, 140, 140, 140, 2]
+  
+  - name: "line7_layers"
+    architecture: [2, 80, 80, 80, 80, 80, 80, 80, 2]

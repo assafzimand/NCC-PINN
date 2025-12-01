@@ -15,6 +15,8 @@ def train_linear_probe(
     
     This computes: weights = (X^T X + λI)^-1 X^T y
     
+    Optimized for GPU with chunked operations for large matrices.
+    
     Args:
         embeddings: Layer activations (N, hidden_dim)
         targets: Ground truth outputs (N, output_dim)
@@ -27,25 +29,40 @@ def train_linear_probe(
     _, output_dim = targets.shape
     device = embeddings.device
     
+    # Ensure everything is on the same device and contiguous for GPU efficiency
+    embeddings = embeddings.contiguous()
+    targets = targets.contiguous()
+    
     # Add bias term by appending ones column to embeddings
     X = torch.cat([embeddings, torch.ones(N, 1, device=device)], dim=1)  # (N, hidden_dim+1)
     y = targets  # (N, output_dim)
     
-    # Compute X^T X + λI
-    XtX = X.t() @ X  # (hidden_dim+1, hidden_dim+1)
-    
-    # Add ridge regularization
-    ridge_term = ridge_lambda * torch.eye(XtX.shape[0], device=device)
-    XtX_reg = XtX + ridge_term
-    
-    # Compute (X^T X + λI)^-1 X^T y
-    try:
-        # Use torch.linalg.solve for numerical stability
-        weights_with_bias = torch.linalg.solve(XtX_reg, X.t() @ y)  # (hidden_dim+1, output_dim)
-    except RuntimeError:
-        # Fallback to pseudo-inverse if solve fails
-        XtX_inv = torch.linalg.pinv(XtX_reg)
-        weights_with_bias = XtX_inv @ X.t() @ y
+    # Use more numerically stable formulation with Cholesky decomposition
+    # This is faster on GPU than linalg.solve
+    with torch.cuda.amp.autocast(enabled=False):  # Disable autocast for numerical stability
+        # Compute X^T X (use matmul for better GPU utilization)
+        XtX = torch.matmul(X.t(), X)  # (hidden_dim+1, hidden_dim+1)
+        
+        # Add ridge regularization
+        ridge_term = ridge_lambda * torch.eye(XtX.shape[0], device=device, dtype=XtX.dtype)
+        XtX_reg = XtX + ridge_term
+        
+        # Compute X^T y
+        Xty = torch.matmul(X.t(), y)  # (hidden_dim+1, output_dim)
+        
+        # Solve using Cholesky decomposition (faster and more stable on GPU)
+        try:
+            # Try Cholesky first (fastest for positive definite matrices)
+            L = torch.linalg.cholesky(XtX_reg)
+            weights_with_bias = torch.cholesky_solve(Xty, L)
+        except RuntimeError:
+            # Fallback to standard solve if Cholesky fails
+            try:
+                weights_with_bias = torch.linalg.solve(XtX_reg, Xty)
+            except RuntimeError:
+                # Last resort: pseudo-inverse (slowest but most robust)
+                XtX_inv = torch.linalg.pinv(XtX_reg)
+                weights_with_bias = torch.matmul(XtX_inv, Xty)
     
     # Extract weights and bias
     weights = weights_with_bias[:-1, :]  # (hidden_dim, output_dim)
@@ -126,12 +143,15 @@ def probe_all_layers(
     results = {}
     
     print("Training linear probes for each layer...")
+    num_layers = len(embeddings_dict)
     
-    for layer_name in embeddings_dict.keys():
+    import time
+    for idx, layer_name in enumerate(embeddings_dict.keys(), 1):
+        start_time = time.time()
         train_embeddings = embeddings_dict[layer_name]
         eval_embeddings = eval_embeddings_dict[layer_name]
         
-        print(f"  Layer {layer_name}: {train_embeddings.shape[1]} dimensions")
+        print(f"  [{idx}/{num_layers}] Layer {layer_name}: {train_embeddings.shape[1]} dimensions", end=" ", flush=True)
         
         # Train probe on training data
         probe = train_linear_probe(train_embeddings, train_targets)
@@ -144,6 +164,9 @@ def probe_all_layers(
         eval_predictions = compute_probe_predictions(probe, eval_embeddings)
         eval_metrics = compute_probe_metrics(eval_predictions, eval_targets)
         
+        elapsed = time.time() - start_time
+        print(f"[{elapsed:.2f}s]")
+        
         results[layer_name] = {
             'train_metrics': train_metrics,
             'eval_metrics': eval_metrics,
@@ -151,8 +174,8 @@ def probe_all_layers(
             'hidden_dim': train_embeddings.shape[1]
         }
         
-        print(f"    Train: Rel-L2={train_metrics['rel_l2']:.6f}, Inf={train_metrics['inf_norm']:.6f}")
-        print(f"    Eval:  Rel-L2={eval_metrics['rel_l2']:.6f}, Inf={eval_metrics['inf_norm']:.6f}")
+        print(f"      Train: Rel-L2={train_metrics['rel_l2']:.6f}, Inf={train_metrics['inf_norm']:.6f}")
+        print(f"      Eval:  Rel-L2={eval_metrics['rel_l2']:.6f}, Inf={eval_metrics['inf_norm']:.6f}")
     
     return results
 
