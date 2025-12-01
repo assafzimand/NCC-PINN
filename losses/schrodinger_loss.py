@@ -170,8 +170,9 @@ def build_loss(**cfg) -> Callable:
         # MSE_f: PDE Residual Loss
         # ============================================================
         if masks['residual'].sum() > 0:
-            x_f = x[masks['residual']]  # (N_f, spatial_dim)
-            t_f = t[masks['residual']]  # (N_f, 1)
+            # Boolean indexing + .contiguous() for GPU efficiency
+            x_f = x[masks['residual']].contiguous()  # (N_f, spatial_dim)
+            t_f = t[masks['residual']].contiguous()  # (N_f, 1)
             
             # Enable gradients for autograd
             x_f = x_f.clone().detach().requires_grad_(True)
@@ -203,9 +204,10 @@ def build_loss(**cfg) -> Callable:
         # MSE_0: Initial Condition Loss
         # ============================================================
         if masks['IC'].sum() > 0:
-            x_0 = x[masks['IC']]  # (N_0, spatial_dim)
-            t_0 = t[masks['IC']]  # (N_0, 1)
-            u_gt_0 = u_gt[masks['IC']]  # (N_0, 2)
+            # Boolean indexing + .contiguous() for GPU efficiency
+            x_0 = x[masks['IC']].contiguous()  # (N_0, spatial_dim)
+            t_0 = t[masks['IC']].contiguous()  # (N_0, 1)
+            u_gt_0 = u_gt[masks['IC']].contiguous()  # (N_0, 2)
             
             # Model prediction
             xt_0 = torch.cat([x_0, t_0], dim=1)
@@ -225,8 +227,9 @@ def build_loss(**cfg) -> Callable:
         # MSE_b: Boundary Condition Loss (Periodic)
         # ============================================================
         if masks['BC'].sum() > 0:
-            x_b = x[masks['BC']]  # (N_b, spatial_dim)
-            t_b = t[masks['BC']]  # (N_b, 1)
+            # Boolean indexing + .contiguous() for GPU efficiency
+            x_b = x[masks['BC']].contiguous()  # (N_b, spatial_dim)
+            t_b = t[masks['BC']].contiguous()  # (N_b, 1)
             
             # Split into left and right boundaries
             # Assumption: first half are left (x=-5), second half are right (x=+5)
