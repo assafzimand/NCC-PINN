@@ -5,12 +5,12 @@ experiment_name: "40,000_params_flat_many_layers"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 10000
+  epochs: 10
   batch_size: 512
   lr: 0.0001
   
   # Optimizer settings
-  optimizer_switch_at: 0.5
+  optimizer_switch_at: 0.9
   
   # Adam hyperparameters
   adam_betas: [0.9, 0.999]
@@ -28,9 +28,9 @@ base_config:
   eval_only: false
   resume_from: null
   bins: 5
-  print_every: 500
-  save_every: 5000
-  ncc_eval_every: 5000
+  print_every: 1
+  save_every: 6
+  ncc_eval_every: 6
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -59,15 +59,12 @@ base_config:
   n_residual_eval: 5000
   n_initial_eval: 25
   n_boundary_eval: 25
-  n_samples_ncc: 5000  # to
+  n_samples_ncc: 5000 
 
 # Experiments to run (only architecture varies)
 experiments:  
   - name: "5_layers"
-    architecture: [2, 100, 100, 100, 100, 100, 2]
+    architecture: [2, 10, 10, 10, 10, 10, 2]
   
   - name: "3_layers"
-    architecture: [2, 140, 140, 140, 2]
-  
-  - name: "line7_layers"
-    architecture: [2, 80, 80, 80, 80, 80, 80, 80, 2]
+    architecture: [2, 14, 14, 14, 2]

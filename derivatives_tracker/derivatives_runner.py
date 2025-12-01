@@ -149,14 +149,26 @@ def run_derivatives_tracker(
     derivatives_plots_dir = run_dir / "derivatives_plots"
     derivatives_plots_dir.mkdir(parents=True, exist_ok=True)
     
-    # Convert to numpy for plotting
-    eval_x_np = eval_x.cpu().numpy()
-    eval_t_np = eval_t.cpu().numpy()
+    # Compute ground truth derivatives for comparison
+    print("\nComputing ground truth derivatives...")
+    from derivatives_tracker.derivatives_core import compute_ground_truth_derivatives
+    
+    ground_truth_derivatives = compute_ground_truth_derivatives(
+        x=eval_x,
+        t=eval_t,
+        config=cfg
+    )
+    print("  Ground truth derivatives computed")
+    
+    # Convert to numpy for plotting (detach first to remove gradients)
+    eval_x_np = eval_x.detach().cpu().numpy()
+    eval_t_np = eval_t.detach().cpu().numpy()
     
     generate_all_derivative_plots(
         derivatives_results=eval_derivatives,
         x=eval_x_np,
         t=eval_t_np,
+        ground_truth_derivatives=ground_truth_derivatives,
         save_dir=derivatives_plots_dir
     )
     
@@ -199,12 +211,10 @@ def run_derivatives_tracker(
     print("=" * 60)
     print(f"Results saved to: {derivatives_plots_dir}")
     print("  Generated plots:")
-    print("    - residual_evolution.png")
+    print("    - residual_evolution.png (most important!)")
     print("    - term_magnitudes.png")
-    print("    - real_imag_components.png")
     print("    - derivative_heatmaps_*.png (for selected layers)")
     print("    - residual_heatmaps_*.png (for selected layers)")
-    print("    - residual_balance.png")
     print(f"Metrics: {metrics_path}")
     print("\nFinal Layer Residuals:")
     print(f"  Train: {metrics_summary['final_layer_train_residual']:.6e}")

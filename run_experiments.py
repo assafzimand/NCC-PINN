@@ -56,25 +56,62 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
     temp_outputs_path = exp_output_dir / "temp_outputs"
     
     try:
+        # Step 1: Train model and run NCC analysis (run_ncc.py trains once)
         with open('config/config.yaml', 'w') as f:
             yaml.dump(config, f, default_flow_style=False)
         
-        # Run training + NCC (with real-time output)
         result = subprocess.run([sys.executable, 'run_ncc.py'])
         
         if result.returncode != 0:
             print(f"\nERROR in {exp_name} NCC: Process exited with code {result.returncode}")
             return None
         
-        # Run probes analysis
+        # Find the checkpoint that was just created
+        checkpoint_pattern = f"layers-{layers_str}_act-{config['activation']}"
+        checkpoints_root = Path("checkpoints") / config['problem']
+        checkpoint_dirs = list(checkpoints_root.glob(checkpoint_pattern))
+        
+        if not checkpoint_dirs:
+            print(f"\nERROR: Could not find checkpoint for {exp_name}")
+            return None
+        
+        checkpoint_dir = checkpoint_dirs[0]
+        best_checkpoint = checkpoint_dir / "best_model.pt"
+        
+        if not best_checkpoint.exists():
+            print(f"\nERROR: best_model.pt not found in {checkpoint_dir}")
+            return None
+        
+        # Step 2: Run probes analysis in eval-only mode on the trained checkpoint
         print(f"\n{'='*70}")
-        print(f"Running Probe Analysis for: {exp_name}")
+        print(f"Running Probe Analysis for: {exp_name} (eval-only mode)")
         print(f"{'='*70}\n")
+        
+        # Update config to eval_only mode with resume_from
+        eval_config = config.copy()
+        eval_config['eval_only'] = True
+        eval_config['resume_from'] = str(best_checkpoint)
+        
+        with open('config/config.yaml', 'w') as f:
+            yaml.dump(eval_config, f, default_flow_style=False)
+        
         result_probes = subprocess.run([sys.executable, 'run_probes.py'])
         
         if result_probes.returncode != 0:
             print(f"\nWARNING in {exp_name} Probes: Process exited with code {result_probes.returncode}")
-            # Don't return None - probes are optional, continue with NCC results
+        
+        # Step 3: Run derivatives tracker analysis in eval-only mode on the trained checkpoint
+        print(f"\n{'='*70}")
+        print(f"Running Derivatives Tracker for: {exp_name} (eval-only mode)")
+        print(f"{'='*70}\n")
+        
+        with open('config/config.yaml', 'w') as f:
+            yaml.dump(eval_config, f, default_flow_style=False)
+        
+        result_derivatives = subprocess.run([sys.executable, 'run_derivatives_tracker.py'])
+        
+        if result_derivatives.returncode != 0:
+            print(f"\nWARNING in {exp_name} Derivatives: Process exited with code {result_derivatives.returncode}")
         
         # Move outputs to experiment directory
         # Find latest architecture directory matching this experiment
@@ -86,16 +123,17 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             arch_dir = outputs_root / arch_folder_name
             
             if arch_dir.exists():
-                # Find the TWO LATEST timestamp directories (one from NCC, one from probes)
+                # Find the THREE LATEST timestamp directories (NCC, probes, derivatives)
                 timestamp_dirs = sorted(
                     [d for d in arch_dir.glob("*/") if d.is_dir()], 
                     key=lambda x: x.stat().st_mtime
                 )
                 
-                if len(timestamp_dirs) >= 2:
-                    # Get the two most recent directories (NCC and Probes)
-                    ncc_dir = timestamp_dirs[-2]  # Second to last (NCC ran first)
-                    probe_dir = timestamp_dirs[-1]  # Last (Probes ran second)
+                if len(timestamp_dirs) >= 3:
+                    # Get the three most recent directories
+                    ncc_dir = timestamp_dirs[-3]  # Third to last (NCC ran first)
+                    probe_dir = timestamp_dirs[-2]  # Second to last (Probes ran second)
+                    deriv_dir = timestamp_dirs[-1]  # Last (Derivatives ran third)
                     
                     # Create experiment output directory
                     exp_output_dir.mkdir(parents=True, exist_ok=True)
@@ -117,6 +155,18 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
                     # Clean up the probe directory (we've moved what we need)
                     if probe_dir.exists():
                         shutil.rmtree(probe_dir)
+                    
+                    # Merge derivatives results into the same directory
+                    deriv_plots_src = deriv_dir / "derivatives_plots"
+                    if deriv_plots_src.exists():
+                        deriv_plots_dest = dest_dir / "derivatives_plots"
+                        if deriv_plots_dest.exists():
+                            shutil.rmtree(deriv_plots_dest)
+                        shutil.move(str(deriv_plots_src), str(deriv_plots_dest))
+                    
+                    # Clean up the derivatives directory
+                    if deriv_dir.exists():
+                        shutil.rmtree(deriv_dir)
                     
                     # Also move corresponding checkpoints to experiment folder
                     checkpoints_root = Path("checkpoints") / config['problem']
@@ -157,6 +207,7 @@ def generate_comparison_report(parent_dir, results):
     metrics_data = []
     ncc_data = {}  # Store all NCC data for periodic plots
     probe_data = {}  # Store all probe data for comparison plots
+    derivatives_data = {}  # Store all derivatives data for comparison plots
     
     for exp_name, result_path in results.items():
         if result_path is None:
@@ -204,6 +255,14 @@ def generate_comparison_report(parent_dir, results):
                 probe_metrics = json.load(f)
                 probe_data[exp_name] = probe_metrics
         
+        # Load derivatives metrics
+        deriv_file = result_path / "derivatives_plots" / "derivatives_metrics.json"
+        deriv_metrics = None
+        if deriv_file.exists():
+            with open(deriv_file) as f:
+                deriv_metrics = json.load(f)
+                derivatives_data[exp_name] = deriv_metrics
+        
         # Extract margin SNR for final layer
         final_layer = list(final_ncc['layer_accuracies'].keys())[-1]
         margin_mean = final_ncc['layer_margins'][final_layer]['mean_margin']
@@ -227,6 +286,11 @@ def generate_comparison_report(parent_dir, results):
         if probe_metrics:
             metrics_row['probe_final_train_rel_l2'] = probe_metrics['train']['rel_l2'][-1]
             metrics_row['probe_final_eval_rel_l2'] = probe_metrics['eval']['rel_l2'][-1]
+        
+        # Add derivatives metrics if available
+        if deriv_metrics:
+            metrics_row['deriv_final_train_residual'] = deriv_metrics['final_layer_train_residual']
+            metrics_row['deriv_final_eval_residual'] = deriv_metrics['final_layer_eval_residual']
         
         metrics_data.append(metrics_row)
         
@@ -254,6 +318,11 @@ def generate_comparison_report(parent_dir, results):
     if probe_data:
         from utils.comparison_plots import generate_probe_comparison_plots
         generate_probe_comparison_plots(parent_dir, probe_data)
+    
+    # Generate derivatives comparison plots if derivatives data available
+    if derivatives_data:
+        from utils.comparison_plots import generate_derivatives_comparison_plots
+        generate_derivatives_comparison_plots(parent_dir, derivatives_data)
     
     print(f"\nComparison report saved to {parent_dir}")
 
@@ -286,10 +355,12 @@ def _generate_training_results_plot(parent_dir, df):
     
     # Create colored table
     table_data = []
-    col_labels = ['Experiment', 'Train Loss', 'Eval Loss', 'Train Rel-L2', 'Train Inf', 'Eval Rel-L2', 'Eval Inf', 'NCC Final Acc', 'Margin SNR']
+    col_labels = ['Experiment', 'Train Loss', 'Eval Loss', 'Train Rel-L2', 'Train Inf', 
+                  'Eval Rel-L2', 'Eval Inf', 'NCC Final Acc', 'Margin SNR', 
+                  'Deriv Train Res', 'Deriv Eval Res']
     
     for _, row in df.iterrows():
-        table_data.append([
+        row_data = [
             row['experiment'],
             f"{row['final_train_loss']:.6f}",
             f"{row['final_eval_loss']:.6f}",
@@ -299,7 +370,17 @@ def _generate_training_results_plot(parent_dir, df):
             f"{row['final_eval_inf_norm']:.6f}",
             f"{row['ncc_final_accuracy']:.6f}",
             f"{row['margin_snr']:.2f}"
-        ])
+        ]
+        # Add derivatives if available
+        if 'deriv_final_train_residual' in row and not pd.isna(row['deriv_final_train_residual']):
+            row_data.append(f"{row['deriv_final_train_residual']:.2e}")
+        else:
+            row_data.append("N/A")
+        if 'deriv_final_eval_residual' in row and not pd.isna(row['deriv_final_eval_residual']):
+            row_data.append(f"{row['deriv_final_eval_residual']:.2e}")
+        else:
+            row_data.append("N/A")
+        table_data.append(row_data)
     
     table = ax3.table(cellText=table_data, colLabels=col_labels,
                      cellLoc='center', loc='center',
@@ -316,23 +397,35 @@ def _generate_training_results_plot(parent_dir, df):
     # Create green-to-red colormap
     cmap = LinearSegmentedColormap.from_list('GreenRed', ['#2ecc71', '#f1c40f', '#e74c3c'])
     
-    for col_idx in range(1, 9):  # Skip experiment name column (now 9 columns total)
-        values = df.iloc[:, col_idx].values
+    # Color coding for each column
+    num_cols = len(col_labels)
+    for col_idx in range(1, min(num_cols, len(df.columns) + 1)):
+        # Check if this column exists in the dataframe
+        if col_idx >= len(df.columns):
+            continue
         
-        # For losses/errors, lower is better; for accuracy and margin SNR, higher is better
+        col_name = df.columns[col_idx]
+        values = df[col_name].values
+        
+        # Skip if all NaN
+        if pd.isna(values).all():
+            continue
+        
+        # For losses/errors/residuals, lower is better; for accuracy and margin SNR, higher is better
         if col_idx == 7 or col_idx == 8:  # NCC accuracy and Margin SNR - higher is better
             norm_values = 1 - (values - values.min()) / (values.max() - values.min() + 1e-10)
-        else:  # Losses and errors - lower is better
+        else:  # Losses, errors, residuals - lower is better
             norm_values = (values - values.min()) / (values.max() - values.min() + 1e-10)
         
         for row_idx, norm_val in enumerate(norm_values):
-            cell = table[(row_idx + 1, col_idx)]
-            color = cmap(norm_val)
-            cell.set_facecolor(color)
-            cell.set_alpha(0.7)
+            if not pd.isna(norm_val):
+                cell = table[(row_idx + 1, col_idx)]
+                color = cmap(norm_val)
+                cell.set_facecolor(color)
+                cell.set_alpha(0.7)
     
     # Style header
-    for col_idx in range(9):
+    for col_idx in range(num_cols):
         cell = table[(0, col_idx)]
         cell.set_facecolor('#34495e')
         cell.set_text_props(weight='bold', color='white')

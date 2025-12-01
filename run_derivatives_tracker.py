@@ -252,7 +252,7 @@ def main():
         print(f"  - training_plots/")
         print(f"  - summary.txt")
     print(f"  - probe_plots/ (2 plots)")
-    print(f"  - derivatives_plots/ (multiple plots)")
+    print(f"  - derivatives_plots/ (4 plot types: residual, magnitudes, heatmaps)")
     print("\nDerivatives Summary:")
     print(f"  Layers analyzed: {derivatives_metrics['layers_analyzed']}")
     print(f"  Final layer train residual: {derivatives_metrics['final_layer_train_residual']:.6e}")
