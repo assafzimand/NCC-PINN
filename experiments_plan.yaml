@@ -28,7 +28,7 @@ base_config:
   eval_only: false
   resume_from: null
   bins: 5
-  print_every: 1000
+  print_every: 10
   save_every: 3000
   ncc_eval_every: 4000
   seed: 42
