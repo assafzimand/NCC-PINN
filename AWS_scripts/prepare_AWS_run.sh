@@ -34,10 +34,20 @@ if [ ! -d "$REPO_DIR" ]; then
   git clone "$REPO_URL" "$REPO_DIR"
 else
   cd "$REPO_DIR"
-  git pull
+  echo "  Fetching latest changes from GitHub..."
+  git fetch origin
+  echo "  Force updating to match GitHub (discards local changes)..."
+  git reset --hard origin/main
 fi
 
 cd "$REPO_DIR"
+
+echo
+echo "=== Clearing Python cache ==="
+echo "  Removing __pycache__ directories and .pyc files..."
+find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find . -name "*.pyc" -delete 2>/dev/null || true
+echo "  Cache cleared"
 
 echo
 echo "=== Installing Python dependencies ==="
