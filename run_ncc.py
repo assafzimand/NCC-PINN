@@ -13,7 +13,7 @@ from trainer.trainer import train
 
 
 def fix_long_path(path):
-    """
+    r"""
     Fix Windows long path issues by adding \\?\ prefix when needed.
     Only applies on Windows for absolute paths longer than 260 chars.
     """
