@@ -5,7 +5,7 @@ experiment_name: "40,000_params_flat_many_layers"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 1000
+  epochs: 10000
   batch_size: 512
   lr: 0.0001
   
