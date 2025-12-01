@@ -44,10 +44,12 @@ bash prepare_AWS_run.sh
 ```
 
 This will:
-- `sudo apt update` and install `python3`, `python3-venv`, `git`, `screen`
+- `sudo apt update` and install `python3`, `python3-venv`, `python3-dev`, `git`, `screen`
 - Create a virtualenv at `~/.venv_ncc_pinn` (if missing)
 - Activate that venv
-- Clone or `git pull` the `~/NCC-PINN` repo
+- Clone or **force update** the `~/NCC-PINN` repo to match GitHub exactly
+  - Uses `git reset --hard origin/main` to ensure EC2 matches your latest push
+  - Clears Python cache to prevent using outdated `.pyc` files
 - Install `requirements.txt`
 
 3. **Run experiments in a screen session** (recommended - allows you to disconnect safely):
