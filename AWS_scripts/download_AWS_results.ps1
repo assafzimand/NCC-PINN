@@ -26,6 +26,21 @@ if (-not (Test-Path $PemPath)) {
     exit 1
 }
 
+# Check if any screen sessions are running (optional info)
+Write-Host "Checking for active screen sessions on EC2..." -ForegroundColor Cyan
+try {
+    $screenSessions = (& ssh -i $PemPath ubuntu@$Ec2Ip "screen -ls 2>&1").Trim()
+    if ($screenSessions -match "ncc_experiment") {
+        Write-Host "  ⚠ Active screen session detected: experiments may still be running!" -ForegroundColor Yellow
+        Write-Host "  Tip: SSH in and run 'screen -r ncc_experiment' to check progress" -ForegroundColor Yellow
+    } else {
+        Write-Host "  No active screen sessions found" -ForegroundColor Gray
+    }
+} catch {
+    Write-Host "  (Could not check screen sessions)" -ForegroundColor Gray
+}
+Write-Host ""
+
 # Find the most recently modified experiment under outputs/experiments on EC2
 Write-Host "Querying EC2 for latest experiment under outputs/experiments/ ..." -ForegroundColor Cyan
 try {

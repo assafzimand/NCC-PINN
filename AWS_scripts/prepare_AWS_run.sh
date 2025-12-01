@@ -14,9 +14,9 @@ REPO_URL="https://github.com/assafzimand/NCC-PINN.git"
 REPO_DIR="$HOME/NCC-PINN"
 VENV_DIR="$HOME/.venv_ncc_pinn"
 
-echo "=== Updating apt and installing dependencies (python3, venv, git) ==="
+echo "=== Updating apt and installing dependencies (python3, venv, git, screen) ==="
 sudo apt update
-sudo apt install -y python3 python3-venv git
+sudo apt install -y python3 python3-venv git screen
 
 echo
 echo "=== Creating Python virtual environment (if missing) ==="
@@ -54,9 +54,20 @@ echo "To start working on this instance next time, run:"
 echo "  source $VENV_DIR/bin/activate"
 echo "  cd $REPO_DIR"
 echo
-echo "To launch experiments:"
+echo "To launch experiments with screen (recommended for long runs):"
+echo "  screen -S ncc_experiment"
+echo "  source $VENV_DIR/bin/activate"
+echo "  cd $REPO_DIR"
 echo "  python run_experiments.py"
-echo "or a single run:"
-echo "  python run_ncc.py"
+echo "  # Press Ctrl+A then D to detach and disconnect safely"
+echo
+echo "To reattach to a running screen session:"
+echo "  screen -r ncc_experiment"
+echo
+echo "To list all screen sessions:"
+echo "  screen -ls"
+echo
+echo "Or run directly without screen (will stop if you disconnect):"
+echo "  python run_experiments.py"
 
 
