@@ -5,6 +5,68 @@ from typing import Dict, Tuple
 import numpy as np
 
 
+def compute_ground_truth_derivatives(
+    x: torch.Tensor,
+    t: torch.Tensor,
+    config: Dict
+) -> Dict[str, np.ndarray]:
+    """
+    Compute ground truth derivatives using analytical solution and autograd.
+    
+    This computes h_gt, h_t_gt, h_xx_gt from the exact NLSE solution.
+    
+    Args:
+        x: Spatial coordinates (N, 1) - will be set to requires_grad
+        t: Temporal coordinates (N, 1) - will be set to requires_grad
+        config: Configuration dict (to get interpolator)
+        
+    Returns:
+        Dictionary with h_gt, h_t_gt, h_xx_gt as numpy arrays (N, 2)
+    """
+    from solvers.schrodinger_solver import _get_interpolator
+    
+    # Get analytical solution interpolator
+    interpolator = _get_interpolator(config)
+    
+    # Get coordinates as numpy (detach first)
+    x_np = x.detach().cpu().numpy().flatten()
+    t_np = t.detach().cpu().numpy().flatten()
+    
+    # Get complex solution from interpolator
+    h_complex = interpolator(x_np, t_np)  # (N,) complex
+    u_gt = torch.from_numpy(h_complex.real).float()
+    v_gt = torch.from_numpy(h_complex.imag).float()
+    
+    # We need to make u_gt and v_gt differentiable w.r.t. x and t
+    # The issue is that the interpolator is not a PyTorch function
+    # We need to compute derivatives on a dense grid instead
+    
+    # Alternative: Use finite differences on the analytical solution
+    eps_x = 1e-6
+    eps_t = 1e-6
+    
+    # Compute h_t using finite differences
+    h_t_plus = interpolator(x_np, t_np + eps_t)
+    h_t_minus = interpolator(x_np, t_np - eps_t)
+    h_t_complex = (h_t_plus - h_t_minus) / (2 * eps_t)
+    
+    # Compute h_xx using finite differences
+    h_x_plus = interpolator(x_np + eps_x, t_np)
+    h_x_minus = interpolator(x_np - eps_x, t_np)
+    h_xx_complex = (h_x_plus - 2*h_complex + h_x_minus) / (eps_x**2)
+    
+    # Convert to (N, 2) format
+    h_gt = np.column_stack([h_complex.real, h_complex.imag])
+    h_t_gt = np.column_stack([h_t_complex.real, h_t_complex.imag])
+    h_xx_gt = np.column_stack([h_xx_complex.real, h_xx_complex.imag])
+    
+    return {
+        'h_gt': h_gt,
+        'h_t_gt': h_t_gt,
+        'h_xx_gt': h_xx_gt
+    }
+
+
 def apply_linear_probe(embeddings: torch.Tensor, probe: torch.nn.Linear) -> torch.Tensor:
     """
     Apply a trained linear probe to embeddings.
