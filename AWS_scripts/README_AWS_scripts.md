@@ -13,8 +13,7 @@ This folder contains helper scripts to make it easier to run NCC-PINN on an AWS 
 
   ```powershell
   # From your local Windows machine (PowerShell)
-  cd C:\Users\assaf\Desktop\Coding\Msc\Master\NCC-PINN
-  ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
+  ssh -i ..\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
   # for now - ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
   ```
 
@@ -52,11 +51,11 @@ This will:
 
 ```bash
 # Start a new screen session
+cd ~/NCC-PINN
 screen -S ncc_experiment
 
 # Inside the screen session:
 source ~/.venv_ncc_pinn/bin/activate
-cd ~/NCC-PINN
 python run_experiments.py              # or: python run_ncc.py
 
 # To detach (leave it running): Press Ctrl+A, then D
@@ -70,6 +69,7 @@ python run_experiments.py              # or: python run_ncc.py
 ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
 
 # Reattach to your screen session to see live progress
+cd ~/NCC-PINN
 screen -r ncc_experiment
 
 # When done viewing: Press Ctrl+A, then D to detach again
@@ -110,7 +110,7 @@ cd C:\Users\assaf\Desktop\Coding\Msc\Master\NCC-PINN
 
 3. It will:
    - Build the remote path to the latest experiment
-   - Copy that directory to a local folder named `AWS_scripts\aws_outputs` in the repo root
+  PINN - Copy that directory to a local folder named `AWS_scripts\aws_outputs` in the repo root
 
 After it finishes, you'll find your experiment results at:
 
