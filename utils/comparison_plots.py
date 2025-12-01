@@ -221,3 +221,84 @@ def generate_probe_comparison_plots(save_dir, probe_data):
     plt.close()
     
     print(f"  Final layer probe comparison saved to {save_path}")
+
+
+def generate_derivatives_comparison_plots(save_dir, derivatives_data):
+    """
+    Generate comparison plots for derivatives tracking across experiments.
+    
+    Args:
+        save_dir: Directory to save plots
+        derivatives_data: Dictionary mapping experiment name -> derivatives metrics
+    """
+    print("\nGenerating derivatives comparison plots...")
+    
+    # Plot 1: Residual evolution across layers for all experiments
+    fig, ax = plt.subplots(figsize=(14, 8))
+    
+    exp_names = list(derivatives_data.keys())
+    
+    for exp_name in exp_names:
+        deriv_metrics = derivatives_data[exp_name]
+        layers = deriv_metrics['layers_analyzed']
+        
+        # Get residual norms for eval data
+        residual_norms = []
+        for layer_name in layers:
+            if layer_name in deriv_metrics['eval']:
+                residual_norms.append(deriv_metrics['eval'][layer_name]['residual_norm'])
+            else:
+                residual_norms.append(None)
+        
+        # Plot with layer indices
+        layer_indices = list(range(1, len(layers) + 1))
+        ax.plot(layer_indices, residual_norms, marker='o', linewidth=2, 
+                markersize=6, label=exp_name)
+    
+    ax.set_xlabel('Layer', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Residual L2 Norm (Eval)', fontsize=12, fontweight='bold')
+    ax.set_title('Residual Evolution Across Layers - All Experiments', 
+                 fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11, loc='best')
+    ax.grid(True, alpha=0.3)
+    ax.set_yscale('log')
+    
+    plt.tight_layout()
+    
+    save_path = Path(save_dir) / "derivatives_residual_evolution_comparison.png"
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Derivatives residual evolution comparison saved to {save_path}")
+    
+    # Plot 2: Final layer residual comparison (bar chart)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    train_final = [derivatives_data[name]['final_layer_train_residual'] for name in exp_names]
+    eval_final = [derivatives_data[name]['final_layer_eval_residual'] for name in exp_names]
+    
+    x = range(len(exp_names))
+    width = 0.35
+    
+    ax.bar([i - width/2 for i in x], train_final, width, label='Train', 
+           color='#3498db', alpha=0.7)
+    ax.bar([i + width/2 for i in x], eval_final, width, label='Eval', 
+           color='#e74c3c', alpha=0.7)
+    
+    ax.set_xlabel('Experiment', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Final Layer Residual L2 Norm', fontsize=12, fontweight='bold')
+    ax.set_title('Final Layer Physics Residual Comparison', 
+                 fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(exp_names, rotation=45, ha='right')
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3, axis='y')
+    ax.set_yscale('log')
+    
+    plt.tight_layout()
+    
+    save_path = Path(save_dir) / "derivatives_final_residual_comparison.png"
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Final layer residual comparison saved to {save_path}")

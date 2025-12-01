@@ -38,6 +38,11 @@ def run_probes(
                           torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
     
+    if device.type == 'cuda':
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+        torch.backends.cudnn.benchmark = True  # Optimize for GPU
+    
     # Move model to device
     model = model.to(device)
     model.eval()

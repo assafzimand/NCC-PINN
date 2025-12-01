@@ -109,7 +109,8 @@ class FCNet(nn.Module):
 
     def register_ncc_hooks(
         self,
-        layer_names: List[str]
+        layer_names: List[str],
+        keep_gradients: bool = False
     ) -> List[RemovableHandle]:
         """
         Register forward hooks to capture activations for NCC analysis.
@@ -117,6 +118,8 @@ class FCNet(nn.Module):
         Args:
             layer_names: List of layer names to hook (e.g., ['layer_1',
                         'layer_2'])
+            keep_gradients: If True, don't detach activations (for derivatives
+                          tracking). Default False for NCC/probes.
 
         Returns:
             List of RemovableHandle objects for hook management
@@ -163,10 +166,10 @@ class FCNet(nn.Module):
                     if name != list(self.network.keys())[-1]:
                         # Not the output layer - apply activation
                         activated = self.activation(output)
-                        self.activations[name] = activated.detach()
+                        self.activations[name] = activated if keep_gradients else activated.detach()
                     else:
                         # Output layer - no activation
-                        self.activations[name] = output.detach()
+                        self.activations[name] = output if keep_gradients else output.detach()
                 return hook
 
             handle = self.network[layer_name].register_forward_hook(
