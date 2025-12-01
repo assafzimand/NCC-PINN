@@ -1,16 +1,16 @@
 # Experiment plan configuration
-experiment_name: "test_probes_integration"
+experiment_name: "40,000_params_flat_many_layers"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 5
-  batch_size: 64
-  lr: 0.001
+  epochs: 10000
+  batch_size: 512
+  lr: 0.0001
   
   # Optimizer settings
-  optimizer_switch_at: 1.0
+  optimizer_switch_at: 0.2
   
   # Adam hyperparameters
   adam_betas: [0.9, 0.999]
@@ -27,10 +27,10 @@ base_config:
   cuda: true
   eval_only: false
   resume_from: null
-  bins: 3
-  print_every: 1
-  save_every: 5
-  ncc_eval_every: 0
+  bins: 5
+  print_every: 500
+  save_every: 5000
+  ncc_eval_every: 5000
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -52,19 +52,22 @@ base_config:
       ic: 1.0
       bc: 1.0
   
-  # Dataset sizes (small for testing)
-  n_residual_train: 500
-  n_initial_train: 20
-  n_boundary_train: 20
-  n_residual_eval: 100
-  n_initial_eval: 10
-  n_boundary_eval: 10
-  n_samples_ncc: 200  # to
+  # Dataset sizes
+  n_residual_train: 20000
+  n_initial_train: 100
+  n_boundary_train: 100
+  n_residual_eval: 5000
+  n_initial_eval: 25
+  n_boundary_eval: 25
+  n_samples_ncc: 5000  # to
 
 # Experiments to run (only architecture varies)
 experiments:  
-  - name: "2_layers"
-    architecture: [2, 15, 15, 2]
+  - name: "5_layers"
+    architecture: [2, 100, 100, 100, 100, 100, 2]
   
   - name: "3_layers"
-    architecture: [2, 12, 12, 12, 2]
+    architecture: [2, 140, 140, 140, 2]
+  
+  - name: "line7_layers"
+    architecture: [2, 80, 80, 80, 80, 80, 80, 80, 2]

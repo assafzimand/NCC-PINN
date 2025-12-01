@@ -42,19 +42,45 @@ bash prepare_AWS_run.sh
 ```
 
 This will:
-- `sudo apt update` and install `python3`, `python3-venv`, `git`
+- `sudo apt update` and install `python3`, `python3-venv`, `git`, `screen`
 - Create a virtualenv at `~/.venv_ncc_pinn` (if missing)
 - Activate that venv
 - Clone or `git pull` the `~/NCC-PINN` repo
 - Install `requirements.txt`
 
-3. **Run experiments**:
+3. **Run experiments in a screen session** (recommended - allows you to disconnect safely):
 
 ```bash
-source ~/.venv_ncc_pinn/bin/activate   # only if not already active
+# Start a new screen session
+screen -S ncc_experiment
+
+# Inside the screen session:
+source ~/.venv_ncc_pinn/bin/activate
 cd ~/NCC-PINN
 python run_experiments.py              # or: python run_ncc.py
+
+# To detach (leave it running): Press Ctrl+A, then D
+# Now you can safely disconnect from EC2!
 ```
+
+4. **Later: Check on your running experiment**:
+
+```bash
+# SSH back into EC2
+ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
+
+# Reattach to your screen session to see live progress
+screen -r ncc_experiment
+
+# When done viewing: Press Ctrl+A, then D to detach again
+```
+
+**Useful screen commands:**
+- `screen -ls` - List all screen sessions
+- `screen -r ncc_experiment` - Reattach to a session
+- `Ctrl+A, then D` - Detach from a session (keeps it running)
+- `Ctrl+C` - Stop the running program (while attached)
+- `exit` - Close the screen session (while attached)
 
 You can safely re-run `prepare_AWS_run.sh` on the same instance; it will just reuse the venv and update the repo.
 
@@ -78,21 +104,40 @@ cd C:\Users\assaf\Desktop\Coding\Msc\Master\NCC-PINN
 ```
 
 2. The script will:
-   - Ask for **EC2 Public IP** (press Enter to keep the default in the script, or type a new one).
-   - Ask for the **path under `outputs/`** you want to download, for example:
-     - `experiments/testing_new_plots_lr0.0001_ep100_bs512_bins5_20251123_205514`
-     - `schrodinger_layers-2-50-50-50-2_act-tanh/20251123_213624`
+   - Check for active **screen sessions** on EC2 (to warn you if experiments are still running)
+   - Ask for **EC2 Public IP** (press Enter to keep the default in the script, or type a new one)
+   - Automatically detect the **latest experiment** under `outputs/experiments/`
 
 3. It will:
-   - Build the remote path: `/home/ubuntu/NCC-PINN/outputs/<your_subpath>`
-   - Copy that directory to a local folder named `aws_outputs` in the repo root.
+   - Build the remote path to the latest experiment
+   - Copy that directory to a local folder named `AWS_scripts\aws_outputs` in the repo root
 
-After it finishes, you’ll find your experiment results at:
+After it finishes, you'll find your experiment results at:
 
 ```text
-NCC-PINN\aws_outputs\<your_subpath>\...
+NCC-PINN\AWS_scripts\aws_outputs\<experiment_folder>\...
 ```
 
 You can then view plots and metrics locally as usual.
+
+**Note:** If experiments are still running in a screen session, you can still download partial results. The script will warn you if it detects an active screen session.
+
+---
+
+## Quick Reference: Screen Commands
+
+| Task | Command |
+|------|---------|
+| Start a new screen session | `screen -S ncc_experiment` |
+| Detach from session (keeps running) | Press `Ctrl+A`, then `D` |
+| List all screen sessions | `screen -ls` |
+| Reattach to a session | `screen -r ncc_experiment` |
+| Stop the running program | `Ctrl+C` (while attached) |
+| Exit/close the screen session | `exit` (while attached) |
+
+**Why use screen?**
+- Your experiment continues running even if your PC goes to sleep or loses connection
+- You can check progress anytime by reattaching
+- Perfect for long-running neural network training jobs
 
 
