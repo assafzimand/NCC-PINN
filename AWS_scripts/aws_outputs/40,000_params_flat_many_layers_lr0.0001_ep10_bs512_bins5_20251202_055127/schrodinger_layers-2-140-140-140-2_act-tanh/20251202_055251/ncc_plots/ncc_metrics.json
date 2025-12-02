@@ -1,0 +1,52 @@
+{
+  "bins": 5,
+  "num_classes": 18,
+  "num_samples": 4432,
+  "layers_analyzed": [
+    "layer_1",
+    "layer_2",
+    "layer_3"
+  ],
+  "layer_accuracies": {
+    "layer_1": 0.3555956678700361,
+    "layer_2": 0.3704873646209386,
+    "layer_3": 0.40703971119133575
+  },
+  "layer_compactness": {
+    "layer_1": {
+      "intra_class": 0.10523502972766903,
+      "intra_class_std": 0.1484201888893107,
+      "inter_class_mean": 0.07988149672746658,
+      "inter_class_std": 0.06319926679134369
+    },
+    "layer_2": {
+      "intra_class": 0.05800418899797474,
+      "intra_class_std": 0.07852819740295056,
+      "inter_class_mean": 0.04974404722452164,
+      "inter_class_std": 0.04109273478388786
+    },
+    "layer_3": {
+      "intra_class": 0.038816404029984715,
+      "intra_class_std": 0.0516242097973551,
+      "inter_class_mean": 0.036268360912799835,
+      "inter_class_std": 0.02952243760228157
+    }
+  },
+  "layer_margins": {
+    "layer_1": {
+      "mean_margin": -0.007941959425807,
+      "std_margin": 0.025839349254965782,
+      "fraction_positive": 0.3555956678700361
+    },
+    "layer_2": {
+      "mean_margin": -0.0038969782181084156,
+      "std_margin": 0.014859023503959179,
+      "fraction_positive": 0.3704873646209386
+    },
+    "layer_3": {
+      "mean_margin": -0.002250660676509142,
+      "std_margin": 0.010106850415468216,
+      "fraction_positive": 0.40703971119133575
+    }
+  }
+}

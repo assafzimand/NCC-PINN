@@ -1,0 +1,108 @@
+{
+  "layers_analyzed": [
+    "layer_1",
+    "layer_2",
+    "layer_3",
+    "layer_4",
+    "layer_5"
+  ],
+  "num_layers": 5,
+  "train": {
+    "layer_1": {
+      "h_norm": 0.6457130312919617,
+      "h_t_norm": 2.5806057453155518,
+      "h_xx_norm": 1.994771122932434,
+      "nonlinear_norm": 1.202612280845642,
+      "residual_norm": 2.4445672035217285
+    },
+    "layer_2": {
+      "h_norm": 5.34031343460083,
+      "h_t_norm": 30.430191040039062,
+      "h_xx_norm": 45.03858184814453,
+      "nonlinear_norm": 582.8411254882812,
+      "residual_norm": 582.6455078125
+    },
+    "layer_3": {
+      "h_norm": 5.942370414733887,
+      "h_t_norm": 34.428077697753906,
+      "h_xx_norm": 48.39015197753906,
+      "nonlinear_norm": 855.2265014648438,
+      "residual_norm": 851.5331420898438
+    },
+    "layer_4": {
+      "h_norm": 3.592728614807129,
+      "h_t_norm": 21.736499786376953,
+      "h_xx_norm": 23.272619247436523,
+      "nonlinear_norm": 171.26181030273438,
+      "residual_norm": 173.6318359375
+    },
+    "layer_5": {
+      "h_norm": 1.2520766258239746,
+      "h_t_norm": 6.1869401931762695,
+      "h_xx_norm": 6.739271640777588,
+      "nonlinear_norm": 6.500398635864258,
+      "residual_norm": 9.375116348266602
+    }
+  },
+  "eval": {
+    "layer_1": {
+      "h_norm": 0.6738110184669495,
+      "h_t_norm": 2.8080992698669434,
+      "h_xx_norm": 2.1712191104888916,
+      "nonlinear_norm": 1.3916575908660889,
+      "residual_norm": 2.7135019302368164
+    },
+    "layer_2": {
+      "h_norm": 5.425721168518066,
+      "h_t_norm": 31.78190040588379,
+      "h_xx_norm": 48.595794677734375,
+      "nonlinear_norm": 638.8087768554688,
+      "residual_norm": 639.9837646484375
+    },
+    "layer_3": {
+      "h_norm": 6.370185852050781,
+      "h_t_norm": 37.99233627319336,
+      "h_xx_norm": 51.58462905883789,
+      "nonlinear_norm": 1267.835205078125,
+      "residual_norm": 1264.001708984375
+    },
+    "layer_4": {
+      "h_norm": 3.7898764610290527,
+      "h_t_norm": 23.384029388427734,
+      "h_xx_norm": 23.715599060058594,
+      "nonlinear_norm": 207.65208435058594,
+      "residual_norm": 210.5253448486328
+    },
+    "layer_5": {
+      "h_norm": 1.3142422437667847,
+      "h_t_norm": 6.3915019035339355,
+      "h_xx_norm": 6.9857940673828125,
+      "nonlinear_norm": 8.145766258239746,
+      "residual_norm": 10.963333129882812
+    }
+  },
+  "layer_norms": {
+    "layer_1": {
+      "train_residual": 2.4445672035217285,
+      "eval_residual": 2.7135019302368164
+    },
+    "layer_2": {
+      "train_residual": 582.6455078125,
+      "eval_residual": 639.9837646484375
+    },
+    "layer_3": {
+      "train_residual": 851.5331420898438,
+      "eval_residual": 1264.001708984375
+    },
+    "layer_4": {
+      "train_residual": 173.6318359375,
+      "eval_residual": 210.5253448486328
+    },
+    "layer_5": {
+      "train_residual": 9.375116348266602,
+      "eval_residual": 10.963333129882812
+    }
+  },
+  "final_layer_train_residual": 9.375116348266602,
+  "final_layer_eval_residual": 10.963333129882812
+}
