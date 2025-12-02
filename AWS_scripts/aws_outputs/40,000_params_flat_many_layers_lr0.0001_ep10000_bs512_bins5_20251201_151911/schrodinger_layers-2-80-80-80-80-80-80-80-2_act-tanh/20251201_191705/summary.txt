@@ -1,0 +1,21 @@
+Training Summary
+============================================================
+
+Problem: schrodinger
+Architecture: [2, 80, 80, 80, 80, 80, 80, 80, 2]
+Activation: tanh
+Epochs: 10000
+Batch size: 512
+Learning rate: 0.0001
+Device: cuda
+
+Final train loss: 0.000017
+Final eval loss: 0.000261
+Final train rel-L2: 0.012278
+Final eval rel-L2: 0.041055
+Final train inf-norm: 0.056979
+Final eval inf-norm: 0.038014
+Best eval loss: 0.000258
+
+Best checkpoint: checkpoints/schrodinger/layers-2-80-80-80-80-80-80-80-2_act-tanh/best_model.pt
+Final checkpoint: checkpoints/schrodinger/layers-2-80-80-80-80-80-80-80-2_act-tanh/final_model.pt
