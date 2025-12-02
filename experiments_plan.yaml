@@ -5,7 +5,7 @@ experiment_name: "40,000_params_flat_many_layers"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 10000
+  epochs: 10
   batch_size: 512
   lr: 0.0001
   
@@ -19,7 +19,7 @@ base_config:
   # LBFGS hyperparameters
   lbfgs_lr: 1.0
   lbfgs_max_iter: 20
-  lbfgs_history_size: 120
+  lbfgs_history_size: 20
   lbfgs_line_search: 'strong_wolfe'
   lbfgs_tolerance_grad: 0.0  # Set to 0 to disable gradient-based convergence check
   lbfgs_tolerance_change: 0.0  # Set to 0 to disable loss change convergence check
@@ -28,9 +28,9 @@ base_config:
   eval_only: false
   resume_from: null
   bins: 5
-  print_every: 1000
-  save_every: 5000
-  ncc_eval_every: 34000
+  print_every: 1
+  save_every: 5
+  ncc_eval_every: 6
   seed: 42
   
   # Problem-specific domains and loss weights

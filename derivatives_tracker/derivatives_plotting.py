@@ -339,29 +339,32 @@ def generate_all_derivative_plots(
     # Plot 2: Term magnitudes
     plot_term_magnitudes(derivatives_results, save_dir)
     
-    # Plot 3 & 4: Heatmaps for selected layers (first, middle, last)
+    # Plot 3 & 4: Heatmaps for every layer (stop-on-error would hide issues)
     layer_names = sorted(derivatives_results.keys())
-    if len(layer_names) > 0:
-        # First layer
-        plot_derivative_heatmaps(derivatives_results, layer_names[0], 
-                                x, t, ground_truth_derivatives, save_dir)
-        plot_residual_heatmaps(derivatives_results, layer_names[0], 
-                              x, t, save_dir)
-        
-        # Middle layer
-        if len(layer_names) > 2:
-            mid_idx = len(layer_names) // 2
-            plot_derivative_heatmaps(derivatives_results, layer_names[mid_idx],
-                                    x, t, ground_truth_derivatives, save_dir)
-            plot_residual_heatmaps(derivatives_results, layer_names[mid_idx],
-                                  x, t, save_dir)
-        
-        # Last layer
-        if len(layer_names) > 1:
-            plot_derivative_heatmaps(derivatives_results, layer_names[-1],
-                                    x, t, ground_truth_derivatives, save_dir)
-            plot_residual_heatmaps(derivatives_results, layer_names[-1],
-                                  x, t, save_dir)
+    total_layers = len(layer_names)
+    for idx, layer_name in enumerate(layer_names, start=1):
+        print(f"  Generating heatmaps for {layer_name} ({idx}/{total_layers})")
+        try:
+            plot_derivative_heatmaps(
+                derivatives_results,
+                layer_name,
+                x,
+                t,
+                ground_truth_derivatives,
+                save_dir
+            )
+        except Exception as exc:
+            print(f"    WARNING: derivative heatmaps failed for {layer_name}: {exc}")
+        try:
+            plot_residual_heatmaps(
+                derivatives_results,
+                layer_name,
+                x,
+                t,
+                save_dir
+            )
+        except Exception as exc:
+            print(f"    WARNING: residual heatmaps failed for {layer_name}: {exc}")
     
     print(f"All derivative plots generated in {save_dir}")
 
