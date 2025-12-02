@@ -10,16 +10,16 @@ base_config:
   lr: 0.0001
   
   # Optimizer settings
-  optimizer_switch_at: 0.9
+  optimizer_switch_at: 0.7
   
   # Adam hyperparameters
   adam_betas: [0.9, 0.999]
   adam_eps: 1.0e-8
   
   # LBFGS hyperparameters
-  lbfgs_lr: 1.0
-  lbfgs_max_iter: 20
-  lbfgs_history_size: 120
+  lbfgs_lr: 0.1
+  lbfgs_max_iter: 5
+  lbfgs_history_size: 10
   lbfgs_line_search: 'strong_wolfe'
   lbfgs_tolerance_grad: 0.0  # Set to 0 to disable gradient-based convergence check
   lbfgs_tolerance_change: 0.0  # Set to 0 to disable loss change convergence check
@@ -28,9 +28,9 @@ base_config:
   eval_only: false
   resume_from: null
   bins: 5
-  print_every: 1000
-  save_every: 5000
-  ncc_eval_every: 34000
+  print_every: 100
+  save_every: 3000
+  ncc_eval_every: 4000
   seed: 42
   
   # Problem-specific domains and loss weights
