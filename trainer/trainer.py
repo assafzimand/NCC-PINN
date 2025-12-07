@@ -123,6 +123,7 @@ def train(
 
     # Training setup
     print_every = cfg['print_every']
+    eval_every = cfg.get('eval_every', print_every)
     save_every = cfg['save_every']
 
     # Metrics storage
@@ -243,7 +244,7 @@ def train(
 
         # Compute evaluation metrics only every print_every epochs or last epoch
         # This speeds up training significantly for physics-informed losses
-        should_evaluate = (epoch % print_every == 0 or epoch == 1 or epoch == epochs)
+        should_evaluate = (epoch % eval_every == 0 or epoch == 1 or epoch == epochs)
         
         # Initialize metrics for this epoch (will be updated if we evaluate)
         eval_loss = None

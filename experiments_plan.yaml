@@ -17,7 +17,7 @@ base_config:
   adam_eps: 1.0e-8
   
   # LBFGS hyperparameters
-  lbfgs_lr: 1.0
+  lbfgs_lr: 0.5
   lbfgs_max_iter: 20
   lbfgs_history_size: 20
   lbfgs_line_search: 'strong_wolfe'
@@ -28,6 +28,7 @@ base_config:
   eval_only: false
   resume_from: null
   bins: 5
+  eval_every: 50
   print_every: 1000
   save_every: 5000
   ncc_eval_every: 5000
