@@ -5,7 +5,7 @@ experiment_name: "40,000_params_flat_many_layers"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 10
+  epochs: 10000
   batch_size: 512
   lr: 0.0001
   
@@ -17,7 +17,7 @@ base_config:
   adam_eps: 1.0e-8
   
   # LBFGS hyperparameters
-  lbfgs_lr: 0.5
+  lbfgs_lr: 1.0
   lbfgs_max_iter: 20
   lbfgs_history_size: 20
   lbfgs_line_search: 'strong_wolfe'
@@ -28,10 +28,10 @@ base_config:
   eval_only: false
   resume_from: null
   bins: 5
-  eval_every: 1
-  print_every: 1
-  save_every: 5
-  ncc_eval_every: 6
+  eval_every: 100
+  print_every: 1000
+  save_every: 5000
+  ncc_eval_every: 3400
   seed: 42
   
   # Problem-specific domains and loss weights
