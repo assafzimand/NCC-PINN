@@ -169,6 +169,7 @@ def compute_layer_derivatives_via_probe(
     return {
         'h': h.detach(),
         'h_t': h_t.detach(),
+        'h_x': h_x.detach(),
         'h_xx': h_xx.detach()
     }
 
@@ -254,6 +255,7 @@ def track_all_layers(
         Dictionary mapping layer_name -> {
             'h': (N, 2),
             'h_t': (N, 2),
+            'h_x': (N, 2),
             'h_xx': (N, 2),
             'nonlinear': (N, 2),
             'residual': (N, 2),
@@ -261,9 +263,11 @@ def track_all_layers(
             'norms': {
                 'h_norm': float,
                 'h_t_norm': float,
+                'h_x_norm': float,
                 'h_xx_norm': float,
                 'nonlinear_norm': float,
-                'residual_norm': float
+                'residual_norm': float,
+                'residual_inf_norm': float
             }
         }
     """
@@ -287,31 +291,37 @@ def track_all_layers(
         
         h = derivatives['h']
         h_t = derivatives['h_t']
+        h_x = derivatives['h_x']
         h_xx = derivatives['h_xx']
         
         # Compute residual terms
         residual_terms = compute_residual_terms(h, h_t, h_xx)
         
-        # Compute L2 norms across samples (mean per-sample L2 norm)
-        # For each term, compute ||term||_2 per sample, then take mean
+        # Compute L2 / L_inf norms across samples (mean per-sample norms)
+        # For each term, compute ||term|| per sample, then take mean
         h_norms = torch.norm(h, dim=1)  # (N,)
         h_t_norms = torch.norm(h_t, dim=1)
+        h_x_norms = torch.norm(h_x, dim=1)
         h_xx_norms = torch.norm(h_xx, dim=1)
         nonlinear_norms = torch.norm(residual_terms['nonlinear'], dim=1)
         residual_norms = torch.norm(residual_terms['residual'], dim=1)
+        residual_inf = torch.max(torch.abs(residual_terms['residual']), dim=1).values
         
         norms = {
             'h_norm': h_norms.mean().item(),
             'h_t_norm': h_t_norms.mean().item(),
+            'h_x_norm': h_x_norms.mean().item(),
             'h_xx_norm': h_xx_norms.mean().item(),
             'nonlinear_norm': nonlinear_norms.mean().item(),
-            'residual_norm': residual_norms.mean().item()
+            'residual_norm': residual_norms.mean().item(),
+            'residual_inf_norm': residual_inf.mean().item()
         }
         
         # Store all results for this layer
         results[layer_name] = {
             'h': h.cpu().numpy(),
             'h_t': h_t.cpu().numpy(),
+            'h_x': h_x.cpu().numpy(),
             'h_xx': h_xx.cpu().numpy(),
             'nonlinear': residual_terms['nonlinear'].cpu().numpy(),
             'residual': residual_terms['residual'].cpu().numpy(),
@@ -319,7 +329,8 @@ def track_all_layers(
             'norms': norms
         }
         
-        print(f"    Residual L2 norm: {norms['residual_norm']:.6f}")
+        print(f"    Residual L2 norm: {norms['residual_norm']:.6f} | "
+              f"L_inf: {norms['residual_inf_norm']:.6f}")
     
     return results
 

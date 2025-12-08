@@ -7,50 +7,51 @@ from typing import Dict
 from scipy.interpolate import griddata
 
 
-def plot_residual_evolution(
-    derivatives_results: Dict[str, Dict],
+def plot_residual_summary(
+    train_results: Dict[str, Dict],
+    eval_results: Dict[str, Dict],
     save_dir: Path
 ) -> None:
     """
-    Plot residual L2 norm evolution across layers.
-    
-    Expected to decrease as we go deeper (approaching physics solution).
-    
-    Args:
-        derivatives_results: Dict mapping layer_name -> results dict
-        save_dir: Directory to save plot
+    Plot residual L2 / L_inf evolution for train & eval in a 2x2 grid.
     """
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     
-    # Extract layer names and residual norms
-    layer_names = sorted(derivatives_results.keys())
-    residual_norms = [derivatives_results[ln]['norms']['residual_norm'] 
-                      for ln in layer_names]
-    
-    # Create layer indices for x-axis
+    layer_names = sorted(eval_results.keys())
     layer_indices = list(range(1, len(layer_names) + 1))
     
-    # Plot
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(layer_indices, residual_norms, marker='o', linewidth=2, 
-            markersize=8, color='crimson', label='Residual L2 Norm')
+    train_l2 = [train_results[ln]['norms']['residual_norm'] for ln in layer_names]
+    eval_l2 = [eval_results[ln]['norms']['residual_norm'] for ln in layer_names]
+    train_inf = [train_results[ln]['norms']['residual_inf_norm'] for ln in layer_names]
+    eval_inf = [eval_results[ln]['norms']['residual_inf_norm'] for ln in layer_names]
     
-    ax.set_xlabel('Layer', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Mean Residual L2 Norm', fontsize=12, fontweight='bold')
-    ax.set_title('Residual Evolution Across Layers', fontsize=14, fontweight='bold')
-    ax.set_xticks(layer_indices)
-    ax.set_xticklabels(layer_names, rotation=45, ha='right')
-    ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=11)
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    panels = [
+        (axes[0, 0], train_l2, 'Train Residual L2'),
+        (axes[0, 1], eval_l2, 'Eval Residual L2'),
+        (axes[1, 0], train_inf, 'Train Residual L∞'),
+        (axes[1, 1], eval_inf, 'Eval Residual L∞'),
+    ]
     
-    plt.tight_layout()
+    for ax, values, title in panels:
+        ax.plot(layer_indices, values, marker='o', linewidth=2, markersize=7, color='#c0392b')
+        ax.set_title(title, fontsize=13, fontweight='bold')
+        ax.set_xlabel('Layer', fontsize=11)
+        ax.set_ylabel('Mean Norm', fontsize=11)
+        ax.set_xticks(layer_indices)
+        ax.set_xticklabels(layer_names, rotation=45, ha='right')
+        ax.set_yscale('log')
+        ax.grid(True, alpha=0.3)
     
-    save_path = save_dir / 'residual_evolution.png'
+    fig.suptitle('Residual Evolution Summary', fontsize=16, fontweight='bold')
+    plt.tight_layout(rect=[0, 0.02, 1, 0.97])
+    
+    save_path = save_dir / 'residual_evolution_summary.png'
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"  Residual evolution plot saved to {save_path}")
+    print(f"  Residual evolution summary saved to {save_path}")
 
 
 def plot_term_magnitudes(
@@ -105,6 +106,95 @@ def plot_term_magnitudes(
     plt.close()
     
     print(f"  Term magnitudes plot saved to {save_path}")
+
+
+def plot_ic_profiles(
+    ic_profile: Dict[str, np.ndarray],
+    save_dir: Path
+) -> None:
+    """
+    Plot h(x, 0) inferred at each layer alongside the analytic IC 2·sech(x).
+    """
+    if not ic_profile or not ic_profile.get('layers'):
+        return
+    
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    
+    x = ic_profile['x']
+    gt_real_func = ic_profile['gt_real']
+    gt_imag_func = ic_profile['gt_imag']
+    x_gt = np.linspace(x.min(), x.max(), 400)
+    gt_real = gt_real_func(x_gt)
+    gt_imag = gt_imag_func(x_gt)
+    layers = sorted(ic_profile['layers'].keys())
+    colors = plt.cm.viridis(np.linspace(0, 1, len(layers))) if layers else ['#2980b9']
+    
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharex=True)
+    titles = ['Initial Condition (Real part)', 'Initial Condition (Imag part)']
+    
+    for ax_idx, (ax, comp_idx, title) in enumerate(zip(axes, [0, 1], titles)):
+        for color, layer in zip(colors, layers):
+            values = ic_profile['layers'][layer][:, comp_idx]
+            label = layer if ax_idx == 0 else None
+            ax.plot(x, values, color=color, alpha=0.85, label=label)
+        if comp_idx == 0:
+            ax.plot(x_gt, gt_real, color='black', linewidth=2.5, linestyle='--',
+                    label='Ground Truth 2·sech(x)')
+        else:
+            ax.plot(x_gt, gt_imag, color='black', linewidth=2.0, linestyle='--',
+                    label='Ground Truth 0')
+        ax.set_title(title, fontsize=13, fontweight='bold')
+        ax.set_xlabel('x', fontsize=11)
+        ax.set_ylabel('h(x, 0)', fontsize=11)
+        ax.grid(True, alpha=0.3)
+    
+    if layers:
+        axes[0].legend(loc='upper right', fontsize=9, ncol=2)
+        axes[1].legend(loc='upper right', fontsize=9)
+    
+    plt.tight_layout()
+    save_path = save_dir / 'ic_profiles.png'
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Initial condition profiles saved to {save_path}")
+
+
+def _plot_metrics_grid(
+    layer_names,
+    train_metrics: Dict[str, Dict[str, float]],
+    eval_metrics: Dict[str, Dict[str, float]],
+    title: str,
+    save_path: Path
+) -> None:
+    layer_indices = list(range(1, len(layer_names) + 1))
+    
+    def extract(metrics_dict, key):
+        return [metrics_dict.get(layer, {}).get(key, np.nan) for layer in layer_names]
+    
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    panels = [
+        (axes[0, 0], extract(train_metrics, 'l2'), 'Train L2'),
+        (axes[0, 1], extract(eval_metrics, 'l2'), 'Eval L2'),
+        (axes[1, 0], extract(train_metrics, 'linf'), 'Train L∞'),
+        (axes[1, 1], extract(eval_metrics, 'linf'), 'Eval L∞'),
+    ]
+    
+    for ax, values, subtitle in panels:
+        ax.plot(layer_indices, values, marker='o', linewidth=2, color='#8e44ad')
+        ax.set_title(subtitle, fontsize=13, fontweight='bold')
+        ax.set_xlabel('Layer', fontsize=11)
+        ax.set_ylabel('Mean Norm', fontsize=11)
+        ax.set_xticks(layer_indices)
+        ax.set_xticklabels(layer_names, rotation=45, ha='right')
+        ax.set_yscale('log')
+        ax.grid(True, alpha=0.3)
+    
+    fig.suptitle(title, fontsize=16, fontweight='bold')
+    plt.tight_layout(rect=[0, 0.02, 1, 0.97])
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  {title} saved to {save_path}")
 
 
 def plot_derivative_heatmaps(
@@ -315,7 +405,12 @@ def plot_residual_heatmaps(
 
 
 def generate_all_derivative_plots(
-    derivatives_results: Dict[str, Dict],
+    train_results: Dict[str, Dict],
+    eval_results: Dict[str, Dict],
+    ic_metrics: Dict[str, Dict[str, Dict[str, float]]],
+    bc_value_metrics: Dict[str, Dict[str, Dict[str, float]]],
+    bc_derivative_metrics: Dict[str, Dict[str, Dict[str, float]]],
+    ic_profile: Dict[str, np.ndarray],
     x: np.ndarray,
     t: np.ndarray,
     ground_truth_derivatives: Dict[str, np.ndarray],
@@ -333,20 +428,47 @@ def generate_all_derivative_plots(
     """
     print("\nGenerating derivative plots...")
     
-    # Plot 1: Residual evolution (most important!)
-    plot_residual_evolution(derivatives_results, save_dir)
+    # Plot 1: Residual evolution summary (L2 / L_inf, train & eval)
+    plot_residual_summary(train_results, eval_results, save_dir)
     
-    # Plot 2: Term magnitudes
-    plot_term_magnitudes(derivatives_results, save_dir)
+    # Plot 2: Term magnitudes (eval set for clarity)
+    plot_term_magnitudes(eval_results, save_dir)
     
-    # Plot 3 & 4: Heatmaps for every layer (stop-on-error would hide issues)
-    layer_names = sorted(derivatives_results.keys())
+    layer_names = sorted(eval_results.keys())
+    
+    # Plot 3: IC / BC summaries
+    _plot_metrics_grid(
+        layer_names,
+        ic_metrics['train'],
+        ic_metrics['eval'],
+        'Initial Condition Error Summary',
+        save_dir / 'ic_summary.png'
+    )
+    _plot_metrics_grid(
+        layer_names,
+        bc_value_metrics['train'],
+        bc_value_metrics['eval'],
+        'Boundary Value Error Summary',
+        save_dir / 'bc_value_summary.png'
+    )
+    _plot_metrics_grid(
+        layer_names,
+        bc_derivative_metrics['train'],
+        bc_derivative_metrics['eval'],
+        'Boundary Derivative Error Summary',
+        save_dir / 'bc_derivative_summary.png'
+    )
+    
+    # Plot IC profiles (eval set)
+    plot_ic_profiles(ic_profile, save_dir)
+    
+    # Plot 4+: Heatmaps for every layer (stop-on-error would hide issues)
     total_layers = len(layer_names)
     for idx, layer_name in enumerate(layer_names, start=1):
         print(f"  Generating heatmaps for {layer_name} ({idx}/{total_layers})")
         try:
             plot_derivative_heatmaps(
-                derivatives_results,
+                eval_results,
                 layer_name,
                 x,
                 t,
@@ -357,7 +479,7 @@ def generate_all_derivative_plots(
             print(f"    WARNING: derivative heatmaps failed for {layer_name}: {exc}")
         try:
             plot_residual_heatmaps(
-                derivatives_results,
+                eval_results,
                 layer_name,
                 x,
                 t,

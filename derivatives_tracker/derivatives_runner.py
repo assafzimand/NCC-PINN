@@ -11,6 +11,95 @@ from derivatives_tracker.derivatives_plotting import generate_all_derivative_plo
 from probes.probe_runner import run_probes
 
 
+def _compute_mean_norms(diff: np.ndarray) -> Dict[str, float]:
+    if diff.size == 0:
+        return {'l2': float('nan'), 'linf': float('nan')}
+    l2 = np.linalg.norm(diff, axis=1)
+    linf = np.max(np.abs(diff), axis=1)
+    return {'l2': float(np.mean(l2)), 'linf': float(np.mean(linf))}
+
+
+def _compute_ic_metrics(layer_results: Dict[str, Dict], data: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, float]]:
+    mask_ic = data['mask']['IC'].detach().cpu().numpy().astype(bool)
+    if not mask_ic.any():
+        return {}
+    u_gt = data['u_gt'].detach().cpu().numpy()
+    metrics = {}
+    for layer_name, results in layer_results.items():
+        preds = results['h'][mask_ic]
+        target = u_gt[mask_ic]
+        metrics[layer_name] = _compute_mean_norms(preds - target)
+    return metrics
+
+
+def _pair_boundary_indices(x: np.ndarray, t: np.ndarray, mask: np.ndarray, boundary_value: float, atol: float = 1e-6):
+    indices = np.where(mask & np.isclose(x, boundary_value, atol=atol))[0]
+    time_map = {}
+    for idx in indices:
+        key = round(float(t[idx]), 8)
+        time_map.setdefault(key, []).append(idx)
+    return time_map
+
+
+def _compute_bc_metrics(layer_results: Dict[str, Dict],
+                        data: Dict[str, torch.Tensor],
+                        config: Dict,
+                        use_derivative: bool = False) -> Dict[str, Dict[str, float]]:
+    mask_bc = data['mask']['BC'].detach().cpu().numpy().astype(bool)
+    if not mask_bc.any():
+        return {}
+    x = data['x'][:, 0].detach().cpu().numpy()
+    t = data['t'][:, 0].detach().cpu().numpy()
+    problem_cfg = config[config['problem']]
+    x_min, x_max = problem_cfg['spatial_domain'][0]
+    
+    left_map = _pair_boundary_indices(x, t, mask_bc, x_min)
+    right_map = _pair_boundary_indices(x, t, mask_bc, x_max)
+    
+    # Build matched pairs using shared times
+    pairs = []
+    for time_key, left_indices in left_map.items():
+        right_indices = right_map.get(time_key, [])
+        while left_indices and right_indices:
+            pairs.append((left_indices.pop(), right_indices.pop()))
+    if not pairs:
+        return {}
+    
+    left_idx = np.array([p[0] for p in pairs])
+    right_idx = np.array([p[1] for p in pairs])
+    
+    metrics = {}
+    value_key = 'h_x' if use_derivative else 'h'
+    for layer_name, results in layer_results.items():
+        values = results[value_key]
+        left_vals = values[left_idx]
+        right_vals = values[right_idx]
+        metrics[layer_name] = _compute_mean_norms(left_vals - right_vals)
+    return metrics
+
+
+def _extract_ic_profile(layer_results: Dict[str, Dict], data: Dict[str, torch.Tensor]) -> Dict[str, np.ndarray]:
+    mask_ic = data['mask']['IC'].detach().cpu().numpy().astype(bool)
+    if not mask_ic.any():
+        return {}
+    x_vals = data['x'][:, 0].detach().cpu().numpy()
+    x_ic = x_vals[mask_ic]
+    order = np.argsort(x_ic)
+    x_sorted = x_ic[order]
+    gt_real = 2.0 / np.cosh(x_sorted)
+    gt_imag = np.zeros_like(x_sorted)
+    profiles = {
+        'x': x_sorted,
+        'gt_real': gt_real,
+        'gt_imag': gt_imag,
+        'layers': {}
+    }
+    for layer_name, results in layer_results.items():
+        preds = results['h'][mask_ic][order]
+        profiles['layers'][layer_name] = preds
+    return profiles
+
+
 def run_derivatives_tracker(
     model: torch.nn.Module,
     train_data_path: str,
@@ -141,6 +230,18 @@ def run_derivatives_tracker(
         device=device
     )
     
+    ic_train_metrics = _compute_ic_metrics(train_derivatives, train_data)
+    ic_eval_metrics = _compute_ic_metrics(eval_derivatives, eval_data)
+    # Pass callable ground-truth functions (2·sech(x) and 0) for plotting
+    ic_profile_eval = _extract_ic_profile(eval_derivatives, eval_data)
+    if ic_profile_eval:
+        ic_profile_eval['gt_real'] = lambda arr: 2.0 / np.cosh(arr)
+        ic_profile_eval['gt_imag'] = lambda arr: np.zeros_like(arr)
+    bc_value_train = _compute_bc_metrics(train_derivatives, train_data, cfg, use_derivative=False)
+    bc_value_eval = _compute_bc_metrics(eval_derivatives, eval_data, cfg, use_derivative=False)
+    bc_deriv_train = _compute_bc_metrics(train_derivatives, train_data, cfg, use_derivative=True)
+    bc_deriv_eval = _compute_bc_metrics(eval_derivatives, eval_data, cfg, use_derivative=True)
+    
     # Step 5: Generate visualizations (use eval data)
     print("\n" + "=" * 60)
     print("Step 5: Generating Visualizations")
@@ -165,7 +266,12 @@ def run_derivatives_tracker(
     eval_t_np = eval_t.detach().cpu().numpy()
     
     generate_all_derivative_plots(
-        derivatives_results=eval_derivatives,
+        train_results=train_derivatives,
+        eval_results=eval_derivatives,
+        ic_metrics={'train': ic_train_metrics, 'eval': ic_eval_metrics},
+        bc_value_metrics={'train': bc_value_train, 'eval': bc_value_eval},
+        bc_derivative_metrics={'train': bc_deriv_train, 'eval': bc_deriv_eval},
+        ic_profile=ic_profile_eval,
         x=eval_x_np,
         t=eval_t_np,
         ground_truth_derivatives=ground_truth_derivatives,
@@ -182,7 +288,10 @@ def run_derivatives_tracker(
         'num_layers': len(hidden_layers),
         'train': {},
         'eval': {},
-        'layer_norms': {}
+        'layer_norms': {},
+        'ic': {'train': ic_train_metrics, 'eval': ic_eval_metrics},
+        'bc_value': {'train': bc_value_train, 'eval': bc_value_eval},
+        'bc_derivative': {'train': bc_deriv_train, 'eval': bc_deriv_eval}
     }
     
     # Collect norms for each layer
@@ -190,14 +299,24 @@ def run_derivatives_tracker(
         metrics_summary['train'][layer_name] = train_derivatives[layer_name]['norms']
         metrics_summary['eval'][layer_name] = eval_derivatives[layer_name]['norms']
         metrics_summary['layer_norms'][layer_name] = {
-            'train_residual': train_derivatives[layer_name]['norms']['residual_norm'],
-            'eval_residual': eval_derivatives[layer_name]['norms']['residual_norm']
+            'train_residual_l2': train_derivatives[layer_name]['norms']['residual_norm'],
+            'eval_residual_l2': eval_derivatives[layer_name]['norms']['residual_norm'],
+            'train_residual_linf': train_derivatives[layer_name]['norms']['residual_inf_norm'],
+            'eval_residual_linf': eval_derivatives[layer_name]['norms']['residual_inf_norm']
         }
     
     # Add final layer residual for easy comparison
     final_layer = hidden_layers[-1]
     metrics_summary['final_layer_train_residual'] = train_derivatives[final_layer]['norms']['residual_norm']
     metrics_summary['final_layer_eval_residual'] = eval_derivatives[final_layer]['norms']['residual_norm']
+    metrics_summary['final_layer_train_residual_inf'] = train_derivatives[final_layer]['norms']['residual_inf_norm']
+    metrics_summary['final_layer_eval_residual_inf'] = eval_derivatives[final_layer]['norms']['residual_inf_norm']
+    metrics_summary['final_layer_train_ic'] = ic_train_metrics.get(final_layer, {})
+    metrics_summary['final_layer_eval_ic'] = ic_eval_metrics.get(final_layer, {})
+    metrics_summary['final_layer_train_bc_value'] = bc_value_train.get(final_layer, {})
+    metrics_summary['final_layer_eval_bc_value'] = bc_value_eval.get(final_layer, {})
+    metrics_summary['final_layer_train_bc_derivative'] = bc_deriv_train.get(final_layer, {})
+    metrics_summary['final_layer_eval_bc_derivative'] = bc_deriv_eval.get(final_layer, {})
     
     # Save metrics
     metrics_path = derivatives_plots_dir / "derivatives_metrics.json"
@@ -211,7 +330,10 @@ def run_derivatives_tracker(
     print("=" * 60)
     print(f"Results saved to: {derivatives_plots_dir}")
     print("  Generated plots:")
-    print("    - residual_evolution.png (most important!)")
+    print("    - residual_evolution_summary.png (most important!)")
+    print("    - ic_summary.png")
+    print("    - bc_value_summary.png")
+    print("    - bc_derivative_summary.png")
     print("    - term_magnitudes.png")
     print("    - derivative_heatmaps_*.png (for selected layers)")
     print("    - residual_heatmaps_*.png (for selected layers)")
@@ -219,6 +341,32 @@ def run_derivatives_tracker(
     print("\nFinal Layer Residuals:")
     print(f"  Train: {metrics_summary['final_layer_train_residual']:.6e}")
     print(f"  Eval:  {metrics_summary['final_layer_eval_residual']:.6e}")
+    print(f"  Train L_inf: {metrics_summary['final_layer_train_residual_inf']:.6e}")
+    print(f"  Eval  L_inf: {metrics_summary['final_layer_eval_residual_inf']:.6e}")
+    ic_train_final = metrics_summary['final_layer_train_ic']
+    ic_eval_final = metrics_summary['final_layer_eval_ic']
+    if ic_train_final:
+        print(f"  IC Train L2/L_inf: {ic_train_final.get('l2', float('nan')):.6e} / "
+              f"{ic_train_final.get('linf', float('nan')):.6e}")
+    if ic_eval_final:
+        print(f"  IC Eval  L2/L_inf: {ic_eval_final.get('l2', float('nan')):.6e} / "
+              f"{ic_eval_final.get('linf', float('nan')):.6e}")
+    bc_val_train_final = metrics_summary['final_layer_train_bc_value']
+    bc_val_eval_final = metrics_summary['final_layer_eval_bc_value']
+    if bc_val_train_final:
+        print(f"  BC Value Train L2/L_inf: {bc_val_train_final.get('l2', float('nan')):.6e} / "
+              f"{bc_val_train_final.get('linf', float('nan')):.6e}")
+    if bc_val_eval_final:
+        print(f"  BC Value Eval  L2/L_inf: {bc_val_eval_final.get('l2', float('nan')):.6e} / "
+              f"{bc_val_eval_final.get('linf', float('nan')):.6e}")
+    bc_der_train_final = metrics_summary['final_layer_train_bc_derivative']
+    bc_der_eval_final = metrics_summary['final_layer_eval_bc_derivative']
+    if bc_der_train_final:
+        print(f"  BC Deriv Train L2/L_inf: {bc_der_train_final.get('l2', float('nan')):.6e} / "
+              f"{bc_der_train_final.get('linf', float('nan')):.6e}")
+    if bc_der_eval_final:
+        print(f"  BC Deriv Eval  L2/L_inf: {bc_der_eval_final.get('l2', float('nan')):.6e} / "
+              f"{bc_der_eval_final.get('linf', float('nan')):.6e}")
     print("=" * 60)
     
     return metrics_summary
