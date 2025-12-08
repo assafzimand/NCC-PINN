@@ -1,6 +1,7 @@
 """Shared comparison plotting functions for multi-experiment analysis."""
 
 import matplotlib.pyplot as plt
+import numpy as np
 from pathlib import Path
 
 
@@ -189,52 +190,131 @@ def generate_probe_comparison_plots(save_dir, probe_data):
     plt.close()
     
     print(f"  Probe comparison plot saved to {save_path}")
+    
+    # Infinity norm comparison (train/eval)
+    fig, (ax3, ax4) = plt.subplots(1, 2, figsize=(16, 6))
+    for exp_idx, (exp_name, metrics) in enumerate(probe_data.items()):
+        color = colors[exp_idx % len(colors)]
+        num_layers = len(metrics['train']['inf_norm'])
+        layer_numbers = list(range(1, num_layers + 1))
+        
+        ax3.plot(layer_numbers, metrics['train']['inf_norm'],
+                 marker='o', color=color, linewidth=2, markersize=7,
+                 label=exp_name, alpha=0.8)
+        ax4.plot(layer_numbers, metrics['eval']['inf_norm'],
+                 marker='s', color=color, linewidth=2, markersize=7,
+                 label=exp_name, alpha=0.8)
+    
+    ax3.set_xlabel('Layer Number', fontsize=12, fontweight='bold')
+    ax3.set_ylabel('Probe L∞ Error', fontsize=12, fontweight='bold')
+    ax3.set_title('Linear Probe Infinity Norm - Training Data',
+                  fontsize=14, fontweight='bold')
+    ax3.grid(True, alpha=0.3)
+    ax3.legend(fontsize=10, loc='best')
+    
+    ax4.set_xlabel('Layer Number', fontsize=12, fontweight='bold')
+    ax4.set_ylabel('Probe L∞ Error', fontsize=12, fontweight='bold')
+    ax4.set_title('Linear Probe Infinity Norm - Evaluation Data',
+                  fontsize=14, fontweight='bold')
+    ax4.grid(True, alpha=0.3)
+    ax4.legend(fontsize=10, loc='best')
+    
+    plt.tight_layout()
+    
+    inf_path = Path(save_dir) / "probe_comparison_inf.png"
+    plt.savefig(inf_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Probe infinity-norm comparison saved to {inf_path}")
+
+
+def _lookup_metric(exp_data, section_key, split, layer_name, metric_name):
+    if section_key is None:
+        layer_metrics = exp_data.get(split, {}).get(layer_name, {})
+    else:
+        layer_metrics = (
+            exp_data.get(section_key, {})
+            .get(split, {})
+            .get(layer_name, {})
+        )
+    return layer_metrics.get(metric_name, np.nan)
+
+
+def _plot_derivative_comparison_grid(save_dir, derivatives_data, section_key, key_map, title, filename):
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    exp_names = list(derivatives_data.keys())
+    max_layers = max(len(data['layers_analyzed']) for data in derivatives_data.values())
+    
+    panel_cfg = [
+        (axes[0, 0], 'train', 'l2', 'Train L2'),
+        (axes[0, 1], 'eval', 'l2', 'Eval L2'),
+        (axes[1, 0], 'train', 'linf', 'Train L∞'),
+        (axes[1, 1], 'eval', 'linf', 'Eval L∞'),
+    ]
+    
+    for panel_idx, (ax, split, metric_id, panel_title) in enumerate(panel_cfg):
+        for exp_name in exp_names:
+            exp_data = derivatives_data[exp_name]
+            layers = exp_data['layers_analyzed']
+            layer_indices = list(range(1, len(layers) + 1))
+            values = []
+            metric_key = key_map[metric_id]
+            for layer_name in layers:
+                values.append(
+                    _lookup_metric(exp_data, section_key, split, layer_name, metric_key)
+                )
+            ax.plot(layer_indices, values, marker='o', linewidth=2, markersize=6, label=exp_name)
+        
+        ax.set_title(panel_title, fontsize=13, fontweight='bold')
+        ax.set_xlabel('Layer', fontsize=11)
+        ax.set_ylabel('Mean Norm', fontsize=11)
+        ax.set_xticks(range(1, max_layers + 1))
+        ax.set_yscale('log')
+        ax.grid(True, alpha=0.3)
+        if panel_idx == 0:
+            ax.legend(fontsize=10, loc='best')
+    
+    plt.tight_layout(rect=[0, 0.02, 1, 0.97])
+    save_path = Path(save_dir) / filename
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  {title} saved to {save_path}")
 
 
 def generate_derivatives_comparison_plots(save_dir, derivatives_data):
     """
     Generate comparison plots for derivatives tracking across experiments.
-    
-    Args:
-        save_dir: Directory to save plots
-        derivatives_data: Dictionary mapping experiment name -> derivatives metrics
     """
     print("\nGenerating derivatives comparison plots...")
     
-    # Plot 1: Residual evolution across layers for all experiments
-    fig, ax = plt.subplots(figsize=(14, 8))
-    
-    exp_names = list(derivatives_data.keys())
-    
-    for exp_name in exp_names:
-        deriv_metrics = derivatives_data[exp_name]
-        layers = deriv_metrics['layers_analyzed']
-        
-        # Get residual norms for eval data
-        residual_norms = []
-        for layer_name in layers:
-            if layer_name in deriv_metrics['eval']:
-                residual_norms.append(deriv_metrics['eval'][layer_name]['residual_norm'])
-            else:
-                residual_norms.append(None)
-        
-        # Plot with layer indices
-        layer_indices = list(range(1, len(layers) + 1))
-        ax.plot(layer_indices, residual_norms, marker='o', linewidth=2, 
-                markersize=6, label=exp_name)
-    
-    ax.set_xlabel('Layer', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Residual L2 Norm (Eval)', fontsize=12, fontweight='bold')
-    ax.set_title('Residual Evolution Across Layers - All Experiments', 
-                 fontsize=14, fontweight='bold')
-    ax.legend(fontsize=11, loc='best')
-    ax.grid(True, alpha=0.3)
-    ax.set_yscale('log')
-    
-    plt.tight_layout()
-    
-    save_path = Path(save_dir) / "derivatives_residual_evolution_comparison.png"
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    print(f"  Derivatives residual evolution comparison saved to {save_path}")
+    _plot_derivative_comparison_grid(
+        save_dir,
+        derivatives_data,
+        section_key=None,
+        key_map={'l2': 'residual_norm', 'linf': 'residual_inf_norm'},
+        title='Derivatives residual comparison',
+        filename="derivatives_residual_comparison.png"
+    )
+    _plot_derivative_comparison_grid(
+        save_dir,
+        derivatives_data,
+        section_key='ic',
+        key_map={'l2': 'l2', 'linf': 'linf'},
+        title='Derivatives IC comparison',
+        filename="derivatives_ic_comparison.png"
+    )
+    _plot_derivative_comparison_grid(
+        save_dir,
+        derivatives_data,
+        section_key='bc_value',
+        key_map={'l2': 'l2', 'linf': 'linf'},
+        title='Derivatives BC value comparison',
+        filename="derivatives_bc_value_comparison.png"
+    )
+    _plot_derivative_comparison_grid(
+        save_dir,
+        derivatives_data,
+        section_key='bc_derivative',
+        key_map={'l2': 'l2', 'linf': 'linf'},
+        title='Derivatives BC derivative comparison',
+        filename="derivatives_bc_derivative_comparison.png"
+    )
