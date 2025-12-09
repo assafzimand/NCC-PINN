@@ -17,9 +17,9 @@ base_config:
   adam_eps: 1.0e-8
   
   # LBFGS hyperparameters
-  lbfgs_lr: 1.0
-  lbfgs_max_iter: 20
-  lbfgs_history_size: 20
+  lbfgs_lr: 1.5
+  lbfgs_max_iter: 100
+  lbfgs_history_size: 50
   lbfgs_line_search: 'strong_wolfe'
   lbfgs_tolerance_grad: 0.0  # Set to 0 to disable gradient-based convergence check
   lbfgs_tolerance_change: 0.0  # Set to 0 to disable loss change convergence check
