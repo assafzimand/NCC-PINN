@@ -29,7 +29,7 @@ print("=" * 70)
 print("\n1. Cleaning up previous test data...")
 cleanup_paths = [
     Path("datasets/schrodinger"),
-    Path("outputs/schrodinger_layers-2-50-100-50-2_act-tanh"),
+    Path("outputs/schrodinger-2-50-100-50-2-tanh"),
     Path("checkpoints/schrodinger")
 ]
 
@@ -109,7 +109,7 @@ try:
     architecture = test_config['architecture']
     activation = test_config['activation']
     layers_str = "-".join(map(str, architecture))
-    run_dir = Path("outputs") / f"{problem}_layers-{layers_str}_act-{activation}"
+    run_dir = Path("outputs") / f"{problem}-{layers_str}-{activation}"
 
     # Check run directory
     assert run_dir.exists(), f"Run directory should exist: {run_dir}"

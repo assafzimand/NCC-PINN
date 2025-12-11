@@ -42,8 +42,8 @@ def make_run_dir(problem: str, layers: list, act: str) -> Path:
     # Format layers as string: "2-50-100-50-2"
     layers_str = "-".join(map(str, layers))
 
-    # Create architecture directory name: <problem>_layers-<...>_act-<activation>
-    arch_dir_name = f"{problem}_layers-{layers_str}_act-{act}"
+    # Create architecture directory name: <problem>-<...>-<activation>
+    arch_dir_name = f"{problem}-{layers_str}-{act}"
     
     # Create timestamp for unique run: YYYYMMDD_HHMMSS
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

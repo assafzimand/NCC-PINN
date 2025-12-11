@@ -3,25 +3,32 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
+from matplotlib import colors as mcolors
+
+
+def _build_color_map(model_names):
+    """
+    Deterministic color assignment per model, shared across all comparison plots.
+    Sorting names ensures the same model always gets the same color in every figure.
+    """
+    sorted_names = sorted(model_names)
+    cmap = plt.cm.get_cmap('tab20', len(sorted_names))
+    color_map = {}
+    for idx, name in enumerate(sorted_names):
+        rgba = cmap(idx)
+        color_map[name] = mcolors.to_hex(rgba)
+    return color_map
 
 
 def generate_ncc_classification_plot(save_dir, ncc_data):
     """Generate NCC classification accuracy comparison across layers and epochs."""
     fig, ax = plt.subplots(figsize=(14, 8))
     
-    # Define color families for models
-    color_families = [
-        ['#ffcccc', '#ff9999', '#ff6666', '#ff3333', '#cc0000'],  # Reds
-        ['#cce5ff', '#99ccff', '#66b3ff', '#3399ff', '#0066cc'],  # Blues
-        ['#ccffcc', '#99ff99', '#66ff66', '#33cc33', '#009900'],  # Greens
-        ['#ffe5cc', '#ffcc99', '#ffb366', '#ff9933', '#cc6600'],  # Oranges
-        ['#e5ccff', '#cc99ff', '#b366ff', '#9933ff', '#6600cc'],  # Purples
-    ]
+    model_names = sorted(ncc_data.keys())
+    color_map = _build_color_map(model_names)
     
-    model_names = list(ncc_data.keys())
-    
-    for model_idx, (model_name, epochs_data) in enumerate(ncc_data.items()):
-        color_family = color_families[model_idx % len(color_families)]
+    for model_idx, model_name in enumerate(model_names):
+        epochs_data = ncc_data[model_name]
         
         # Sort epochs (numeric first, then 'final')
         sorted_epochs = sorted([e for e in epochs_data.keys() if isinstance(e, int)])
@@ -33,15 +40,23 @@ def generate_ncc_classification_plot(save_dir, ncc_data):
             layers = ncc_metrics['layers_analyzed']
             accuracies = [ncc_metrics['layer_accuracies'][layer] for layer in layers]
             
-            # Darker color for later epochs
-            color_idx = min(epoch_idx, len(color_family) - 1)
-            color = color_family[color_idx]
+            base_color = color_map[model_name]
+            # Darker (higher alpha) for later epochs
+            alpha = min(0.45 + 0.15 * epoch_idx, 1.0)
             
             epoch_label = f"Epoch {epoch_key}" if isinstance(epoch_key, int) else "Final"
             label = f"{model_name}" if epoch_idx == 0 else None
             
-            ax.plot(layers, accuracies, marker='o', color=color, 
-                   linewidth=2, markersize=6, alpha=0.8, label=label)
+            ax.plot(
+                layers,
+                accuracies,
+                marker='o',
+                color=base_color,
+                linewidth=2,
+                markersize=6,
+                alpha=alpha,
+                label=label
+            )
     
     ax.set_xlabel('Layer', fontsize=12, fontweight='bold')
     ax.set_ylabel('Accuracy', fontsize=12, fontweight='bold')
@@ -62,19 +77,11 @@ def generate_ncc_compactness_plot(save_dir, ncc_data):
     """Generate NCC compactness (margin) comparison across layers and epochs."""
     fig, ax = plt.subplots(figsize=(14, 8))
     
-    # Define color families for models
-    color_families = [
-        ['#ffcccc', '#ff9999', '#ff6666', '#ff3333', '#cc0000'],  # Reds
-        ['#cce5ff', '#99ccff', '#66b3ff', '#3399ff', '#0066cc'],  # Blues
-        ['#ccffcc', '#99ff99', '#66ff66', '#33cc33', '#009900'],  # Greens
-        ['#ffe5cc', '#ffcc99', '#ffb366', '#ff9933', '#cc6600'],  # Oranges
-        ['#e5ccff', '#cc99ff', '#b366ff', '#9933ff', '#6600cc'],  # Purples
-    ]
+    model_names = sorted(ncc_data.keys())
+    color_map = _build_color_map(model_names)
     
-    model_names = list(ncc_data.keys())
-    
-    for model_idx, (model_name, epochs_data) in enumerate(ncc_data.items()):
-        color_family = color_families[model_idx % len(color_families)]
+    for model_idx, model_name in enumerate(model_names):
+        epochs_data = ncc_data[model_name]
         
         # Sort epochs (numeric first, then 'final')
         sorted_epochs = sorted([e for e in epochs_data.keys() if isinstance(e, int)])
@@ -93,15 +100,23 @@ def generate_ncc_compactness_plot(save_dir, ncc_data):
                 snr = mean / std if std > 0 else 0
                 margin_snrs.append(snr)
             
-            # Darker color for later epochs
-            color_idx = min(epoch_idx, len(color_family) - 1)
-            color = color_family[color_idx]
+            base_color = color_map[model_name]
+            # Darker (higher alpha) for later epochs
+            alpha = min(0.45 + 0.15 * epoch_idx, 1.0)
             
             epoch_label = f"Epoch {epoch_key}" if isinstance(epoch_key, int) else "Final"
             label = f"{model_name}" if epoch_idx == 0 else None
             
-            ax.plot(layers, margin_snrs, marker='o', color=color, 
-                   linewidth=2, markersize=6, alpha=0.8, label=label)
+            ax.plot(
+                layers,
+                margin_snrs,
+                marker='o',
+                color=base_color,
+                linewidth=2,
+                markersize=6,
+                alpha=alpha,
+                label=label
+            )
     
     ax.set_xlabel('Layer', fontsize=12, fontweight='bold')
     ax.set_ylabel('Margin SNR (mean/std)', fontsize=12, fontweight='bold')
@@ -143,14 +158,15 @@ def generate_probe_comparison_plots(save_dir, probe_data):
     """
     print("\nGenerating probe comparison plots...")
     
-    # Define colors for different experiments
-    colors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c']
+    exp_names = sorted(probe_data.keys())
+    color_map = _build_color_map(exp_names)
     
     # Create figure with 2 subplots (one for train, one for eval)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
     
-    for exp_idx, (exp_name, metrics) in enumerate(probe_data.items()):
-        color = colors[exp_idx % len(colors)]
+    for exp_name in exp_names:
+        metrics = probe_data[exp_name]
+        color = color_map[exp_name]
         
         # Number of layers
         num_layers = len(metrics['train']['rel_l2'])
@@ -193,8 +209,9 @@ def generate_probe_comparison_plots(save_dir, probe_data):
     
     # Infinity norm comparison (train/eval)
     fig, (ax3, ax4) = plt.subplots(1, 2, figsize=(16, 6))
-    for exp_idx, (exp_name, metrics) in enumerate(probe_data.items()):
-        color = colors[exp_idx % len(colors)]
+    for exp_name in exp_names:
+        metrics = probe_data[exp_name]
+        color = color_map[exp_name]
         num_layers = len(metrics['train']['inf_norm'])
         layer_numbers = list(range(1, num_layers + 1))
         
@@ -241,7 +258,8 @@ def _lookup_metric(exp_data, section_key, split, layer_name, metric_name):
 
 def _plot_derivative_comparison_grid(save_dir, derivatives_data, section_key, key_map, title, filename):
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-    exp_names = list(derivatives_data.keys())
+    exp_names = sorted(derivatives_data.keys())
+    color_map = _build_color_map(exp_names)
     max_layers = max(len(data['layers_analyzed']) for data in derivatives_data.values())
     
     panel_cfg = [
@@ -262,7 +280,15 @@ def _plot_derivative_comparison_grid(save_dir, derivatives_data, section_key, ke
                 values.append(
                     _lookup_metric(exp_data, section_key, split, layer_name, metric_key)
                 )
-            ax.plot(layer_indices, values, marker='o', linewidth=2, markersize=6, label=exp_name)
+            ax.plot(
+                layer_indices,
+                values,
+                marker='o',
+                linewidth=2,
+                markersize=6,
+                label=exp_name,
+                color=color_map[exp_name]
+            )
         
         ax.set_title(panel_title, fontsize=13, fontweight='bold')
         ax.set_xlabel('Layer', fontsize=11)
