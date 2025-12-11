@@ -99,7 +99,7 @@ def test_run_dir_creation():
     assert (run_dir / "ncc_plots").exists(), "ncc_plots subdirectory should exist"
     
     # Check naming format
-    expected_name = f"{config['problem']}_layers-2-50-100-50-2_act-{config['activation']}"
+    expected_name = f"{config['problem']}-2-50-100-50-2-{config['activation']}"
     assert run_dir.name == expected_name, f"Directory name should be {expected_name}"
     
     print(f"✓ Run directory created: {run_dir}")

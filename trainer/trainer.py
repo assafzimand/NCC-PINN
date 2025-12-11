@@ -142,9 +142,9 @@ def train(
     best_eval_loss = float('inf')
     best_checkpoint_path = None
 
-    # Create checkpoint directory (with architecture subdirectory like outputs)
+    # Create checkpoint directory (aligned with outputs naming: <problem>-<layers>-<act>)
     architecture_str = "-".join(map(str, cfg['architecture']))
-    checkpoint_dir = Path("checkpoints") / cfg['problem'] / f"layers-{architecture_str}_act-{cfg['activation']}"
+    checkpoint_dir = Path("checkpoints") / cfg['problem'] / f"{cfg['problem']}-{architecture_str}-{cfg['activation']}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # Create ncc_plots directory for periodic NCC analysis

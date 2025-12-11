@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "40,000_params_flat_many_layers"
+experiment_name: "dcrs_Wn_flat_many_lyr"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -17,9 +17,9 @@ base_config:
   adam_eps: 1.0e-8
   
   # LBFGS hyperparameters
-  lbfgs_lr: 1.5
-  lbfgs_max_iter: 100
-  lbfgs_history_size: 50
+  lbfgs_lr: 1.0
+  lbfgs_max_iter: 20
+  lbfgs_history_size: 20
   lbfgs_line_search: 'strong_wolfe'
   lbfgs_tolerance_grad: 0.0  # Set to 0 to disable gradient-based convergence check
   lbfgs_tolerance_change: 0.0  # Set to 0 to disable loss change convergence check
@@ -28,7 +28,7 @@ base_config:
   eval_only: false
   resume_from: null
   bins: 5
-  eval_every: 100
+  eval_every: 200
   print_every: 1000
   save_every: 5000
   ncc_eval_every: 3400
@@ -64,11 +64,38 @@ base_config:
 
 # Experiments to run (only architecture varies)
 experiments:  
-  - name: "5_layers"
+  - name: "5_lyr_40k_Wn"
     architecture: [2, 100, 100, 100, 100, 100, 2]
   
-  - name: "3_layers"
+  - name: "3_lyr_40k_Wn"
     architecture: [2, 140, 140, 140, 2]
 
-  - name: "7_layers"
+  - name: "7_lyr_40k_Wn"
     architecture: [2, 80, 80, 80, 80, 80, 80, 80, 2]
+
+  - name: "5_lyr_30k_Wn"
+    architecture: [2, 85, 85, 85, 85, 85, 2]
+  
+  - name: "3_lyr_30k_Wn"
+    architecture: [2, 120, 120, 120, 2]
+
+  - name: "7_lyr_30k_Wn"
+    architecture: [2, 70, 70, 70, 70, 70, 70, 70, 2]
+
+  - name: "5_lyr_20k_Wn"
+    architecture: [2, 70, 70, 70, 70, 70, 2]
+
+  - name: "3_lyr_20k_Wn"
+    architecture: [2, 100, 100, 100, 2]
+
+  - name: "7_lyr_20k_Wn"
+    architecture: [2, 58, 58, 58, 58, 58, 58, 58, 2]
+
+  - name: "5_lyr_10k_Wn"
+    architecture: [2, 50, 50, 50, 50, 50, 2]
+
+  - name: "3_lyr_10k_Wn"
+    architecture: [2, 70, 70, 70, 2]
+
+  - name: "7_lyr_10k_Wn"
+    architecture: [2, 40, 40, 40, 40, 40, 40, 40, 2]

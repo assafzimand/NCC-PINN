@@ -22,11 +22,9 @@ def create_experiment_dir(plan):
     base = plan['base_config']
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Create descriptive folder name
+    # Create descriptive folder name (drop training-param suffix for shorter paths)
     exp_name = plan['experiment_name']
-    params = f"lr{base['lr']}_ep{base['epochs']}_bs{base['batch_size']}_bins{base['bins']}"
-    
-    parent_dir = Path("outputs") / "experiments" / f"{exp_name}_{params}_{timestamp}"
+    parent_dir = Path("outputs") / "experiments" / f"{exp_name}_{timestamp}"
     parent_dir.mkdir(parents=True, exist_ok=True)
     
     return parent_dir
@@ -42,9 +40,9 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
     # Merge configs
     config = {**base_config, **exp_config}
     
-    # Generate architecture-based folder name (same format as make_run_dir)
+    # Generate architecture-based folder name (aligned with make_run_dir)
     layers_str = "-".join(map(str, config['architecture']))
-    arch_folder_name = f"{config['problem']}_layers-{layers_str}_act-{config['activation']}"
+    arch_folder_name = f"{config['problem']}-{layers_str}-{config['activation']}"
     exp_output_dir = parent_dir / arch_folder_name
     
     # Temporarily update config.yaml
@@ -67,9 +65,12 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             return None
         
         # Find the checkpoint that was just created
-        checkpoint_pattern = f"layers-{layers_str}_act-{config['activation']}"
         checkpoints_root = Path("checkpoints") / config['problem']
-        checkpoint_dirs = list(checkpoints_root.glob(checkpoint_pattern))
+        checkpoint_pattern_new = f"{config['problem']}-{layers_str}-{config['activation']}"
+        checkpoint_pattern_legacy = f"layers-{layers_str}_act-{config['activation']}"
+        checkpoint_dirs = list(checkpoints_root.glob(checkpoint_pattern_new))
+        if not checkpoint_dirs:
+            checkpoint_dirs = list(checkpoints_root.glob(checkpoint_pattern_legacy))
         
         if not checkpoint_dirs:
             print(f"\nERROR: Could not find checkpoint for {exp_name}")
@@ -119,7 +120,7 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
         if outputs_root.exists():
             # Build pattern to match architecture folder
             layers_str = "-".join(map(str, config['architecture']))
-            arch_folder_name = f"{config['problem']}_layers-{layers_str}_act-{config['activation']}"
+            arch_folder_name = f"{config['problem']}-{layers_str}-{config['activation']}"
             arch_dir = outputs_root / arch_folder_name
             
             if arch_dir.exists():
@@ -171,8 +172,19 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
                     # Also move corresponding checkpoints to experiment folder
                     checkpoints_root = Path("checkpoints") / config['problem']
                     if checkpoints_root.exists():
-                        checkpoint_pattern = f"layers-{layers_str}_act-{config['activation']}"
-                        checkpoint_dirs = list(checkpoints_root.glob(checkpoint_pattern))
+                        checkpoint_pattern_new = f"{config['problem']}-{layers_str}-{config['activation']}"
+                        checkpoint_pattern_legacy = f"layers-{layers_str}_act-{config['activation']}"
+                        checkpoint_dirs = sorted(
+                            checkpoints_root.glob(checkpoint_pattern_new),
+                            key=lambda p: p.stat().st_mtime,
+                            reverse=True
+                        )
+                        if not checkpoint_dirs:
+                            checkpoint_dirs = sorted(
+                                checkpoints_root.glob(checkpoint_pattern_legacy),
+                                key=lambda p: p.stat().st_mtime,
+                                reverse=True
+                            )
                         
                         if checkpoint_dirs:
                             checkpoint_dir = checkpoint_dirs[0]
@@ -180,11 +192,20 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
                             exp_checkpoints_dir = exp_output_dir / "checkpoints"
                             exp_checkpoints_dir.mkdir(parents=True, exist_ok=True)
                             
-                            # Move checkpoint directory
+                            # Copy checkpoint directory (robust on Windows and when src removed later)
                             dest_checkpoint = exp_checkpoints_dir / checkpoint_dir.name
                             if dest_checkpoint.exists():
                                 shutil.rmtree(dest_checkpoint)
-                            shutil.move(str(checkpoint_dir), str(dest_checkpoint))
+                            dest_checkpoint.mkdir(parents=True, exist_ok=True)
+                            # Manual recursive copy to avoid Windows copytree edge-cases
+                            for src_path in checkpoint_dir.rglob("*"):
+                                rel = src_path.relative_to(checkpoint_dir)
+                                dst_path = dest_checkpoint / rel
+                                if src_path.is_dir():
+                                    dst_path.mkdir(parents=True, exist_ok=True)
+                                else:
+                                    dst_path.parent.mkdir(parents=True, exist_ok=True)
+                                    shutil.copy2(src_path, dst_path)
                     
                     # Return the moved timestamp directory
                     return dest_dir
@@ -328,29 +349,9 @@ def generate_comparison_report(parent_dir, results):
 
 
 def _generate_training_results_plot(parent_dir, df):
-    """Generate training and results comparison plot."""
-    fig = plt.figure(figsize=(16, 10))
-    gs = fig.add_gridspec(3, 2, height_ratios=[1, 1, 0.8], hspace=0.35)
-    
-    # Top row: Eval Loss and Rel-L2
-    ax1 = fig.add_subplot(gs[0, 0])
-    ax1.bar(df['experiment'], df['final_eval_loss'])
-    ax1.set_title('Final Evaluation Loss', fontsize=12, fontweight='bold')
-    ax1.set_xlabel('Experiment')
-    ax1.set_ylabel('Loss')
-    ax1.tick_params(axis='x', rotation=45)
-    ax1.grid(True, alpha=0.3)
-    
-    ax2 = fig.add_subplot(gs[0, 1])
-    ax2.bar(df['experiment'], df['final_eval_rel_l2'])
-    ax2.set_title('Final Evaluation Rel-L2 Error', fontsize=12, fontweight='bold')
-    ax2.set_xlabel('Experiment')
-    ax2.set_ylabel('Rel-L2 Error')
-    ax2.tick_params(axis='x', rotation=45)
-    ax2.grid(True, alpha=0.3)
-    
-    # Bottom: Colored table
-    ax3 = fig.add_subplot(gs[1:, :])
+    """Generate training and results comparison table (no bar charts)."""
+    fig = plt.figure(figsize=(16, 6))
+    ax3 = fig.add_subplot(111)
     ax3.axis('off')
     
     # Create colored table
@@ -430,7 +431,7 @@ def _generate_training_results_plot(parent_dir, df):
         cell.set_facecolor('#34495e')
         cell.set_text_props(weight='bold', color='white')
     
-    fig.suptitle('Training and Results Comparison', fontsize=16, fontweight='bold', y=0.98)
+    fig.suptitle('Training and Results Comparison', fontsize=16, fontweight='bold', y=0.92)
     
     plt.savefig(parent_dir / "training_and_results_comparison.png", dpi=150, bbox_inches='tight')
     plt.close()
