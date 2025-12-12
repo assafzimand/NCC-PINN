@@ -123,7 +123,16 @@ def run_ncc(
         print("\nGenerating NCC classification diagnostic...")
         try:
             from utils.problem_specific import get_visualization_module
-            _, _, _, visualize_ncc_classification, visualize_ncc_classification_input_space = get_visualization_module(cfg['problem'])
+            viz_module = get_visualization_module(cfg['problem'])
+            _, _, _, visualize_ncc_classification, visualize_ncc_classification_input_space = viz_module[:5]
+            
+            # Check if heatmap functions are available (new functions)
+            try:
+                visualize_ncc_classification_heatmap = viz_module[5]
+                visualize_ncc_classification_input_space_heatmap = viz_module[6]
+                has_heatmap = True
+            except (IndexError, AttributeError):
+                has_heatmap = False
             
             # Extract class labels from results (already a tensor on device)
             class_labels = ncc_results['class_labels']
@@ -133,15 +142,25 @@ def run_ncc(
                 for ln in hidden_layers
             }
             
-            # Output space visualization (u, v)
+            # Output space visualization (u, v) - scatter plot
             viz_path = ncc_plots_dir / "ncc_classification_diagnostic.png"
             visualize_ncc_classification(u_gt, class_labels, predictions_dict, bins, viz_path)
             print(f"  Classification diagnostic saved to {viz_path}")
             
-            # Input space visualization (x, t)
+            # Input space visualization (x, t) - scatter plot
             viz_path_input = ncc_plots_dir / "ncc_classification_input_space.png"
             visualize_ncc_classification_input_space(x, t, class_labels, predictions_dict, viz_path_input)
             print(f"  Input space classification diagnostic saved to {viz_path_input}")
+            
+            # Generate heatmap versions if available
+            if has_heatmap:
+                # Output space visualization (u, v) - heatmap
+                viz_path_heatmap = ncc_plots_dir / "ncc_classification_heatmap.png"
+                visualize_ncc_classification_heatmap(u_gt, class_labels, predictions_dict, bins, viz_path_heatmap, cfg)
+                
+                # Input space visualization (x, t) - heatmap
+                viz_path_input_heatmap = ncc_plots_dir / "ncc_classification_input_space_heatmap.png"
+                visualize_ncc_classification_input_space_heatmap(x, t, class_labels, predictions_dict, viz_path_input_heatmap, cfg)
         except (ValueError, AttributeError) as e:
             print(f"  Warning: Problem-specific NCC visualization not available: {e}")
 

@@ -170,6 +170,8 @@ def probe_all_layers(
         results[layer_name] = {
             'train_metrics': train_metrics,
             'eval_metrics': eval_metrics,
+            'train_predictions': train_predictions,
+            'eval_predictions': eval_predictions,
             'probe': probe,
             'hidden_dim': train_embeddings.shape[1]
         }

@@ -90,7 +90,7 @@ def run_probes(
     
     # Register hooks to capture activations for eval data
     print("\nCollecting evaluation embeddings...")
-    handles = model.register_ncc_hooks(hidden_layers)
+    _ = model.register_ncc_hooks(hidden_layers)  # noqa: F841
     
     with torch.no_grad():
         eval_inputs = torch.cat([eval_x, eval_t], dim=1)
@@ -122,8 +122,14 @@ def run_probes(
     
     probe_plots_dir.mkdir(parents=True, exist_ok=True)
     
-    # Generate plots
-    generate_all_probe_plots(probe_results, probe_plots_dir)
+    # Generate plots (include coordinates and targets for error heatmaps)
+    generate_all_probe_plots(
+        probe_results, 
+        probe_plots_dir,
+        eval_x=eval_x.cpu().numpy(),
+        eval_t=eval_t.cpu().numpy(),
+        eval_targets=eval_targets.cpu().numpy()
+    )
     
     # Build metrics summary for JSON export
     metrics_summary = {

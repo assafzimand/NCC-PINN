@@ -529,3 +529,350 @@ def visualize_ncc_classification_input_space(
     
     print(f"  Input space classification diagnostic saved to {save_path}")
 
+
+def visualize_ncc_classification_heatmap(
+    u_gt: torch.Tensor,
+    class_labels: torch.Tensor,
+    predictions_dict: Dict[str, torch.Tensor],
+    bins: int,
+    save_path: Path,
+    config: Dict
+):
+    """
+    Visualize NCC classification accuracy as heatmaps in (u, v) output space.
+    
+    Creates multi-panel figure with one subplot per layer showing a heatmap
+    where each grid cell's color represents the classification accuracy (0-1)
+    in that region.
+    
+    Args:
+        u_gt: Ground truth outputs (N, 2) with u, v values
+        class_labels: True class labels (N,)
+        predictions_dict: Dict mapping layer_name -> predictions (N,)
+        bins: Number of bins per dimension (for NCC classes)
+        save_path: Path to save figure
+        config: Configuration dictionary with 'n_bin_visualize_ncc' and 'n_samples_ncc'
+    """
+    # Get visualization parameters
+    n_bin_viz = config.get('n_bin_visualize_ncc', 100)
+    min_samples_threshold = 1  # Minimum 1 sample per bin
+    
+    # Extract u, v values
+    u_gt_np = u_gt.cpu().numpy()
+    u = u_gt_np[:, 0]
+    v = u_gt_np[:, 1]
+    
+    class_labels_np = class_labels.cpu().numpy()
+    
+    # Compute visualization grid edges
+    u_min, u_max = u.min(), u.max()
+    v_min, v_max = v.min(), v.max()
+    u_edges = np.linspace(u_min, u_max, n_bin_viz + 1)
+    v_edges = np.linspace(v_min, v_max, n_bin_viz + 1)
+    
+    # Setup subplots (3 columns)
+    layer_names = list(predictions_dict.keys())
+    n_layers = len(layer_names)
+    n_cols = 3
+    n_rows = int(np.ceil(n_layers / n_cols))
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
+    
+    if n_layers == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+    
+    # Store accuracy grids for computing changes
+    accuracy_grids = {}
+    
+    for idx, layer_name in enumerate(layer_names):
+        ax = axes[idx]
+        predictions = predictions_dict[layer_name].cpu().numpy()
+        
+        # Determine correctness for all samples
+        correct = (predictions == class_labels_np).astype(float)
+        
+        # Create 2D histogram for accuracy
+        accuracy_grid = np.full((n_bin_viz, n_bin_viz), np.nan)
+        
+        for i in range(n_bin_viz):
+            for j in range(n_bin_viz):
+                # Find samples in this bin
+                in_bin = (
+                    (u >= u_edges[i]) & (u < u_edges[i+1]) &
+                    (v >= v_edges[j]) & (v < v_edges[j+1])
+                )
+                
+                if i == n_bin_viz - 1:  # Include right edge
+                    in_bin = in_bin | ((u == u_edges[i+1]) & 
+                                      (v >= v_edges[j]) & (v < v_edges[j+1]))
+                if j == n_bin_viz - 1:  # Include top edge
+                    in_bin = in_bin | ((v == v_edges[j+1]) & 
+                                      (u >= u_edges[i]) & (u < u_edges[i+1]))
+                
+                n_in_bin = in_bin.sum()
+                if n_in_bin >= min_samples_threshold:
+                    accuracy_grid[j, i] = correct[in_bin].mean()
+        
+        # Store for computing changes
+        accuracy_grids[layer_name] = accuracy_grid
+        
+        # Plot heatmap
+        im = ax.imshow(
+            accuracy_grid,
+            extent=[u_min, u_max, v_min, v_max],
+            origin='lower',
+            aspect='auto',
+            cmap='RdYlGn',
+            vmin=0.0,
+            vmax=1.0,
+            interpolation='nearest'
+        )
+        
+        ax.set_xlabel('u (Real part)', fontsize=11)
+        ax.set_ylabel('v (Imaginary part)', fontsize=11)
+        overall_acc = correct.mean()
+        ax.set_title(f'{layer_name} (Acc: {overall_acc:.2%})', 
+                    fontsize=12, fontweight='bold')
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Local Accuracy', fontsize=10)
+    
+    # Hide unused subplots
+    for idx in range(n_layers, len(axes)):
+        axes[idx].axis('off')
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  NCC classification heatmap saved to {save_path}")
+    
+    # Generate accuracy changes plot (N-1 transitions)
+    if n_layers > 1:
+        n_changes = n_layers - 1
+        n_cols_changes = 3
+        n_rows_changes = int(np.ceil(n_changes / n_cols_changes))
+        
+        fig_changes, axes_changes = plt.subplots(
+            n_rows_changes, n_cols_changes, 
+            figsize=(15, 5 * n_rows_changes)
+        )
+        
+        if n_changes == 1:
+            axes_changes = np.array([axes_changes])
+        axes_changes = axes_changes.flatten()
+        
+        for idx in range(n_changes):
+            ax = axes_changes[idx]
+            layer_prev = layer_names[idx]
+            layer_curr = layer_names[idx + 1]
+            
+            # Compute difference: current - previous
+            diff_grid = accuracy_grids[layer_curr] - accuracy_grids[layer_prev]
+            
+            # Plot difference heatmap
+            im = ax.imshow(
+                diff_grid,
+                extent=[u_min, u_max, v_min, v_max],
+                origin='lower',
+                aspect='auto',
+                cmap='RdYlGn',
+                vmin=-1.0,
+                vmax=1.0,
+                interpolation='nearest'
+            )
+            
+            ax.set_xlabel('u (Real part)', fontsize=11)
+            ax.set_ylabel('v (Imaginary part)', fontsize=11)
+            ax.set_title(f'{layer_prev} → {layer_curr}', 
+                        fontsize=12, fontweight='bold')
+            
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax)
+            cbar.set_label('Accuracy Change', fontsize=10)
+        
+        # Hide unused subplots
+        for idx in range(n_changes, len(axes_changes)):
+            axes_changes[idx].axis('off')
+        
+        plt.tight_layout()
+        changes_path = save_path.parent / "ncc_classification_accuracy_changes.png"
+        plt.savefig(changes_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"  NCC accuracy changes heatmap saved to {changes_path}")
+
+
+def visualize_ncc_classification_input_space_heatmap(
+    x: torch.Tensor,
+    t: torch.Tensor,
+    class_labels: torch.Tensor,
+    predictions_dict: Dict[str, torch.Tensor],
+    save_path: Path,
+    config: Dict
+):
+    """
+    Visualize NCC classification accuracy as heatmaps in (x, t) input space.
+    
+    Creates multi-panel figure with one subplot per layer showing a heatmap
+    where each grid cell's color represents the classification accuracy (0-1)
+    in that region.
+    
+    Args:
+        x: Spatial coordinates (N, 1)
+        t: Temporal coordinates (N, 1)
+        class_labels: True class labels (N,)
+        predictions_dict: Dict mapping layer_name -> predictions (N,)
+        save_path: Path to save figure
+        config: Configuration dictionary with 'n_bin_visualize_ncc' and 'n_samples_ncc'
+    """
+    # Get visualization parameters
+    n_bin_viz = config.get('n_bin_visualize_ncc', 100)
+    min_samples_threshold = 1  # Minimum 1 sample per bin
+    
+    # Extract x, t values
+    x_np = x.cpu().numpy().flatten()
+    t_np = t.cpu().numpy().flatten()
+    class_labels_np = class_labels.cpu().numpy()
+    
+    # Compute visualization grid edges
+    x_min, x_max = x_np.min(), x_np.max()
+    t_min, t_max = t_np.min(), t_np.max()
+    x_edges = np.linspace(x_min, x_max, n_bin_viz + 1)
+    t_edges = np.linspace(t_min, t_max, n_bin_viz + 1)
+    
+    # Setup subplots (3 columns)
+    layer_names = list(predictions_dict.keys())
+    n_layers = len(layer_names)
+    n_cols = 3
+    n_rows = int(np.ceil(n_layers / n_cols))
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
+    
+    if n_layers == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+    
+    # Store accuracy grids for computing changes
+    accuracy_grids = {}
+    
+    for idx, layer_name in enumerate(layer_names):
+        ax = axes[idx]
+        predictions = predictions_dict[layer_name].cpu().numpy()
+        
+        # Determine correctness for all samples
+        correct = (predictions == class_labels_np).astype(float)
+        
+        # Create 2D histogram for accuracy
+        accuracy_grid = np.full((n_bin_viz, n_bin_viz), np.nan)
+        
+        for i in range(n_bin_viz):
+            for j in range(n_bin_viz):
+                # Find samples in this bin
+                in_bin = (
+                    (x_np >= x_edges[i]) & (x_np < x_edges[i+1]) &
+                    (t_np >= t_edges[j]) & (t_np < t_edges[j+1])
+                )
+                
+                if i == n_bin_viz - 1:  # Include right edge
+                    in_bin = in_bin | ((x_np == x_edges[i+1]) & 
+                                      (t_np >= t_edges[j]) & (t_np < t_edges[j+1]))
+                if j == n_bin_viz - 1:  # Include top edge
+                    in_bin = in_bin | ((t_np == t_edges[j+1]) & 
+                                      (x_np >= x_edges[i]) & (x_np < x_edges[i+1]))
+                
+                n_in_bin = in_bin.sum()
+                if n_in_bin >= min_samples_threshold:
+                    accuracy_grid[j, i] = correct[in_bin].mean()
+        
+        # Store for computing changes
+        accuracy_grids[layer_name] = accuracy_grid
+        
+        # Plot heatmap
+        im = ax.imshow(
+            accuracy_grid,
+            extent=[x_min, x_max, t_min, t_max],
+            origin='lower',
+            aspect='auto',
+            cmap='RdYlGn',
+            vmin=0.0,
+            vmax=1.0,
+            interpolation='nearest'
+        )
+        
+        ax.set_xlabel('x (spatial)', fontsize=11)
+        ax.set_ylabel('t (time)', fontsize=11)
+        overall_acc = correct.mean()
+        ax.set_title(f'{layer_name} (Acc: {overall_acc:.2%})',
+                    fontsize=12, fontweight='bold')
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Local Accuracy', fontsize=10)
+    
+    # Hide unused subplots
+    for idx in range(n_layers, len(axes)):
+        axes[idx].axis('off')
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Input space classification heatmap saved to {save_path}")
+    
+    # Generate accuracy changes plot (N-1 transitions)
+    if n_layers > 1:
+        n_changes = n_layers - 1
+        n_cols_changes = 3
+        n_rows_changes = int(np.ceil(n_changes / n_cols_changes))
+        
+        fig_changes, axes_changes = plt.subplots(
+            n_rows_changes, n_cols_changes, 
+            figsize=(15, 5 * n_rows_changes)
+        )
+        
+        if n_changes == 1:
+            axes_changes = np.array([axes_changes])
+        axes_changes = axes_changes.flatten()
+        
+        for idx in range(n_changes):
+            ax = axes_changes[idx]
+            layer_prev = layer_names[idx]
+            layer_curr = layer_names[idx + 1]
+            
+            # Compute difference: current - previous
+            diff_grid = accuracy_grids[layer_curr] - accuracy_grids[layer_prev]
+            
+            # Plot difference heatmap
+            im = ax.imshow(
+                diff_grid,
+                extent=[x_min, x_max, t_min, t_max],
+                origin='lower',
+                aspect='auto',
+                cmap='RdYlGn',
+                vmin=-1.0,
+                vmax=1.0,
+                interpolation='nearest'
+            )
+            
+            ax.set_xlabel('x (spatial)', fontsize=11)
+            ax.set_ylabel('t (time)', fontsize=11)
+            ax.set_title(f'{layer_prev} → {layer_curr}', 
+                        fontsize=12, fontweight='bold')
+            
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax)
+            cbar.set_label('Accuracy Change', fontsize=10)
+        
+        # Hide unused subplots
+        for idx in range(n_changes, len(axes_changes)):
+            axes_changes[idx].axis('off')
+        
+        plt.tight_layout()
+        changes_path = save_path.parent / "ncc_classification_input_space_accuracy_changes.png"
+        plt.savefig(changes_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"  Input space accuracy changes heatmap saved to {changes_path}")
