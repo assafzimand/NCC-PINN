@@ -1,0 +1,89 @@
+problem: schrodinger
+architecture: [2, 20, 20, 2]
+activation: tanh
+epochs: 3
+batch_size: 64
+lr: 0.001
+
+# Optimizer settings
+optimizer_switch_at: 0.9 
+
+# Adam hyperparameters
+adam_betas: [0.9, 0.999]
+adam_eps: 0.00000001
+
+# LBFGS hyperparameters
+lbfgs_lr: 1.0  # LBFGS typically uses lr=1.0
+lbfgs_max_iter: 20  # Reduced from 20 for faster training
+lbfgs_history_size: 20
+lbfgs_line_search: 'strong_wolfe'  # or null
+lbfgs_tolerance_grad: 0.0  # Set to 0 to disable gradient-based convergence check
+lbfgs_tolerance_change: 0.0  # Set to 0 to disable loss change convergence check
+
+cuda: true
+eval_only: false
+
+# resume_from: single checkpoint (string) or multiple checkpoints (dict)
+# Single checkpoint:
+resume_from: null
+# resume_from:
+#   2-200-200-200-200-200-2: "outputs/experiments/5_layers_mid_size_200_different_mid_structure_symmetric_lr0.0001_ep6000_bs512_bins5_20251120_053338/schrodinger_layers-2-200-200-200-200-200-2_act-tanh/checkpoints/final_model.pt"
+#   2-200-200-150-200-200-2: "outputs/experiments/5_layers_mid_size_200_different_mid_structure_symmetric_lr0.0001_ep6000_bs512_bins5_20251120_053338/schrodinger_layers-2-200-200-150-200-200-2_act-tanh/checkpoints/final_model.pt"
+#   2-200-150-100-150-200-2: "outputs/experiments/5_layers_mid_size_200_different_mid_structure_symmetric_lr0.0001_ep6000_bs512_bins5_20251120_053338/schrodinger_layers-2-200-150-100-150-200-2_act-tanh/checkpoints/final_model.pt"
+#   2-100-200-200-200-100-2: "outputs/experiments/5_layers_mid_size_200_different_mid_structure_symmetric_lr0.0001_ep6000_bs512_bins5_20251120_053338/schrodinger_layers-2-100-200-200-200-100-2_act-tanh/checkpoints/final_model.pt"
+
+bins: 3
+
+# NCC visualization
+n_bin_visualize_ncc: 30  # grid resolution (NxN) for NCC classification heatmaps
+
+# training control
+print_every: 1  # print training info every N epochs
+save_every: 2  # save checkpoint every N epochs
+inner_metrics_eval_every: 2 # run NCC/probe/deriv analysis every N epochs (0 = only at end)
+
+# reproducibility
+seed: 42
+
+# problem-specific domains and loss weights
+schrodinger:
+  spatial_dim: 1
+  output_dim: 2  # Complex-valued: h = [u, v] (real, imaginary)
+  spatial_domain: [[-5.0, 5.0]]  # list of [min, max] for each spatial dimension
+  temporal_domain: [0.0, 1.5707963267948966]  # [min, max] for time (π/2)
+  loss_weights:
+    residual: 1.0
+    ic: 1.0
+    bc: 1.0
+
+wave1d:
+  spatial_dim: 1
+  output_dim: 1  # Real-valued: h is scalar
+  spatial_domain: [[-5.0, 5.0]]
+  temporal_domain: [0.0, 6.283185307179586]  # 2π (one full period)
+  loss_weights:
+    residual: 1.0
+    ic: 1.0
+    bc: 1.0
+
+problem2:
+  spatial_dim: 1
+  output_dim: 2  # Placeholder
+  spatial_domain: [[0.0, 1.0]]
+  temporal_domain: [0.0, 1.0]
+  loss_weights:
+    residual: 1.0
+    ic: 1.0
+    bc: 1.0
+
+# dataset sizes (small for testing)
+n_residual_train: 1000
+n_initial_train: 20
+n_boundary_train: 20
+n_residual_eval: 200
+n_initial_eval: 10
+n_boundary_eval: 10
+
+# NCC dataset (uniform sampling - equal samples per non-empty class)
+n_samples_ncc: 500  # total samples, divided equally among non-empty classes
+

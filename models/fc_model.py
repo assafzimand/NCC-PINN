@@ -36,12 +36,18 @@ class FCNet(nn.Module):
         problem = config['problem']
         problem_config = config[problem]
         spatial_dim = problem_config['spatial_dim']
+        output_dim = problem_config.get('output_dim', 2)  # Default to 2 for legacy
         expected_input_dim = spatial_dim + 1  # x + t
 
         assert layers[0] == expected_input_dim, (
             f"Architecture input dimension {layers[0]} does not match "
             f"expected dimension {expected_input_dim} "
             f"(spatial_dim={spatial_dim} + 1 for time)"
+        )
+        
+        assert layers[-1] == output_dim, (
+            f"Architecture output dimension {layers[-1]} does not match "
+            f"expected dimension {output_dim} (problem={problem})"
         )
 
         self.layers = layers

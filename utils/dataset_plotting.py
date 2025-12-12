@@ -25,10 +25,15 @@ def plot_dataset(data: Dict[str, torch.Tensor], save_path: str, title: str = "Da
     mask_bc = data['mask']['BC'].cpu().numpy()
     
     spatial_dim = x.shape[1]
+    output_dim = u_gt.shape[1]
     
     # Create figure based on spatial dimension
     if spatial_dim == 1:
-        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+        # Determine number of subplots based on output_dim
+        n_plots = 1 + output_dim  # 1 for point distribution + 1 per output component
+        fig, axes = plt.subplots(1, n_plots, figsize=(5*n_plots, 4))
+        if n_plots == 1:
+            axes = [axes]
         
         # Plot 1: Point distribution in (x, t) space
         ax = axes[0]
@@ -44,25 +49,17 @@ def plot_dataset(data: Dict[str, torch.Tensor], save_path: str, title: str = "Da
         ax.legend(markerscale=3)
         ax.grid(True, alpha=0.3)
         
-        # Plot 2: Ground truth u_gt[:, 0] in (x, t) space
-        ax = axes[1]
-        scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, 0], 
-                           s=2, cmap='viridis', alpha=0.6)
-        ax.set_xlabel('x')
-        ax.set_ylabel('t')
-        ax.set_title('Ground Truth u₀(x,t)')
-        plt.colorbar(scatter, ax=ax)
-        ax.grid(True, alpha=0.3)
-        
-        # Plot 3: Ground truth u_gt[:, 1] in (x, t) space
-        ax = axes[2]
-        scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, 1], 
-                           s=2, cmap='plasma', alpha=0.6)
-        ax.set_xlabel('x')
-        ax.set_ylabel('t')
-        ax.set_title('Ground Truth u₁(x,t)')
-        plt.colorbar(scatter, ax=ax)
-        ax.grid(True, alpha=0.3)
+        # Plots 2+: Ground truth components
+        cmaps = ['viridis', 'plasma', 'inferno', 'magma']
+        for i in range(output_dim):
+            ax = axes[1 + i]
+            scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, i], 
+                               s=2, cmap=cmaps[i % len(cmaps)], alpha=0.6)
+            ax.set_xlabel('x')
+            ax.set_ylabel('t')
+            ax.set_title(f'Ground Truth u_{i}(x,t)')
+            plt.colorbar(scatter, ax=ax)
+            ax.grid(True, alpha=0.3)
         
     else:
         # For higher dimensions, show projections or simplified views
@@ -103,10 +100,14 @@ def plot_dataset(data: Dict[str, torch.Tensor], save_path: str, title: str = "Da
         plt.colorbar(scatter, ax=ax)
         ax.grid(True, alpha=0.3)
         
-        # Plot 4: Ground truth component 1
+        # Plot 4: Ground truth component 1 (if exists)
         ax = axes[1, 1]
-        scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, 1], 
-                           s=2, cmap='plasma', alpha=0.6)
+        if output_dim > 1:
+            scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, 1], 
+                               s=2, cmap='plasma', alpha=0.6)
+        else:
+            scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, 0], 
+                               s=2, cmap='viridis', alpha=0.6)
         ax.set_xlabel('x₀')
         ax.set_ylabel('t')
         ax.set_title('Ground Truth u₁')
@@ -156,8 +157,10 @@ def plot_dataset_statistics(data: Dict[str, torch.Tensor], save_path: str) -> No
     
     # Ground truth distribution
     ax = axes[0, 1]
-    ax.hist(u_gt[:, 0], bins=50, alpha=0.6, label='u₀', color='purple')
-    ax.hist(u_gt[:, 1], bins=50, alpha=0.6, label='u₁', color='orange')
+    output_dim = u_gt.shape[1]
+    colors = ['purple', 'orange', 'green', 'red']
+    for i in range(output_dim):
+        ax.hist(u_gt[:, i], bins=50, alpha=0.6, label=f'u_{i}', color=colors[i % len(colors)])
     ax.set_xlabel('Value')
     ax.set_ylabel('Frequency')
     ax.set_title('Ground Truth Value Distribution')

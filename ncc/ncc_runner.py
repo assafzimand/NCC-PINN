@@ -130,6 +130,8 @@ def run_ncc(
             try:
                 visualize_ncc_classification_heatmap = viz_module[5]
                 visualize_ncc_classification_input_space_heatmap = viz_module[6]
+                visualize_ncc_classification_accuracy_changes = viz_module[7]
+                visualize_ncc_classification_input_space_accuracy_changes = viz_module[8]
                 has_heatmap = True
             except (IndexError, AttributeError):
                 has_heatmap = False
@@ -161,6 +163,13 @@ def run_ncc(
                 # Input space visualization (x, t) - heatmap
                 viz_path_input_heatmap = ncc_plots_dir / "ncc_classification_input_space_heatmap.png"
                 visualize_ncc_classification_input_space_heatmap(x, t, class_labels, predictions_dict, viz_path_input_heatmap, cfg)
+                
+                # Accuracy change heatmaps
+                viz_path_accuracy_changes = ncc_plots_dir / "ncc_classification_accuracy_changes.png"
+                visualize_ncc_classification_accuracy_changes(x, t, class_labels, predictions_dict, viz_path_accuracy_changes, cfg)
+                
+                viz_path_input_accuracy_changes = ncc_plots_dir / "ncc_classification_input_space_accuracy_changes.png"
+                visualize_ncc_classification_input_space_accuracy_changes(x, t, class_labels, predictions_dict, viz_path_input_accuracy_changes, cfg)
         except (ValueError, AttributeError) as e:
             print(f"  Warning: Problem-specific NCC visualization not available: {e}")
 

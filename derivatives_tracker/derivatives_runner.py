@@ -220,7 +220,8 @@ def run_derivatives_tracker(
         probes_dict=probes_dict,
         x=train_x,
         t=train_t,
-        device=device
+        device=device,
+        config=cfg
     )
     
     print("\nProcessing evaluation data...")
@@ -229,16 +230,25 @@ def run_derivatives_tracker(
         probes_dict=probes_dict,
         x=eval_x,
         t=eval_t,
-        device=device
+        device=device,
+        config=cfg
     )
     
     ic_train_metrics = _compute_ic_metrics(train_derivatives, train_data)
     ic_eval_metrics = _compute_ic_metrics(eval_derivatives, eval_data)
-    # Pass callable ground-truth functions (2·sech(x) and 0) for plotting
+    
+    # Pass callable ground-truth functions for plotting (problem-specific)
     ic_profile_eval = _extract_ic_profile(eval_derivatives, eval_data)
     if ic_profile_eval:
-        ic_profile_eval['gt_real'] = lambda arr: 2.0 / np.cosh(arr)
-        ic_profile_eval['gt_imag'] = lambda arr: np.zeros_like(arr)
+        problem_name = cfg.get('problem', 'schrodinger')
+        if problem_name == 'schrodinger':
+            ic_profile_eval['gt_real'] = lambda arr: 2.0 / np.cosh(arr)
+            ic_profile_eval['gt_imag'] = lambda arr: np.zeros_like(arr)
+            ic_profile_eval['gt_label_0'] = 'Ground Truth 2·sech(x)'
+            ic_profile_eval['gt_label_1'] = 'Ground Truth 0'
+        elif problem_name == 'wave1d':
+            ic_profile_eval['gt_real'] = lambda arr: np.sin(arr)
+            ic_profile_eval['gt_label_0'] = 'Ground Truth sin(x)'
     bc_value_train = _compute_bc_metrics(train_derivatives, train_data, cfg, use_derivative=False)
     bc_value_eval = _compute_bc_metrics(eval_derivatives, eval_data, cfg, use_derivative=False)
     bc_deriv_train = _compute_bc_metrics(train_derivatives, train_data, cfg, use_derivative=True)
@@ -283,7 +293,8 @@ def run_derivatives_tracker(
         x=eval_x_np,
         t=eval_t_np,
         ground_truth_derivatives=ground_truth_derivatives,
-        save_dir=derivatives_plots_dir
+        save_dir=derivatives_plots_dir,
+        config=cfg
     )
     
     # Step 6: Build and save metrics summary

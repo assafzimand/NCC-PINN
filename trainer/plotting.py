@@ -101,43 +101,31 @@ def plot_final_comparison(
 
     # For 1D spatial + time, create scatter plots
     if x.shape[1] == 1:
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        output_dim = u_pred.shape[1]
+        cmaps = ['viridis', 'plasma', 'inferno', 'magma']
+        
+        fig, axes = plt.subplots(output_dim, 2, figsize=(14, 5*output_dim))
+        if output_dim == 1:
+            axes = axes.reshape(1, 2)
 
-        # Component 0 - Prediction
-        ax = axes[0, 0]
-        scatter = ax.scatter(x[:, 0], t[:, 0], c=u_pred[:, 0],
-                           s=2, cmap='viridis', alpha=0.6)
-        ax.set_xlabel('x')
-        ax.set_ylabel('t')
-        ax.set_title('Prediction u₀(x,t)')
-        plt.colorbar(scatter, ax=ax)
+        for comp_idx in range(output_dim):
+            # Prediction
+            ax = axes[comp_idx, 0]
+            scatter = ax.scatter(x[:, 0], t[:, 0], c=u_pred[:, comp_idx],
+                               s=2, cmap=cmaps[comp_idx % len(cmaps)], alpha=0.6)
+            ax.set_xlabel('x')
+            ax.set_ylabel('t')
+            ax.set_title(f'Prediction h_{comp_idx}(x,t)')
+            plt.colorbar(scatter, ax=ax)
 
-        # Component 0 - Ground Truth
-        ax = axes[0, 1]
-        scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, 0],
-                           s=2, cmap='viridis', alpha=0.6)
-        ax.set_xlabel('x')
-        ax.set_ylabel('t')
-        ax.set_title('Ground Truth u₀(x,t)')
-        plt.colorbar(scatter, ax=ax)
-
-        # Component 1 - Prediction
-        ax = axes[1, 0]
-        scatter = ax.scatter(x[:, 0], t[:, 0], c=u_pred[:, 1],
-                           s=2, cmap='plasma', alpha=0.6)
-        ax.set_xlabel('x')
-        ax.set_ylabel('t')
-        ax.set_title('Prediction u₁(x,t)')
-        plt.colorbar(scatter, ax=ax)
-
-        # Component 1 - Ground Truth
-        ax = axes[1, 1]
-        scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, 1],
-                           s=2, cmap='plasma', alpha=0.6)
-        ax.set_xlabel('x')
-        ax.set_ylabel('t')
-        ax.set_title('Ground Truth u₁(x,t)')
-        plt.colorbar(scatter, ax=ax)
+            # Ground Truth
+            ax = axes[comp_idx, 1]
+            scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, comp_idx],
+                               s=2, cmap=cmaps[comp_idx % len(cmaps)], alpha=0.6)
+            ax.set_xlabel('x')
+            ax.set_ylabel('t')
+            ax.set_title(f'Ground Truth h_{comp_idx}(x,t)')
+            plt.colorbar(scatter, ax=ax)
 
         plt.tight_layout()
 
