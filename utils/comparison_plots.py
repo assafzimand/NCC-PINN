@@ -29,34 +29,22 @@ def generate_ncc_classification_plot(save_dir, ncc_data):
     
     for model_idx, model_name in enumerate(model_names):
         epochs_data = ncc_data[model_name]
-        
-        # Sort epochs (numeric first, then 'final')
-        sorted_epochs = sorted([e for e in epochs_data.keys() if isinstance(e, int)])
-        if 'final' in epochs_data:
-            sorted_epochs.append('final')
-        
-        for epoch_idx, epoch_key in enumerate(sorted_epochs):
-            ncc_metrics = epochs_data[epoch_key]
-            layers = ncc_metrics['layers_analyzed']
-            accuracies = [ncc_metrics['layer_accuracies'][layer] for layer in layers]
-            
-            base_color = color_map[model_name]
-            # Darker (higher alpha) for later epochs
-            alpha = min(0.45 + 0.15 * epoch_idx, 1.0)
-            
-            epoch_label = f"Epoch {epoch_key}" if isinstance(epoch_key, int) else "Final"
-            label = f"{model_name}" if epoch_idx == 0 else None
-            
-            ax.plot(
-                layers,
-                accuracies,
-                marker='o',
-                color=base_color,
-                linewidth=2,
-                markersize=6,
-                alpha=alpha,
-                label=label
-            )
+        if 'final' not in epochs_data:
+            continue
+        ncc_metrics = epochs_data['final']
+        layers = ncc_metrics['layers_analyzed']
+        accuracies = [ncc_metrics['layer_accuracies'][layer] for layer in layers]
+        base_color = color_map[model_name]
+        ax.plot(
+            layers,
+            accuracies,
+            marker='o',
+            color=base_color,
+            linewidth=2,
+            markersize=6,
+            alpha=0.9,
+            label=model_name
+        )
     
     ax.set_xlabel('Layer', fontsize=12, fontweight='bold')
     ax.set_ylabel('Accuracy', fontsize=12, fontweight='bold')
@@ -82,41 +70,30 @@ def generate_ncc_compactness_plot(save_dir, ncc_data):
     
     for model_idx, model_name in enumerate(model_names):
         epochs_data = ncc_data[model_name]
+        if 'final' not in epochs_data:
+            continue
+        ncc_metrics = epochs_data['final']
+        layers = ncc_metrics['layers_analyzed']
         
-        # Sort epochs (numeric first, then 'final')
-        sorted_epochs = sorted([e for e in epochs_data.keys() if isinstance(e, int)])
-        if 'final' in epochs_data:
-            sorted_epochs.append('final')
+        margin_snrs = []
+        for layer in layers:
+            mean = ncc_metrics['layer_margins'][layer]['mean_margin']
+            std = ncc_metrics['layer_margins'][layer]['std_margin']
+            snr = mean / std if std > 0 else 0
+            margin_snrs.append(snr)
         
-        for epoch_idx, epoch_key in enumerate(sorted_epochs):
-            ncc_metrics = epochs_data[epoch_key]
-            layers = ncc_metrics['layers_analyzed']
-            
-            # Compute margin SNR for each layer
-            margin_snrs = []
-            for layer in layers:
-                mean = ncc_metrics['layer_margins'][layer]['mean_margin']
-                std = ncc_metrics['layer_margins'][layer]['std_margin']
-                snr = mean / std if std > 0 else 0
-                margin_snrs.append(snr)
-            
-            base_color = color_map[model_name]
-            # Darker (higher alpha) for later epochs
-            alpha = min(0.45 + 0.15 * epoch_idx, 1.0)
-            
-            epoch_label = f"Epoch {epoch_key}" if isinstance(epoch_key, int) else "Final"
-            label = f"{model_name}" if epoch_idx == 0 else None
-            
-            ax.plot(
-                layers,
-                margin_snrs,
-                marker='o',
-                color=base_color,
-                linewidth=2,
-                markersize=6,
-                alpha=alpha,
-                label=label
-            )
+        base_color = color_map[model_name]
+        
+        ax.plot(
+            layers,
+            margin_snrs,
+            marker='o',
+            color=base_color,
+            linewidth=2,
+            markersize=6,
+            alpha=0.9,
+            label=model_name
+        )
     
     ax.set_xlabel('Layer', fontsize=12, fontweight='bold')
     ax.set_ylabel('Margin SNR (mean/std)', fontsize=12, fontweight='bold')

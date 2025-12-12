@@ -105,7 +105,8 @@ def run_derivatives_tracker(
     train_data_path: str,
     eval_data_path: str,
     cfg: Dict,
-    run_dir: Path
+    run_dir: Path,
+    epoch_suffix: str = ""
 ) -> Dict:
     """
     Run complete derivatives tracking analysis.
@@ -147,7 +148,8 @@ def run_derivatives_tracker(
         train_data_path=train_data_path,
         eval_data_path=eval_data_path,
         cfg=cfg,
-        run_dir=run_dir
+        run_dir=run_dir,
+        epoch_suffix=epoch_suffix
     )
     
     # Extract trained probes from probe_results
@@ -247,7 +249,13 @@ def run_derivatives_tracker(
     print("Step 5: Generating Visualizations")
     print("=" * 60)
     
-    derivatives_plots_dir = run_dir / "derivatives_plots"
+    if epoch_suffix:
+        # Periodic derivatives: save inside derivatives_plots/derivatives_plots_epoch_X/
+        derivatives_plots_dir = run_dir / "derivatives_plots" / f"derivatives_plots{epoch_suffix}"
+    else:
+        # Final derivatives: save directly in derivatives_plots/
+        derivatives_plots_dir = run_dir / "derivatives_plots"
+    
     derivatives_plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Compute ground truth derivatives for comparison
@@ -317,6 +325,10 @@ def run_derivatives_tracker(
     metrics_summary['final_layer_eval_bc_value'] = bc_value_eval.get(final_layer, {})
     metrics_summary['final_layer_train_bc_derivative'] = bc_deriv_train.get(final_layer, {})
     metrics_summary['final_layer_eval_bc_derivative'] = bc_deriv_eval.get(final_layer, {})
+    # Store per-layer IC/BC metrics for history plotting
+    metrics_summary['ic'] = {'train': ic_train_metrics, 'eval': ic_eval_metrics}
+    metrics_summary['bc_value'] = {'train': bc_value_train, 'eval': bc_value_eval}
+    metrics_summary['bc_derivative'] = {'train': bc_deriv_train, 'eval': bc_deriv_eval}
     
     # Save metrics
     metrics_path = derivatives_plots_dir / "derivatives_metrics.json"

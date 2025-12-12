@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 import seaborn as sns
 
 
@@ -324,3 +324,57 @@ def generate_all_ncc_plots(
         save_dir
     )
 
+
+def plot_ncc_history_shaded(history: List[tuple], save_dir: Path) -> None:
+    """
+    Overlay NCC accuracy and margin SNR across epochs for a single model using shaded progression.
+    history: list of (epoch, metrics_summary)
+    """
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    if not history:
+        return
+    # Sort by epoch
+    history = sorted(history, key=lambda x: x[0])
+    # Colors
+    base_color = '#1f77b4'
+    alphas = []
+    for idx in range(len(history)):
+        alphas.append(min(0.45 + 0.15 * idx, 1.0))
+
+    # Accuracy plot (overwrite main file)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for (epoch, metrics), alpha in zip(history, alphas):
+        layers = metrics['layers_analyzed']
+        accs = [metrics['layer_accuracies'][ln] for ln in layers]
+        label = f"Epoch {epoch}"
+        ax.plot(layers, accs, marker='o', color=base_color, alpha=alpha, label=label)
+    ax.set_xlabel('Layer')
+    ax.set_ylabel('Accuracy')
+    ax.set_title('NCC Accuracy (mid-training shading)')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(save_dir / "ncc_layer_accuracy.png", dpi=150, bbox_inches='tight')
+    plt.close()
+
+    # Margin SNR plot (line only, no bars; overwrite main file)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for (epoch, metrics), alpha in zip(history, alphas):
+        layers = metrics['layers_analyzed']
+        snrs = []
+        for ln in layers:
+            mean = metrics['layer_margins'][ln]['mean_margin']
+            std = metrics['layer_margins'][ln]['std_margin']
+            snrs.append(mean / std if std > 0 else 0)
+        label = f"Epoch {epoch}"
+        ax.plot(layers, snrs, marker='o', color=base_color, alpha=alpha, label=label)
+    ax.set_xlabel('Layer')
+    ax.set_ylabel('Margin SNR')
+    ax.set_title('NCC Margin SNR (mid-training shading)')
+    ax.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.5)
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(save_dir / "ncc_margin.png", dpi=150, bbox_inches='tight')
+    plt.close()

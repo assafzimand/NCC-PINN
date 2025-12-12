@@ -445,6 +445,25 @@ def main():
         cfg=config,
         run_dir=run_dir
     )
+    
+    # If there's a history from training, regenerate shaded plots
+    if not eval_only:
+        metrics_path = run_dir / "metrics.json"
+        if metrics_path.exists():
+            import json
+            with open(metrics_path, 'r') as f:
+                metrics = json.load(f)
+            
+            # Add final NCC to history
+            if 'ncc_history' in metrics and metrics['ncc_history']:
+                from ncc.ncc_plotting import plot_ncc_history_shaded
+                # Add the final metrics to the history
+                final_epoch = config.get('epochs', 0)
+                metrics['ncc_history'].append((final_epoch, ncc_metrics))
+                # Regenerate shaded plots
+                history = [(epoch, mets) for epoch, mets in metrics['ncc_history']]
+                plot_ncc_history_shaded(history, run_dir / "ncc_plots")
+                print(f"\n  Shaded NCC plots generated from {len(history)} epochs")
 
     # In eval-only mode, also run problem-specific evaluation visualization
     if eval_only:

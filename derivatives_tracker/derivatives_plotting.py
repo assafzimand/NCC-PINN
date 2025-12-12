@@ -3,7 +3,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 from scipy.interpolate import griddata
 
 
@@ -489,4 +489,79 @@ def generate_all_derivative_plots(
             print(f"    WARNING: residual heatmaps failed for {layer_name}: {exc}")
     
     print(f"All derivative plots generated in {save_dir}")
+
+
+def plot_derivative_history_shaded(history: List[tuple], save_dir: Path) -> None:
+    """
+    Overlay derivative residual and IC/BC norms across epochs with shaded progression.
+    history: list of (epoch, metrics_summary) returned by run_derivatives_tracker.
+    """
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    if not history:
+        return
+    history = sorted(history, key=lambda x: x[0])
+    base_color = '#2ecc71'
+    alphas = [min(0.45 + 0.15 * idx, 1.0) for idx in range(len(history))]
+
+    def _plot_residual():
+        fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+        panels = [
+            ('train_residual_l2', 'Train L2'),
+            ('eval_residual_l2', 'Eval L2'),
+            ('train_residual_linf', 'Train L∞'),
+            ('eval_residual_linf', 'Eval L∞'),
+        ]
+        key_map = {
+            'train_residual_l2': 'train_residual_l2',
+            'eval_residual_l2': 'eval_residual_l2',
+            'train_residual_linf': 'train_residual_linf',
+            'eval_residual_linf': 'eval_residual_linf',
+        }
+        for ax, (key, title) in zip(axes.flat, panels):
+            for (epoch, metrics), alpha in zip(history, alphas):
+                layers = sorted(metrics.get('layer_norms', {}).keys(), key=lambda x: int(x.split('_')[-1]))
+                values = [metrics['layer_norms'][ln].get(key_map[key], float('nan')) for ln in layers]
+                ax.plot(range(1, len(values)+1), values, marker='o', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
+            ax.set_title(title)
+            ax.set_xlabel('Layer')
+            ax.set_ylabel('Mean Norm')
+            ax.set_yscale('log')
+            ax.grid(True, alpha=0.3)
+        axes[0,0].legend()
+        plt.tight_layout()
+        plt.savefig(save_dir / "residual_evolution_summary.png", dpi=150, bbox_inches='tight')
+        plt.close()
+
+    def _plot_ic_bc(key: str, title: str, filename: str):
+        fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+        panels = [('l2', 'Train L2'), ('l2_eval', 'Eval L2'), ('linf', 'Train L∞'), ('linf_eval', 'Eval L∞')]
+        for ax_idx, (metric_key, lbl) in enumerate(panels):
+            for (epoch, metrics), alpha in zip(history, alphas):
+                store = metrics.get(key, {})
+                if not store:
+                    continue
+                # select train/eval
+                split = 'train' if 'eval' not in metric_key else 'eval'
+                base_key = 'l2' if 'l2' in metric_key else 'linf'
+                per_layer = store.get(split, {})
+                layers = sorted(per_layer.keys(), key=lambda x: int(x.split('_')[-1]))
+                values = [per_layer[ln].get(base_key, float('nan')) for ln in layers]
+                ax = axes.flatten()[ax_idx]
+                ax.plot(range(1, len(values)+1), values, marker='o', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
+            ax = axes.flatten()[ax_idx]
+            ax.set_title(lbl)
+            ax.set_xlabel('Layer')
+            ax.set_ylabel('Mean Norm')
+            ax.set_yscale('log')
+            ax.grid(True, alpha=0.3)
+        axes[0,0].legend()
+        plt.tight_layout()
+        plt.savefig(save_dir / filename, dpi=150, bbox_inches='tight')
+        plt.close()
+
+    _plot_residual()
+    _plot_ic_bc('ic', 'Initial Condition Error Summary', 'ic_summary.png')
+    _plot_ic_bc('bc_value', 'Boundary Value Error Summary', 'bc_value_summary.png')
+    _plot_ic_bc('bc_derivative', 'Boundary Derivative Error Summary', 'bc_derivative_summary.png')
 
