@@ -28,6 +28,7 @@ base_config:
   eval_only: false
   resume_from: null
   bins: 5
+  n_bin_visualize_ncc: 100
   eval_every: 2
   print_every: 1
   save_every: 2

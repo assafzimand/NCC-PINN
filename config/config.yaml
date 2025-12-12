@@ -34,6 +34,9 @@ resume_from: null
 
 bins: 3
 
+# NCC visualization
+n_bin_visualize_ncc: 30  # grid resolution (NxN) for NCC classification heatmaps
+
 # training control
 print_every: 1  # print training info every N epochs
 save_every: 2  # save checkpoint every N epochs

@@ -110,17 +110,108 @@ def plot_layer_dimensions(probe_results: Dict, save_dir: Path):
     print(f"  Layer dimensions plot saved to {plot_path}")
 
 
-def generate_all_probe_plots(probe_results: Dict, save_dir: Path):
+def plot_probe_error_heatmaps(
+    probe_results: Dict,
+    eval_x: np.ndarray,
+    eval_t: np.ndarray,
+    eval_targets: np.ndarray,
+    save_dir: Path
+):
+    """
+    Generate error heatmaps for probe predictions (similar to residual heatmaps).
+    
+    Args:
+        probe_results: Dictionary from probe_all_layers()
+        eval_x: Spatial coordinates (N,)
+        eval_t: Temporal coordinates (N,)
+        eval_targets: Ground truth outputs (N, 2) - [u, v]
+        save_dir: Directory to save plots
+    """
+    import matplotlib.pyplot as plt
+    from scipy.interpolate import griddata
+    
+    save_dir.mkdir(parents=True, exist_ok=True)
+    layer_names = sorted(probe_results.keys())
+    
+    for idx, layer_name in enumerate(layer_names, 1):
+        print(f"  Generating error heatmaps for {layer_name} ({idx}/{len(layer_names)})")
+        
+        # Get predictions for this layer
+        eval_preds = probe_results[layer_name]['eval_predictions']  # (N, 2)
+        
+        # Compute errors
+        error = eval_preds - eval_targets  # (N, 2)
+        error_u = error[:, 0]  # real part error
+        error_v = error[:, 1]  # imaginary part error
+        
+        # Create grid for interpolation
+        x_min, x_max = eval_x.min(), eval_x.max()
+        t_min, t_max = eval_t.min(), eval_t.max()
+        grid_x, grid_t = np.meshgrid(
+            np.linspace(x_min, x_max, 200),
+            np.linspace(t_min, t_max, 200)
+        )
+        
+        # Interpolate errors onto grid
+        points = np.column_stack([eval_x, eval_t])
+        grid_error_u = griddata(points, error_u, (grid_x, grid_t), method='cubic', fill_value=0)
+        grid_error_v = griddata(points, error_v, (grid_x, grid_t), method='cubic', fill_value=0)
+        
+        # Create figure with 2 subplots (u and v errors)
+        fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+        
+        # Plot real part error
+        im1 = axes[0].contourf(grid_x, grid_t, grid_error_u, levels=50, cmap='RdBu_r')
+        axes[0].set_xlabel('x', fontsize=11)
+        axes[0].set_ylabel('t', fontsize=11)
+        axes[0].set_title(f'Probe Error - u (real)', fontsize=12, fontweight='bold')
+        plt.colorbar(im1, ax=axes[0])
+        
+        # Plot imaginary part error
+        im2 = axes[1].contourf(grid_x, grid_t, grid_error_v, levels=50, cmap='RdBu_r')
+        axes[1].set_xlabel('x', fontsize=11)
+        axes[1].set_ylabel('t', fontsize=11)
+        axes[1].set_title(f'Probe Error - v (imag)', fontsize=12, fontweight='bold')
+        plt.colorbar(im2, ax=axes[1])
+        
+        # Overall title
+        fig.suptitle(f'Probe Prediction Error Heatmaps - {layer_name}', 
+                     fontsize=14, fontweight='bold', y=0.995)
+        
+        plt.tight_layout(rect=[0, 0, 1, 0.99])
+        
+        save_path = save_dir / f'probe_error_heatmaps_{layer_name}.png'
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+    print(f"  Probe error heatmaps saved to {save_dir}")
+
+
+def generate_all_probe_plots(
+    probe_results: Dict, 
+    save_dir: Path,
+    eval_x: np.ndarray = None,
+    eval_t: np.ndarray = None,
+    eval_targets: np.ndarray = None
+):
     """
     Generate all probe visualization plots.
     
     Args:
         probe_results: Dictionary from probe_all_layers()
         save_dir: Directory to save plots
+        eval_x: Optional spatial coordinates for error heatmaps
+        eval_t: Optional temporal coordinates for error heatmaps
+        eval_targets: Optional ground truth for error heatmaps
     """
     print("\nGenerating probe plots...")
     plot_probe_metrics(probe_results, save_dir)
     plot_layer_dimensions(probe_results, save_dir)
+    
+    # Generate error heatmaps if data is provided
+    if eval_x is not None and eval_t is not None and eval_targets is not None:
+        plot_probe_error_heatmaps(probe_results, eval_x, eval_t, eval_targets, save_dir)
+    
     print("  All probe plots generated")
 
 
