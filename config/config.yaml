@@ -5,17 +5,17 @@ adam_betas:
 adam_eps: 1.0e-08
 architecture:
 - 2
-- 20
-- 20
-- 20
-- 1
+- 5
+- 5
+- 5
+- 2
 batch_size: 64
 bins: 5
 cuda: true
-epochs: 10
+epochs: 3
 eval_every: 1
-eval_only: true
-inner_metrics_eval_every: 6
+eval_only: false
+inner_metrics_eval_every: 2
 lbfgs_history_size: 20
 lbfgs_line_search: strong_wolfe
 lbfgs_lr: 1.0
@@ -31,10 +31,10 @@ n_initial_train: 100
 n_residual_eval: 5000
 n_residual_train: 20000
 n_samples_ncc: 5000
-name: wave1d_test_3layer
+name: schrodinger_test_3_layer
 optimizer_switch_at: 0.9
 print_every: 1
-problem: wave1d
+problem: schrodinger
 problem2:
   loss_weights:
     bc: 1.0
@@ -48,8 +48,8 @@ problem2:
   temporal_domain:
   - 0.0
   - 1.0
-resume_from: checkpoints\wave1d\wave1d-2-20-20-20-1-tanh\best_model.pt
-save_every: 5
+resume_from: null
+save_every: 2
 schrodinger:
   loss_weights:
     bc: 1.0

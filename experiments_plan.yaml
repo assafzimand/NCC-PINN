@@ -1,11 +1,11 @@
 # Experiment plan configuration
-experiment_name: "wave1d_test"
+experiment_name: "schrodinger_test"
 
 # Base configuration (will be used for all experiments)
 base_config:
-  problem: wave1d
+  problem: schrodinger
   activation: tanh
-  epochs: 10
+  epochs: 3
   batch_size: 64
   lr: 0.001
   
@@ -31,8 +31,8 @@ base_config:
   n_bin_visualize_ncc: 100
   eval_every: 1
   print_every: 1
-  save_every: 5
-  inner_metrics_eval_every: 6
+  save_every: 2
+  inner_metrics_eval_every: 2
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -75,12 +75,12 @@ base_config:
   n_boundary_eval: 25
   n_samples_ncc: 5000 
 
-# Experiments to run (wave1d test only)
+# Experiments to run (schrodinger test only)
 experiments:  
-  - name: "wave1d_test_3layer"
-    problem: wave1d
-    architecture: [2, 20, 20, 20, 1]
+  - name: "schrodinger_test_3_layer"
+    problem: schrodinger
+    architecture: [2, 5, 5, 5, 2]
 
-  - name: "wave1d_test_5ayer"
-    problem: wave1d
-    architecture: [2,10,10,10,10,10,1]
+  - name: "schrodinger_test_2layers"
+    problem: schrodinger
+    architecture: [2, 5, 5, 2]

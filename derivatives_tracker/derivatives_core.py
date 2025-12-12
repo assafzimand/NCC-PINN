@@ -30,7 +30,7 @@ def compute_ground_truth_derivatives(
     solver_module = importlib.import_module(f'solvers.{problem_name}_solver')
     
     # Get analytical solution interpolator
-    interpolator = solver_module._get_interpolator_cached(config)
+    interpolator = solver_module._get_interpolator(config)
     
     # Get coordinates as numpy (detach first)
     x_np = x.detach().cpu().numpy().flatten()

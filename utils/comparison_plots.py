@@ -81,9 +81,9 @@ def generate_ncc_compactness_plot(save_dir, ncc_data):
             std = ncc_metrics['layer_margins'][layer]['std_margin']
             snr = mean / std if std > 0 else 0
             margin_snrs.append(snr)
-        
+            
         base_color = color_map[model_name]
-        
+            
         ax.plot(
             layers,
             margin_snrs,
@@ -131,7 +131,7 @@ def generate_probe_comparison_plots(save_dir, probe_data):
     Args:
         save_dir: Directory to save plots
         probe_data: Dict of {experiment_name: probe_metrics}
-                   where probe_metrics has 'train'/'eval' with 'rel_l2' and 'inf_norm' lists
+        where probe_metrics has 'train'/'eval' with 'rel_l2' and 'inf_norm' lists
     """
     print("\nGenerating probe comparison plots...")
     
