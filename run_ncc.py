@@ -478,7 +478,8 @@ def main():
 
         try:
             from utils.problem_specific import get_visualization_module
-            _, visualize_evaluation, _, _, _ = get_visualization_module(problem)
+            viz_module = get_visualization_module(problem)
+            visualize_evaluation = viz_module[1]  # Second element is visualize_evaluation
             visualize_evaluation(model, str(eval_data_path), run_dir, config)
         except ValueError:
             print(f"  (No custom evaluation visualization for {problem})")

@@ -2,7 +2,6 @@
 
 from .derivatives_core import (
     compute_layer_derivatives_via_probe,
-    compute_residual_terms,
     track_all_layers
 )
 
@@ -18,7 +17,6 @@ from .derivatives_runner import run_derivatives_tracker
 
 __all__ = [
     'compute_layer_derivatives_via_probe',
-    'compute_residual_terms',
     'track_all_layers',
     'plot_residual_summary',
     'plot_term_magnitudes',

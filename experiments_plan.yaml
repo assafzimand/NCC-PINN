@@ -1,13 +1,13 @@
 # Experiment plan configuration
-experiment_name: "dcrs_Wn_flat_many_lyr"
+experiment_name: "wave1d_test"
 
 # Base configuration (will be used for all experiments)
 base_config:
-  problem: schrodinger
+  problem: wave1d
   activation: tanh
-  epochs: 10000
-  batch_size: 512
-  lr: 0.0001
+  epochs: 10
+  batch_size: 64
+  lr: 0.001
   
   # Optimizer settings
   optimizer_switch_at: 0.9
@@ -29,15 +29,16 @@ base_config:
   resume_from: null
   bins: 5
   n_bin_visualize_ncc: 100
-  eval_every: 200
-  print_every: 1000
-  save_every: 5000
-  inner_metrics_eval_every: 2501
+  eval_every: 1
+  print_every: 1
+  save_every: 5
+  inner_metrics_eval_every: 6
   seed: 42
   
   # Problem-specific domains and loss weights
   schrodinger:
     spatial_dim: 1
+    output_dim: 2  # Complex-valued: h = [u, v]
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 1.5707963267948966]
     loss_weights:
@@ -45,8 +46,19 @@ base_config:
       ic: 1.0
       bc: 1.0
   
+  wave1d:
+    spatial_dim: 1
+    output_dim: 1  # Real-valued: h is scalar
+    spatial_domain: [[-5.0, 5.0]]
+    temporal_domain: [0.0, 6.283185307179586]  # 2π
+    loss_weights:
+      residual: 1.0
+      ic: 1.0
+      bc: 1.0
+  
   problem2:
     spatial_dim: 1
+    output_dim: 2
     spatial_domain: [[0.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     loss_weights:
@@ -63,40 +75,12 @@ base_config:
   n_boundary_eval: 25
   n_samples_ncc: 5000 
 
-# Experiments to run (only architecture varies)
+# Experiments to run (wave1d test only)
 experiments:  
-  - name: "3_lyr_40k_Wn"
-    architecture: [2, 140, 140, 140, 2]
+  - name: "wave1d_test_3layer"
+    problem: wave1d
+    architecture: [2, 20, 20, 20, 1]
 
-  - name: "5_lyr_40k_Wn"
-    architecture: [2, 100, 100, 100, 100, 100, 2]
-
-  - name: "7_lyr_40k_Wn"
-    architecture: [2, 80, 80, 80, 80, 80, 80, 80, 2]
-
-  - name: "3_lyr_30k_Wn"
-    architecture: [2, 120, 120, 120, 2]
-
-  - name: "5_lyr_30k_Wn"
-    architecture: [2, 85, 85, 85, 85, 85, 2]
-
-  - name: "7_lyr_30k_Wn"
-    architecture: [2, 70, 70, 70, 70, 70, 70, 70, 2]
-
-  - name: "3_lyr_20k_Wn"
-    architecture: [2, 100, 100, 100, 2]
-
-  - name: "5_lyr_20k_Wn"
-    architecture: [2, 70, 70, 70, 70, 70, 2]
-
-  - name: "7_lyr_20k_Wn"
-    architecture: [2, 58, 58, 58, 58, 58, 58, 58, 2]
-
-  - name: "3_lyr_10k_Wn"
-    architecture: [2, 70, 70, 70, 2]
-
-  - name: "5_lyr_10k_Wn"
-    architecture: [2, 50, 50, 50, 50, 50, 2]
-
-  - name: "7_lyr_10k_Wn"
-    architecture: [2, 40, 40, 40, 40, 40, 40, 40, 2]
+  - name: "wave1d_test_5ayer"
+    problem: wave1d
+    architecture: [2,10,10,10,10,10,1]

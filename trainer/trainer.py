@@ -473,7 +473,8 @@ def train(
     print("\nGenerating problem-specific evaluation visualizations...")
     try:
         from utils.problem_specific import get_visualization_module
-        _, visualize_evaluation, _, _, _ = get_visualization_module(cfg['problem'])
+        viz_module = get_visualization_module(cfg['problem'])
+        visualize_evaluation = viz_module[1]  # Second element is visualize_evaluation
         visualize_evaluation(model, eval_data_path, run_dir, cfg)
     except ValueError as e:
         print(f"  (No custom evaluation visualization for {cfg['problem']})")

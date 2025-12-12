@@ -137,12 +137,11 @@ def plot_probe_error_heatmaps(
         print(f"  Generating error heatmaps for {layer_name} ({idx}/{len(layer_names)})")
         
         # Get predictions for this layer
-        eval_preds = probe_results[layer_name]['eval_predictions']  # (N, 2)
+        eval_preds = probe_results[layer_name]['eval_predictions']  # (N, output_dim)
+        output_dim = eval_preds.shape[1]
         
         # Compute errors
-        error = eval_preds - eval_targets  # (N, 2)
-        error_u = error[:, 0]  # real part error
-        error_v = error[:, 1]  # imaginary part error
+        error = eval_preds - eval_targets  # (N, output_dim)
         
         # Create grid for interpolation
         x_min, x_max = eval_x.min(), eval_x.max()
@@ -152,27 +151,30 @@ def plot_probe_error_heatmaps(
             np.linspace(t_min, t_max, 200)
         )
         
-        # Interpolate errors onto grid
         points = np.column_stack([eval_x, eval_t])
-        grid_error_u = griddata(points, error_u, (grid_x, grid_t), method='cubic', fill_value=0)
-        grid_error_v = griddata(points, error_v, (grid_x, grid_t), method='cubic', fill_value=0)
         
-        # Create figure with 2 subplots (u and v errors)
-        fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+        # Create figure with output_dim subplots
+        fig, axes = plt.subplots(output_dim, 1, figsize=(12, 5*output_dim))
+        if output_dim == 1:
+            axes = [axes]
         
-        # Plot real part error
-        im1 = axes[0].contourf(grid_x, grid_t, grid_error_u, levels=50, cmap='RdBu_r')
-        axes[0].set_xlabel('x', fontsize=11)
-        axes[0].set_ylabel('t', fontsize=11)
-        axes[0].set_title(f'Probe Error - u (real)', fontsize=12, fontweight='bold')
-        plt.colorbar(im1, ax=axes[0])
+        # Plot error for each output component
+        if output_dim == 1:
+            component_names = ['h(x,t)']
+        elif output_dim == 2:
+            component_names = ['u (real)', 'v (imag)']
+        else:
+            component_names = [f'h_{i}' for i in range(output_dim)]
         
-        # Plot imaginary part error
-        im2 = axes[1].contourf(grid_x, grid_t, grid_error_v, levels=50, cmap='RdBu_r')
-        axes[1].set_xlabel('x', fontsize=11)
-        axes[1].set_ylabel('t', fontsize=11)
-        axes[1].set_title(f'Probe Error - v (imag)', fontsize=12, fontweight='bold')
-        plt.colorbar(im2, ax=axes[1])
+        for i in range(output_dim):
+            error_i = error[:, i]
+            grid_error_i = griddata(points, error_i, (grid_x, grid_t), method='cubic', fill_value=0)
+            
+            im = axes[i].contourf(grid_x, grid_t, grid_error_i, levels=50, cmap='RdBu_r')
+            axes[i].set_xlabel('x', fontsize=11)
+            axes[i].set_ylabel('t', fontsize=11)
+            axes[i].set_title(f'Probe Error - {component_names[i]}', fontsize=12, fontweight='bold')
+            plt.colorbar(im, ax=axes[i])
         
         # Overall title
         fig.suptitle(f'Probe Prediction Error Heatmaps - {layer_name}', 
@@ -234,34 +236,33 @@ def plot_probe_error_change_heatmaps(
     points = np.column_stack([eval_x, eval_t])
     error_grids = {}
     
-    for layer_name in layer_names:
-        eval_preds = probe_results[layer_name]['eval_predictions']  # (N, 2)
-        error = eval_preds - eval_targets  # (N, 2)
-        error_u = error[:, 0]  # real part error
-        error_v = error[:, 1]  # imaginary part error
-        
-        # Interpolate errors onto grid
-        grid_error_u = griddata(points, error_u, (grid_x, grid_t),
-                                method='cubic', fill_value=0)
-        grid_error_v = griddata(points, error_v, (grid_x, grid_t),
-                                method='cubic', fill_value=0)
-        
-        error_grids[layer_name] = {
-            'error_u': grid_error_u,
-            'error_v': grid_error_v
-        }
+    # Determine output dimension from first layer
+    first_layer = layer_names[0]
+    output_dim = probe_results[first_layer]['eval_predictions'].shape[1]
     
-    # Create figure for changes (N-1 transitions, 2 subplots each)
-    # Layout: imaginary below real, arrange transitions to make figure square
+    for layer_name in layer_names:
+        eval_preds = probe_results[layer_name]['eval_predictions']  # (N, output_dim)
+        error = eval_preds - eval_targets  # (N, output_dim)
+        
+        layer_grid = {}
+        for i in range(output_dim):
+            error_i = error[:, i]
+            grid_error_i = griddata(points, error_i, (grid_x, grid_t),
+                                    method='cubic', fill_value=0)
+            layer_grid[f'error_{i}'] = grid_error_i
+        
+        error_grids[layer_name] = layer_grid
+    
+    # Create figure for changes (N-1 transitions, output_dim subplots each)
+    # Layout: stack components vertically, arrange transitions to make figure square
     n_changes = n_layers - 1
     
     # Calculate optimal grid layout for roughly square figure
-    # Each transition needs 2 rows (u on top, v below)
-    # n_cols_transitions = number of transitions per row
+    # Each transition needs output_dim rows (one per component)
     import math
     n_cols_transitions = max(1, int(math.ceil(math.sqrt(n_changes))))
     n_rows_groups = int(math.ceil(n_changes / n_cols_transitions))
-    n_rows_total = n_rows_groups * 2  # 2 rows per transition group
+    n_rows_total = n_rows_groups * output_dim  # output_dim rows per transition group
     
     fig, axes = plt.subplots(n_rows_total, n_cols_transitions,
                              figsize=(6 * n_cols_transitions, 5 * n_rows_groups))
@@ -270,7 +271,9 @@ def plot_probe_error_change_heatmaps(
                  fontsize=14, fontweight='bold')
     
     # Ensure axes is 2D
-    if n_rows_total == 1:
+    if n_rows_total == 1 and n_cols_transitions == 1:
+        axes = np.array([[axes]])
+    elif n_rows_total == 1:
         axes = axes.reshape(1, -1)
     elif n_cols_transitions == 1:
         axes = axes.reshape(-1, 1)
@@ -278,52 +281,45 @@ def plot_probe_error_change_heatmaps(
     # Define colormap normalization (center at 1.0)
     norm = TwoSlopeNorm(vmin=0.0, vcenter=1.0, vmax=3.0)
     
+    # Component names
+    if output_dim == 1:
+        component_names = ['h(x,t)']
+    elif output_dim == 2:
+        component_names = ['u (real)', 'v (imag)']
+    else:
+        component_names = [f'h_{i}' for i in range(output_dim)]
+    
     for idx in range(n_changes):
         layer_prev = layer_names[idx]
         layer_curr = layer_names[idx + 1]
         
-        prev_u = error_grids[layer_prev]['error_u']
-        prev_v = error_grids[layer_prev]['error_v']
-        curr_u = error_grids[layer_curr]['error_u']
-        curr_v = error_grids[layer_curr]['error_v']
-        
-        # Compute ratio: abs(curr) / abs(prev)
-        # Handle division by zero: set to large value (error got worse)
-        eps = 1e-10
-        ratio_u = np.abs(curr_u) / (np.abs(prev_u) + eps)
-        ratio_v = np.abs(curr_v) / (np.abs(prev_v) + eps)
-        
-        # Cap extreme values for visualization
-        ratio_u = np.clip(ratio_u, 0, 5)
-        ratio_v = np.clip(ratio_v, 0, 5)
-        
         # Calculate position in grid
         col_idx = idx % n_cols_transitions
         row_group = idx // n_cols_transitions
-        row_u = row_group * 2  # Real part row
-        row_v = row_group * 2 + 1  # Imaginary part row (below real)
         
-        # Plot real part change (top)
-        ax_u = axes[row_u, col_idx]
-        im_u = ax_u.contourf(grid_x, grid_t, ratio_u, levels=50,
-                             cmap='RdYlGn_r', norm=norm)
-        ax_u.set_xlabel('x', fontsize=11)
-        ax_u.set_ylabel('t', fontsize=11)
-        ax_u.set_title(f'{layer_prev} → {layer_curr}\nReal part (u) error',
-                      fontsize=12, fontweight='bold')
-        cbar_u = plt.colorbar(im_u, ax=ax_u)
-        cbar_u.set_label('Error Ratio', fontsize=10)
-        
-        # Plot imaginary part change (below)
-        ax_v = axes[row_v, col_idx]
-        im_v = ax_v.contourf(grid_x, grid_t, ratio_v, levels=50,
-                             cmap='RdYlGn_r', norm=norm)
-        ax_v.set_xlabel('x', fontsize=11)
-        ax_v.set_ylabel('t', fontsize=11)
-        ax_v.set_title(f'{layer_prev} → {layer_curr}\nImaginary part (v) error',
-                      fontsize=12, fontweight='bold')
-        cbar_v = plt.colorbar(im_v, ax=ax_v)
-        cbar_v.set_label('Error Ratio', fontsize=10)
+        # Plot change for each output component
+        for comp_idx in range(output_dim):
+            prev_error = error_grids[layer_prev][f'error_{comp_idx}']
+            curr_error = error_grids[layer_curr][f'error_{comp_idx}']
+            
+            # Compute ratio: abs(curr) / abs(prev)
+            eps = 1e-10
+            ratio = np.abs(curr_error) / (np.abs(prev_error) + eps)
+            ratio = np.clip(ratio, 0, 5)  # Cap extreme values
+            
+            # Get subplot position
+            row_idx = row_group * output_dim + comp_idx
+            ax = axes[row_idx, col_idx]
+            
+            # Plot
+            im = ax.contourf(grid_x, grid_t, ratio, levels=50,
+                           cmap='RdYlGn_r', norm=norm)
+            ax.set_xlabel('x', fontsize=11)
+            ax.set_ylabel('t', fontsize=11)
+            ax.set_title(f'{layer_prev} → {layer_curr}\n{component_names[comp_idx]} error',
+                        fontsize=12, fontweight='bold')
+            cbar = plt.colorbar(im, ax=ax)
+            cbar.set_label('Error Ratio', fontsize=10)
     
     # Hide unused subplots if any
     for row in range(n_rows_total):

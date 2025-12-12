@@ -56,16 +56,18 @@ def plot_residual_summary(
 
 def plot_term_magnitudes(
     derivatives_results: Dict[str, Dict],
-    save_dir: Path
+    save_dir: Path,
+    config: Dict = None
 ) -> None:
     """
-    Plot L2 norms of all terms across layers.
+    Plot L2 norms of terms relevant to the problem's residual formula.
     
-    Shows: ||h||, ||h_t||, ||h_xx||, ||nonlinear||, ||residual||
+    Only plots derivatives that are used in the specific problem's residual.
     
     Args:
         derivatives_results: Dict mapping layer_name -> results dict
         save_dir: Directory to save plot
+        config: Configuration dict (used to determine relevant derivatives)
     """
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -73,20 +75,49 @@ def plot_term_magnitudes(
     layer_names = sorted(derivatives_results.keys())
     layer_indices = list(range(1, len(layer_names) + 1))
     
-    # Extract norms for each term
-    h_norms = [derivatives_results[ln]['norms']['h_norm'] for ln in layer_names]
-    h_t_norms = [derivatives_results[ln]['norms']['h_t_norm'] for ln in layer_names]
-    h_xx_norms = [derivatives_results[ln]['norms']['h_xx_norm'] for ln in layer_names]
-    nonlinear_norms = [derivatives_results[ln]['norms']['nonlinear_norm'] for ln in layer_names]
+    # Get relevant derivatives for this problem
+    if config is not None:
+        problem_name = config.get('problem', 'schrodinger')
+        try:
+            from derivatives_tracker.residuals import get_residual_module
+            residual_module = get_residual_module(problem_name)
+            relevant_derivatives = residual_module.get_relevant_derivatives()
+        except Exception as e:
+            print(f"  Warning: Could not get relevant derivatives for {problem_name}: {e}")
+            # Fallback: plot all available terms
+            relevant_derivatives = ['h', 'h_t', 'h_tt', 'h_x', 'h_xx', 'nonlinear']
+    else:
+        # Fallback: plot all available terms
+        relevant_derivatives = ['h', 'h_t', 'h_tt', 'h_x', 'h_xx', 'nonlinear']
+    
+    # Map derivative names to their norm keys, labels, and plotting styles
+    derivative_mapping = {
+        'h': ('h_norm', '||h||', 'o', 'blue'),
+        'h_t': ('h_t_norm', '||h_t||', 's', 'green'),
+        'h_tt': ('h_tt_norm', '||h_tt||', 'p', 'cyan'),
+        'h_x': ('h_x_norm', '||h_x||', 'v', 'magenta'),
+        'h_xx': ('h_xx_norm', '||h_xx||', '^', 'orange'),
+        'nonlinear': ('nonlinear_norm', '|||h|²h||', 'd', 'purple')
+    }
+    
+    # Extract norms for residual (always present)
     residual_norms = [derivatives_results[ln]['norms']['residual_norm'] for ln in layer_names]
     
     # Plot
     fig, ax = plt.subplots(figsize=(12, 7))
     
-    ax.plot(layer_indices, h_norms, marker='o', linewidth=2, label='||h||', color='blue')
-    ax.plot(layer_indices, h_t_norms, marker='s', linewidth=2, label='||h_t||', color='green')
-    ax.plot(layer_indices, h_xx_norms, marker='^', linewidth=2, label='||h_xx||', color='orange')
-    ax.plot(layer_indices, nonlinear_norms, marker='d', linewidth=2, label='|||h|²h||', color='purple')
+    # Plot only relevant terms
+    first_layer = layer_names[0]
+    norms_keys = derivatives_results[first_layer]['norms'].keys()
+    
+    for deriv_name in relevant_derivatives:
+        if deriv_name in derivative_mapping:
+            norm_key, label, marker, color = derivative_mapping[deriv_name]
+            if norm_key in norms_keys:
+                norms = [derivatives_results[ln]['norms'][norm_key] for ln in layer_names]
+                ax.plot(layer_indices, norms, marker=marker, linewidth=2, label=label, color=color)
+    
+    # Always plot residual
     ax.plot(layer_indices, residual_norms, marker='*', linewidth=2, markersize=10, 
             label='||residual||', color='crimson')
     
@@ -122,36 +153,54 @@ def plot_ic_profiles(
     save_dir.mkdir(parents=True, exist_ok=True)
     
     x = ic_profile['x']
-    gt_real_func = ic_profile['gt_real']
-    gt_imag_func = ic_profile['gt_imag']
-    x_gt = np.linspace(x.min(), x.max(), 400)
-    gt_real = gt_real_func(x_gt)
-    gt_imag = gt_imag_func(x_gt)
     layers = sorted(ic_profile['layers'].keys())
     colors = plt.cm.viridis(np.linspace(0, 1, len(layers))) if layers else ['#2980b9']
     
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharex=True)
-    titles = ['Initial Condition (Real part)', 'Initial Condition (Imag part)']
+    # Determine output_dim from first layer
+    first_layer = layers[0] if layers else None
+    output_dim = ic_profile['layers'][first_layer].shape[1] if first_layer else 1
     
-    for ax_idx, (ax, comp_idx, title) in enumerate(zip(axes, [0, 1], titles)):
+    # Get ground truth functions
+    gt_funcs = []
+    gt_labels = []
+    x_gt = np.linspace(x.min(), x.max(), 400)
+    
+    for comp_idx in range(output_dim):
+        if comp_idx == 0:
+            gt_funcs.append(ic_profile['gt_real'])
+            gt_labels.append(ic_profile.get('gt_label_0', 'Ground Truth'))
+        elif comp_idx == 1 and 'gt_imag' in ic_profile:
+            gt_funcs.append(ic_profile['gt_imag'])
+            gt_labels.append(ic_profile.get('gt_label_1', 'Ground Truth'))
+    
+    # Create subplots
+    fig, axes = plt.subplots(1, output_dim, figsize=(7*output_dim, 6), sharex=True)
+    if output_dim == 1:
+        axes = [axes]
+    
+    titles = ['h(x, 0)'] if output_dim == 1 else ['Initial Condition (Real part)', 'Initial Condition (Imag part)']
+    
+    for comp_idx in range(output_dim):
+        ax = axes[comp_idx]
+        
+        # Plot layer predictions
         for color, layer in zip(colors, layers):
             values = ic_profile['layers'][layer][:, comp_idx]
-            label = layer if ax_idx == 0 else None
+            label = layer if comp_idx == 0 else None
             ax.plot(x, values, color=color, alpha=0.85, label=label)
-        if comp_idx == 0:
-            ax.plot(x_gt, gt_real, color='black', linewidth=2.5, linestyle='--',
-                    label='Ground Truth 2·sech(x)')
-        else:
-            ax.plot(x_gt, gt_imag, color='black', linewidth=2.0, linestyle='--',
-                    label='Ground Truth 0')
-        ax.set_title(title, fontsize=13, fontweight='bold')
+        
+        # Plot ground truth
+        if comp_idx < len(gt_funcs):
+            gt_values = gt_funcs[comp_idx](x_gt)
+            ax.plot(x_gt, gt_values, color='black', linewidth=2.5, linestyle='--',
+                   label=gt_labels[comp_idx])
+        
+        ax.set_title(titles[comp_idx], fontsize=13, fontweight='bold')
         ax.set_xlabel('x', fontsize=11)
         ax.set_ylabel('h(x, 0)', fontsize=11)
         ax.grid(True, alpha=0.3)
-    
-    if layers:
-        axes[0].legend(loc='upper right', fontsize=9, ncol=2)
-        axes[1].legend(loc='upper right', fontsize=9)
+        if layers or (comp_idx < len(gt_funcs)):
+            ax.legend(loc='upper right', fontsize=9)
     
     plt.tight_layout()
     save_path = save_dir / 'ic_profiles.png'
@@ -203,23 +252,26 @@ def plot_derivative_heatmaps(
     x: np.ndarray,
     t: np.ndarray,
     ground_truth_derivatives: Dict[str, np.ndarray],
-    save_dir: Path
+    save_dir: Path,
+    config: Dict = None
 ) -> None:
     """
     Plot heatmaps of derivatives for a specific layer with ground truth comparison.
+    Only plots derivatives that are relevant to the problem's residual formula.
     
-    Creates 6x3 grid:
-    - Rows 1-2: Predicted (u, v components) of (h, h_t, h_xx)
-    - Rows 3-4: Ground truth (u, v components)
-    - Rows 5-6: Absolute error (u, v components)
+    Creates grid with rows for each output component showing:
+    - Predicted derivatives
+    - Ground truth derivatives
+    - Absolute error
     
     Args:
         derivatives_results: Dict mapping layer_name -> results dict
         layer_name: Which layer to visualize
         x: Spatial coordinates (N,) or (N, 1)
         t: Temporal coordinates (N,) or (N, 1)
-        ground_truth_derivatives: Dict with 'h_gt', 'h_t_gt', 'h_xx_gt'
+        ground_truth_derivatives: Dict with 'h_gt' and optionally 'h_t_gt', 'h_tt_gt', 'h_xx_gt'
         save_dir: Directory to save plot
+        config: Configuration dict (used to determine relevant derivatives)
     """
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -234,88 +286,115 @@ def plot_derivative_heatmaps(
     x_flat = x.flatten() if isinstance(x, np.ndarray) else x
     t_flat = t.flatten() if isinstance(t, np.ndarray) else t
     
-    # Extract ground truth derivatives
+    # Determine output_dim from h_gt
     h_gt = ground_truth_derivatives['h_gt']
-    h_t_gt = ground_truth_derivatives['h_t_gt']
-    h_xx_gt = ground_truth_derivatives['h_xx_gt']
+    output_dim = h_gt.shape[1] if len(h_gt.shape) > 1 else 1
+    
+    # Get relevant derivatives for this problem
+    if config is not None:
+        problem_name = config.get('problem', 'schrodinger')
+        try:
+            from derivatives_tracker.residuals import get_residual_module
+            residual_module = get_residual_module(problem_name)
+            relevant_derivatives = residual_module.get_relevant_derivatives()
+        except Exception as e:
+            print(f"  Warning: Could not get relevant derivatives for {problem_name}: {e}")
+            # Fallback: plot all available terms
+            relevant_derivatives = ['h', 'h_t', 'h_tt', 'h_x', 'h_xx']
+    else:
+        # Fallback: plot all available terms
+        relevant_derivatives = ['h', 'h_t', 'h_tt', 'h_x', 'h_xx']
+    
+    # Map derivative names to actual keys (skip 'nonlinear' as it's computed, not a base derivative)
+    derivative_mapping = {
+        'h': 'h',
+        'h_t': 'h_t',
+        'h_tt': 'h_tt',
+        'h_x': 'h_x',
+        'h_xx': 'h_xx'
+    }
+    
+    # Collect terms that exist in both results and ground_truth, and are relevant
+    terms_to_plot = []
+    for deriv_name in relevant_derivatives:
+        if deriv_name in derivative_mapping:
+            term_key = derivative_mapping[deriv_name]
+            if term_key in results and f'{term_key}_gt' in ground_truth_derivatives:
+                terms_to_plot.append((term_key, ground_truth_derivatives[f'{term_key}_gt']))
+    
+    if not terms_to_plot:
+        print(f"  Warning: No relevant terms found for {layer_name}, skipping heatmap")
+        return
+    
+    n_terms = len(terms_to_plot)
+    n_rows = output_dim * 3  # 3 types: predicted, GT, error
     
     # Create grid for interpolation
     x_grid = np.linspace(x_flat.min(), x_flat.max(), 200)
     t_grid = np.linspace(t_flat.min(), t_flat.max(), 200)
     X_grid, T_grid = np.meshgrid(x_grid, t_grid)
     
-    # Terms to plot
-    terms = ['h', 'h_t', 'h_xx']
-    terms_gt = [h_gt, h_t_gt, h_xx_gt]
-    term_labels = ['h', 'h_t', 'h_xx']
+    fig, axes = plt.subplots(n_rows, n_terms, figsize=(6*n_terms, 4.5*n_rows))
+    if n_rows == 1:
+        axes = axes.reshape(1, -1)
+    if n_terms == 1:
+        axes = axes.reshape(-1, 1)
     
-    fig, axes = plt.subplots(6, 3, figsize=(18, 28))
     fig.suptitle(f'Derivative Heatmaps with Ground Truth - {layer_name}', 
                  fontsize=16, fontweight='bold')
     
-    for col_idx, (term, term_gt_data, label) in enumerate(zip(terms, terms_gt, term_labels)):
-        term_pred = results[term]  # (N, 2)
-        
-        # Compute error
+    cmaps = ['viridis', 'plasma', 'inferno', 'magma']
+    if output_dim == 1:
+        comp_names = ['h(x,t)']
+    elif output_dim == 2:
+        comp_names = ['u (real)', 'v (imag)']
+    else:
+        comp_names = [f'h_{i}' for i in range(output_dim)]
+    
+    for col_idx, (term_key, term_gt_data) in enumerate(terms_to_plot):
+        term_pred = results[term_key]  # (N, output_dim)
         term_error = np.abs(term_pred - term_gt_data)
         
-        # Row 0-1: Predicted (u, v)
-        for comp_idx, (comp_name, cmap, comp_label) in enumerate([
-            ('u', 'viridis', 'u (real)'), ('v', 'plasma', 'v (imag)')
-        ]):
-            pred_data = term_pred[:, comp_idx]
-            pred_grid = griddata((x_flat, t_flat), pred_data, 
-                                (X_grid, T_grid), method='cubic')
+        for comp_idx in range(output_dim):
+            cmap = cmaps[comp_idx % len(cmaps)]
             
-            ax = axes[comp_idx, col_idx]
+            # Predicted
+            row = comp_idx
+            pred_data = term_pred[:, comp_idx] if output_dim > 1 else term_pred.flatten()
+            pred_grid = griddata((x_flat, t_flat), pred_data, (X_grid, T_grid), method='cubic')
+            
+            ax = axes[row, col_idx]
             im = ax.contourf(X_grid, T_grid, pred_grid, levels=50, cmap=cmap)
-            
-            # Add row label on leftmost column
             if col_idx == 0:
-                ax.set_ylabel(f'{comp_label}\nPredicted\nt', 
-                             fontsize=10, fontweight='bold')
+                ax.set_ylabel(f'{comp_names[comp_idx]}\nPredicted\nt', fontsize=10, fontweight='bold')
             else:
                 ax.set_ylabel('t', fontsize=10)
-            
-            # Column titles only on first row
-            if comp_idx == 0:
-                ax.set_title(f'{label}', fontsize=12, fontweight='bold')
+            if row == 0:
+                ax.set_title(f'{term_key}', fontsize=12, fontweight='bold')
             plt.colorbar(im, ax=ax)
-        
-        # Row 2-3: Ground truth (u, v)
-        for comp_idx, (comp_name, cmap, comp_label) in enumerate([
-            ('u', 'viridis', 'u (real)'), ('v', 'plasma', 'v (imag)')
-        ]):
-            gt_data = term_gt_data[:, comp_idx]
-            gt_grid = griddata((x_flat, t_flat), gt_data, 
-                              (X_grid, T_grid), method='cubic')
             
-            ax = axes[2 + comp_idx, col_idx]
+            # Ground truth
+            row = output_dim + comp_idx
+            gt_data = term_gt_data[:, comp_idx] if output_dim > 1 else term_gt_data.flatten()
+            gt_grid = griddata((x_flat, t_flat), gt_data, (X_grid, T_grid), method='cubic')
+            
+            ax = axes[row, col_idx]
             im = ax.contourf(X_grid, T_grid, gt_grid, levels=50, cmap=cmap)
-            
-            # Add row label on leftmost column
             if col_idx == 0:
-                ax.set_ylabel(f'{comp_label}\nGround Truth\nt', 
-                             fontsize=10, fontweight='bold')
+                ax.set_ylabel(f'{comp_names[comp_idx]}\nGround Truth\nt', fontsize=10, fontweight='bold')
             else:
                 ax.set_ylabel('t', fontsize=10)
             plt.colorbar(im, ax=ax)
-        
-        # Row 4-5: Error (u, v)
-        for comp_idx, (comp_name, cmap, comp_label) in enumerate([
-            ('u', 'Reds', 'u (real)'), ('v', 'Reds', 'v (imag)')
-        ]):
-            error_data = term_error[:, comp_idx]
-            error_grid = griddata((x_flat, t_flat), error_data, 
-                                 (X_grid, T_grid), method='cubic')
             
-            ax = axes[4 + comp_idx, col_idx]
-            im = ax.contourf(X_grid, T_grid, error_grid, levels=50, cmap=cmap)
+            # Error
+            row = 2*output_dim + comp_idx
+            error_data = term_error[:, comp_idx] if output_dim > 1 else term_error.flatten()
+            error_grid = griddata((x_flat, t_flat), error_data, (X_grid, T_grid), method='cubic')
             
-            # Add row label on leftmost column
+            ax = axes[row, col_idx]
+            im = ax.contourf(X_grid, T_grid, error_grid, levels=50, cmap='Reds')
             if col_idx == 0:
-                ax.set_ylabel(f'{comp_label}\n|Error|\nt', 
-                             fontsize=10, fontweight='bold')
+                ax.set_ylabel(f'{comp_names[comp_idx]}\n|Error|\nt', fontsize=10, fontweight='bold')
             else:
                 ax.set_ylabel('t', fontsize=10)
             ax.set_xlabel('x', fontsize=10)
@@ -358,7 +437,10 @@ def plot_residual_heatmaps(
         print(f"  Warning: Layer {layer_name} not found, skipping residual heatmap")
         return
     
-    residual = derivatives_results[layer_name]['residual']  # (N, 2)
+    residual = derivatives_results[layer_name]['residual']  # (N, output_dim)
+    
+    # Determine output_dim
+    output_dim = residual.shape[1] if len(residual.shape) > 1 else 1
     
     # Flatten x and t if needed
     x_flat = x.flatten() if isinstance(x, np.ndarray) else x
@@ -369,31 +451,29 @@ def plot_residual_heatmaps(
     t_grid = np.linspace(t_flat.min(), t_flat.max(), 200)
     X_grid, T_grid = np.meshgrid(x_grid, t_grid)
     
-    # Interpolate residual components
-    f_u = residual[:, 0]
-    f_v = residual[:, 1]
+    fig, axes = plt.subplots(output_dim, 1, figsize=(12, 5*output_dim))
+    if output_dim == 1:
+        axes = [axes]
     
-    f_u_grid = griddata((x_flat, t_flat), f_u, (X_grid, T_grid), method='cubic')
-    f_v_grid = griddata((x_flat, t_flat), f_v, (X_grid, T_grid), method='cubic')
-    
-    fig, axes = plt.subplots(2, 1, figsize=(12, 10))
     fig.suptitle(f'Residual Heatmaps - {layer_name}', fontsize=16, fontweight='bold')
     
-    # Top: Real residual
-    ax = axes[0]
-    im = ax.contourf(X_grid, T_grid, f_u_grid, levels=50, cmap='RdBu_r')
-    ax.set_xlabel('x', fontsize=12)
-    ax.set_ylabel('t', fontsize=12)
-    ax.set_title('Residual f_u (real)', fontsize=13, fontweight='bold')
-    plt.colorbar(im, ax=ax)
+    if output_dim == 1:
+        comp_names = ['Residual f']
+    elif output_dim == 2:
+        comp_names = ['f_u (real)', 'f_v (imag)']
+    else:
+        comp_names = [f'f_{i}' for i in range(output_dim)]
     
-    # Bottom: Imaginary residual
-    ax = axes[1]
-    im = ax.contourf(X_grid, T_grid, f_v_grid, levels=50, cmap='RdBu_r')
-    ax.set_xlabel('x', fontsize=12)
-    ax.set_ylabel('t', fontsize=12)
-    ax.set_title('Residual f_v (imag)', fontsize=13, fontweight='bold')
-    plt.colorbar(im, ax=ax)
+    for comp_idx in range(output_dim):
+        f_comp = residual[:, comp_idx] if output_dim > 1 else residual.flatten()
+        f_comp_grid = griddata((x_flat, t_flat), f_comp, (X_grid, T_grid), method='cubic')
+        
+        ax = axes[comp_idx]
+        im = ax.contourf(X_grid, T_grid, f_comp_grid, levels=50, cmap='RdBu_r')
+        ax.set_xlabel('x', fontsize=12)
+        ax.set_ylabel('t', fontsize=12)
+        ax.set_title(comp_names[comp_idx], fontsize=13, fontweight='bold')
+        plt.colorbar(im, ax=ax)
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.97])
     
@@ -436,6 +516,11 @@ def plot_residual_change_heatmaps(
     if n_layers < 2:
         return  # Need at least 2 layers for changes
     
+    # Determine output_dim from first layer
+    first_layer = layer_names[0]
+    residual_sample = derivatives_results[first_layer]['residual']
+    output_dim = residual_sample.shape[1] if len(residual_sample.shape) > 1 else 1
+    
     # Store interpolated grids for all layers
     x_flat = x.flatten() if isinstance(x, np.ndarray) else x
     t_flat = t.flatten() if isinstance(t, np.ndarray) else t
@@ -447,31 +532,27 @@ def plot_residual_change_heatmaps(
     # Pre-compute all grids
     residual_grids = {}
     for layer_name in layer_names:
-        residual = derivatives_results[layer_name]['residual']  # (N, 2)
-        f_u = residual[:, 0]
-        f_v = residual[:, 1]
+        residual = derivatives_results[layer_name]['residual']  # (N, output_dim)
         
-        f_u_grid = griddata((x_flat, t_flat), f_u, (X_grid, T_grid),
-                            method='cubic', fill_value=0)
-        f_v_grid = griddata((x_flat, t_flat), f_v, (X_grid, T_grid),
-                            method='cubic', fill_value=0)
+        layer_grid = {}
+        for comp_idx in range(output_dim):
+            f_comp = residual[:, comp_idx] if output_dim > 1 else residual.flatten()
+            f_comp_grid = griddata((x_flat, t_flat), f_comp, (X_grid, T_grid),
+                                   method='cubic', fill_value=0)
+            layer_grid[f'f_{comp_idx}'] = f_comp_grid
         
-        residual_grids[layer_name] = {
-            'f_u': f_u_grid,
-            'f_v': f_v_grid
-        }
+        residual_grids[layer_name] = layer_grid
     
-    # Create figure for changes (N-1 transitions, 2 subplots each)
-    # Layout: imaginary below real, arrange transitions to make figure square
+    # Create figure for changes (N-1 transitions, output_dim subplots each)
+    # Layout: stack components vertically, arrange transitions to make figure square
     n_changes = n_layers - 1
     
     # Calculate optimal grid layout for roughly square figure
-    # Each transition needs 2 rows (u on top, v below)
-    # n_cols_transitions = number of transitions per row
+    # Each transition needs output_dim rows
     import math
     n_cols_transitions = max(1, int(math.ceil(math.sqrt(n_changes))))
     n_rows_groups = int(math.ceil(n_changes / n_cols_transitions))
-    n_rows_total = n_rows_groups * 2  # 2 rows per transition group
+    n_rows_total = n_rows_groups * output_dim  # output_dim rows per transition group
     
     fig, axes = plt.subplots(n_rows_total, n_cols_transitions,
                              figsize=(6 * n_cols_transitions, 5 * n_rows_groups))
@@ -480,7 +561,9 @@ def plot_residual_change_heatmaps(
                  fontsize=14, fontweight='bold')
     
     # Ensure axes is 2D
-    if n_rows_total == 1:
+    if n_rows_total == 1 and n_cols_transitions == 1:
+        axes = np.array([[axes]])
+    elif n_rows_total == 1:
         axes = axes.reshape(1, -1)
     elif n_cols_transitions == 1:
         axes = axes.reshape(-1, 1)
@@ -488,57 +571,49 @@ def plot_residual_change_heatmaps(
     # Define colormap normalization (center at 1.0)
     norm = TwoSlopeNorm(vmin=0.0, vcenter=1.0, vmax=3.0)
     
+    if output_dim == 1:
+        comp_names = ['Residual f']
+    elif output_dim == 2:
+        comp_names = ['f_u (real)', 'f_v (imag)']
+    else:
+        comp_names = [f'f_{i}' for i in range(output_dim)]
+    
     for idx in range(n_changes):
         layer_prev = layer_names[idx]
         layer_curr = layer_names[idx + 1]
         
-        prev_u = residual_grids[layer_prev]['f_u']
-        prev_v = residual_grids[layer_prev]['f_v']
-        curr_u = residual_grids[layer_curr]['f_u']
-        curr_v = residual_grids[layer_curr]['f_v']
-        
-        # Compute ratio: abs(curr) / abs(prev)
-        # Handle division by zero: set to large value (error got worse)
-        eps = 1e-10
-        ratio_u = np.abs(curr_u) / (np.abs(prev_u) + eps)
-        ratio_v = np.abs(curr_v) / (np.abs(prev_v) + eps)
-        
-        # Cap extreme values for visualization
-        ratio_u = np.clip(ratio_u, 0, 5)
-        ratio_v = np.clip(ratio_v, 0, 5)
-        
         # Calculate position in grid
         col_idx = idx % n_cols_transitions
         row_group = idx // n_cols_transitions
-        row_u = row_group * 2  # Real part row
-        row_v = row_group * 2 + 1  # Imaginary part row (below real)
         
-        # Plot real part change (top)
-        ax_u = axes[row_u, col_idx]
-        im_u = ax_u.contourf(X_grid, T_grid, ratio_u, levels=50,
-                             cmap='RdYlGn_r', norm=norm)
-        ax_u.set_xlabel('x', fontsize=11)
-        ax_u.set_ylabel('t', fontsize=11)
-        ax_u.set_title(f'{layer_prev} → {layer_curr}\nReal part (u)',
-                      fontsize=12, fontweight='bold')
-        cbar_u = plt.colorbar(im_u, ax=ax_u)
-        cbar_u.set_label('Error Ratio', fontsize=10)
-        
-        # Plot imaginary part change (below)
-        ax_v = axes[row_v, col_idx]
-        im_v = ax_v.contourf(X_grid, T_grid, ratio_v, levels=50,
-                             cmap='RdYlGn_r', norm=norm)
-        ax_v.set_xlabel('x', fontsize=11)
-        ax_v.set_ylabel('t', fontsize=11)
-        ax_v.set_title(f'{layer_prev} → {layer_curr}\nImaginary part (v)',
-                      fontsize=12, fontweight='bold')
-        cbar_v = plt.colorbar(im_v, ax=ax_v)
-        cbar_v.set_label('Error Ratio', fontsize=10)
+        # Plot change for each output component
+        for comp_idx in range(output_dim):
+            prev_comp = residual_grids[layer_prev][f'f_{comp_idx}']
+            curr_comp = residual_grids[layer_curr][f'f_{comp_idx}']
+            
+            # Compute ratio: abs(curr) / abs(prev)
+            eps = 1e-10
+            ratio = np.abs(curr_comp) / (np.abs(prev_comp) + eps)
+            ratio = np.clip(ratio, 0, 5)  # Cap extreme values
+            
+            # Get subplot position
+            row_idx = row_group * output_dim + comp_idx
+            ax = axes[row_idx, col_idx]
+            
+            # Plot
+            im = ax.contourf(X_grid, T_grid, ratio, levels=50,
+                           cmap='RdYlGn_r', norm=norm)
+            ax.set_xlabel('x', fontsize=11)
+            ax.set_ylabel('t', fontsize=11)
+            ax.set_title(f'{layer_prev} → {layer_curr}\n{comp_names[comp_idx]}',
+                        fontsize=12, fontweight='bold')
+            cbar = plt.colorbar(im, ax=ax)
+            cbar.set_label('Error Ratio', fontsize=10)
     
     # Hide unused subplots if any
     for row in range(n_rows_total):
         for col in range(n_cols_transitions):
-            trans_idx = (row // 2) * n_cols_transitions + col
+            trans_idx = (row // output_dim) * n_cols_transitions + col
             if trans_idx >= n_changes:
                 axes[row, col].axis('off')
     
@@ -560,7 +635,8 @@ def generate_all_derivative_plots(
     x: np.ndarray,
     t: np.ndarray,
     ground_truth_derivatives: Dict[str, np.ndarray],
-    save_dir: Path
+    save_dir: Path,
+    config: Dict = None
 ) -> None:
     """
     Generate all derivative visualization plots.
@@ -578,7 +654,7 @@ def generate_all_derivative_plots(
     plot_residual_summary(train_results, eval_results, save_dir)
     
     # Plot 2: Term magnitudes (eval set for clarity)
-    plot_term_magnitudes(eval_results, save_dir)
+    plot_term_magnitudes(eval_results, save_dir, config)
     
     layer_names = sorted(eval_results.keys())
     
@@ -619,7 +695,8 @@ def generate_all_derivative_plots(
                 x,
                 t,
                 ground_truth_derivatives,
-                save_dir
+                save_dir,
+                config
             )
         except Exception as exc:
             print(f"    WARNING: derivative heatmaps failed for {layer_name}: {exc}")
