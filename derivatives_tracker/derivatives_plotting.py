@@ -404,6 +404,152 @@ def plot_residual_heatmaps(
     print(f"  Residual heatmaps for {layer_name} saved to {save_path}")
 
 
+def plot_residual_change_heatmaps(
+    derivatives_results: Dict[str, Dict],
+    x: np.ndarray,
+    t: np.ndarray,
+    save_dir: Path
+) -> None:
+    """
+    Plot residual change heatmaps showing error evolution between layers.
+    
+    For each transition, computes: abs(residual_{i+1}) / abs(residual_i)
+    - 0.0 (green): Error eliminated
+    - 1.0 (white): No change
+    - >1.0 (red): Error increased
+    
+    Args:
+        derivatives_results: Dict mapping layer_name -> results dict
+        x: Spatial coordinates
+        t: Temporal coordinates
+        save_dir: Directory to save plot
+    """
+    from matplotlib.colors import TwoSlopeNorm
+    
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    
+    layer_names = sorted(derivatives_results.keys(),
+                        key=lambda x: int(x.split('_')[1]))
+    n_layers = len(layer_names)
+    
+    if n_layers < 2:
+        return  # Need at least 2 layers for changes
+    
+    # Store interpolated grids for all layers
+    x_flat = x.flatten() if isinstance(x, np.ndarray) else x
+    t_flat = t.flatten() if isinstance(t, np.ndarray) else t
+    
+    x_grid = np.linspace(x_flat.min(), x_flat.max(), 200)
+    t_grid = np.linspace(t_flat.min(), t_flat.max(), 200)
+    X_grid, T_grid = np.meshgrid(x_grid, t_grid)
+    
+    # Pre-compute all grids
+    residual_grids = {}
+    for layer_name in layer_names:
+        residual = derivatives_results[layer_name]['residual']  # (N, 2)
+        f_u = residual[:, 0]
+        f_v = residual[:, 1]
+        
+        f_u_grid = griddata((x_flat, t_flat), f_u, (X_grid, T_grid),
+                            method='cubic', fill_value=0)
+        f_v_grid = griddata((x_flat, t_flat), f_v, (X_grid, T_grid),
+                            method='cubic', fill_value=0)
+        
+        residual_grids[layer_name] = {
+            'f_u': f_u_grid,
+            'f_v': f_v_grid
+        }
+    
+    # Create figure for changes (N-1 transitions, 2 subplots each)
+    # Layout: imaginary below real, arrange transitions to make figure square
+    n_changes = n_layers - 1
+    
+    # Calculate optimal grid layout for roughly square figure
+    # Each transition needs 2 rows (u on top, v below)
+    # n_cols_transitions = number of transitions per row
+    import math
+    n_cols_transitions = max(1, int(math.ceil(math.sqrt(n_changes))))
+    n_rows_groups = int(math.ceil(n_changes / n_cols_transitions))
+    n_rows_total = n_rows_groups * 2  # 2 rows per transition group
+    
+    fig, axes = plt.subplots(n_rows_total, n_cols_transitions,
+                             figsize=(6 * n_cols_transitions, 5 * n_rows_groups))
+    fig.suptitle('Residual Error Changes Between Layers\n'
+                 '(Ratio: |layer_{i+1}| / |layer_i|, Green=Improved, Red=Worse)',
+                 fontsize=14, fontweight='bold')
+    
+    # Ensure axes is 2D
+    if n_rows_total == 1:
+        axes = axes.reshape(1, -1)
+    elif n_cols_transitions == 1:
+        axes = axes.reshape(-1, 1)
+    
+    # Define colormap normalization (center at 1.0)
+    norm = TwoSlopeNorm(vmin=0.0, vcenter=1.0, vmax=3.0)
+    
+    for idx in range(n_changes):
+        layer_prev = layer_names[idx]
+        layer_curr = layer_names[idx + 1]
+        
+        prev_u = residual_grids[layer_prev]['f_u']
+        prev_v = residual_grids[layer_prev]['f_v']
+        curr_u = residual_grids[layer_curr]['f_u']
+        curr_v = residual_grids[layer_curr]['f_v']
+        
+        # Compute ratio: abs(curr) / abs(prev)
+        # Handle division by zero: set to large value (error got worse)
+        eps = 1e-10
+        ratio_u = np.abs(curr_u) / (np.abs(prev_u) + eps)
+        ratio_v = np.abs(curr_v) / (np.abs(prev_v) + eps)
+        
+        # Cap extreme values for visualization
+        ratio_u = np.clip(ratio_u, 0, 5)
+        ratio_v = np.clip(ratio_v, 0, 5)
+        
+        # Calculate position in grid
+        col_idx = idx % n_cols_transitions
+        row_group = idx // n_cols_transitions
+        row_u = row_group * 2  # Real part row
+        row_v = row_group * 2 + 1  # Imaginary part row (below real)
+        
+        # Plot real part change (top)
+        ax_u = axes[row_u, col_idx]
+        im_u = ax_u.contourf(X_grid, T_grid, ratio_u, levels=50,
+                             cmap='RdYlGn_r', norm=norm)
+        ax_u.set_xlabel('x', fontsize=11)
+        ax_u.set_ylabel('t', fontsize=11)
+        ax_u.set_title(f'{layer_prev} → {layer_curr}\nReal part (u)',
+                      fontsize=12, fontweight='bold')
+        cbar_u = plt.colorbar(im_u, ax=ax_u)
+        cbar_u.set_label('Error Ratio', fontsize=10)
+        
+        # Plot imaginary part change (below)
+        ax_v = axes[row_v, col_idx]
+        im_v = ax_v.contourf(X_grid, T_grid, ratio_v, levels=50,
+                             cmap='RdYlGn_r', norm=norm)
+        ax_v.set_xlabel('x', fontsize=11)
+        ax_v.set_ylabel('t', fontsize=11)
+        ax_v.set_title(f'{layer_prev} → {layer_curr}\nImaginary part (v)',
+                      fontsize=12, fontweight='bold')
+        cbar_v = plt.colorbar(im_v, ax=ax_v)
+        cbar_v.set_label('Error Ratio', fontsize=10)
+    
+    # Hide unused subplots if any
+    for row in range(n_rows_total):
+        for col in range(n_cols_transitions):
+            trans_idx = (row // 2) * n_cols_transitions + col
+            if trans_idx >= n_changes:
+                axes[row, col].axis('off')
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    save_path = save_dir / 'residual_change_heatmaps.png'
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Residual change heatmaps saved to {save_path}")
+
+
 def generate_all_derivative_plots(
     train_results: Dict[str, Dict],
     eval_results: Dict[str, Dict],
@@ -487,6 +633,12 @@ def generate_all_derivative_plots(
             )
         except Exception as exc:
             print(f"    WARNING: residual heatmaps failed for {layer_name}: {exc}")
+    
+    # Generate residual change heatmaps (N-1 transitions)
+    try:
+        plot_residual_change_heatmaps(eval_results, x, t, save_dir)
+    except Exception as exc:
+        print(f"    WARNING: residual change heatmaps failed: {exc}")
     
     print(f"All derivative plots generated in {save_dir}")
 

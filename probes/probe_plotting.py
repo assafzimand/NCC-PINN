@@ -187,6 +187,159 @@ def plot_probe_error_heatmaps(
     print(f"  Probe error heatmaps saved to {save_dir}")
 
 
+def plot_probe_error_change_heatmaps(
+    probe_results: Dict,
+    eval_x: np.ndarray,
+    eval_t: np.ndarray,
+    eval_targets: np.ndarray,
+    save_dir: Path
+):
+    """
+    Plot probe error change heatmaps showing how errors evolve between layers.
+    
+    For each transition, computes: abs(error_{i+1}) / abs(error_i)
+    - 0.0 (green): Error eliminated
+    - 1.0 (white): No change
+    - >1.0 (red): Error increased
+    
+    Args:
+        probe_results: Dictionary from probe_all_layers()
+        eval_x: Spatial coordinates (N,)
+        eval_t: Temporal coordinates (N,)
+        eval_targets: Ground truth outputs (N, 2) - [u, v]
+        save_dir: Directory to save plots
+    """
+    import matplotlib.pyplot as plt
+    from scipy.interpolate import griddata
+    from matplotlib.colors import TwoSlopeNorm
+    
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    
+    layer_names = sorted(probe_results.keys(),
+                        key=lambda x: int(x.split('_')[1]))
+    n_layers = len(layer_names)
+    
+    if n_layers < 2:
+        return  # Need at least 2 layers for changes
+    
+    # Pre-compute error grids for all layers
+    x_min, x_max = eval_x.min(), eval_x.max()
+    t_min, t_max = eval_t.min(), eval_t.max()
+    grid_x, grid_t = np.meshgrid(
+        np.linspace(x_min, x_max, 200),
+        np.linspace(t_min, t_max, 200)
+    )
+    
+    points = np.column_stack([eval_x, eval_t])
+    error_grids = {}
+    
+    for layer_name in layer_names:
+        eval_preds = probe_results[layer_name]['eval_predictions']  # (N, 2)
+        error = eval_preds - eval_targets  # (N, 2)
+        error_u = error[:, 0]  # real part error
+        error_v = error[:, 1]  # imaginary part error
+        
+        # Interpolate errors onto grid
+        grid_error_u = griddata(points, error_u, (grid_x, grid_t),
+                                method='cubic', fill_value=0)
+        grid_error_v = griddata(points, error_v, (grid_x, grid_t),
+                                method='cubic', fill_value=0)
+        
+        error_grids[layer_name] = {
+            'error_u': grid_error_u,
+            'error_v': grid_error_v
+        }
+    
+    # Create figure for changes (N-1 transitions, 2 subplots each)
+    # Layout: imaginary below real, arrange transitions to make figure square
+    n_changes = n_layers - 1
+    
+    # Calculate optimal grid layout for roughly square figure
+    # Each transition needs 2 rows (u on top, v below)
+    # n_cols_transitions = number of transitions per row
+    import math
+    n_cols_transitions = max(1, int(math.ceil(math.sqrt(n_changes))))
+    n_rows_groups = int(math.ceil(n_changes / n_cols_transitions))
+    n_rows_total = n_rows_groups * 2  # 2 rows per transition group
+    
+    fig, axes = plt.subplots(n_rows_total, n_cols_transitions,
+                             figsize=(6 * n_cols_transitions, 5 * n_rows_groups))
+    fig.suptitle('Probe Error Changes Between Layers\n'
+                 '(Ratio: |error_{i+1}| / |error_i|, Green=Improved, Red=Worse)',
+                 fontsize=14, fontweight='bold')
+    
+    # Ensure axes is 2D
+    if n_rows_total == 1:
+        axes = axes.reshape(1, -1)
+    elif n_cols_transitions == 1:
+        axes = axes.reshape(-1, 1)
+    
+    # Define colormap normalization (center at 1.0)
+    norm = TwoSlopeNorm(vmin=0.0, vcenter=1.0, vmax=3.0)
+    
+    for idx in range(n_changes):
+        layer_prev = layer_names[idx]
+        layer_curr = layer_names[idx + 1]
+        
+        prev_u = error_grids[layer_prev]['error_u']
+        prev_v = error_grids[layer_prev]['error_v']
+        curr_u = error_grids[layer_curr]['error_u']
+        curr_v = error_grids[layer_curr]['error_v']
+        
+        # Compute ratio: abs(curr) / abs(prev)
+        # Handle division by zero: set to large value (error got worse)
+        eps = 1e-10
+        ratio_u = np.abs(curr_u) / (np.abs(prev_u) + eps)
+        ratio_v = np.abs(curr_v) / (np.abs(prev_v) + eps)
+        
+        # Cap extreme values for visualization
+        ratio_u = np.clip(ratio_u, 0, 5)
+        ratio_v = np.clip(ratio_v, 0, 5)
+        
+        # Calculate position in grid
+        col_idx = idx % n_cols_transitions
+        row_group = idx // n_cols_transitions
+        row_u = row_group * 2  # Real part row
+        row_v = row_group * 2 + 1  # Imaginary part row (below real)
+        
+        # Plot real part change (top)
+        ax_u = axes[row_u, col_idx]
+        im_u = ax_u.contourf(grid_x, grid_t, ratio_u, levels=50,
+                             cmap='RdYlGn_r', norm=norm)
+        ax_u.set_xlabel('x', fontsize=11)
+        ax_u.set_ylabel('t', fontsize=11)
+        ax_u.set_title(f'{layer_prev} → {layer_curr}\nReal part (u) error',
+                      fontsize=12, fontweight='bold')
+        cbar_u = plt.colorbar(im_u, ax=ax_u)
+        cbar_u.set_label('Error Ratio', fontsize=10)
+        
+        # Plot imaginary part change (below)
+        ax_v = axes[row_v, col_idx]
+        im_v = ax_v.contourf(grid_x, grid_t, ratio_v, levels=50,
+                             cmap='RdYlGn_r', norm=norm)
+        ax_v.set_xlabel('x', fontsize=11)
+        ax_v.set_ylabel('t', fontsize=11)
+        ax_v.set_title(f'{layer_prev} → {layer_curr}\nImaginary part (v) error',
+                      fontsize=12, fontweight='bold')
+        cbar_v = plt.colorbar(im_v, ax=ax_v)
+        cbar_v.set_label('Error Ratio', fontsize=10)
+    
+    # Hide unused subplots if any
+    for row in range(n_rows_total):
+        for col in range(n_cols_transitions):
+            trans_idx = (row // 2) * n_cols_transitions + col
+            if trans_idx >= n_changes:
+                axes[row, col].axis('off')
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    save_path = save_dir / 'probe_error_change_heatmaps.png'
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Probe error change heatmaps saved to {save_path}")
+
+
 def generate_all_probe_plots(
     probe_results: Dict, 
     save_dir: Path,
@@ -211,6 +364,8 @@ def generate_all_probe_plots(
     # Generate error heatmaps if data is provided
     if eval_x is not None and eval_t is not None and eval_targets is not None:
         plot_probe_error_heatmaps(probe_results, eval_x, eval_t, eval_targets, save_dir)
+        # Also generate change heatmaps
+        plot_probe_error_change_heatmaps(probe_results, eval_x, eval_t, eval_targets, save_dir)
     
     print("  All probe plots generated")
 
