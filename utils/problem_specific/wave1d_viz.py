@@ -348,7 +348,9 @@ def visualize_ncc_classification_input_space_heatmap(
     config: Dict
 ):
     """
-    Visualize NCC classification accuracy heatmap in (x,t) space.
+    Visualize NCC classification accuracy as smooth continuous heatmap in (x,t) space.
+    
+    Uses interpolation to create smooth heatmaps from scattered accuracy data.
     
     Args:
         x: Spatial coordinates (N, 1)
@@ -361,14 +363,13 @@ def visualize_ncc_classification_input_space_heatmap(
     from scipy.interpolate import griddata
     
     n_bin_vis = config.get('n_bin_visualize_ncc', 100)
-    min_samples = config.get('min_samples_threshold', 1)
     
     n_layers = len(predictions_dict)
     fig, axes = plt.subplots(1, n_layers, figsize=(6*n_layers, 5))
     if n_layers == 1:
         axes = [axes]
     
-    # Create grid
+    # Create dense grid for smooth visualization
     x_vals = x[:, 0]
     t_vals = t[:, 0]
     x_grid = np.linspace(x_vals.min(), x_vals.max(), n_bin_vis)
@@ -380,30 +381,30 @@ def visualize_ncc_classification_input_space_heatmap(
         preds_np = preds if isinstance(preds, np.ndarray) else preds.cpu().numpy()
         labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.cpu().numpy()
         
-        # Bin the space and compute accuracy
+        # Compute per-point correctness (1 or 0)
         correct = (preds_np == labels_np).astype(float)
         
-        # Grid accuracy using binning
-        accuracy_grid = np.full((n_bin_vis, n_bin_vis), np.nan)
-        for i in range(n_bin_vis):
-            for j in range(n_bin_vis):
-                x_mask = (x_vals >= x_grid[i] - (x_grid[1]-x_grid[0])/2) & \
-                         (x_vals < x_grid[i] + (x_grid[1]-x_grid[0])/2)
-                t_mask = (t_vals >= t_grid[j] - (t_grid[1]-t_grid[0])/2) & \
-                         (t_vals < t_grid[j] + (t_grid[1]-t_grid[0])/2)
-                mask = x_mask & t_mask
-                if mask.sum() >= min_samples:
-                    accuracy_grid[j, i] = correct[mask].mean()
+        # Interpolate to dense grid for smooth heatmap
+        points = np.column_stack([x_vals, t_vals])
+        accuracy_grid = griddata(
+            points, 
+            correct, 
+            (X_grid, T_grid), 
+            method='cubic',
+            fill_value=0.5  # Neutral value for extrapolated regions
+        )
         
-        # Plot heatmap
-        im = ax.imshow(accuracy_grid, extent=[x_vals.min(), x_vals.max(), 
-                                             t_vals.min(), t_vals.max()],
-                      origin='lower', cmap='RdYlGn', vmin=0, vmax=1, aspect='auto')
+        # Clip to [0, 1] range (cubic interpolation can overshoot)
+        accuracy_grid = np.clip(accuracy_grid, 0, 1)
+        
+        # Plot smooth heatmap using contourf
+        contour = ax.contourf(X_grid, T_grid, accuracy_grid, levels=20, 
+                             cmap='RdYlGn', vmin=0, vmax=1)
         ax.set_xlabel('x', fontsize=10)
         ax.set_ylabel('t', fontsize=10)
         ax.set_title(f'{layer_name}\nAcc: {correct.mean():.3f}', 
                     fontsize=11)
-        plt.colorbar(im, ax=ax, label='Accuracy')
+        plt.colorbar(contour, ax=ax, label='Accuracy')
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
@@ -435,12 +436,15 @@ def visualize_ncc_classification_input_space_accuracy_changes(
     save_path: Path,
     config: Dict
 ):
-    """Visualize NCC accuracy changes between layers in input space."""
+    """
+    Visualize NCC accuracy changes between layers as smooth continuous heatmaps in input space.
+    
+    Uses interpolation to create smooth transition heatmaps.
+    """
     from scipy.interpolate import griddata
     from matplotlib.colors import TwoSlopeNorm
     
     n_bin_vis = config.get('n_bin_visualize_ncc', 100)
-    min_samples = config.get('min_samples_threshold', 1)
     
     layer_names = list(predictions_dict.keys())
     n_transitions = len(layer_names) - 1
@@ -459,32 +463,34 @@ def visualize_ncc_classification_input_space_accuracy_changes(
     else:
         axes = axes.flatten()
     
-    # Create grid
+    # Create dense grid for smooth visualization
     x_vals = x[:, 0]
     t_vals = t[:, 0]
     x_grid = np.linspace(x_vals.min(), x_vals.max(), n_bin_vis)
     t_grid = np.linspace(t_vals.min(), t_vals.max(), n_bin_vis)
+    X_grid, T_grid = np.meshgrid(x_grid, t_grid)
     
-    # Compute accuracy grids for all layers first
+    # Compute interpolated accuracy grids for all layers
     accuracy_grids = {}
     labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.cpu().numpy()
+    points = np.column_stack([x_vals, t_vals])
     
     for layer_name, preds in predictions_dict.items():
         preds_np = preds if isinstance(preds, np.ndarray) else preds.cpu().numpy()
         correct = (preds_np == labels_np).astype(float)
-        accuracy_grid = np.full((n_bin_vis, n_bin_vis), np.nan)
-        for i in range(n_bin_vis):
-            for j in range(n_bin_vis):
-                x_mask = (x_vals >= x_grid[i] - (x_grid[1]-x_grid[0])/2) & \
-                         (x_vals < x_grid[i] + (x_grid[1]-x_grid[0])/2)
-                t_mask = (t_vals >= t_grid[j] - (t_grid[1]-t_grid[0])/2) & \
-                         (t_vals < t_grid[j] + (t_grid[1]-t_grid[0])/2)
-                mask = x_mask & t_mask
-                if mask.sum() >= min_samples:
-                    accuracy_grid[j, i] = correct[mask].mean()
+        
+        # Interpolate to dense grid
+        accuracy_grid = griddata(
+            points,
+            correct,
+            (X_grid, T_grid),
+            method='cubic',
+            fill_value=0.5
+        )
+        accuracy_grid = np.clip(accuracy_grid, 0, 1)
         accuracy_grids[layer_name] = accuracy_grid
     
-    # Plot changes
+    # Plot changes with smooth heatmaps
     for idx in range(n_transitions):
         ax = axes[idx]
         layer_prev = layer_names[idx]
@@ -494,13 +500,14 @@ def visualize_ncc_classification_input_space_accuracy_changes(
         
         # Use TwoSlopeNorm for diverging colormap centered at 0
         norm = TwoSlopeNorm(vmin=-1.0, vcenter=0.0, vmax=1.0)
-        im = ax.imshow(change, extent=[x_vals.min(), x_vals.max(),
-                                      t_vals.min(), t_vals.max()],
-                      origin='lower', cmap='RdYlGn', norm=norm, aspect='auto')
+        
+        # Plot smooth change heatmap using contourf
+        contour = ax.contourf(X_grid, T_grid, change, levels=20,
+                             cmap='RdYlGn', norm=norm)
         ax.set_xlabel('x', fontsize=10)
         ax.set_ylabel('t', fontsize=10)
         ax.set_title(f'{layer_prev} → {layer_curr}', fontsize=11)
-        plt.colorbar(im, ax=ax, label='Accuracy Change')
+        plt.colorbar(contour, ax=ax, label='Accuracy Change')
     
     # Hide unused subplots
     for idx in range(n_transitions, len(axes)):
