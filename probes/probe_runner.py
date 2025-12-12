@@ -14,7 +14,8 @@ def run_probes(
     train_data_path: str,
     eval_data_path: str,
     cfg: Dict,
-    run_dir: Path
+    run_dir: Path,
+    epoch_suffix: str = ""
 ) -> Dict:
     """
     Run complete linear probe analysis on a trained model.
@@ -25,6 +26,7 @@ def run_probes(
         eval_data_path: Path to eval_data.pt
         cfg: Configuration dictionary
         run_dir: Output directory for this run
+        epoch_suffix: Optional suffix for epoch-specific analysis (e.g., "_epoch_2")
         
     Returns:
         Dictionary with probe metrics summary
@@ -111,7 +113,13 @@ def run_probes(
     print("=" * 60)
     
     # Create output directory
-    probe_plots_dir = run_dir / "probe_plots"
+    if epoch_suffix:
+        # Periodic probes: save inside probe_plots/probe_plots_epoch_X/
+        probe_plots_dir = run_dir / "probe_plots" / f"probe_plots{epoch_suffix}"
+    else:
+        # Final probes: save directly in probe_plots/
+        probe_plots_dir = run_dir / "probe_plots"
+    
     probe_plots_dir.mkdir(parents=True, exist_ok=True)
     
     # Generate plots

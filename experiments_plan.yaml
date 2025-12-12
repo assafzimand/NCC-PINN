@@ -5,7 +5,7 @@ experiment_name: "dcrs_Wn_flat_many_lyr"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 10000
+  epochs: 3
   batch_size: 512
   lr: 0.0001
   
@@ -28,10 +28,10 @@ base_config:
   eval_only: false
   resume_from: null
   bins: 5
-  eval_every: 200
-  print_every: 1000
-  save_every: 5000
-  ncc_eval_every: 3400
+  eval_every: 2
+  print_every: 1
+  save_every: 2
+  inner_metrics_eval_every: 2
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -65,37 +65,10 @@ base_config:
 # Experiments to run (only architecture varies)
 experiments:  
   - name: "5_lyr_40k_Wn"
-    architecture: [2, 100, 100, 100, 100, 100, 2]
+    architecture: [2, 10, 10, 10, 10, 10, 2]
   
   - name: "3_lyr_40k_Wn"
-    architecture: [2, 140, 140, 140, 2]
+    architecture: [2, 14, 14, 14, 2]
 
   - name: "7_lyr_40k_Wn"
-    architecture: [2, 80, 80, 80, 80, 80, 80, 80, 2]
-
-  - name: "5_lyr_30k_Wn"
-    architecture: [2, 85, 85, 85, 85, 85, 2]
-  
-  - name: "3_lyr_30k_Wn"
-    architecture: [2, 120, 120, 120, 2]
-
-  - name: "7_lyr_30k_Wn"
-    architecture: [2, 70, 70, 70, 70, 70, 70, 70, 2]
-
-  - name: "5_lyr_20k_Wn"
-    architecture: [2, 70, 70, 70, 70, 70, 2]
-
-  - name: "3_lyr_20k_Wn"
-    architecture: [2, 100, 100, 100, 2]
-
-  - name: "7_lyr_20k_Wn"
-    architecture: [2, 58, 58, 58, 58, 58, 58, 58, 2]
-
-  - name: "5_lyr_10k_Wn"
-    architecture: [2, 50, 50, 50, 50, 50, 2]
-
-  - name: "3_lyr_10k_Wn"
-    architecture: [2, 70, 70, 70, 2]
-
-  - name: "7_lyr_10k_Wn"
-    architecture: [2, 40, 40, 40, 40, 40, 40, 40, 2]
+    architecture: [2, 8, 8, 8, 8, 8, 8, 8, 2]

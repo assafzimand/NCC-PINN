@@ -124,6 +124,7 @@ def train(
     # Training setup
     print_every = cfg['print_every']
     eval_every = cfg.get('eval_every', print_every)
+    inner_metrics_every = cfg.get('inner_metrics_eval_every', 0)
     save_every = cfg['save_every']
 
     # Metrics storage
@@ -335,11 +336,24 @@ def train(
             _save_checkpoint(best_checkpoint_path, model, optimizer, current_optimizer_name, epoch,
                            train_loss, eval_loss, cfg, metrics)
 
-        # Periodic NCC analysis
-        ncc_eval_every = cfg.get('ncc_eval_every', 0)
-        if ncc_eval_every > 0 and epoch % ncc_eval_every == 0:
-            print(f"\n  Running NCC analysis at epoch {epoch}...")
-            _run_intermediate_ncc(model, cfg, run_dir, epoch)
+        # Periodic inner metrics (NCC + probes + derivatives)
+        if inner_metrics_every > 0 and epoch % inner_metrics_every == 0:
+            print(f"\n  Running inner metrics at epoch {epoch} (NCC/Probes/Derivatives)...")
+            ncc_metrics = _run_intermediate_ncc(model, cfg, run_dir, epoch)
+            probe_metrics = _run_intermediate_probes(model, cfg, run_dir, epoch)
+            deriv_metrics = _run_intermediate_derivatives(model, cfg, run_dir, epoch)
+            # Cache for post-run shading overlays
+            if 'ncc_history' not in metrics:
+                metrics['ncc_history'] = []
+            metrics['ncc_history'].append((epoch, ncc_metrics))
+            if 'probe_history' not in metrics:
+                metrics['probe_history'] = []
+            if probe_metrics is not None:
+                metrics['probe_history'].append((epoch, probe_metrics))
+            if 'deriv_history' not in metrics:
+                metrics['deriv_history'] = []
+            if deriv_metrics is not None:
+                metrics['deriv_history'].append((epoch, deriv_metrics))
 
     # Save final model
     final_checkpoint_path = checkpoint_dir / "final_model.pt"
@@ -371,6 +385,53 @@ def train(
         eval_data['t'].cpu().numpy(),
         training_plots_dir
     )
+
+    # Run final probes and derivatives analysis (without epoch_suffix for main directory)
+    print("\n" + "=" * 60)
+    print("Running Final Probe and Derivative Analysis")
+    print("=" * 60)
+    
+    from probes.probe_runner import run_probes
+    from derivatives_tracker.derivatives_runner import run_derivatives_tracker
+    
+    train_data_path = Path("datasets") / cfg['problem'] / "training_data.pt"
+    eval_data_path = Path("datasets") / cfg['problem'] / "eval_data.pt"
+    
+    # Final probes (saves to main probe_plots/ directory)
+    print("\nRunning final probe analysis...")
+    final_probe_metrics = run_probes(
+        model=model,
+        train_data_path=str(train_data_path),
+        eval_data_path=str(eval_data_path),
+        cfg=cfg,
+        run_dir=run_dir
+    )
+    
+    # Final derivatives (saves to main derivatives_plots/ directory)
+    print("\nRunning final derivatives analysis...")
+    final_deriv_metrics = run_derivatives_tracker(
+        model=model,
+        train_data_path=str(train_data_path),
+        eval_data_path=str(eval_data_path),
+        cfg=cfg,
+        run_dir=run_dir
+    )
+    
+    # Add final results to history for shaded plotting
+    if 'probe_history' not in metrics:
+        metrics['probe_history'] = []
+    if final_probe_metrics is not None:
+        metrics['probe_history'].append((epochs, final_probe_metrics))
+    
+    if 'deriv_history' not in metrics:
+        metrics['deriv_history'] = []
+    if final_deriv_metrics is not None:
+        metrics['deriv_history'].append((epochs, final_deriv_metrics))
+    
+    # Post-run shaded overlays for mid-training metrics (if collected)
+    _maybe_plot_ncc_history(metrics, run_dir)
+    _maybe_plot_probe_history(metrics, run_dir)
+    _maybe_plot_deriv_history(metrics, run_dir)
 
     # Save metrics to JSON
     metrics_path = run_dir / "metrics.json"
@@ -530,11 +591,65 @@ def _run_intermediate_ncc(model, cfg, run_dir, epoch):
     ncc_data_path = Path("datasets") / cfg['problem'] / "ncc_data.pt"
     
     # Run NCC with epoch-specific output dir nested inside ncc_plots
-    run_ncc(
+    return run_ncc(
         model=model,
         eval_data_path=str(ncc_data_path),
         cfg=cfg,
         run_dir=run_dir,
         epoch_suffix=f"_epoch_{epoch}"
     )
+
+
+def _run_intermediate_probes(model, cfg, run_dir, epoch):
+    """Run probe analysis at intermediate epoch."""
+    from probes.probe_runner import run_probes
+    train_data_path = Path("datasets") / cfg['problem'] / "training_data.pt"
+    eval_data_path = Path("datasets") / cfg['problem'] / "eval_data.pt"
+    return run_probes(
+        model=model,
+        train_data_path=str(train_data_path),
+        eval_data_path=str(eval_data_path),
+        cfg=cfg,
+        run_dir=run_dir,
+        epoch_suffix=f"_epoch_{epoch}"
+    )
+
+
+def _run_intermediate_derivatives(model, cfg, run_dir, epoch):
+    """Run derivatives tracker at intermediate epoch."""
+    from derivatives_tracker.derivatives_runner import run_derivatives_tracker
+    train_data_path = Path("datasets") / cfg['problem'] / "training_data.pt"
+    eval_data_path = Path("datasets") / cfg['problem'] / "eval_data.pt"
+    return run_derivatives_tracker(
+        model=model,
+        train_data_path=str(train_data_path),
+        eval_data_path=str(eval_data_path),
+        cfg=cfg,
+        run_dir=run_dir,
+        epoch_suffix=f"_epoch_{epoch}"
+    )
+
+
+def _maybe_plot_ncc_history(metrics: Dict, run_dir: Path):
+    history = metrics.get('ncc_history')
+    if not history:
+        return
+    from ncc.ncc_plotting import plot_ncc_history_shaded
+    plot_ncc_history_shaded(history, run_dir / "ncc_plots")
+
+
+def _maybe_plot_probe_history(metrics: Dict, run_dir: Path):
+    history = metrics.get('probe_history')
+    if not history:
+        return
+    from probes.probe_plotting import plot_probe_history_shaded
+    plot_probe_history_shaded(history, run_dir / "probe_plots")
+
+
+def _maybe_plot_deriv_history(metrics: Dict, run_dir: Path):
+    history = metrics.get('deriv_history')
+    if not history:
+        return
+    from derivatives_tracker.derivatives_plotting import plot_derivative_history_shaded
+    plot_derivative_history_shaded(history, run_dir / "derivatives_plots")
 

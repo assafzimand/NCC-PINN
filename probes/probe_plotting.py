@@ -2,7 +2,7 @@
 
 import matplotlib.pyplot as plt
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 import numpy as np
 
 
@@ -122,4 +122,54 @@ def generate_all_probe_plots(probe_results: Dict, save_dir: Path):
     plot_probe_metrics(probe_results, save_dir)
     plot_layer_dimensions(probe_results, save_dir)
     print("  All probe plots generated")
+
+
+def plot_probe_history_shaded(history: List[tuple], save_dir: Path) -> None:
+    """
+    Overlay probe metrics across epochs with shaded progression.
+    history: list of (epoch, metrics_summary) where metrics_summary matches run_probes return.
+    """
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    if not history:
+        return
+    history = sorted(history, key=lambda x: x[0])
+    base_color = '#e74c3c'
+    alphas = [min(0.45 + 0.15 * idx, 1.0) for idx in range(len(history))]
+
+    # Rel-L2
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    for (epoch, metrics), alpha in zip(history, alphas):
+        layers = list(range(1, len(metrics['train']['rel_l2']) + 1))
+        axes[0].plot(layers, metrics['train']['rel_l2'], marker='o', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
+        axes[1].plot(layers, metrics['eval']['rel_l2'], marker='s', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
+    axes[0].set_title('Train Rel-L2 (shaded)')
+    axes[1].set_title('Eval Rel-L2 (shaded)')
+    for ax in axes:
+        ax.set_xlabel('Layer')
+        ax.set_ylabel('Rel-L2')
+        ax.set_yscale('log')
+        ax.grid(True, alpha=0.3)
+    axes[0].legend()
+    plt.tight_layout()
+    plt.savefig(save_dir / "probe_metrics.png", dpi=150, bbox_inches='tight')
+    plt.close()
+
+    # L_inf
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    for (epoch, metrics), alpha in zip(history, alphas):
+        layers = list(range(1, len(metrics['train']['inf_norm']) + 1))
+        axes[0].plot(layers, metrics['train']['inf_norm'], marker='o', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
+        axes[1].plot(layers, metrics['eval']['inf_norm'], marker='s', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
+    axes[0].set_title('Train L∞ (shaded)')
+    axes[1].set_title('Eval L∞ (shaded)')
+    for ax in axes:
+        ax.set_xlabel('Layer')
+        ax.set_ylabel('L∞')
+        ax.set_yscale('log')
+        ax.grid(True, alpha=0.3)
+    axes[0].legend()
+    plt.tight_layout()
+    plt.savefig(save_dir / "probe_metrics_inf.png", dpi=150, bbox_inches='tight')
+    plt.close()
 

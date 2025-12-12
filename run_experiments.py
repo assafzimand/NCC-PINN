@@ -145,25 +145,37 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
                         shutil.rmtree(dest_dir)
                     shutil.move(str(ncc_dir), str(dest_dir))
                     
-                    # Merge probe results into the same directory
+                    # Merge probe results into the same directory (preserving epoch subdirs)
                     probe_plots_src = probe_dir / "probe_plots"
                     if probe_plots_src.exists():
                         probe_plots_dest = dest_dir / "probe_plots"
-                        if probe_plots_dest.exists():
-                            shutil.rmtree(probe_plots_dest)
-                        shutil.move(str(probe_plots_src), str(probe_plots_dest))
+                        probe_plots_dest.mkdir(parents=True, exist_ok=True)
+                        
+                        # Copy files (not subdirs) from source to dest
+                        # Only copy metrics.json, preserve plot files from training (shaded versions)
+                        for item in probe_plots_src.iterdir():
+                            if item.is_file():
+                                # Only copy JSON files, skip plot images to preserve shaded versions
+                                if item.suffix == '.json':
+                                    shutil.copy2(item, probe_plots_dest / item.name)
                     
-                    # Clean up the probe directory (we've moved what we need)
+                    # Clean up the probe directory (we've copied what we need)
                     if probe_dir.exists():
                         shutil.rmtree(probe_dir)
                     
-                    # Merge derivatives results into the same directory
+                    # Merge derivatives results into the same directory (preserving epoch subdirs)
                     deriv_plots_src = deriv_dir / "derivatives_plots"
                     if deriv_plots_src.exists():
                         deriv_plots_dest = dest_dir / "derivatives_plots"
-                        if deriv_plots_dest.exists():
-                            shutil.rmtree(deriv_plots_dest)
-                        shutil.move(str(deriv_plots_src), str(deriv_plots_dest))
+                        deriv_plots_dest.mkdir(parents=True, exist_ok=True)
+                        
+                        # Copy files (not subdirs) from source to dest
+                        # Only copy metrics.json, preserve plot files from training (shaded versions)
+                        for item in deriv_plots_src.iterdir():
+                            if item.is_file():
+                                # Only copy JSON files, skip plot images to preserve shaded versions
+                                if item.suffix == '.json':
+                                    shutil.copy2(item, deriv_plots_dest / item.name)
                     
                     # Clean up the derivatives directory
                     if deriv_dir.exists():
