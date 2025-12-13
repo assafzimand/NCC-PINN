@@ -79,11 +79,11 @@ base_config:
 experiments:  
   - name: "3lyr_40k_Wn_flat"
     problem: schrodinger
-    architecture: [2, 14, 14, 14, 2]
+    architecture: [2, 4, 4, 4, 2]
 
   - name: "5lyr_40k_Wn_flat"
     problem: schrodinger
-    architecture: [2, 10, 10, 10, 10, 10, 2]
+    architecture: [2, 5, 5, 2]
 
  #- name: "7lyr_40k_Wn_flat"
  #   problem: schrodinger
