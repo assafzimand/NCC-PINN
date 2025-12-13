@@ -689,21 +689,21 @@ def visualize_ncc_classification_heatmap(
                     cmap='RdYlGn',
                     norm=norm
                 )
+                
+                ax.set_xlabel('u (Real part)', fontsize=11)
+                ax.set_ylabel('v (Imaginary part)', fontsize=11)
+                ax.set_title(f'{layer_prev} → {layer_curr}', 
+                            fontsize=12, fontweight='bold')
                 plt.colorbar(contour, ax=ax, label='Accuracy Change')
             else:
                 # Skip this subplot if data is insufficient
                 ax.text(0.5, 0.5, 'Insufficient data\nfor change visualization',
                        ha='center', va='center', transform=ax.transAxes,
                        fontsize=12, color='gray')
-                ax.axis('off')
-            
-            ax.set_xlabel('u (Real part)', fontsize=11)
-            ax.set_ylabel('v (Imaginary part)', fontsize=11)
-            ax.set_title(f'{layer_prev} → {layer_curr}', 
-                        fontsize=12, fontweight='bold')
-            
-            # Add colorbar
-            plt.colorbar(contour, ax=ax, label='Accuracy Change')
+                ax.set_xlabel('u (Real part)', fontsize=11)
+                ax.set_ylabel('v (Imaginary part)', fontsize=11)
+                ax.set_title(f'{layer_prev} → {layer_curr}', 
+                            fontsize=12, fontweight='bold')
         
         # Hide unused subplots
         for idx in range(n_changes, len(axes_changes)):

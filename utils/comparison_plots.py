@@ -54,8 +54,8 @@ def generate_ncc_classification_plot(save_dir, ncc_data):
         if 'final' not in epochs_data:
             continue
         ncc_metrics = epochs_data['final']
-        layers = ncc_metrics['layers_analyzed']
-        accuracies = [ncc_metrics['layer_accuracies'][layer] for layer in layers]
+            layers = ncc_metrics['layers_analyzed']
+            accuracies = [ncc_metrics['layer_accuracies'][layer] for layer in layers]
         base_color = color_map[model_name]
         ax.plot(
             layers,
@@ -95,14 +95,14 @@ def generate_ncc_compactness_plot(save_dir, ncc_data):
         if 'final' not in epochs_data:
             continue
         ncc_metrics = epochs_data['final']
-        layers = ncc_metrics['layers_analyzed']
-        
-        margin_snrs = []
-        for layer in layers:
-            mean = ncc_metrics['layer_margins'][layer]['mean_margin']
-            std = ncc_metrics['layer_margins'][layer]['std_margin']
-            snr = mean / std if std > 0 else 0
-            margin_snrs.append(snr)
+            layers = ncc_metrics['layers_analyzed']
+            
+            margin_snrs = []
+            for layer in layers:
+                mean = ncc_metrics['layer_margins'][layer]['mean_margin']
+                std = ncc_metrics['layer_margins'][layer]['std_margin']
+                snr = mean / std if std > 0 else 0
+                margin_snrs.append(snr)
             
         base_color = color_map[model_name]
             
