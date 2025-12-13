@@ -361,7 +361,8 @@ def plot_derivative_heatmaps(
             # Predicted
             row = comp_idx
             pred_data = term_pred[:, comp_idx] if output_dim > 1 else term_pred.flatten()
-            pred_grid = griddata((x_flat, t_flat), pred_data, (X_grid, T_grid), method='cubic')
+            pred_grid = griddata((x_flat, t_flat), pred_data, (X_grid, T_grid),
+                                 method='linear', fill_value=0.0)
             
             ax = axes[row, col_idx]
             if pred_grid.shape[0] < 2 or pred_grid.shape[1] < 2 or np.all(np.isnan(pred_grid)):
@@ -382,7 +383,8 @@ def plot_derivative_heatmaps(
             # Ground truth
             row = output_dim + comp_idx
             gt_data = term_gt_data[:, comp_idx] if output_dim > 1 else term_gt_data.flatten()
-            gt_grid = griddata((x_flat, t_flat), gt_data, (X_grid, T_grid), method='cubic')
+            gt_grid = griddata((x_flat, t_flat), gt_data, (X_grid, T_grid),
+                               method='linear', fill_value=0.0)
             
             ax = axes[row, col_idx]
             if gt_grid.shape[0] < 2 or gt_grid.shape[1] < 2 or np.all(np.isnan(gt_grid)):
@@ -401,7 +403,8 @@ def plot_derivative_heatmaps(
             # Error
             row = 2*output_dim + comp_idx
             error_data = term_error[:, comp_idx] if output_dim > 1 else term_error.flatten()
-            error_grid = griddata((x_flat, t_flat), error_data, (X_grid, T_grid), method='cubic')
+            error_grid = griddata((x_flat, t_flat), error_data, (X_grid, T_grid),
+                                  method='linear', fill_value=0.0)
             
             ax = axes[row, col_idx]
             if error_grid.shape[0] < 2 or error_grid.shape[1] < 2 or np.all(np.isnan(error_grid)):
@@ -484,7 +487,8 @@ def plot_residual_heatmaps(
     
     for comp_idx in range(output_dim):
         f_comp = residual[:, comp_idx] if output_dim > 1 else residual.flatten()
-        f_comp_grid = griddata((x_flat, t_flat), f_comp, (X_grid, T_grid), method='cubic')
+        f_comp_grid = griddata((x_flat, t_flat), f_comp, (X_grid, T_grid),
+                               method='linear', fill_value=0.0)
         
         ax = axes[comp_idx]
         if f_comp_grid.shape[0] < 2 or f_comp_grid.shape[1] < 2 or np.all(np.isnan(f_comp_grid)):
@@ -562,7 +566,7 @@ def plot_residual_change_heatmaps(
         for comp_idx in range(output_dim):
             f_comp = residual[:, comp_idx] if output_dim > 1 else residual.flatten()
             f_comp_grid = griddata((x_flat, t_flat), f_comp, (X_grid, T_grid),
-                                   method='cubic', fill_value=0)
+                                   method='linear', fill_value=0.0)
             layer_grid[f'f_{comp_idx}'] = f_comp_grid
         
         residual_grids[layer_name] = layer_grid
