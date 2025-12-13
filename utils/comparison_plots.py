@@ -9,14 +9,36 @@ from matplotlib import colors as mcolors
 def _build_color_map(model_names):
     """
     Deterministic color assignment per model, shared across all comparison plots.
-    Sorting names ensures the same model always gets the same color in every figure.
+    Uses distinct, high-contrast colors for clear visual differentiation.
     """
+    # Use a diverse set of distinct colors
+    distinct_colors = [
+        '#e41a1c',  # Red
+        '#377eb8',  # Blue
+        '#4daf4a',  # Green
+        '#984ea3',  # Purple
+        '#ff7f00',  # Orange
+        '#ffff33',  # Yellow
+        '#a65628',  # Brown
+        '#f781bf',  # Pink
+        '#999999',  # Gray
+        '#66c2a5',  # Teal
+        '#fc8d62',  # Salmon
+        '#8da0cb',  # Light blue
+        '#e78ac3',  # Light pink
+        '#a6d854',  # Light green
+        '#ffd92f',  # Gold
+        '#e5c494',  # Tan
+        '#b3b3b3',  # Light gray
+        '#1b9e77',  # Dark teal
+        '#d95f02',  # Dark orange
+        '#7570b3',  # Dark purple
+    ]
+    
     sorted_names = sorted(model_names)
-    cmap = plt.cm.get_cmap('tab20', len(sorted_names))
     color_map = {}
     for idx, name in enumerate(sorted_names):
-        rgba = cmap(idx)
-        color_map[name] = mcolors.to_hex(rgba)
+        color_map[name] = distinct_colors[idx % len(distinct_colors)]
     return color_map
 
 

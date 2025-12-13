@@ -600,28 +600,30 @@ def visualize_ncc_classification_heatmap(
         
         # Interpolate to dense grid for smooth heatmap
         points = np.column_stack([u, v])
-        accuracy_grid = griddata(
-            points,
-            correct,
-            (U_grid, V_grid),
-            method='cubic',
-            fill_value=0.5
-        )
+        
+        # Try cubic first, fall back to linear if needed
+        try:
+            accuracy_grid = griddata(
+                points, correct, (U_grid, V_grid),
+                method='cubic', fill_value=0.5
+            )
+            # Check if cubic produced valid results
+            if accuracy_grid.shape[0] < 2 or accuracy_grid.shape[1] < 2 or np.all(np.isnan(accuracy_grid)):
+                raise ValueError("Cubic interpolation insufficient")
+        except:
+            # Fall back to linear interpolation (more robust)
+            accuracy_grid = griddata(
+                points, correct, (U_grid, V_grid),
+                method='linear', fill_value=0.5
+            )
+        
         accuracy_grid = np.clip(accuracy_grid, 0, 1)
         
         # Store for computing changes
         accuracy_grids[layer_name] = accuracy_grid
         
-        # Check if grid is valid for contourf (needs at least 2x2)
-        if accuracy_grid.shape[0] < 2 or accuracy_grid.shape[1] < 2 or np.all(np.isnan(accuracy_grid)):
-            # Fall back to scatter plot if interpolation failed
-            ax.scatter(u[correct.astype(bool)], v[correct.astype(bool)], 
-                      c='green', s=10, alpha=0.5, label='Correct')
-            ax.scatter(u[~correct.astype(bool)], v[~correct.astype(bool)], 
-                      c='red', s=10, alpha=0.5, label='Incorrect')
-            ax.legend(fontsize=8)
-        else:
-            # Plot smooth heatmap
+        # Check if we have valid data to plot
+        if accuracy_grid.shape[0] >= 2 and accuracy_grid.shape[1] >= 2 and not np.all(np.isnan(accuracy_grid)):
             im = ax.contourf(
                 U_grid, V_grid, accuracy_grid,
                 levels=20,
@@ -630,6 +632,12 @@ def visualize_ncc_classification_heatmap(
                 vmax=1.0
             )
             plt.colorbar(im, ax=ax, label='Local Accuracy')
+        else:
+            # Only if interpolation completely fails
+            ax.text(0.5, 0.5, 'Insufficient data\nfor heatmap',
+                   ha='center', va='center', transform=ax.transAxes,
+                   fontsize=12, color='gray')
+            ax.axis('off')
         
         ax.set_xlabel('u (Real part)', fontsize=11)
         ax.set_ylabel('v (Imaginary part)', fontsize=11)
@@ -671,23 +679,23 @@ def visualize_ncc_classification_heatmap(
             diff_grid = accuracy_grids[layer_curr] - accuracy_grids[layer_prev]
             
             # Check if grid is valid for contourf
-            if diff_grid.shape[0] < 2 or diff_grid.shape[1] < 2 or np.all(np.isnan(diff_grid)):
+            if diff_grid.shape[0] >= 2 and diff_grid.shape[1] >= 2 and not np.all(np.isnan(diff_grid)):
+                # Plot smooth difference heatmap
+                from matplotlib.colors import TwoSlopeNorm
+                norm = TwoSlopeNorm(vmin=-1.0, vcenter=0.0, vmax=1.0)
+                contour = ax.contourf(
+                    U_grid, V_grid, diff_grid,
+                    levels=20,
+                    cmap='RdYlGn',
+                    norm=norm
+                )
+                plt.colorbar(contour, ax=ax, label='Accuracy Change')
+            else:
                 # Skip this subplot if data is insufficient
                 ax.text(0.5, 0.5, 'Insufficient data\nfor change visualization',
                        ha='center', va='center', transform=ax.transAxes,
                        fontsize=12, color='gray')
                 ax.axis('off')
-                continue
-            
-            # Plot smooth difference heatmap
-            from matplotlib.colors import TwoSlopeNorm
-            norm = TwoSlopeNorm(vmin=-1.0, vcenter=0.0, vmax=1.0)
-            contour = ax.contourf(
-                U_grid, V_grid, diff_grid,
-                levels=20,
-                cmap='RdYlGn',
-                norm=norm
-            )
             
             ax.set_xlabel('u (Real part)', fontsize=11)
             ax.set_ylabel('v (Imaginary part)', fontsize=11)
@@ -777,28 +785,29 @@ def visualize_ncc_classification_input_space_heatmap(
         
         # Interpolate to dense grid for smooth heatmap
         points = np.column_stack([x_np, t_np])
-        accuracy_grid = griddata(
-            points,
-            correct,
-            (X_grid, T_grid),
-            method='cubic',
-            fill_value=0.5
-        )
+        
+        # Try cubic first, fall back to linear if needed
+        try:
+            accuracy_grid = griddata(
+                points, correct, (X_grid, T_grid),
+                method='cubic', fill_value=0.5
+            )
+            if accuracy_grid.shape[0] < 2 or accuracy_grid.shape[1] < 2 or np.all(np.isnan(accuracy_grid)):
+                raise ValueError("Cubic interpolation insufficient")
+        except:
+            # Fall back to linear interpolation (more robust)
+            accuracy_grid = griddata(
+                points, correct, (X_grid, T_grid),
+                method='linear', fill_value=0.5
+            )
+        
         accuracy_grid = np.clip(accuracy_grid, 0, 1)
         
         # Store for computing changes
         accuracy_grids[layer_name] = accuracy_grid
         
-        # Check if grid is valid for contourf (needs at least 2x2)
-        if accuracy_grid.shape[0] < 2 or accuracy_grid.shape[1] < 2 or np.all(np.isnan(accuracy_grid)):
-            # Fall back to scatter plot if interpolation failed
-            ax.scatter(x_np[correct.astype(bool)], t_np[correct.astype(bool)], 
-                      c='green', s=10, alpha=0.5, label='Correct')
-            ax.scatter(x_np[~correct.astype(bool)], t_np[~correct.astype(bool)], 
-                      c='red', s=10, alpha=0.5, label='Incorrect')
-            ax.legend(fontsize=8)
-        else:
-            # Plot smooth heatmap
+        # Check if we have valid data to plot
+        if accuracy_grid.shape[0] >= 2 and accuracy_grid.shape[1] >= 2 and not np.all(np.isnan(accuracy_grid)):
             im = ax.contourf(
                 X_grid, T_grid, accuracy_grid,
                 levels=20,
@@ -807,6 +816,12 @@ def visualize_ncc_classification_input_space_heatmap(
                 vmax=1.0
             )
             plt.colorbar(im, ax=ax, label='Local Accuracy')
+        else:
+            # Only if interpolation completely fails
+            ax.text(0.5, 0.5, 'Insufficient data\nfor heatmap',
+                   ha='center', va='center', transform=ax.transAxes,
+                   fontsize=12, color='gray')
+            ax.axis('off')
         
         ax.set_xlabel('x (spatial)', fontsize=11)
         ax.set_ylabel('t (time)', fontsize=11)
@@ -848,23 +863,23 @@ def visualize_ncc_classification_input_space_heatmap(
             diff_grid = accuracy_grids[layer_curr] - accuracy_grids[layer_prev]
             
             # Check if grid is valid for contourf
-            if diff_grid.shape[0] < 2 or diff_grid.shape[1] < 2 or np.all(np.isnan(diff_grid)):
+            if diff_grid.shape[0] >= 2 and diff_grid.shape[1] >= 2 and not np.all(np.isnan(diff_grid)):
+                # Plot smooth difference heatmap
+                from matplotlib.colors import TwoSlopeNorm
+                norm = TwoSlopeNorm(vmin=-1.0, vcenter=0.0, vmax=1.0)
+                contour = ax.contourf(
+                    X_grid, T_grid, diff_grid,
+                    levels=20,
+                    cmap='RdYlGn',
+                    norm=norm
+                )
+                plt.colorbar(contour, ax=ax, label='Accuracy Change')
+            else:
                 # Skip this subplot if data is insufficient
                 ax.text(0.5, 0.5, 'Insufficient data\nfor change visualization',
                        ha='center', va='center', transform=ax.transAxes,
                        fontsize=12, color='gray')
                 ax.axis('off')
-                continue
-            
-            # Plot smooth difference heatmap
-            from matplotlib.colors import TwoSlopeNorm
-            norm = TwoSlopeNorm(vmin=-1.0, vcenter=0.0, vmax=1.0)
-            contour = ax.contourf(
-                X_grid, T_grid, diff_grid,
-                levels=20,
-                cmap='RdYlGn',
-                norm=norm
-            )
             
             ax.set_xlabel('x (spatial)', fontsize=11)
             ax.set_ylabel('t (time)', fontsize=11)
