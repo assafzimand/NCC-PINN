@@ -297,7 +297,7 @@ def visualize_ncc_classification_heatmap(
         save_path: Path to save figure
         config: Configuration dictionary
     """
-    n_bin_vis = config.get('n_bin_visualize_ncc', 100)
+    n_bin_vis = max(20, config.get('n_bin_visualize_ncc', 100))
     min_samples = config.get('min_samples_threshold', 1)
     
     n_layers = len(predictions_dict)
@@ -370,7 +370,7 @@ def visualize_ncc_classification_input_space_heatmap(
     """
     from scipy.interpolate import griddata
     
-    n_bin_vis = config.get('n_bin_visualize_ncc', 100)
+    n_bin_vis = max(20, config.get('n_bin_visualize_ncc', 100))
     
     n_layers = len(predictions_dict)
     fig, axes = plt.subplots(1, n_layers, figsize=(6*n_layers, 5))
@@ -425,7 +425,6 @@ def visualize_ncc_classification_input_space_heatmap(
             ax.text(0.5, 0.5, 'Insufficient data\nfor heatmap',
                    ha='center', va='center', transform=ax.transAxes,
                    fontsize=12, color='gray')
-            ax.axis('off')
         
         ax.set_xlabel('x', fontsize=10)
         ax.set_ylabel('t', fontsize=10)
@@ -470,7 +469,7 @@ def visualize_ncc_classification_input_space_accuracy_changes(
     from scipy.interpolate import griddata
     from matplotlib.colors import TwoSlopeNorm
     
-    n_bin_vis = config.get('n_bin_visualize_ncc', 100)
+    n_bin_vis = max(20, config.get('n_bin_visualize_ncc', 100))
     
     layer_names = list(predictions_dict.keys())
     n_transitions = len(layer_names) - 1
@@ -549,7 +548,6 @@ def visualize_ncc_classification_input_space_accuracy_changes(
             ax.text(0.5, 0.5, 'Insufficient data\nfor change visualization',
                    ha='center', va='center', transform=ax.transAxes,
                    fontsize=12, color='gray')
-            ax.axis('off')
             continue
         
         # Axis labels/title already set in the valid branch above

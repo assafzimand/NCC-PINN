@@ -554,7 +554,7 @@ def visualize_ncc_classification_heatmap(
         config: Configuration dictionary with 'n_bin_visualize_ncc' and 'n_samples_ncc'
     """
     # Get visualization parameters
-    n_bin_viz = config.get('n_bin_visualize_ncc', 100)
+    n_bin_viz = max(20, config.get('n_bin_visualize_ncc', 100))
     min_samples_threshold = 1  # Minimum 1 sample per bin
     
     # Extract u, v values
@@ -637,7 +637,6 @@ def visualize_ncc_classification_heatmap(
             ax.text(0.5, 0.5, 'Insufficient data\nfor heatmap',
                    ha='center', va='center', transform=ax.transAxes,
                    fontsize=12, color='gray')
-            ax.axis('off')
         
         ax.set_xlabel('u (Real part)', fontsize=11)
         ax.set_ylabel('v (Imaginary part)', fontsize=11)
@@ -741,7 +740,7 @@ def visualize_ncc_classification_input_space_heatmap(
         config: Configuration dictionary with 'n_bin_visualize_ncc' and 'n_samples_ncc'
     """
     # Get visualization parameters
-    n_bin_viz = config.get('n_bin_visualize_ncc', 100)
+    n_bin_viz = max(20, config.get('n_bin_visualize_ncc', 100))
     min_samples_threshold = 1  # Minimum 1 sample per bin
     
     # Extract x, t values
@@ -821,7 +820,6 @@ def visualize_ncc_classification_input_space_heatmap(
             ax.text(0.5, 0.5, 'Insufficient data\nfor heatmap',
                    ha='center', va='center', transform=ax.transAxes,
                    fontsize=12, color='gray')
-            ax.axis('off')
         
         ax.set_xlabel('x (spatial)', fontsize=11)
         ax.set_ylabel('t (time)', fontsize=11)
