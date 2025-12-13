@@ -397,14 +397,24 @@ def visualize_ncc_classification_input_space_heatmap(
         # Clip to [0, 1] range (cubic interpolation can overshoot)
         accuracy_grid = np.clip(accuracy_grid, 0, 1)
         
-        # Plot smooth heatmap using contourf
-        contour = ax.contourf(X_grid, T_grid, accuracy_grid, levels=20, 
-                             cmap='RdYlGn', vmin=0, vmax=1)
+        # Check if grid is valid for contourf (needs at least 2x2)
+        if accuracy_grid.shape[0] < 2 or accuracy_grid.shape[1] < 2 or np.all(np.isnan(accuracy_grid)):
+            # Fall back to scatter plot if interpolation failed
+            ax.scatter(x_vals[correct.astype(bool)], t_vals[correct.astype(bool)], 
+                      c='green', s=10, alpha=0.5, label='Correct')
+            ax.scatter(x_vals[~correct.astype(bool)], t_vals[~correct.astype(bool)], 
+                      c='red', s=10, alpha=0.5, label='Incorrect')
+            ax.legend(fontsize=8)
+        else:
+            # Plot smooth heatmap using contourf
+            contour = ax.contourf(X_grid, T_grid, accuracy_grid, levels=20, 
+                                 cmap='RdYlGn', vmin=0, vmax=1)
+            plt.colorbar(contour, ax=ax, label='Accuracy')
+        
         ax.set_xlabel('x', fontsize=10)
         ax.set_ylabel('t', fontsize=10)
         ax.set_title(f'{layer_name}\nAcc: {correct.mean():.3f}', 
                     fontsize=11)
-        plt.colorbar(contour, ax=ax, label='Accuracy')
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
@@ -497,6 +507,15 @@ def visualize_ncc_classification_input_space_accuracy_changes(
         layer_curr = layer_names[idx + 1]
         
         change = accuracy_grids[layer_curr] - accuracy_grids[layer_prev]
+        
+        # Check if grid is valid for contourf
+        if change.shape[0] < 2 or change.shape[1] < 2 or np.all(np.isnan(change)):
+            # Skip this subplot if data is insufficient
+            ax.text(0.5, 0.5, 'Insufficient data\nfor change visualization',
+                   ha='center', va='center', transform=ax.transAxes,
+                   fontsize=12, color='gray')
+            ax.axis('off')
+            continue
         
         # Use TwoSlopeNorm for diverging colormap centered at 0
         norm = TwoSlopeNorm(vmin=-1.0, vcenter=0.0, vmax=1.0)

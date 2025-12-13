@@ -364,14 +364,20 @@ def plot_derivative_heatmaps(
             pred_grid = griddata((x_flat, t_flat), pred_data, (X_grid, T_grid), method='cubic')
             
             ax = axes[row, col_idx]
-            im = ax.contourf(X_grid, T_grid, pred_grid, levels=50, cmap=cmap)
+            if pred_grid.shape[0] < 2 or pred_grid.shape[1] < 2 or np.all(np.isnan(pred_grid)):
+                ax.scatter(x_flat, t_flat, c=pred_data, cmap=cmap, s=5, alpha=0.5)
+                ax.text(0.5, 0.95, '(Scatter)', ha='center', va='top', 
+                       transform=ax.transAxes, fontsize=8, color='gray')
+            else:
+                im = ax.contourf(X_grid, T_grid, pred_grid, levels=50, cmap=cmap)
+                plt.colorbar(im, ax=ax)
+            
             if col_idx == 0:
                 ax.set_ylabel(f'{comp_names[comp_idx]}\nPredicted\nt', fontsize=10, fontweight='bold')
             else:
                 ax.set_ylabel('t', fontsize=10)
             if row == 0:
                 ax.set_title(f'{term_key}', fontsize=12, fontweight='bold')
-            plt.colorbar(im, ax=ax)
             
             # Ground truth
             row = output_dim + comp_idx
@@ -379,12 +385,18 @@ def plot_derivative_heatmaps(
             gt_grid = griddata((x_flat, t_flat), gt_data, (X_grid, T_grid), method='cubic')
             
             ax = axes[row, col_idx]
-            im = ax.contourf(X_grid, T_grid, gt_grid, levels=50, cmap=cmap)
+            if gt_grid.shape[0] < 2 or gt_grid.shape[1] < 2 or np.all(np.isnan(gt_grid)):
+                ax.scatter(x_flat, t_flat, c=gt_data, cmap=cmap, s=5, alpha=0.5)
+                ax.text(0.5, 0.95, '(Scatter)', ha='center', va='top', 
+                       transform=ax.transAxes, fontsize=8, color='gray')
+            else:
+                im = ax.contourf(X_grid, T_grid, gt_grid, levels=50, cmap=cmap)
+                plt.colorbar(im, ax=ax)
+            
             if col_idx == 0:
                 ax.set_ylabel(f'{comp_names[comp_idx]}\nGround Truth\nt', fontsize=10, fontweight='bold')
             else:
                 ax.set_ylabel('t', fontsize=10)
-            plt.colorbar(im, ax=ax)
             
             # Error
             row = 2*output_dim + comp_idx
@@ -392,13 +404,19 @@ def plot_derivative_heatmaps(
             error_grid = griddata((x_flat, t_flat), error_data, (X_grid, T_grid), method='cubic')
             
             ax = axes[row, col_idx]
-            im = ax.contourf(X_grid, T_grid, error_grid, levels=50, cmap='Reds')
+            if error_grid.shape[0] < 2 or error_grid.shape[1] < 2 or np.all(np.isnan(error_grid)):
+                ax.scatter(x_flat, t_flat, c=error_data, cmap='Reds', s=5, alpha=0.5)
+                ax.text(0.5, 0.95, '(Scatter)', ha='center', va='top', 
+                       transform=ax.transAxes, fontsize=8, color='gray')
+            else:
+                im = ax.contourf(X_grid, T_grid, error_grid, levels=50, cmap='Reds')
+                plt.colorbar(im, ax=ax)
+            
             if col_idx == 0:
                 ax.set_ylabel(f'{comp_names[comp_idx]}\n|Error|\nt', fontsize=10, fontweight='bold')
             else:
                 ax.set_ylabel('t', fontsize=10)
             ax.set_xlabel('x', fontsize=10)
-            plt.colorbar(im, ax=ax)
     
     plt.tight_layout(rect=[0, 0.01, 1, 0.99])
     
@@ -469,11 +487,17 @@ def plot_residual_heatmaps(
         f_comp_grid = griddata((x_flat, t_flat), f_comp, (X_grid, T_grid), method='cubic')
         
         ax = axes[comp_idx]
-        im = ax.contourf(X_grid, T_grid, f_comp_grid, levels=50, cmap='RdBu_r')
+        if f_comp_grid.shape[0] < 2 or f_comp_grid.shape[1] < 2 or np.all(np.isnan(f_comp_grid)):
+            ax.scatter(x_flat, t_flat, c=f_comp, cmap='RdBu_r', s=10, alpha=0.6)
+            ax.text(0.5, 0.95, '(Scatter - insufficient data)', ha='center', va='top', 
+                   transform=ax.transAxes, fontsize=9, color='gray')
+        else:
+            im = ax.contourf(X_grid, T_grid, f_comp_grid, levels=50, cmap='RdBu_r')
+            plt.colorbar(im, ax=ax)
+        
         ax.set_xlabel('x', fontsize=12)
         ax.set_ylabel('t', fontsize=12)
         ax.set_title(comp_names[comp_idx], fontsize=13, fontweight='bold')
-        plt.colorbar(im, ax=ax)
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.97])
     
@@ -599,6 +623,15 @@ def plot_residual_change_heatmaps(
             # Get subplot position
             row_idx = row_group * output_dim + comp_idx
             ax = axes[row_idx, col_idx]
+            
+            # Check if grid is valid for contourf
+            if ratio.shape[0] < 2 or ratio.shape[1] < 2 or np.all(np.isnan(ratio)):
+                # Skip this subplot if data is insufficient
+                ax.text(0.5, 0.5, 'Insufficient data',
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=10, color='gray')
+                ax.axis('off')
+                continue
             
             # Plot
             im = ax.contourf(X_grid, T_grid, ratio, levels=50,
