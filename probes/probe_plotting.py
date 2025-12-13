@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import Dict, List
 import numpy as np
+import torch
 
 
 def plot_probe_metrics(probe_results: Dict, save_dir: Path):
@@ -136,8 +137,10 @@ def plot_probe_error_heatmaps(
     for idx, layer_name in enumerate(layer_names, 1):
         print(f"  Generating error heatmaps for {layer_name} ({idx}/{len(layer_names)})")
         
-        # Get predictions for this layer
+        # Get predictions for this layer (ensure it's on CPU and numpy)
         eval_preds = probe_results[layer_name]['eval_predictions']  # (N, output_dim)
+        if isinstance(eval_preds, torch.Tensor):
+            eval_preds = eval_preds.cpu().numpy()
         output_dim = eval_preds.shape[1]
         
         # Compute errors
@@ -242,6 +245,8 @@ def plot_probe_error_change_heatmaps(
     
     for layer_name in layer_names:
         eval_preds = probe_results[layer_name]['eval_predictions']  # (N, output_dim)
+        if isinstance(eval_preds, torch.Tensor):
+            eval_preds = eval_preds.cpu().numpy()
         error = eval_preds - eval_targets  # (N, output_dim)
         
         layer_grid = {}
