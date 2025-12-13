@@ -173,11 +173,20 @@ def plot_probe_error_heatmaps(
             error_i = error[:, i]
             grid_error_i = griddata(points, error_i, (grid_x, grid_t), method='cubic', fill_value=0)
             
-            im = axes[i].contourf(grid_x, grid_t, grid_error_i, levels=50, cmap='RdBu_r')
+            # Check if grid is valid for contourf
+            if grid_error_i.shape[0] < 2 or grid_error_i.shape[1] < 2 or np.all(np.isnan(grid_error_i)):
+                # Fall back to scatter plot
+                axes[i].scatter(eval_x, eval_t, c=error_i, cmap='RdBu_r', s=10, alpha=0.6)
+                axes[i].text(0.5, 0.95, '(Scatter - insufficient data for contour)',
+                           ha='center', va='top', transform=axes[i].transAxes,
+                           fontsize=9, color='gray')
+            else:
+                im = axes[i].contourf(grid_x, grid_t, grid_error_i, levels=50, cmap='RdBu_r')
+                plt.colorbar(im, ax=axes[i])
+            
             axes[i].set_xlabel('x', fontsize=11)
             axes[i].set_ylabel('t', fontsize=11)
             axes[i].set_title(f'Probe Error - {component_names[i]}', fontsize=12, fontweight='bold')
-            plt.colorbar(im, ax=axes[i])
         
         # Overall title
         fig.suptitle(f'Probe Prediction Error Heatmaps - {layer_name}', 
@@ -315,6 +324,15 @@ def plot_probe_error_change_heatmaps(
             # Get subplot position
             row_idx = row_group * output_dim + comp_idx
             ax = axes[row_idx, col_idx]
+            
+            # Check if grid is valid for contourf
+            if ratio.shape[0] < 2 or ratio.shape[1] < 2 or np.all(np.isnan(ratio)):
+                # Skip this subplot if data is insufficient
+                ax.text(0.5, 0.5, 'Insufficient data',
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=10, color='gray')
+                ax.axis('off')
+                continue
             
             # Plot
             im = ax.contourf(grid_x, grid_t, ratio, levels=50,

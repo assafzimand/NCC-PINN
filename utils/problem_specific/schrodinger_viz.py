@@ -612,23 +612,30 @@ def visualize_ncc_classification_heatmap(
         # Store for computing changes
         accuracy_grids[layer_name] = accuracy_grid
         
-        # Plot smooth heatmap
-        im = ax.contourf(
-            U_grid, V_grid, accuracy_grid,
-            levels=20,
-            cmap='RdYlGn',
-            vmin=0.0,
-            vmax=1.0
-        )
+        # Check if grid is valid for contourf (needs at least 2x2)
+        if accuracy_grid.shape[0] < 2 or accuracy_grid.shape[1] < 2 or np.all(np.isnan(accuracy_grid)):
+            # Fall back to scatter plot if interpolation failed
+            ax.scatter(u[correct.astype(bool)], v[correct.astype(bool)], 
+                      c='green', s=10, alpha=0.5, label='Correct')
+            ax.scatter(u[~correct.astype(bool)], v[~correct.astype(bool)], 
+                      c='red', s=10, alpha=0.5, label='Incorrect')
+            ax.legend(fontsize=8)
+        else:
+            # Plot smooth heatmap
+            im = ax.contourf(
+                U_grid, V_grid, accuracy_grid,
+                levels=20,
+                cmap='RdYlGn',
+                vmin=0.0,
+                vmax=1.0
+            )
+            plt.colorbar(im, ax=ax, label='Local Accuracy')
         
         ax.set_xlabel('u (Real part)', fontsize=11)
         ax.set_ylabel('v (Imaginary part)', fontsize=11)
         overall_acc = correct.mean()
         ax.set_title(f'{layer_name} (Acc: {overall_acc:.2%})', 
                     fontsize=12, fontweight='bold')
-        
-        # Add colorbar
-        plt.colorbar(im, ax=ax, label='Local Accuracy')
     
     # Hide unused subplots
     for idx in range(n_layers, len(axes)):
@@ -662,6 +669,15 @@ def visualize_ncc_classification_heatmap(
             
             # Compute difference: current - previous
             diff_grid = accuracy_grids[layer_curr] - accuracy_grids[layer_prev]
+            
+            # Check if grid is valid for contourf
+            if diff_grid.shape[0] < 2 or diff_grid.shape[1] < 2 or np.all(np.isnan(diff_grid)):
+                # Skip this subplot if data is insufficient
+                ax.text(0.5, 0.5, 'Insufficient data\nfor change visualization',
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=12, color='gray')
+                ax.axis('off')
+                continue
             
             # Plot smooth difference heatmap
             from matplotlib.colors import TwoSlopeNorm
@@ -773,23 +789,30 @@ def visualize_ncc_classification_input_space_heatmap(
         # Store for computing changes
         accuracy_grids[layer_name] = accuracy_grid
         
-        # Plot smooth heatmap
-        im = ax.contourf(
-            X_grid, T_grid, accuracy_grid,
-            levels=20,
-            cmap='RdYlGn',
-            vmin=0.0,
-            vmax=1.0
-        )
+        # Check if grid is valid for contourf (needs at least 2x2)
+        if accuracy_grid.shape[0] < 2 or accuracy_grid.shape[1] < 2 or np.all(np.isnan(accuracy_grid)):
+            # Fall back to scatter plot if interpolation failed
+            ax.scatter(x_np[correct.astype(bool)], t_np[correct.astype(bool)], 
+                      c='green', s=10, alpha=0.5, label='Correct')
+            ax.scatter(x_np[~correct.astype(bool)], t_np[~correct.astype(bool)], 
+                      c='red', s=10, alpha=0.5, label='Incorrect')
+            ax.legend(fontsize=8)
+        else:
+            # Plot smooth heatmap
+            im = ax.contourf(
+                X_grid, T_grid, accuracy_grid,
+                levels=20,
+                cmap='RdYlGn',
+                vmin=0.0,
+                vmax=1.0
+            )
+            plt.colorbar(im, ax=ax, label='Local Accuracy')
         
         ax.set_xlabel('x (spatial)', fontsize=11)
         ax.set_ylabel('t (time)', fontsize=11)
         overall_acc = correct.mean()
         ax.set_title(f'{layer_name} (Acc: {overall_acc:.2%})',
                     fontsize=12, fontweight='bold')
-        
-        # Add colorbar
-        plt.colorbar(im, ax=ax, label='Local Accuracy')
     
     # Hide unused subplots
     for idx in range(n_layers, len(axes)):
@@ -823,6 +846,15 @@ def visualize_ncc_classification_input_space_heatmap(
             
             # Compute difference: current - previous
             diff_grid = accuracy_grids[layer_curr] - accuracy_grids[layer_prev]
+            
+            # Check if grid is valid for contourf
+            if diff_grid.shape[0] < 2 or diff_grid.shape[1] < 2 or np.all(np.isnan(diff_grid)):
+                # Skip this subplot if data is insufficient
+                ax.text(0.5, 0.5, 'Insufficient data\nfor change visualization',
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=12, color='gray')
+                ax.axis('off')
+                continue
             
             # Plot smooth difference heatmap
             from matplotlib.colors import TwoSlopeNorm
