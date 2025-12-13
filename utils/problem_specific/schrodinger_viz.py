@@ -885,9 +885,6 @@ def visualize_ncc_classification_input_space_heatmap(
             ax.set_ylabel('t (time)', fontsize=11)
             ax.set_title(f'{layer_prev} → {layer_curr}', 
                         fontsize=12, fontweight='bold')
-            
-            # Add colorbar
-            plt.colorbar(contour, ax=ax, label='Accuracy Change')
         
         # Hide unused subplots
         for idx in range(n_changes, len(axes_changes)):
