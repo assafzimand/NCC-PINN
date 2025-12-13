@@ -206,17 +206,19 @@ def visualize_ncc_classification(
     if n_layers == 1:
         axes = [axes]
     
+    # Ensure numpy arrays on CPU
+    h_gt_np = h_gt if isinstance(h_gt, np.ndarray) else h_gt.detach().cpu().numpy()
+    labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.detach().cpu().numpy()
+    indices = np.arange(len(h_gt_np))
+
     for ax, (layer_name, preds) in zip(axes, predictions_dict.items()):
-        # Ensure numpy arrays
-        preds_np = preds if isinstance(preds, np.ndarray) else preds.cpu().numpy()
-        labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.cpu().numpy()
+        preds_np = preds if isinstance(preds, np.ndarray) else preds.detach().cpu().numpy()
         correct = (preds_np == labels_np).astype(float)
         
         # Scatter plot: h values on x-axis, index on y-axis, color by correctness
-        indices = np.arange(len(h_gt))
         colors = np.where(correct > 0.5, 'green', 'red')
         
-        ax.scatter(h_gt[:, 0], indices, c=colors, s=2, alpha=0.5)
+        ax.scatter(h_gt_np[:, 0], indices, c=colors, s=2, alpha=0.5)
         ax.set_xlabel('h', fontsize=10)
         ax.set_ylabel('Sample index', fontsize=10)
         ax.set_title(f'{layer_name}\nAcc: {correct.mean():.3f}', fontsize=11)
@@ -251,14 +253,17 @@ def visualize_ncc_classification_input_space(
     if n_layers == 1:
         axes = [axes]
     
+    # Ensure numpy arrays on CPU
+    x_np = x if isinstance(x, np.ndarray) else x.detach().cpu().numpy()
+    t_np = t if isinstance(t, np.ndarray) else t.detach().cpu().numpy()
+    labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.detach().cpu().numpy()
+
     for ax, (layer_name, preds) in zip(axes, predictions_dict.items()):
-        # Ensure numpy arrays
-        preds_np = preds if isinstance(preds, np.ndarray) else preds.cpu().numpy()
-        labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.cpu().numpy()
+        preds_np = preds if isinstance(preds, np.ndarray) else preds.detach().cpu().numpy()
         correct = (preds_np == labels_np).astype(float)
         colors = np.where(correct > 0.5, 'green', 'red')
         
-        ax.scatter(x[:, 0], t[:, 0], c=colors, s=2, alpha=0.5)
+        ax.scatter(x_np[:, 0], t_np[:, 0], c=colors, s=2, alpha=0.5)
         ax.set_xlabel('x', fontsize=10)
         ax.set_ylabel('t', fontsize=10)
         ax.set_title(f'{layer_name}\nAcc: {correct.mean():.3f}', fontsize=11)
@@ -300,16 +305,19 @@ def visualize_ncc_classification_heatmap(
     if n_layers == 1:
         axes = [axes]
     
+    # Ensure numpy arrays on CPU
+    h_gt_np = h_gt if isinstance(h_gt, np.ndarray) else h_gt.detach().cpu().numpy()
+    labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.detach().cpu().numpy()
+
     for ax, (layer_name, preds) in zip(axes, predictions_dict.items()):
         # Create bins for visualization
-        h_values = h_gt[:, 0]
+        h_values = h_gt_np[:, 0]
         h_min, h_max = h_values.min(), h_values.max()
         bin_edges = np.linspace(h_min, h_max, n_bin_vis + 1)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         
         # Ensure numpy arrays
-        preds_np = preds if isinstance(preds, np.ndarray) else preds.cpu().numpy()
-        labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.cpu().numpy()
+        preds_np = preds if isinstance(preds, np.ndarray) else preds.detach().cpu().numpy()
         
         # Compute accuracy per bin
         accuracies = []
@@ -370,16 +378,18 @@ def visualize_ncc_classification_input_space_heatmap(
         axes = [axes]
     
     # Create dense grid for smooth visualization
-    x_vals = x[:, 0]
-    t_vals = t[:, 0]
+    x_np = x if isinstance(x, np.ndarray) else x.detach().cpu().numpy()
+    t_np = t if isinstance(t, np.ndarray) else t.detach().cpu().numpy()
+    labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.detach().cpu().numpy()
+    x_vals = x_np[:, 0]
+    t_vals = t_np[:, 0]
     x_grid = np.linspace(x_vals.min(), x_vals.max(), n_bin_vis)
     t_grid = np.linspace(t_vals.min(), t_vals.max(), n_bin_vis)
     X_grid, T_grid = np.meshgrid(x_grid, t_grid)
     
     for ax, (layer_name, preds) in zip(axes, predictions_dict.items()):
         # Ensure numpy arrays
-        preds_np = preds if isinstance(preds, np.ndarray) else preds.cpu().numpy()
-        labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.cpu().numpy()
+        preds_np = preds if isinstance(preds, np.ndarray) else preds.detach().cpu().numpy()
         
         # Compute per-point correctness (1 or 0)
         correct = (preds_np == labels_np).astype(float)
@@ -480,19 +490,21 @@ def visualize_ncc_classification_input_space_accuracy_changes(
         axes = axes.flatten()
     
     # Create dense grid for smooth visualization
-    x_vals = x[:, 0]
-    t_vals = t[:, 0]
+    x_np = x if isinstance(x, np.ndarray) else x.detach().cpu().numpy()
+    t_np = t if isinstance(t, np.ndarray) else t.detach().cpu().numpy()
+    labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.detach().cpu().numpy()
+    x_vals = x_np[:, 0]
+    t_vals = t_np[:, 0]
     x_grid = np.linspace(x_vals.min(), x_vals.max(), n_bin_vis)
     t_grid = np.linspace(t_vals.min(), t_vals.max(), n_bin_vis)
     X_grid, T_grid = np.meshgrid(x_grid, t_grid)
     
     # Compute interpolated accuracy grids for all layers
     accuracy_grids = {}
-    labels_np = class_labels if isinstance(class_labels, np.ndarray) else class_labels.cpu().numpy()
     points = np.column_stack([x_vals, t_vals])
     
     for layer_name, preds in predictions_dict.items():
-        preds_np = preds if isinstance(preds, np.ndarray) else preds.cpu().numpy()
+        preds_np = preds if isinstance(preds, np.ndarray) else preds.detach().cpu().numpy()
         correct = (preds_np == labels_np).astype(float)
         
         # Try cubic first, fall back to linear if needed
