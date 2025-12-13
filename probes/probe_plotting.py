@@ -171,7 +171,8 @@ def plot_probe_error_heatmaps(
         
         for i in range(output_dim):
             error_i = error[:, i]
-            grid_error_i = griddata(points, error_i, (grid_x, grid_t), method='cubic', fill_value=0)
+            grid_error_i = griddata(points, error_i, (grid_x, grid_t),
+                                    method='linear', fill_value=0.0)
             
             # Check if grid is valid for contourf
             if grid_error_i.shape[0] < 2 or grid_error_i.shape[1] < 2 or np.all(np.isnan(grid_error_i)):
@@ -262,7 +263,7 @@ def plot_probe_error_change_heatmaps(
         for i in range(output_dim):
             error_i = error[:, i]
             grid_error_i = griddata(points, error_i, (grid_x, grid_t),
-                                    method='cubic', fill_value=0)
+                                    method='linear', fill_value=0.0)
             layer_grid[f'error_{i}'] = grid_error_i
         
         error_grids[layer_name] = layer_grid

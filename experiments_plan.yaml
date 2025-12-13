@@ -1,9 +1,9 @@
 # Experiment plan configuration
-experiment_name: "wave1d_capacity"
+experiment_name: "schrodinger_capacity"
 
 # Base configuration (will be used for all experiments)
 base_config:
-  problem: wave1d
+  problem: schrodinger
   activation: tanh
   epochs: 3
   batch_size: 512
@@ -78,12 +78,12 @@ base_config:
 # Experiments to run (schrodinger test only)
 experiments:  
   - name: "3lyr_40k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 4, 4, 4, 1]
+    problem: schrodinger
+    architecture: [2, 4, 4, 4, 2]
 
   - name: "5lyr_40k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 5, 5, 1]
+    problem: schrodinger
+    architecture: [2, 5, 5, 2]
 
  #- name: "7lyr_40k_Wn_flat"
  #   problem: schrodinger
