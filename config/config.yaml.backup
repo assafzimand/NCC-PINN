@@ -10,22 +10,22 @@ architecture:
 - 10
 - 10
 - 10
-- 2
-batch_size: 512
+- 1
+batch_size: 64
 bins: 5
 cuda: true
-epochs: 3
-eval_every: 2
+epochs: 10
+eval_every: 1
 eval_only: false
-inner_metrics_eval_every: 2
+inner_metrics_eval_every: 6
 lbfgs_history_size: 20
 lbfgs_line_search: strong_wolfe
 lbfgs_lr: 1.0
 lbfgs_max_iter: 20
 lbfgs_tolerance_change: 0.0
 lbfgs_tolerance_grad: 0.0
-lr: 0.0001
-n_bin_visualize_ncc: 1
+lr: 0.001
+n_bin_visualize_ncc: 100
 n_boundary_eval: 25
 n_boundary_train: 100
 n_initial_eval: 25
@@ -33,10 +33,10 @@ n_initial_train: 100
 n_residual_eval: 5000
 n_residual_train: 20000
 n_samples_ncc: 5000
-name: 5lyr_40k_Wn_flat
+name: wave1d_test_5ayer
 optimizer_switch_at: 0.9
 print_every: 1
-problem: schrodinger
+problem: wave1d
 problem2:
   loss_weights:
     bc: 1.0
@@ -51,7 +51,7 @@ problem2:
   - 0.0
   - 1.0
 resume_from: null
-save_every: 2
+save_every: 5
 schrodinger:
   loss_weights:
     bc: 1.0
