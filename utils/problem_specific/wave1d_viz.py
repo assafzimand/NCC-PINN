@@ -538,10 +538,9 @@ def visualize_ncc_classification_input_space_accuracy_changes(
                    ha='center', va='center', transform=ax.transAxes,
                    fontsize=12, color='gray')
             ax.axis('off')
-        ax.set_xlabel('x', fontsize=10)
-        ax.set_ylabel('t', fontsize=10)
-        ax.set_title(f'{layer_prev} → {layer_curr}', fontsize=11)
-        plt.colorbar(contour, ax=ax, label='Accuracy Change')
+            continue
+        
+        # Axis labels/title already set in the valid branch above
     
     # Hide unused subplots
     for idx in range(n_transitions, len(axes)):
