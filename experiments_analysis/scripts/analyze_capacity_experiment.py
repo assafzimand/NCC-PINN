@@ -740,6 +740,25 @@ def organize_non_monotonic_by_metric(
         non_mono_dir: Non-monotonic comparisons directory
         experiment_plan: Optional mapping from experiment name to architecture
     """
+    # Summarize violations by metric (total vs passed threshold)
+    summary = defaultdict(lambda: {"total": 0, "passed": 0, "models": set(), "passed_models": set()})
+    for v in violations:
+        metric_type = v["metric_type"]
+        model_name = v["model_name"]
+        summary[metric_type]["total"] += 1
+        summary[metric_type]["models"].add(model_name)
+        if v["passed_threshold"]:
+            summary[metric_type]["passed"] += 1
+            summary[metric_type]["passed_models"].add(model_name)
+
+    print("  Metric violation summary (total / passed @10%):")
+    for metric_type in sorted(summary.keys()):
+        s = summary[metric_type]
+        print(
+            f"    {metric_type}: total={s['total']} (models={len(s['models'])}), "
+            f"passed={s['passed']} (models={len(s['passed_models'])})"
+        )
+
     # Group violations by metric type
     metric_violations = defaultdict(list)
     for v in violations:
