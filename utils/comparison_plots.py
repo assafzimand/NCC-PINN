@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 from matplotlib import colors as mcolors
+import os
 
 
 def _build_color_map(model_names):
@@ -42,6 +43,15 @@ def _build_color_map(model_names):
     return color_map
 
 
+def _long_path(path: Path) -> Path:
+    """Prefix Windows paths to bypass MAX_PATH limits when needed."""
+    resolved = path.resolve()
+    p_str = str(resolved)
+    if os.name == "nt" and not p_str.startswith("\\\\?\\"):
+        return Path("\\\\?\\" + p_str)
+    return resolved
+
+
 def generate_ncc_classification_plot(save_dir, ncc_data):
     """Generate NCC classification accuracy comparison across layers and epochs."""
     fig, ax = plt.subplots(figsize=(14, 8))
@@ -77,7 +87,7 @@ def generate_ncc_classification_plot(save_dir, ncc_data):
     ax.set_ylim([0, 1])
     
     plt.tight_layout()
-    save_path = Path(save_dir) / "ncc_classification_comparison.png"
+    save_path = _long_path(Path(save_dir) / "ncc_classification_comparison.png")
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  NCC classification comparison saved to {save_path}")
@@ -126,7 +136,7 @@ def generate_ncc_compactness_plot(save_dir, ncc_data):
     ax.legend(loc='best', fontsize=10)
     
     plt.tight_layout()
-    save_path = Path(save_dir) / "ncc_compactness_comparison.png"
+    save_path = _long_path(Path(save_dir) / "ncc_compactness_comparison.png")
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  NCC compactness comparison saved to {save_path}")
@@ -200,7 +210,7 @@ def generate_probe_comparison_plots(save_dir, probe_data):
     plt.tight_layout()
     
     # Save plot
-    save_path = Path(save_dir) / "probe_comparison.png"
+    save_path = _long_path(Path(save_dir) / "probe_comparison.png")
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
@@ -237,7 +247,7 @@ def generate_probe_comparison_plots(save_dir, probe_data):
     
     plt.tight_layout()
     
-    inf_path = Path(save_dir) / "probe_comparison_inf.png"
+    inf_path = _long_path(Path(save_dir) / "probe_comparison_inf.png")
     plt.savefig(inf_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  Probe infinity-norm comparison saved to {inf_path}")
@@ -299,7 +309,7 @@ def _plot_derivative_comparison_grid(save_dir, derivatives_data, section_key, ke
             ax.legend(fontsize=10, loc='best')
     
     plt.tight_layout(rect=[0, 0.02, 1, 0.97])
-    save_path = Path(save_dir) / filename
+    save_path = _long_path(Path(save_dir) / filename)
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  {title} saved to {save_path}")

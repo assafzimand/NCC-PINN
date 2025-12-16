@@ -1,4 +1,0 @@
-Note: 1 additional models showed non-monotonicity but degradation was < 5% threshold and are not shown in these plots.
-
-Only models with non-monotonic violations (passed 5% threshold) are shown here.
-Total non-monotonic models shown: 8
