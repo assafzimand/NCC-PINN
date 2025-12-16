@@ -1,0 +1,9 @@
+rank,model_name,num_layers,num_parameters,worst_degradation_rel,worst_degradation_abs,worst_layer,worst_metric_type,violation_count
+1,schrodinger-2-70-70-70-70-70-70-70-2-tanh,7,30172,2.095311597874371,1.473304808139801,layer_3,Derivatives_BC_Derivative,4
+2,schrodinger-2-140-140-140-2-tanh,3,40182,1.1755680486596678,3.0926785469055176,layer_2,Derivatives_Residual,6
+3,schrodinger-2-40-40-40-40-40-40-40-2-tanh,7,10042,0.7457248691897624,0.10427246987819672,layer_2,Derivatives_BC_Value,3
+4,schrodinger-2-100-100-100-2-tanh,3,20702,0.6138521733242526,1.9280123710632324,layer_2,Derivatives_Residual,5
+5,schrodinger-2-85-85-85-85-85-2-tanh,5,29667,0.43101984285158346,0.0018711425364017487,layer_5,Derivatives_BC_Value,2
+6,schrodinger-2-100-100-100-100-100-2-tanh,5,40902,0.3922882985991962,0.9185268878936768,layer_2,Derivatives_Residual,2
+7,schrodinger-2-58-58-58-58-58-58-58-2-tanh,7,20824,0.24590314442361855,0.005777148529887199,layer_6,Derivatives_BC_Derivative,2
+8,schrodinger-2-70-70-70-70-70-2-tanh,5,20232,0.1462934553559361,0.01099202036857605,layer_4,Derivatives_BC_Derivative,1
