@@ -7,7 +7,10 @@ Implements the three-component loss:
 where:
 - MSE_f: PDE residual loss (h_tt - h_xx = 0)
 - MSE_0: Initial condition loss (h(x,0) = sin(x), h_t(x,0) = 0)
-- MSE_b: Boundary condition loss (h(±5,t) = 0, Dirichlet)
+- MSE_b:  MSE_b: Boundary condition loss using the analytical boundary values from the
+         dataset (not forced to zero). This keeps the loss consistent with the
+         ground-truth solution and avoids injecting an inconsistent zero BC
+         when the analytical solution is non-zero at the domain edges.
 """
 
 import torch
@@ -211,20 +214,20 @@ def build_loss(**cfg) -> Callable:
             mse_ic = torch.tensor(0.0, device=device)
         
         # ============================================================
-        # MSE_b: Boundary Condition Loss (Dirichlet: h(±5,t) = 0)
+        # MSE_b: Boundary Condition Loss (use analytical boundary values)
         # ============================================================
         if masks['BC'].sum() > 0:
             # Boolean indexing + .contiguous() for GPU efficiency
             x_b = x[masks['BC']].contiguous()  # (N_b, spatial_dim)
             t_b = t[masks['BC']].contiguous()  # (N_b, 1)
+            u_gt_b = u_gt[masks['BC']].contiguous()  # (N_b, 1)
             
             # Model prediction
             xt_b = torch.cat([x_b, t_b], dim=1)
             h_pred = model(xt_b)  # (N_b, 1)
             
-            # Dirichlet BC: h(boundary, t) = 0
-            # MSE: |h(boundary, t) - 0|²
-            mse_bc = torch.mean(h_pred ** 2)
+            # Match the analytical boundary values instead of forcing zero
+            mse_bc = torch.mean((h_pred - u_gt_b) ** 2)
         else:
             mse_bc = torch.tensor(0.0, device=device)
         

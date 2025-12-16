@@ -86,42 +86,42 @@ experiments:
     problem: wave1d
     architecture: [2, 85, 85, 85, 85, 85, 1]
 
-  - name: "7lyr_30k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 70, 70, 70, 70, 70, 70, 70, 1]
+#  - name: "7lyr_30k_Wn_flat"
+#    problem: wave1d
+#    architecture: [2, 70, 70, 70, 70, 70, 70, 70, 1]
 
-  - name: "3lyr_20k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 100, 100, 100, 1]
+#  - name: "3lyr_20k_Wn_flat"
+#    problem: wave1d
+#    architecture: [2, 100, 100, 100, 1]
 
-  - name: "5lyr_20k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 70, 70, 70, 70, 70, 1]
+#  - name: "5lyr_20k_Wn_flat"
+#    problem: wave1d
+#    architecture: [2, 70, 70, 70, 70, 70, 1]
 
-  - name: "7lyr_20k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 58, 58, 58, 58, 58, 58, 58, 1]
+#  - name: "7lyr_20k_Wn_flat"
+#    problem: wave1d
+#    architecture: [2, 58, 58, 58, 58, 58, 58, 58, 1]
 
-  - name: "3lyr_10k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 70, 70, 70, 1]
+#  - name: "3lyr_10k_Wn_flat"
+#    problem: wave1d
+#    architecture: [2, 70, 70, 70, 1]
 
-  - name: "5lyr_10k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 50, 50, 50, 50, 50, 1]
+#  - name: "5lyr_10k_Wn_flat"
+#    problem: wave1d
+#    architecture: [2, 50, 50, 50, 50, 50, 1]
 
-  - name: "7lyr_10k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 40, 40, 40, 40, 40, 40, 40, 1]
+#  - name: "7lyr_10k_Wn_flat"
+#    problem: wave1d
+#    architecture: [2, 40, 40, 40, 40, 40, 40, 40, 1]
 
-  - name: "3lyr_5k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 46, 46, 46, 1]
+#  - name: "3lyr_5k_Wn_flat"
+#    problem: wave1d
+#    architecture: [2, 46, 46, 46, 1]
 
-  - name: "5lyr_5k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 36, 36, 36, 36, 36, 1]
+#  - name: "5lyr_5k_Wn_flat"
+#    problem: wave1d
+#    architecture: [2, 36, 36, 36, 36, 36, 1]
 
-  - name: "7lyr_5k_Wn_flat"
-    problem: wave1d
-    architecture: [2, 28, 28, 28, 28, 28, 28, 28, 1]
+#  - name: "7lyr_5k_Wn_flat"
+#    problem: wave1d
+#    architecture: [2, 28, 28, 28, 28, 28, 28, 28, 1]
