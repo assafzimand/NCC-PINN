@@ -1,0 +1,85 @@
+Non-Monotonic Statistics Summary
+======================================================================
+
+Total violations (passed threshold): 24
+Total violations (below threshold): 1
+
+Statistics by Group:
+
+Overall: All
+  Count: 24
+  Mean degradation (abs): 0.754577 ± 0.939268
+  Mean degradation (rel): 53.86% ± 47.37%
+  Mean layer position: 1.83 ± 1.34
+
+Metric Type: Derivatives_Residual
+  Count: 8
+  Mean degradation (abs): 1.703722 ± 0.968424
+  Mean degradation (rel): 60.21% ± 35.53%
+  Mean layer position: 1.25 ± 0.46
+
+Metric Type: Derivatives_IC
+  Count: 3
+  Mean degradation (abs): 0.248875 ± 0.167984
+  Mean degradation (rel): 42.01% ± 31.02%
+  Mean layer position: 1.00 ± 0.00
+
+Metric Type: Derivatives_BC_Derivative
+  Count: 6
+  Mean degradation (abs): 0.501517 ± 0.672162
+  Mean degradation (rel): 69.02% ± 81.80%
+  Mean layer position: 3.00 ± 1.67
+
+Metric Type: Derivatives_BC_Value
+  Count: 6
+  Mean degradation (abs): 0.118017 ± 0.123265
+  Mean degradation (rel): 44.22% ± 21.80%
+  Mean layer position: 2.00 ± 1.55
+
+Metric Type: NCC
+  Count: 1
+  Mean degradation (abs): 0.016245 ± nan
+  Mean degradation (rel): 5.43% ± nan%
+  Mean layer position: 1.00 ± nan
+
+Num Layers: 5
+  Count: 5
+  Mean degradation (abs): 0.383775 ± 0.519967
+  Mean degradation (rel): 29.33% ± 15.36%
+  Mean layer position: 2.60 ± 1.52
+
+Num Layers: 3
+  Count: 10
+  Mean degradation (abs): 1.143424 ± 1.230502
+  Mean degradation (rel): 56.78% ± 35.97%
+  Mean layer position: 1.00 ± 0.00
+
+Num Layers: 7
+  Count: 9
+  Mean degradation (abs): 0.528527 ± 0.604474
+  Mean degradation (rel): 64.24% ± 66.11%
+  Mean layer position: 2.33 ± 1.58
+
+Num Parameters: 10k-20k
+  Count: 3
+  Mean degradation (abs): 0.065561 ± 0.044961
+  Mean degradation (rel): 45.78% ± 35.99%
+  Mean layer position: 1.00 ± 0.00
+
+Num Parameters: 20k-30k
+  Count: 9
+  Mean degradation (abs): 0.441061 ± 0.778530
+  Mean degradation (rel): 28.43% ± 20.11%
+  Mean layer position: 2.78 ± 1.79
+
+Num Parameters: 30k-40k
+  Count: 4
+  Mean degradation (abs): 1.137273 ± 0.286720
+  Mean degradation (rel): 98.83% ± 87.77%
+  Mean layer position: 2.00 ± 0.00
+
+Num Parameters: 40k-50k
+  Count: 8
+  Mean degradation (abs): 1.174316 ± 1.247139
+  Mean degradation (rel): 63.00% ± 33.61%
+  Mean layer position: 1.00 ± 0.00
