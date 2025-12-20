@@ -39,10 +39,6 @@ def compute_ground_truth_derivatives(
     # Get solution from interpolator
     h_values = interpolator(x_np, t_np)  # (N,) - could be complex or real
     
-    # Alternative: Use finite differences on the analytical solution
-    eps_x = 1e-6
-    eps_t = 1e-6
-    
     # Get problem config
     output_dim = config[problem_name].get('output_dim', 2)
     
@@ -51,6 +47,11 @@ def compute_ground_truth_derivatives(
     if problem_name == 'schrodinger':
         # Complex-valued solution
         h_complex = h_values  # (N,) complex
+        
+        # Finite difference step sizes - must be appropriate for grid resolution
+        # Schrodinger uses 512x201 grid, so dx~0.01, dt~0.005
+        eps_x = 1e-3
+        eps_t = 1e-3
         
         # Compute h_t using finite differences
         h_t_plus = interpolator(x_np, t_np + eps_t)
@@ -95,10 +96,45 @@ def compute_ground_truth_derivatives(
         # Real-valued solution - use finite differences on interpolator
         h_real = h_values  # (N,) real
         
-        # Compute h_t using finite differences
-        h_t_plus = interpolator(x_np, t_np + eps_t)
-        h_t_minus = interpolator(x_np, t_np - eps_t)
-        h_t_real = (h_t_plus - h_t_minus) / (2 * eps_t)
+        # Finite difference step sizes - must be appropriate for grid resolution
+        # Burgers uses 256x201 grid, so dx~0.0078, dt~0.005
+        # Using eps ~ grid spacing / 2 for good accuracy without precision issues
+        eps_x = 1e-3
+        eps_t = 1e-3
+        
+        # Get domain bounds for boundary handling
+        t_min, t_max = config[problem_name]['temporal_domain']
+        
+        # Compute h_t using finite differences with boundary handling
+        # Use one-sided differences at temporal boundaries to avoid fill_value issues
+        h_t_real = np.zeros_like(h_real)
+        
+        # Masks for different regions
+        near_t_min = t_np < t_min + eps_t
+        near_t_max = t_np > t_max - eps_t
+        interior = ~near_t_min & ~near_t_max
+        
+        # Central difference for interior points
+        if np.any(interior):
+            h_t_plus_int = interpolator(x_np[interior], t_np[interior] + eps_t)
+            h_t_minus_int = interpolator(x_np[interior], t_np[interior] - eps_t)
+            h_t_real[interior] = (h_t_plus_int - h_t_minus_int) / (2 * eps_t)
+        
+        # Forward difference near t_min
+        if np.any(near_t_min):
+            h_0 = interpolator(x_np[near_t_min], t_np[near_t_min])
+            h_1 = interpolator(x_np[near_t_min], t_np[near_t_min] + eps_t)
+            h_2 = interpolator(x_np[near_t_min], t_np[near_t_min] + 2*eps_t)
+            # Second-order forward difference: (-3h0 + 4h1 - h2) / (2*eps)
+            h_t_real[near_t_min] = (-3*h_0 + 4*h_1 - h_2) / (2 * eps_t)
+        
+        # Backward difference near t_max
+        if np.any(near_t_max):
+            h_0 = interpolator(x_np[near_t_max], t_np[near_t_max])
+            h_m1 = interpolator(x_np[near_t_max], t_np[near_t_max] - eps_t)
+            h_m2 = interpolator(x_np[near_t_max], t_np[near_t_max] - 2*eps_t)
+            # Second-order backward difference: (3h0 - 4h_{-1} + h_{-2}) / (2*eps)
+            h_t_real[near_t_max] = (3*h_0 - 4*h_m1 + h_m2) / (2 * eps_t)
         
         # Compute h_x using finite differences
         h_x_plus = interpolator(x_np + eps_x, t_np)
