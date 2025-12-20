@@ -297,7 +297,7 @@ def generate_dataset(
         Dictionary with keys:
             "x": (N, spatial_dim) spatial coordinates
             "t": (N, 1) temporal coordinates
-            "u_gt": (N, 2) ground truth solution (real, imag)
+            "h_gt": (N, 2) ground truth solution h = u + iv as (real, imag)
             "mask": dict with "residual", "IC", "BC" boolean masks
     """
     seed = config['seed']
@@ -375,17 +375,17 @@ def generate_dataset(
     
     h_interp = interpolator(x_np, t_np)  # (N,) complex
     
-    # Convert to (real, imag) format
-    u_gt = torch.zeros(N, 2, device=device, dtype=torch.float32)
-    u_gt[:, 0] = torch.from_numpy(h_interp.real.astype(np.float32)).to(device)
-    u_gt[:, 1] = torch.from_numpy(h_interp.imag.astype(np.float32)).to(device)
+    # Convert to (real, imag) format: h = u + iv
+    h_gt = torch.zeros(N, 2, device=device, dtype=torch.float32)
+    h_gt[:, 0] = torch.from_numpy(h_interp.real.astype(np.float32)).to(device)
+    h_gt[:, 1] = torch.from_numpy(h_interp.imag.astype(np.float32)).to(device)
     
     print("  Dataset generated successfully")
     
     return {
         "x": x,
         "t": t,
-        "u_gt": u_gt,
+        "h_gt": h_gt,
         "mask": {
             "residual": mask_residual,
             "IC": mask_ic,

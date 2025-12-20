@@ -51,7 +51,7 @@ def run_ncc(
     # Move data to device
     x = eval_data['x'].to(device)
     t = eval_data['t'].to(device)
-    u_gt = eval_data['u_gt'].to(device)
+    h_gt = eval_data['h_gt'].to(device)
 
     N = x.shape[0]
     print(f"  NCC samples: {N}")
@@ -74,7 +74,7 @@ def run_ncc(
     print("\nRunning forward pass to collect activations...")
     with torch.no_grad():
         inputs = torch.cat([x, t], dim=1)
-        u_pred = model(inputs)
+        h_pred = model(inputs)
 
     # Get activations from model
     embeddings_dict = model.activations.copy()
@@ -91,7 +91,7 @@ def run_ncc(
     print("\nComputing NCC metrics...")
     ncc_results = compute_all_ncc_metrics(
         embeddings_dict=embeddings_dict,
-        ground_truth_outputs=u_gt,
+        ground_truth_outputs=h_gt,
         bins=bins,
         device=device
     )
@@ -146,7 +146,7 @@ def run_ncc(
             
             # Output space visualization (u, v) - scatter plot
             viz_path = ncc_plots_dir / "ncc_classification_diagnostic.png"
-            visualize_ncc_classification(u_gt, class_labels, predictions_dict, bins, viz_path)
+            visualize_ncc_classification(h_gt, class_labels, predictions_dict, bins, viz_path)
             print(f"  Classification diagnostic saved to {viz_path}")
             
             # Input space visualization (x, t) - scatter plot
@@ -158,7 +158,7 @@ def run_ncc(
             if has_heatmap:
                 # Output space visualization (u, v) - heatmap
                 viz_path_heatmap = ncc_plots_dir / "ncc_classification_heatmap.png"
-                visualize_ncc_classification_heatmap(u_gt, class_labels, predictions_dict, bins, viz_path_heatmap, cfg)
+                visualize_ncc_classification_heatmap(h_gt, class_labels, predictions_dict, bins, viz_path_heatmap, cfg)
                 
                 # Input space visualization (x, t) - heatmap
                 viz_path_input_heatmap = ncc_plots_dir / "ncc_classification_input_space_heatmap.png"

@@ -38,7 +38,7 @@ def create_tiny_batch(n_points: int, spatial_dim: int, device: torch.device):
 
     x = torch.rand(n_points, spatial_dim, device=device)
     t = torch.rand(n_points, 1, device=device)
-    u_gt = torch.randn(n_points, 2, device=device)
+    h_gt = torch.randn(n_points, 2, device=device)
 
     mask_residual = torch.zeros(n_points, dtype=torch.bool, device=device)
     mask_residual[:n_residual] = True
@@ -52,7 +52,7 @@ def create_tiny_batch(n_points: int, spatial_dim: int, device: torch.device):
     batch = {
         'x': x,
         't': t,
-        'u_gt': u_gt,
+        'h_gt': h_gt,
         'mask': {
             'residual': mask_residual,
             'IC': mask_ic,
@@ -236,7 +236,7 @@ def test_physics_informed_gradients():
     x[n_residual+n_ic+n_bc//2:, 0] = x_max  # Right
     
     # Ground truth (not used for residual, but needed for IC/BC)
-    u_gt = torch.randn(n_points, 2, device=device)
+    h_gt = torch.randn(n_points, 2, device=device)
     
     # Create masks
     mask_residual = torch.zeros(n_points, dtype=torch.bool, device=device)
@@ -251,7 +251,7 @@ def test_physics_informed_gradients():
     batch = {
         'x': x,
         't': t,
-        'u_gt': u_gt,
+        'h_gt': h_gt,
         'mask': {
             'residual': mask_residual,
             'IC': mask_ic,

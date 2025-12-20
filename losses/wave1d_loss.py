@@ -138,7 +138,7 @@ def build_loss(**cfg) -> Callable:
             batch: Dictionary with keys:
                 - 'x': (N, spatial_dim) spatial coordinates
                 - 't': (N, 1) temporal coordinates
-                - 'u_gt': (N, 1) ground truth (for IC/BC)
+                - 'h_gt': (N, 1) ground truth (for IC/BC)
                 - 'mask': dict with 'residual', 'IC', 'BC' boolean masks
                 
         Returns:
@@ -146,7 +146,7 @@ def build_loss(**cfg) -> Callable:
         """
         x = batch['x']  # (N, spatial_dim)
         t = batch['t']  # (N, 1)
-        u_gt = batch['u_gt']  # (N, 1)
+        h_gt = batch['h_gt']  # (N, 1)
         masks = batch['mask']  # dict with boolean masks
         
         device = x.device
@@ -188,7 +188,7 @@ def build_loss(**cfg) -> Callable:
             # Boolean indexing + .contiguous() for GPU efficiency
             x_0 = x[masks['IC']].contiguous()  # (N_0, spatial_dim)
             t_0 = t[masks['IC']].contiguous()  # (N_0, 1)
-            u_gt_0 = u_gt[masks['IC']].contiguous()  # (N_0, 1)
+            h_gt_0 = h_gt[masks['IC']].contiguous()  # (N_0, 1)
             
             # Enable gradients for h_t computation
             x_0 = x_0.clone().detach().requires_grad_(True)
@@ -204,7 +204,7 @@ def build_loss(**cfg) -> Callable:
             
             # IC: h(x,0) = sin(x) and h_t(x,0) = 0
             # MSE for position: |h(x,0) - sin(x)|²
-            mse_position = torch.mean((h_0 - u_gt_0[:, 0]) ** 2)
+            mse_position = torch.mean((h_0 - h_gt_0[:, 0]) ** 2)
             
             # MSE for velocity: |h_t(x,0) - 0|²
             mse_velocity = torch.mean(h_t ** 2)
@@ -220,14 +220,14 @@ def build_loss(**cfg) -> Callable:
             # Boolean indexing + .contiguous() for GPU efficiency
             x_b = x[masks['BC']].contiguous()  # (N_b, spatial_dim)
             t_b = t[masks['BC']].contiguous()  # (N_b, 1)
-            u_gt_b = u_gt[masks['BC']].contiguous()  # (N_b, 1)
+            h_gt_b = h_gt[masks['BC']].contiguous()  # (N_b, 1)
             
             # Model prediction
             xt_b = torch.cat([x_b, t_b], dim=1)
             h_pred = model(xt_b)  # (N_b, 1)
             
             # Match the analytical boundary values instead of forcing zero
-            mse_bc = torch.mean((h_pred - u_gt_b) ** 2)
+            mse_bc = torch.mean((h_pred - h_gt_b) ** 2)
         else:
             mse_bc = torch.tensor(0.0, device=device)
         

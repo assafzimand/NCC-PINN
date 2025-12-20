@@ -57,11 +57,11 @@ def run_probes(
     # Move data to device
     train_x = train_data['x'].to(device)
     train_t = train_data['t'].to(device)
-    train_targets = train_data['u_gt'].to(device)
+    train_targets = train_data['h_gt'].to(device)
     
     eval_x = eval_data['x'].to(device)
     eval_t = eval_data['t'].to(device)
-    eval_targets = eval_data['u_gt'].to(device)
+    eval_targets = eval_data['h_gt'].to(device)
     
     N_train = train_x.shape[0]
     N_eval = eval_x.shape[0]

@@ -153,7 +153,7 @@ def build_loss(**cfg) -> Callable:
             batch: Dictionary with keys:
                 - 'x': (N, spatial_dim) spatial coordinates
                 - 't': (N, 1) temporal coordinates
-                - 'u_gt': (N, 2) ground truth (for IC/BC)
+                - 'h_gt': (N, 2) ground truth h = u + iv as (real, imag)
                 - 'mask': dict with 'residual', 'IC', 'BC' boolean masks
                 
         Returns:
@@ -161,7 +161,7 @@ def build_loss(**cfg) -> Callable:
         """
         x = batch['x']  # (N, spatial_dim)
         t = batch['t']  # (N, 1)
-        u_gt = batch['u_gt']  # (N, 2)
+        h_gt = batch['h_gt']  # (N, 2) as (real, imag)
         masks = batch['mask']  # dict with boolean masks
         
         device = x.device
@@ -207,7 +207,7 @@ def build_loss(**cfg) -> Callable:
             # Boolean indexing + .contiguous() for GPU efficiency
             x_0 = x[masks['IC']].contiguous()  # (N_0, spatial_dim)
             t_0 = t[masks['IC']].contiguous()  # (N_0, 1)
-            u_gt_0 = u_gt[masks['IC']].contiguous()  # (N_0, 2)
+            h_gt_0 = h_gt[masks['IC']].contiguous()  # (N_0, 2)
             
             # Model prediction
             xt_0 = torch.cat([x_0, t_0], dim=1)
@@ -215,7 +215,7 @@ def build_loss(**cfg) -> Callable:
             
             # Convert to complex
             h_pred = torch.complex(uv_0[:, 0], uv_0[:, 1])
-            h_true = torch.complex(u_gt_0[:, 0], u_gt_0[:, 1])
+            h_true = torch.complex(h_gt_0[:, 0], h_gt_0[:, 1])
             
             # MSE: |h_pred - h_true|²
             diff = h_pred - h_true

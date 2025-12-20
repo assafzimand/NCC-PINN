@@ -10,7 +10,7 @@ def visualize_dataset(data_dict, save_dir, config, split_name):
     Placeholder - no custom dataset visualization for problem2 yet.
     
     Args:
-        data_dict: Dataset dictionary with x, t, u_gt, mask
+        data_dict: Dataset dictionary with x, t, h_gt, mask
         save_dir: Directory to save visualizations
         config: Configuration dictionary
         split_name: Name of split ('training' or 'evaluation')
@@ -36,7 +36,7 @@ def visualize_ncc_dataset(ncc_data, dataset_dir, config, prefix='ncc'):
     Placeholder - no custom NCC dataset visualization for problem2 yet.
     
     Args:
-        ncc_data: NCC dataset dictionary with u_gt tensor
+        ncc_data: NCC dataset dictionary with h_gt tensor
         dataset_dir: Directory to save visualization
         config: Configuration dictionary with 'bins'
         prefix: Prefix for filename
@@ -44,12 +44,12 @@ def visualize_ncc_dataset(ncc_data, dataset_dir, config, prefix='ncc'):
     pass
 
 
-def visualize_ncc_classification(u_gt, class_labels, predictions_dict, bins, save_path):
+def visualize_ncc_classification(h_gt, class_labels, predictions_dict, bins, save_path):
     """
     Placeholder - no custom NCC classification visualization for problem2 yet.
     
     Args:
-        u_gt: Ground truth outputs (N, output_dim)
+        h_gt: Ground truth outputs (N, output_dim)
         class_labels: True class labels (N,)
         predictions_dict: Dict mapping layer_name -> predictions (N,)
         bins: Number of bins per dimension

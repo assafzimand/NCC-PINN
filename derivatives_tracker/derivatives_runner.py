@@ -23,11 +23,11 @@ def _compute_ic_metrics(layer_results: Dict[str, Dict], data: Dict[str, torch.Te
     mask_ic = data['mask']['IC'].detach().cpu().numpy().astype(bool)
     if not mask_ic.any():
         return {}
-    u_gt = data['u_gt'].detach().cpu().numpy()
+    h_gt = data['h_gt'].detach().cpu().numpy()
     metrics = {}
     for layer_name, results in layer_results.items():
         preds = results['h'][mask_ic]
-        target = u_gt[mask_ic]
+        target = h_gt[mask_ic]
         metrics[layer_name] = _compute_mean_norms(preds - target)
     return metrics
 
@@ -199,7 +199,7 @@ def run_derivatives_tracker(
     # Train probes to get probe objects
     from probes.probe_core import train_linear_probe
     
-    train_targets = train_data['u_gt'].to(device)
+    train_targets = train_data['h_gt'].to(device)
     probes_dict = {}
     
     print("  Training probes...")
@@ -249,6 +249,9 @@ def run_derivatives_tracker(
         elif problem_name == 'wave1d':
             ic_profile_eval['gt_real'] = lambda arr: np.sin(arr)
             ic_profile_eval['gt_label_0'] = 'Ground Truth sin(x)'
+        elif problem_name == 'burgers1d':
+            ic_profile_eval['gt_real'] = lambda arr: -np.sin(np.pi * arr)
+            ic_profile_eval['gt_label_0'] = 'Ground Truth -sin(πx)'
     bc_value_train = _compute_bc_metrics(train_derivatives, train_data, cfg, use_derivative=False)
     bc_value_eval = _compute_bc_metrics(eval_derivatives, eval_data, cfg, use_derivative=False)
     bc_deriv_train = _compute_bc_metrics(train_derivatives, train_data, cfg, use_derivative=True)

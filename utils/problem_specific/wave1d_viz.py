@@ -22,7 +22,7 @@ def visualize_dataset(data_dict: Dict, save_dir: Path, config: Dict, split_name:
     Creates heatmap of h(x,t) - real-valued wave field.
     
     Args:
-        data_dict: Dataset dictionary with 'x', 't', 'u_gt' tensors
+        data_dict: Dataset dictionary with 'x', 't', 'h_gt' tensors
         save_dir: Directory to save visualization
         config: Configuration dictionary
         split_name: Name of split ('training' or 'evaluation')
@@ -30,12 +30,12 @@ def visualize_dataset(data_dict: Dict, save_dir: Path, config: Dict, split_name:
     # Extract data
     x = data_dict['x'].cpu().numpy()  # (N, spatial_dim)
     t = data_dict['t'].cpu().numpy()  # (N, 1)
-    u_gt = data_dict['u_gt'].cpu().numpy()  # (N, 1) - real-valued
+    h_gt = data_dict['h_gt'].cpu().numpy()  # (N, 1) - real-valued
     
     # Flatten coordinates
     x_flat = x[:, 0]
     t_flat = t[:, 0]
-    h = u_gt[:, 0]  # Scalar wave field
+    h = h_gt[:, 0]  # Scalar wave field
     
     # Create figure
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
@@ -162,7 +162,7 @@ def visualize_ncc_dataset(ncc_data: Dict, dataset_dir: Path, config: Dict, prefi
         config: Configuration dictionary
         prefix: Prefix for filename
     """
-    h_gt = ncc_data['u_gt'].cpu().numpy()  # (N, 1)
+    h_gt = ncc_data['h_gt'].cpu().numpy()  # (N, 1)
     
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
     

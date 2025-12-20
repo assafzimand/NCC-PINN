@@ -197,7 +197,7 @@ def test_cuda_batching():
         # Check batch structure
         assert 'x' in batch, "Batch missing x"
         assert 't' in batch, "Batch missing t"
-        assert 'u_gt' in batch, "Batch missing u_gt"
+        assert 'h_gt' in batch, "Batch missing h_gt"
         assert 'mask' in batch, "Batch missing mask"
 
         # Check device
@@ -207,7 +207,7 @@ def test_cuda_batching():
         # Check shapes
         assert batch['x'].dim() == 2, "x should be 2D"
         assert batch['t'].dim() == 2, "t should be 2D"
-        assert batch['u_gt'].dim() == 2, "u_gt should be 2D"
+        assert batch['h_gt'].dim() == 2, "h_gt should be 2D"
 
         if i == 0:
             print(f"  ✓ Batch structure correct")
