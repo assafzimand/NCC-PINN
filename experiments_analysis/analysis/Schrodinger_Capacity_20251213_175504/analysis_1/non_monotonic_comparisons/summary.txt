@@ -1,0 +1,16 @@
+Non-Monotonic Analysis Summary
+============================================================
+Total violations: 21
+Total models with violations: 8
+Total models analyzed: 12
+
+Violations by metric:
+  BC Derivative L2 (eval): 3 violations in 3 models
+  BC Derivative L-inf (eval): 2 violations in 2 models
+  BC Value L2 (eval): 3 violations in 3 models
+  BC Value L-inf (eval): 2 violations in 2 models
+  IC L2 (eval): 1 violations in 1 models
+  IC L-inf (eval): 1 violations in 1 models
+  NCC Compactness (Margin SNR): 1 violations in 1 models
+  Residual L2 (eval): 4 violations in 4 models
+  Residual L-inf (eval): 4 violations in 4 models

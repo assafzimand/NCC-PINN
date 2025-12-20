@@ -1,0 +1,3 @@
+model_name,num_layers,num_parameters,non_monotone_layers,worst_degradation_pct,other_metrics_violated
+wave1d-2-70-70-70-70-70-70-70-1-tanh,7,"30,101","2, 5",19.8%,"bc_derivative_l2, bc_derivative_linf, ic_l2, ic_linf, ncc_co..."
+wave1d-2-36-36-36-36-36-1-tanh,5,"5,473",2,16.5%,"bc_derivative_l2, bc_derivative_linf, ic_l2, ic_linf, probe_..."
