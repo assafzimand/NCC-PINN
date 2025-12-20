@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "burgers1d_Capacity"
+experiment_name: "Burgers1d_Capacity"
 
 # Base configuration (will be used for all experiments)
 base_config:
