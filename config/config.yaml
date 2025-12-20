@@ -5,9 +5,11 @@ adam_betas:
 adam_eps: 1.0e-08
 architecture:
 - 2
-- 12
-- 12
-- 12
+- 8
+- 8
+- 8
+- 8
+- 8
 - 2
 batch_size: 512
 bins: 5
@@ -28,7 +30,7 @@ burgers1d:
 cuda: true
 epochs: 3
 eval_every: 2
-eval_only: false
+eval_only: true
 inner_metrics_eval_every: 2
 lbfgs_history_size: 20
 lbfgs_line_search: strong_wolfe
@@ -45,7 +47,7 @@ n_initial_train: 100
 n_residual_eval: 5000
 n_residual_train: 20000
 n_samples_ncc: 5000
-name: 3lyr_30k_Wn_flat
+name: 5lyr_30k_Wn_flat
 optimizer_switch_at: 0.9
 print_every: 1
 problem: schrodinger
@@ -62,7 +64,7 @@ problem2:
   temporal_domain:
   - 0.0
   - 1.0
-resume_from: null
+resume_from: checkpoints\schrodinger\schrodinger-2-8-8-8-8-8-2-tanh\best_model.pt
 save_every: 2
 schrodinger:
   loss_weights:
