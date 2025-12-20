@@ -1,0 +1,9 @@
+model_name,num_layers,num_parameters,worst_metric,non_monotone_layers,worst_degradation_pct,metrics_violated
+schrodinger-2-70-70-70-70-70-70-70-2-tanh,7,"30,172",BC Derivative L-inf (eval),3,233.9%,4
+schrodinger-2-140-140-140-2-tanh,3,"40,182",Residual L2 (eval),2,111.1%,6
+schrodinger-2-40-40-40-40-40-40-40-2-tanh,7,"10,042",BC Value L-inf (eval),2,89.0%,3
+schrodinger-2-100-100-100-2-tanh,3,"20,702",Residual L2 (eval),2,61.4%,2
+schrodinger-2-100-100-100-100-100-2-tanh,5,"40,902",Residual L2 (eval),2,39.0%,2
+schrodinger-2-58-58-58-58-58-58-58-2-tanh,7,"20,824",BC Derivative L2 (eval),6,20.9%,1
+schrodinger-2-70-70-70-70-70-2-tanh,5,"20,232",BC Derivative L2 (eval),4,14.6%,2
+schrodinger-2-85-85-85-85-85-2-tanh,5,"29,667",BC Value L2 (eval),5,10.7%,1
