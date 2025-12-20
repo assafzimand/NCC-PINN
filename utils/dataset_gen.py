@@ -110,8 +110,8 @@ def generate_and_save_datasets(config: Dict) -> None:
             config=config
         )
         
-        # Determine output dimension (generic: check u_gt shape)
-        output_dim = large_data['u_gt'].shape[1]
+        # Determine output dimension
+        output_dim = large_data['h_gt'].shape[1]
         
         # Apply uniform sampling
         print(f"  Applying uniform sampling (target: {config['n_samples_ncc']} samples)...")
@@ -167,7 +167,7 @@ def load_dataset(
         # Move all tensors to specified device
         data['x'] = data['x'].to(device)
         data['t'] = data['t'].to(device)
-        data['u_gt'] = data['u_gt'].to(device)
+        data['h_gt'] = data['h_gt'].to(device)
         data['mask']['residual'] = data['mask']['residual'].to(device)
         data['mask']['IC'] = data['mask']['IC'].to(device)
         data['mask']['BC'] = data['mask']['BC'].to(device)

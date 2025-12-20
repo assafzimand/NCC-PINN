@@ -80,8 +80,8 @@ def plot_training_curves(
 
 
 def plot_final_comparison(
-    u_pred: np.ndarray,
-    u_gt: np.ndarray,
+    h_pred: np.ndarray,
+    h_gt: np.ndarray,
     x: np.ndarray,
     t: np.ndarray,
     save_dir: Path
@@ -90,8 +90,8 @@ def plot_final_comparison(
     Plot final predictions vs ground truth.
 
     Args:
-        u_pred: Predicted values (N, output_dim)
-        u_gt: Ground truth values (N, output_dim)
+        h_pred: Predicted values (N, output_dim)
+        h_gt: Ground truth values (N, output_dim)
         x: Spatial coordinates (N, spatial_dim)
         t: Temporal coordinates (N, 1)
         save_dir: Directory to save plot
@@ -101,7 +101,7 @@ def plot_final_comparison(
 
     # For 1D spatial + time, create scatter plots
     if x.shape[1] == 1:
-        output_dim = u_pred.shape[1]
+        output_dim = h_pred.shape[1]
         cmaps = ['viridis', 'plasma', 'inferno', 'magma']
         
         fig, axes = plt.subplots(output_dim, 2, figsize=(14, 5*output_dim))
@@ -111,7 +111,7 @@ def plot_final_comparison(
         for comp_idx in range(output_dim):
             # Prediction
             ax = axes[comp_idx, 0]
-            scatter = ax.scatter(x[:, 0], t[:, 0], c=u_pred[:, comp_idx],
+            scatter = ax.scatter(x[:, 0], t[:, 0], c=h_pred[:, comp_idx],
                                s=2, cmap=cmaps[comp_idx % len(cmaps)], alpha=0.6)
             ax.set_xlabel('x')
             ax.set_ylabel('t')
@@ -120,7 +120,7 @@ def plot_final_comparison(
 
             # Ground Truth
             ax = axes[comp_idx, 1]
-            scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, comp_idx],
+            scatter = ax.scatter(x[:, 0], t[:, 0], c=h_gt[:, comp_idx],
                                s=2, cmap=cmaps[comp_idx % len(cmaps)], alpha=0.6)
             ax.set_xlabel('x')
             ax.set_ylabel('t')

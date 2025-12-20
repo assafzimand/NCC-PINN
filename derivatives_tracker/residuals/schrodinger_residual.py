@@ -16,7 +16,26 @@ def get_relevant_derivatives() -> List[str]:
     
     Schrödinger residual: i*h_t + 0.5*h_xx + |h|²*h = 0
     """
-    return ['h', 'h_t', 'h_xx', 'nonlinear']
+    return ['h', 'h_t', 'h_xx']
+
+
+def get_term_metadata() -> Dict[str, Dict[str, str]]:
+    """
+    Returns metadata for problem-specific terms in the Schrödinger residual.
+    
+    Returns:
+        Dict mapping term_key -> metadata dict with:
+            'label': display label for plots
+            'marker': matplotlib marker style
+            'color': matplotlib color
+    """
+    return {
+        'cubic_nonlinearity': {
+            'label': '|h|²h',
+            'marker': 'd',
+            'color': 'purple'
+        }
+    }
 
 
 def compute_residual_terms(
@@ -43,7 +62,7 @@ def compute_residual_terms(
         
     Returns:
         Dictionary with:
-            'nonlinear': |h|²*h term (N, 2)
+            'cubic_nonlinearity': |h|²*h term (N, 2)
             'residual': Full residual f (N, 2)
             'h_magnitude_sq': |h|² (N,) for reference
     """
@@ -60,22 +79,22 @@ def compute_residual_terms(
     # Compute |h|² = u² + v²
     h_mag_sq = u**2 + v**2  # (N, 1)
     
-    # Compute nonlinear term: |h|²*h = (|h|²*u, |h|²*v)
-    nonlinear_u = h_mag_sq * u
-    nonlinear_v = h_mag_sq * v
-    nonlinear = torch.cat([nonlinear_u, nonlinear_v], dim=1)  # (N, 2)
+    # Compute cubic nonlinear term: |h|²*h = (|h|²*u, |h|²*v)
+    cubic_u = h_mag_sq * u
+    cubic_v = h_mag_sq * v
+    cubic_nonlinearity = torch.cat([cubic_u, cubic_v], dim=1)  # (N, 2)
     
     # Compute residual using complex arithmetic
     # f = i*h_t + 0.5*h_xx + |h|²*h
     # Real part: f_u = -v_t + 0.5*u_xx + |h|²*u
     # Imag part: f_v = u_t + 0.5*v_xx + |h|²*v
     
-    residual_u = -v_t + 0.5 * u_xx + nonlinear_u
-    residual_v = u_t + 0.5 * v_xx + nonlinear_v
+    residual_u = -v_t + 0.5 * u_xx + cubic_u
+    residual_v = u_t + 0.5 * v_xx + cubic_v
     residual = torch.cat([residual_u, residual_v], dim=1)  # (N, 2)
     
     return {
-        'nonlinear': nonlinear,
+        'cubic_nonlinearity': cubic_nonlinearity,
         'residual': residual,
         'h_magnitude_sq': h_mag_sq.squeeze()  # (N,)
     }

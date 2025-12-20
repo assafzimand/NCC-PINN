@@ -44,7 +44,7 @@ def test_ncc_runner():
     eval_data = {
         'x': torch.randn(N, spatial_dim, device=device),
         't': torch.randn(N, 1, device=device),
-        'u_gt': torch.randn(N, output_dim, device=device),
+        'h_gt': torch.randn(N, output_dim, device=device),
         'mask': {
             'residual': torch.ones(N, dtype=torch.bool, device=device),
             'IC': torch.zeros(N, dtype=torch.bool, device=device),
@@ -164,7 +164,7 @@ def test_ncc_with_different_bins():
         eval_data = {
             'x': torch.randn(N, spatial_dim, device=device),
             't': torch.randn(N, 1, device=device),
-            'u_gt': torch.randn(N, output_dim, device=device),
+            'h_gt': torch.randn(N, output_dim, device=device),
             'mask': {
                 'residual': torch.ones(N, dtype=torch.bool, device=device),
                 'IC': torch.zeros(N, dtype=torch.bool, device=device),

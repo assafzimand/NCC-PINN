@@ -30,9 +30,12 @@ def get_residual_module(problem_name: str) -> Any:
     elif problem_name == 'wave1d':
         from . import wave1d_residual
         return wave1d_residual
+    elif problem_name == 'burgers1d':
+        from . import burgers1d_residual
+        return burgers1d_residual
     else:
         raise ValueError(f"Unknown problem: {problem_name}. "
-                       f"Available problems: schrodinger, wave1d")
+                       f"Available problems: schrodinger, wave1d, burgers1d")
 
 
 def get_required_derivatives(problem_name: str) -> List[str]:

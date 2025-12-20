@@ -101,7 +101,7 @@ def generate_dataset(
         Dictionary with keys:
             "x": (N, spatial_dim) spatial coordinates
             "t": (N, 1) temporal coordinates
-            "u_gt": (N, out_dim) ground truth solution
+            "h_gt": (N, out_dim) ground truth solution
             "mask": dict with "residual", "IC", "BC" boolean masks (N,)
         where N = n_residual + n_ic + n_bc
     """
@@ -170,23 +170,23 @@ def generate_dataset(
     mask_bc[n_residual + n_ic:] = True
     
     # Generate ground truth using appropriate functions
-    u_gt = torch.zeros(N, 2, device=device)
+    h_gt = torch.zeros(N, 2, device=device)
     
     # Residual points: use general solution
-    u_gt[mask_residual] = solve_ground_truth(
+    h_gt[mask_residual] = solve_ground_truth(
         x[mask_residual], t[mask_residual], seed=seed
     )
     
     # Initial condition points: use IC function
-    u_gt[mask_ic] = initial_condition(x[mask_ic], seed=seed)
+    h_gt[mask_ic] = initial_condition(x[mask_ic], seed=seed)
     
     # Boundary condition points: use BC function
-    u_gt[mask_bc] = boundary_condition(x[mask_bc], t[mask_bc], seed=seed)
+    h_gt[mask_bc] = boundary_condition(x[mask_bc], t[mask_bc], seed=seed)
     
     return {
         "x": x,
         "t": t,
-        "u_gt": u_gt,
+        "h_gt": h_gt,
         "mask": {
             "residual": mask_residual,
             "IC": mask_ic,

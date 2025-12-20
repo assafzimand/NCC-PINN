@@ -75,20 +75,24 @@ def plot_term_magnitudes(
     layer_names = sorted(derivatives_results.keys())
     layer_indices = list(range(1, len(layer_names) + 1))
     
-    # Get relevant derivatives for this problem
+    # Get relevant derivatives and term metadata for this problem
+    term_metadata = {}
     if config is not None:
         problem_name = config.get('problem', 'schrodinger')
         try:
             from derivatives_tracker.residuals import get_residual_module
             residual_module = get_residual_module(problem_name)
             relevant_derivatives = residual_module.get_relevant_derivatives()
+            # Get problem-specific term metadata
+            if hasattr(residual_module, 'get_term_metadata'):
+                term_metadata = residual_module.get_term_metadata()
         except Exception as e:
             print(f"  Warning: Could not get relevant derivatives for {problem_name}: {e}")
             # Fallback: plot all available terms
-            relevant_derivatives = ['h', 'h_t', 'h_tt', 'h_x', 'h_xx', 'nonlinear']
+            relevant_derivatives = ['h', 'h_t', 'h_tt', 'h_x', 'h_xx']
     else:
         # Fallback: plot all available terms
-        relevant_derivatives = ['h', 'h_t', 'h_tt', 'h_x', 'h_xx', 'nonlinear']
+        relevant_derivatives = ['h', 'h_t', 'h_tt', 'h_x', 'h_xx']
     
     # Map derivative names to their norm keys, labels, and plotting styles
     derivative_mapping = {
@@ -97,8 +101,19 @@ def plot_term_magnitudes(
         'h_tt': ('h_tt_norm', '||h_tt||', 'p', 'cyan'),
         'h_x': ('h_x_norm', '||h_x||', 'v', 'magenta'),
         'h_xx': ('h_xx_norm', '||h_xx||', '^', 'orange'),
-        'nonlinear': ('nonlinear_norm', '|||h|²h||', 'd', 'purple')
     }
+    
+    # Add problem-specific terms from metadata
+    for term_key, meta in term_metadata.items():
+        derivative_mapping[term_key] = (
+            f'{term_key}_norm',
+            f"||{meta.get('label', term_key)}||",
+            meta.get('marker', 'd'),
+            meta.get('color', 'purple')
+        )
+        # Add to relevant_derivatives if not already there
+        if term_key not in relevant_derivatives:
+            relevant_derivatives.append(term_key)
     
     # Extract norms for residual (always present)
     residual_norms = [derivatives_results[ln]['norms']['residual_norm'] for ln in layer_names]
@@ -305,7 +320,7 @@ def plot_derivative_heatmaps(
         # Fallback: plot all available terms
         relevant_derivatives = ['h', 'h_t', 'h_tt', 'h_x', 'h_xx']
     
-    # Map derivative names to actual keys (skip 'nonlinear' as it's computed, not a base derivative)
+    # Map derivative names to actual keys (only base derivatives, not computed terms)
     derivative_mapping = {
         'h': 'h',
         'h_t': 'h_t',

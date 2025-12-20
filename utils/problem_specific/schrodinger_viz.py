@@ -22,7 +22,7 @@ def visualize_dataset(data_dict: Dict, save_dir: Path, config: Dict, split_name:
     - arg(h) (phase) vs (x, t)
     
     Args:
-        data_dict: Dataset dictionary with 'x', 't', 'u_gt' tensors
+        data_dict: Dataset dictionary with 'x', 't', 'h_gt' tensors
         save_dir: Directory to save visualization
         config: Configuration dictionary
         split_name: Name of split ('training' or 'evaluation')
@@ -30,15 +30,15 @@ def visualize_dataset(data_dict: Dict, save_dir: Path, config: Dict, split_name:
     # Extract data
     x = data_dict['x'].cpu().numpy()  # (N, spatial_dim)
     t = data_dict['t'].cpu().numpy()  # (N, 1)
-    u_gt = data_dict['u_gt'].cpu().numpy()  # (N, 2) where [:, 0]=real, [:, 1]=imag
+    h_gt = data_dict['h_gt'].cpu().numpy()  # (N, 2) where h = u + iv, [:, 0]=real, [:, 1]=imag
     
     # Flatten coordinates
     x_flat = x[:, 0]
     t_flat = t[:, 0]
     
-    # Compute magnitude and phase
-    u = u_gt[:, 0]
-    v = u_gt[:, 1]
+    # Compute magnitude and phase (h = u + iv)
+    u = h_gt[:, 0]
+    v = h_gt[:, 1]
     magnitude = np.sqrt(u**2 + v**2)
     phase = np.arctan2(v, u)
     
@@ -318,15 +318,15 @@ def visualize_ncc_dataset(ncc_data: Dict, dataset_dir: Path, config: Dict, prefi
     - Color-coded by class ID
     
     Args:
-        ncc_data: NCC dataset dictionary with 'u_gt' tensor (N, 2)
+        ncc_data: NCC dataset dictionary with 'h_gt' tensor (N, 2) where h = u + iv
         dataset_dir: Directory to save visualization
         config: Configuration dictionary with 'bins'
         prefix: Prefix for filename
     """
-    # Extract u, v values
-    u_gt = ncc_data['u_gt'].cpu().numpy()  # (N, 2)
-    u = u_gt[:, 0]
-    v = u_gt[:, 1]
+    # Extract u, v values (h = u + iv)
+    h_gt = ncc_data['h_gt'].cpu().numpy()  # (N, 2)
+    u = h_gt[:, 0]
+    v = h_gt[:, 1]
     
     bins = config['bins']
     N = len(u)
@@ -376,7 +376,7 @@ def visualize_ncc_dataset(ncc_data: Dict, dataset_dir: Path, config: Dict, prefi
 
 
 def visualize_ncc_classification(
-    u_gt: torch.Tensor,
+    h_gt: torch.Tensor,
     class_labels: torch.Tensor,
     predictions_dict: Dict[str, torch.Tensor],
     bins: int,
@@ -391,16 +391,16 @@ def visualize_ncc_classification(
     - Bin grid overlay
     
     Args:
-        u_gt: Ground truth outputs (N, 2) with u, v values
+        h_gt: Ground truth outputs (N, 2) with h = u + iv as (real, imag)
         class_labels: True class labels (N,)
         predictions_dict: Dict mapping layer_name -> predictions (N,)
         bins: Number of bins per dimension
         save_path: Path to save figure
     """
-    # Extract u, v values
-    u_gt_np = u_gt.cpu().numpy()
-    u = u_gt_np[:, 0]
-    v = u_gt_np[:, 1]
+    # Extract u, v values (h = u + iv)
+    h_gt_np = h_gt.cpu().numpy()
+    u = h_gt_np[:, 0]
+    v = h_gt_np[:, 1]
     
     class_labels_np = class_labels.cpu().numpy()
     
@@ -531,7 +531,7 @@ def visualize_ncc_classification_input_space(
 
 
 def visualize_ncc_classification_heatmap(
-    u_gt: torch.Tensor,
+    h_gt: torch.Tensor,
     class_labels: torch.Tensor,
     predictions_dict: Dict[str, torch.Tensor],
     bins: int,
@@ -546,7 +546,7 @@ def visualize_ncc_classification_heatmap(
     in that region.
     
     Args:
-        u_gt: Ground truth outputs (N, 2) with u, v values
+        h_gt: Ground truth outputs (N, 2) with h = u + iv as (real, imag)
         class_labels: True class labels (N,)
         predictions_dict: Dict mapping layer_name -> predictions (N,)
         bins: Number of bins per dimension (for NCC classes)
@@ -557,10 +557,10 @@ def visualize_ncc_classification_heatmap(
     n_bin_viz = max(20, config.get('n_bin_visualize_ncc', 100))
     min_samples_threshold = 1  # Minimum 1 sample per bin
     
-    # Extract u, v values
-    u_gt_np = u_gt.cpu().numpy()
-    u = u_gt_np[:, 0]
-    v = u_gt_np[:, 1]
+    # Extract u, v values (h = u + iv)
+    h_gt_np = h_gt.cpu().numpy()
+    u = h_gt_np[:, 0]
+    v = h_gt_np[:, 1]
     
     class_labels_np = class_labels.cpu().numpy()
     

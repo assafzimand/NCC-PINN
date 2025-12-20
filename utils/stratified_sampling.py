@@ -21,7 +21,7 @@ def stratify_by_bins(
     4. Return dataset with uniform class distribution
     
     Args:
-        large_data: Large dataset dict with 'x', 't', 'u_gt', 'mask'
+        large_data: Large dataset dict with 'x', 't', 'h_gt', 'mask'
         bins: Number of bins per output dimension
         output_dim: Output dimensionality (e.g., 2 for complex field u+iv)
         target_size: Target total number of samples
@@ -37,7 +37,7 @@ def stratify_by_bins(
     
     # Bin all samples (empty classes already filtered out)
     class_labels, class_map, bin_info = create_class_labels_from_regression(
-        large_data['u_gt'], bins, device
+        large_data['h_gt'], bins, device
     )
     num_classes = bin_info['num_classes']  # Number of non-empty classes after filtering
     
@@ -95,7 +95,7 @@ def stratify_by_bins(
     return {
         'x': large_data['x'][selected_indices],
         't': large_data['t'][selected_indices],
-        'u_gt': large_data['u_gt'][selected_indices],
+        'h_gt': large_data['h_gt'][selected_indices],
         'mask': {
             'residual': large_data['mask']['residual'][selected_indices],
             'IC': large_data['mask']['IC'][selected_indices],

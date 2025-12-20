@@ -36,24 +36,24 @@ def build_loss(**cfg) -> Callable:
 
         Args:
             model: Neural network model
-            batch: Dictionary with keys 'x', 't', 'u_gt', 'mask'
+            batch: Dictionary with keys 'x', 't', 'h_gt', 'mask'
 
         Returns:
             Scalar loss tensor on same device as inputs
         """
         x = batch['x']  # (N, spatial_dim)
         t = batch['t']  # (N, 1)
-        u_gt = batch['u_gt']  # (N, out_dim)
+        h_gt = batch['h_gt']  # (N, out_dim)
         masks = batch['mask']  # dict with 'residual', 'IC', 'BC'
 
         # Concatenate x and t as model input
         inputs = torch.cat([x, t], dim=1)  # (N, spatial_dim + 1)
 
         # Forward pass
-        u_pred = model(inputs)  # (N, out_dim)
+        h_pred = model(inputs)  # (N, out_dim)
 
         # Compute MSE for each point type
-        mse = (u_pred - u_gt) ** 2  # (N, out_dim)
+        mse = (h_pred - h_gt) ** 2  # (N, out_dim)
 
         # Sum over output dimensions
         mse_per_point = mse.sum(dim=1)  # (N,)

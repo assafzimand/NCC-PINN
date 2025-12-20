@@ -44,7 +44,7 @@ def test_dataset_generation_schrodinger():
     # Check keys
     assert 'x' in data, "Missing 'x' key"
     assert 't' in data, "Missing 't' key"
-    assert 'u_gt' in data, "Missing 'u_gt' key"
+    assert 'h_gt' in data, "Missing 'h_gt' key"
     assert 'mask' in data, "Missing 'mask' key"
     
     # Check shapes
@@ -54,10 +54,10 @@ def test_dataset_generation_schrodinger():
         f"x shape should be ({N_total}, {spatial_dim}), got {data['x'].shape}"
     assert data['t'].shape == (N_total, 1), \
         f"t shape should be ({N_total}, 1), got {data['t'].shape}"
-    assert data['u_gt'].shape[0] == N_total, \
-        f"u_gt should have {N_total} samples, got {data['u_gt'].shape[0]}"
-    assert data['u_gt'].shape[1] == 2, \
-        f"u_gt should have 2 outputs, got {data['u_gt'].shape[1]}"
+    assert data['h_gt'].shape[0] == N_total, \
+        f"h_gt should have {N_total} samples, got {data['h_gt'].shape[0]}"
+    assert data['h_gt'].shape[1] == 2, \
+        f"h_gt should have 2 outputs, got {data['h_gt'].shape[1]}"
     
     # Check masks
     assert 'residual' in data['mask'], "Missing 'residual' mask"
@@ -74,7 +74,7 @@ def test_dataset_generation_schrodinger():
     # Check device
     assert data['x'].device.type == device.type, f"x should be on {device}"
     assert data['t'].device.type == device.type, f"t should be on {device}"
-    assert data['u_gt'].device.type == device.type, f"u_gt should be on {device}"
+    assert data['h_gt'].device.type == device.type, f"h_gt should be on {device}"
     
     # Check IC constraint (t should be at t_min for IC points)
     t_min = problem_config['temporal_domain'][0]
@@ -98,20 +98,20 @@ def test_dataset_generation_schrodinger():
         # Check IC: h(x,0) should be approximately 2*sech(x) (real-valued)
         ic_mask = data['mask']['IC']
         x_ic = data['x'][ic_mask, 0].cpu().numpy()
-        u_ic_real = data['u_gt'][ic_mask, 0].cpu().numpy()  # Real part
-        u_ic_imag = data['u_gt'][ic_mask, 1].cpu().numpy()  # Imag part
+        h_ic_real = data['h_gt'][ic_mask, 0].cpu().numpy()  # Real part (u)
+        h_ic_imag = data['h_gt'][ic_mask, 1].cpu().numpy()  # Imag part (v)
         
         # Expected IC: 2*sech(x)
         import numpy as np
         h_expected = 2.0 / np.cosh(x_ic)
         
         # Check real part matches expected IC
-        max_error_real = np.abs(u_ic_real - h_expected).max()
+        max_error_real = np.abs(h_ic_real - h_expected).max()
         print(f"    IC real part max error: {max_error_real:.6f}")
         assert max_error_real < 0.01, f"IC real part error too large: {max_error_real}"
         
         # Check imaginary part is near zero (IC is real-valued)
-        max_error_imag = np.abs(u_ic_imag).max()
+        max_error_imag = np.abs(h_ic_imag).max()
         print(f"    IC imag part max error: {max_error_imag:.6f}")
         assert max_error_imag < 0.01, f"IC imaginary part should be ~0: {max_error_imag}"
         
@@ -145,7 +145,7 @@ def test_dataset_generation_schrodinger():
         print("  ✓ Schrödinger-specific constraints verified")
     
     print("  ✓ Dataset generation successful")
-    print(f"  ✓ Shapes: x{data['x'].shape}, t{data['t'].shape}, u_gt{data['u_gt'].shape}")
+    print(f"  ✓ Shapes: x{data['x'].shape}, t{data['t'].shape}, h_gt{data['h_gt'].shape}")
     print(f"  ✓ Mask sums: residual={n_residual}, IC={n_ic}, BC={n_bc}")
 
 

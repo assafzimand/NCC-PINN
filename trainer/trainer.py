@@ -264,9 +264,9 @@ def train(
             for batch in train_loader:
                 with torch.no_grad():
                     inputs = torch.cat([batch['x'], batch['t']], dim=1)
-                    u_pred = model(inputs)
-                    rel_l2 = compute_relative_l2_error(u_pred, batch['u_gt'])
-                    inf_norm = compute_infinity_norm_error(u_pred, batch['u_gt'])
+                    h_pred = model(inputs)
+                    rel_l2 = compute_relative_l2_error(h_pred, batch['h_gt'])
+                    inf_norm = compute_infinity_norm_error(h_pred, batch['h_gt'])
                     train_rel_l2 += rel_l2.item()
                     train_inf_norm += inf_norm.item()
                     n_train_batches_l2 += 1
@@ -289,9 +289,9 @@ def train(
 
                 with torch.no_grad():
                     inputs = torch.cat([batch['x'], batch['t']], dim=1)
-                    u_pred = model(inputs)
-                    rel_l2 = compute_relative_l2_error(u_pred, batch['u_gt'])
-                    inf_norm = compute_infinity_norm_error(u_pred, batch['u_gt'])
+                    h_pred = model(inputs)
+                    rel_l2 = compute_relative_l2_error(h_pred, batch['h_gt'])
+                    inf_norm = compute_infinity_norm_error(h_pred, batch['h_gt'])
 
                 eval_loss += loss.item()
                 eval_rel_l2 += rel_l2.item()
@@ -376,11 +376,11 @@ def train(
     model.eval()
     with torch.no_grad():
         inputs_eval = torch.cat([eval_data['x'], eval_data['t']], dim=1)
-        u_pred_eval = model(inputs_eval)
+        h_pred_eval = model(inputs_eval)
 
     plot_final_comparison(
-        u_pred_eval.cpu().numpy(),
-        eval_data['u_gt'].cpu().numpy(),
+        h_pred_eval.cpu().numpy(),
+        eval_data['h_gt'].cpu().numpy(),
         eval_data['x'].cpu().numpy(),
         eval_data['t'].cpu().numpy(),
         training_plots_dir
@@ -492,7 +492,7 @@ def _move_batch_to_device(batch: Dict, device: torch.device) -> Dict:
     return {
         'x': batch['x'].to(device),
         't': batch['t'].to(device),
-        'u_gt': batch['u_gt'].to(device),
+        'h_gt': batch['h_gt'].to(device),
         'mask': {
             'residual': batch['mask']['residual'].to(device),
             'IC': batch['mask']['IC'].to(device),
@@ -510,7 +510,7 @@ def _create_dataloader(
     Create DataLoader from data dictionary.
 
     Args:
-        data: Dictionary with 'x', 't', 'u_gt', 'mask'
+        data: Dictionary with 'x', 't', 'h_gt', 'mask'
         batch_size: Batch size
         shuffle: Whether to shuffle
 
@@ -518,22 +518,20 @@ def _create_dataloader(
         DataLoader
     """
     # Create TensorDataset
-    # We need to pass all components, including masks
     dataset = TensorDataset(
         data['x'],
         data['t'],
-        data['u_gt'],
+        data['h_gt'],
         data['mask']['residual'],
         data['mask']['IC'],
         data['mask']['BC']
     )
 
     # Custom collate function to reconstruct dict format
-    # Optimized for GPU: use tuple instead of list for better performance
     def collate_fn(batch_list):
         x_batch = torch.stack(tuple(item[0] for item in batch_list))
         t_batch = torch.stack(tuple(item[1] for item in batch_list))
-        u_gt_batch = torch.stack(tuple(item[2] for item in batch_list))
+        h_gt_batch = torch.stack(tuple(item[2] for item in batch_list))
         mask_res_batch = torch.stack(tuple(item[3] for item in batch_list))
         mask_ic_batch = torch.stack(tuple(item[4] for item in batch_list))
         mask_bc_batch = torch.stack(tuple(item[5] for item in batch_list))
@@ -541,7 +539,7 @@ def _create_dataloader(
         return {
             'x': x_batch,
             't': t_batch,
-            'u_gt': u_gt_batch,
+            'h_gt': h_gt_batch,
             'mask': {
                 'residual': mask_res_batch,
                 'IC': mask_ic_batch,

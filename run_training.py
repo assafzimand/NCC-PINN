@@ -127,7 +127,7 @@ def main():
         eval_data_device = {
             'x': eval_data['x'].to(device),
             't': eval_data['t'].to(device),
-            'u_gt': eval_data['u_gt'].to(device),
+            'h_gt': eval_data['h_gt'].to(device),
             'mask': {
                 'residual': eval_data['mask']['residual'].to(device),
                 'IC': eval_data['mask']['IC'].to(device),
@@ -143,10 +143,10 @@ def main():
             from trainer.utils import compute_relative_l2_error
             inputs = torch.cat([eval_data_device['x'], eval_data_device['t']],
                              dim=1)
-            u_pred = model(inputs)
+            h_pred = model(inputs)
             eval_rel_l2 = compute_relative_l2_error(
-                u_pred,
-                eval_data_device['u_gt']
+                h_pred,
+                eval_data_device['h_gt']
             )
 
         print(f"  ✓ Eval loss: {eval_loss.item():.6f}")
@@ -170,8 +170,8 @@ def main():
         training_plots_dir = run_dir / "training_plots"
 
         plot_final_comparison(
-            u_pred.cpu().numpy(),
-            eval_data_device['u_gt'].cpu().numpy(),
+            h_pred.cpu().numpy(),
+            eval_data_device['h_gt'].cpu().numpy(),
             eval_data_device['x'].cpu().numpy(),
             eval_data_device['t'].cpu().numpy(),
             training_plots_dir

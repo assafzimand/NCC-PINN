@@ -12,20 +12,20 @@ def plot_dataset(data: Dict[str, torch.Tensor], save_path: str, title: str = "Da
     Visualize a PINN dataset showing point distributions and ground truth.
     
     Args:
-        data: Dataset dictionary with x, t, u_gt, and mask keys
+        data: Dataset dictionary with x, t, h_gt, and mask keys
         save_path: Path to save the figure
         title: Title for the plot
     """
     # Move data to CPU for plotting
     x = data['x'].cpu().numpy()
     t = data['t'].cpu().numpy()
-    u_gt = data['u_gt'].cpu().numpy()
+    h_gt = data['h_gt'].cpu().numpy()
     mask_residual = data['mask']['residual'].cpu().numpy()
     mask_ic = data['mask']['IC'].cpu().numpy()
     mask_bc = data['mask']['BC'].cpu().numpy()
     
     spatial_dim = x.shape[1]
-    output_dim = u_gt.shape[1]
+    output_dim = h_gt.shape[1]
     
     # Create figure based on spatial dimension
     if spatial_dim == 1:
@@ -53,11 +53,11 @@ def plot_dataset(data: Dict[str, torch.Tensor], save_path: str, title: str = "Da
         cmaps = ['viridis', 'plasma', 'inferno', 'magma']
         for i in range(output_dim):
             ax = axes[1 + i]
-            scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, i], 
+            scatter = ax.scatter(x[:, 0], t[:, 0], c=h_gt[:, i], 
                                s=2, cmap=cmaps[i % len(cmaps)], alpha=0.6)
             ax.set_xlabel('x')
             ax.set_ylabel('t')
-            ax.set_title(f'Ground Truth u_{i}(x,t)')
+            ax.set_title(f'Ground Truth h_{i}(x,t)')
             plt.colorbar(scatter, ax=ax)
             ax.grid(True, alpha=0.3)
         
@@ -92,25 +92,25 @@ def plot_dataset(data: Dict[str, torch.Tensor], save_path: str, title: str = "Da
         
         # Plot 3: Ground truth component 0
         ax = axes[1, 0]
-        scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, 0], 
+        scatter = ax.scatter(x[:, 0], t[:, 0], c=h_gt[:, 0], 
                            s=2, cmap='viridis', alpha=0.6)
         ax.set_xlabel('x₀')
         ax.set_ylabel('t')
-        ax.set_title('Ground Truth u₀')
+        ax.set_title('Ground Truth h₀')
         plt.colorbar(scatter, ax=ax)
         ax.grid(True, alpha=0.3)
         
         # Plot 4: Ground truth component 1 (if exists)
         ax = axes[1, 1]
         if output_dim > 1:
-            scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, 1], 
+            scatter = ax.scatter(x[:, 0], t[:, 0], c=h_gt[:, 1], 
                                s=2, cmap='plasma', alpha=0.6)
         else:
-            scatter = ax.scatter(x[:, 0], t[:, 0], c=u_gt[:, 0], 
+            scatter = ax.scatter(x[:, 0], t[:, 0], c=h_gt[:, 0], 
                                s=2, cmap='viridis', alpha=0.6)
         ax.set_xlabel('x₀')
         ax.set_ylabel('t')
-        ax.set_title('Ground Truth u₁')
+        ax.set_title('Ground Truth h₁')
         plt.colorbar(scatter, ax=ax)
         ax.grid(True, alpha=0.3)
     
@@ -135,7 +135,7 @@ def plot_dataset_statistics(data: Dict[str, torch.Tensor], save_path: str) -> No
     """
     x = data['x'].cpu().numpy()
     t = data['t'].cpu().numpy()
-    u_gt = data['u_gt'].cpu().numpy()
+    h_gt = data['h_gt'].cpu().numpy()
     
     mask_residual = data['mask']['residual'].cpu().numpy()
     mask_ic = data['mask']['IC'].cpu().numpy()
@@ -157,10 +157,10 @@ def plot_dataset_statistics(data: Dict[str, torch.Tensor], save_path: str) -> No
     
     # Ground truth distribution
     ax = axes[0, 1]
-    output_dim = u_gt.shape[1]
+    output_dim = h_gt.shape[1]
     colors = ['purple', 'orange', 'green', 'red']
     for i in range(output_dim):
-        ax.hist(u_gt[:, i], bins=50, alpha=0.6, label=f'u_{i}', color=colors[i % len(colors)])
+        ax.hist(h_gt[:, i], bins=50, alpha=0.6, label=f'h_{i}', color=colors[i % len(colors)])
     ax.set_xlabel('Value')
     ax.set_ylabel('Frequency')
     ax.set_title('Ground Truth Value Distribution')

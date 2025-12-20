@@ -90,6 +90,29 @@ def compute_ground_truth_derivatives(
         result['h_tt_gt'] = h_tt_real.reshape(-1, 1)
         result['h_x_gt'] = h_x_real.reshape(-1, 1)
         result['h_xx_gt'] = h_xx_real.reshape(-1, 1)
+    
+    elif problem_name == 'burgers1d':
+        # Real-valued solution - use finite differences on interpolator
+        h_real = h_values  # (N,) real
+        
+        # Compute h_t using finite differences
+        h_t_plus = interpolator(x_np, t_np + eps_t)
+        h_t_minus = interpolator(x_np, t_np - eps_t)
+        h_t_real = (h_t_plus - h_t_minus) / (2 * eps_t)
+        
+        # Compute h_x using finite differences
+        h_x_plus = interpolator(x_np + eps_x, t_np)
+        h_x_minus = interpolator(x_np - eps_x, t_np)
+        h_x_real = (h_x_plus - h_x_minus) / (2 * eps_x)
+        
+        # Compute h_xx using finite differences
+        h_xx_real = (h_x_plus - 2*h_real + h_x_minus) / (eps_x**2)
+        
+        # Convert to (N, 1) format for output_dim=1
+        result['h_gt'] = h_real.reshape(-1, 1)
+        result['h_t_gt'] = h_t_real.reshape(-1, 1)
+        result['h_x_gt'] = h_x_real.reshape(-1, 1)
+        result['h_xx_gt'] = h_xx_real.reshape(-1, 1)
         
     return result
 
@@ -334,9 +357,19 @@ def track_all_layers(
         if h_tt is not None:
             norms['h_tt_norm'] = torch.norm(h_tt, dim=1).mean().item()
         
-        # Add optional problem-specific terms (e.g., nonlinear for Schrödinger)
-        if 'nonlinear' in residual_terms:
-            norms['nonlinear_norm'] = torch.norm(residual_terms['nonlinear'], dim=1).mean().item()
+        # Get problem-specific term metadata for dynamic norm computation
+        term_metadata = {}
+        if hasattr(residual_module, 'get_term_metadata'):
+            term_metadata = residual_module.get_term_metadata()
+        
+        # Add norms for problem-specific terms (dynamically)
+        for term_key in term_metadata:
+            if term_key in residual_terms:
+                term_tensor = residual_terms[term_key]
+                if term_tensor.dim() == 1:
+                    norms[f'{term_key}_norm'] = torch.abs(term_tensor).mean().item()
+                else:
+                    norms[f'{term_key}_norm'] = torch.norm(term_tensor, dim=1).mean().item()
         
         # Store all results for this layer
         layer_results = {
@@ -355,10 +388,16 @@ def track_all_layers(
         if h_tt is not None:
             layer_results['h_tt'] = h_tt.cpu().numpy()
         
-        # Add optional problem-specific terms
-        for key in ['nonlinear', 'h_magnitude_sq']:
-            if key in residual_terms:
-                layer_results[key] = residual_terms[key].cpu().numpy()
+        # Add problem-specific terms (dynamically from term_metadata)
+        for term_key in term_metadata:
+            if term_key in residual_terms:
+                term_tensor = residual_terms[term_key]
+                if isinstance(term_tensor, torch.Tensor):
+                    layer_results[term_key] = term_tensor.cpu().numpy()
+        
+        # Also add h_magnitude_sq if present (for compatibility)
+        if 'h_magnitude_sq' in residual_terms:
+            layer_results['h_magnitude_sq'] = residual_terms['h_magnitude_sq'].cpu().numpy()
         
         results[layer_name] = layer_results
         

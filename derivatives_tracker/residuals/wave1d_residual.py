@@ -19,6 +19,19 @@ def get_relevant_derivatives() -> List[str]:
     return ['h_tt', 'h_xx']
 
 
+def get_term_metadata() -> Dict[str, Dict[str, str]]:
+    """
+    Returns metadata for problem-specific terms in the wave residual.
+    
+    Wave equation is linear, so there are no additional terms beyond
+    the base derivatives.
+    
+    Returns:
+        Empty dict (no problem-specific nonlinear terms)
+    """
+    return {}
+
+
 def compute_residual_terms(
     h: torch.Tensor,
     h_tt: torch.Tensor,
