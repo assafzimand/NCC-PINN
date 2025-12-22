@@ -1,5 +1,6 @@
 Non-Monotonic Analysis Summary
 ============================================================
+Problem: schrodinger
 Total violations: 21
 Total models with violations: 8
 Total models analyzed: 12

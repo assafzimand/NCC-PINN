@@ -154,6 +154,57 @@ METRICS_CONFIG = {
     },
 }
 
+# Problem-specific BC metrics configuration
+# Maps problem name -> which BC metrics are included in the loss function
+PROBLEM_BC_CONFIG = {
+    'schrodinger': {
+        'bc_value': True,       # Periodic: h(-5,t) = h(5,t)
+        'bc_derivative': True,  # Periodic: h_x(-5,t) = h_x(5,t)
+    },
+    'wave1d': {
+        'bc_value': True,       # Dirichlet-like: match analytical boundary
+        'bc_derivative': False,  # Not enforced in loss
+    },
+    'burgers1d': {
+        'bc_value': True,       # Dirichlet: h(t,-1) = h(t,1) = 0
+        'bc_derivative': False,  # Not enforced in loss
+    },
+}
+
+# Default for unknown problems (conservative: include all)
+DEFAULT_BC_CONFIG = {'bc_value': True, 'bc_derivative': True}
+
+
+def get_problem_from_model_name(model_name: str) -> Optional[str]:
+    """Extract problem type from model name."""
+    model_lower = model_name.lower()
+    if 'schrodinger' in model_lower:
+        return 'schrodinger'
+    elif 'wave1d' in model_lower:
+        return 'wave1d'
+    elif 'burgers1d' in model_lower:
+        return 'burgers1d'
+    return None
+
+
+def get_active_metrics(problem_name: Optional[str]) -> List[str]:
+    """Get list of metric names that are active for a given problem.
+    
+    Filters out BC metrics that are not part of the problem's loss function.
+    """
+    bc_config = PROBLEM_BC_CONFIG.get(problem_name, DEFAULT_BC_CONFIG)
+    
+    active_metrics = []
+    for metric_name in METRICS_CONFIG.keys():
+        # Filter BC metrics based on problem config
+        if metric_name.startswith('bc_value') and not bc_config.get('bc_value', True):
+            continue
+        if metric_name.startswith('bc_derivative') and not bc_config.get('bc_derivative', True):
+            continue
+        active_metrics.append(metric_name)
+    
+    return active_metrics
+
 
 # =============================================================================
 # UTILITY FUNCTIONS
@@ -294,6 +345,9 @@ def load_all_model_metrics(experiment_path: Path) -> Dict[str, Dict[str, Any]]:
         num_layers = len(architecture) - 2  # Exclude input and output layers
         num_parameters = calculate_num_parameters(architecture)
         
+        # Determine problem type from model name
+        problem_name = get_problem_from_model_name(model_name)
+        
         models_data[model_name] = {
             'model_name': model_name,
             'architecture': architecture,
@@ -305,7 +359,8 @@ def load_all_model_metrics(experiment_path: Path) -> Dict[str, Dict[str, Any]]:
             'probe_metrics': probe_metrics,
             'derivatives_metrics': derivatives_metrics,
             'eval_rel_l2': final_eval_rel_l2,
-            'eval_linf': final_eval_linf
+            'eval_linf': final_eval_linf,
+            'problem_name': problem_name
         }
     
     return models_data
@@ -381,6 +436,9 @@ def check_monotonicity(
 def detect_non_monotonic_metrics(models_data: Dict[str, Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     """Detect non-monotonic metrics across all models using METRICS_CONFIG.
     
+    Only checks metrics that are relevant to each problem's loss function.
+    BC metrics are filtered based on PROBLEM_BC_CONFIG.
+    
     Returns:
         Dict mapping metric_name -> list of violations, where each violation contains:
         - model_name: str
@@ -393,7 +451,17 @@ def detect_non_monotonic_metrics(models_data: Dict[str, Dict[str, Any]]) -> Dict
     all_violations = defaultdict(list)
     
     for model_name, data in models_data.items():
+        # Get problem-specific BC config
+        problem_name = data.get('problem_name')
+        bc_config = PROBLEM_BC_CONFIG.get(problem_name, DEFAULT_BC_CONFIG)
+        
         for metric_name, config in METRICS_CONFIG.items():
+            # Skip BC metrics not relevant to this problem's loss function
+            if metric_name.startswith('bc_value') and not bc_config.get('bc_value', True):
+                continue
+            if metric_name.startswith('bc_derivative') and not bc_config.get('bc_derivative', True):
+                continue
+            
             source = config['source']
             direction = config['direction']
             extract_fn = config['extract_fn']
@@ -1052,11 +1120,18 @@ def generate_comparison_plots(
 def generate_non_monotonic_summary(
     all_violations: Dict[str, List[Dict[str, Any]]],
     models_data: Dict[str, Dict[str, Any]],
-    output_dir: Path
+    output_dir: Path,
+    experiment_plan: Optional[Dict[str, List[int]]] = None
 ):
     """Generate summary statistics and plots for all non-monotonic violations.
     
     Files are saved directly to output_dir (non_monotonic_comparisons).
+    
+    Args:
+        all_violations: Dict mapping metric_name -> list of violations
+        models_data: Dict mapping model_name -> model data
+        output_dir: Directory to save summary files
+        experiment_plan: Optional dict mapping experiment names to architectures
     """
     
     # Count total violations
@@ -1099,21 +1174,29 @@ def generate_non_monotonic_summary(
     # Generate overall ranking table for all non-monotonic models
     generate_overall_non_monotonic_ranking(all_violations, models_data, summary_dir)
     
-    # Plot 1: Violations by metric (show ALL metrics, including those with 0 violations)
+    # Plot 1: Violations by metric (show only ACTIVE metrics for this problem)
     fig, ax = plt.subplots(figsize=(16, 7))
-    # Create counts for ALL metrics in METRICS_CONFIG
-    all_metric_names = list(METRICS_CONFIG.keys())
-    metric_counts_dict = df['metric'].value_counts().to_dict() if len(df) > 0 else {}
-    all_counts = [metric_counts_dict.get(m, 0) for m in all_metric_names]
-    all_labels = [METRICS_CONFIG[m]['display_name'] for m in all_metric_names]
     
-    x_pos = range(len(all_metric_names))
+    # Determine problem from first model (assume all models are same problem)
+    first_model_data = next(iter(models_data.values()), {})
+    problem_name = first_model_data.get('problem_name')
+    active_metrics = get_active_metrics(problem_name)
+    
+    # Create counts for only ACTIVE metrics
+    metric_counts_dict = df['metric'].value_counts().to_dict() if len(df) > 0 else {}
+    all_counts = [metric_counts_dict.get(m, 0) for m in active_metrics]
+    all_labels = [METRICS_CONFIG[m]['display_name'] for m in active_metrics]
+    
+    x_pos = range(len(active_metrics))
     ax.bar(x_pos, all_counts, color='#3498db', alpha=0.7, edgecolor='black')
     ax.set_xticks(x_pos)
     ax.set_xticklabels(all_labels, rotation=45, ha='right', fontsize=9)
     ax.set_xlabel('Metric', fontsize=12, fontweight='bold')
     ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
-    ax.set_title('Non-Monotonic Violations by Metric Type', fontsize=14, fontweight='bold')
+    title = 'Non-Monotonic Violations by Metric Type'
+    if problem_name:
+        title += f' ({problem_name})'
+    ax.set_title(title, fontsize=14, fontweight='bold')
     ax.grid(True, alpha=0.3, axis='y')
     for i, count in enumerate(all_counts):
         ax.text(i, count + 0.1, str(count), ha='center', va='bottom', fontweight='bold')
@@ -1162,17 +1245,53 @@ def generate_non_monotonic_summary(
     plt.close()
     
     # Plot 4: Violations by weights (parameter count bins)
+    # Extract weight labels dynamically from experiment plan using architecture mapping
     fig, ax = plt.subplots(figsize=(12, 6))
-    param_bins = [0, 15000, 25000, 35000, 45000, float('inf')]
-    param_labels = ['10k', '20k', '30k', '40k', '50k+']
-    df_copy = df.copy()
-    df_copy['param_bin'] = pd.cut(df_copy['num_parameters'], bins=param_bins, labels=param_labels)
-    weight_counts = df_copy['param_bin'].value_counts().reindex(param_labels, fill_value=0)
     
-    x_positions = list(range(len(param_labels)))
+    weight_labels = []
+    arch_to_weight = {}
+    
+    if experiment_plan:
+        # Build mapping: architecture tuple -> weight label (like group_models_by_attribute)
+        for exp_name, arch in experiment_plan.items():
+            weight_str = extract_weight_from_experiment_name(exp_name)
+            if weight_str:
+                arch_tuple = tuple(arch)
+                if arch_tuple not in arch_to_weight:
+                    arch_to_weight[arch_tuple] = weight_str
+                if weight_str not in weight_labels:
+                    weight_labels.append(weight_str)
+    
+    # Sort weight labels numerically (e.g., ['5k', '10k', '20k', '30k'])
+    def weight_to_num(w):
+        return int(w.replace('k', '')) * 1000
+    
+    if weight_labels and arch_to_weight:
+        weight_labels = sorted(weight_labels, key=weight_to_num)
+        
+        # Map each model to its weight category via architecture
+        df_copy = df.copy()
+        
+        def get_weight_for_model(model_name):
+            if model_name in models_data:
+                arch = models_data[model_name].get('architecture', [])
+                return arch_to_weight.get(tuple(arch))
+            return None
+        
+        df_copy['weight_label'] = df_copy['model_name'].apply(get_weight_for_model)
+        weight_counts = df_copy['weight_label'].value_counts().reindex(weight_labels, fill_value=0)
+    else:
+        # Fallback to hardcoded bins if no experiment plan
+        param_bins = [0, 15000, 25000, 35000, 45000, float('inf')]
+        weight_labels = ['10k', '20k', '30k', '40k', '50k+']
+        df_copy = df.copy()
+        df_copy['param_bin'] = pd.cut(df_copy['num_parameters'], bins=param_bins, labels=weight_labels)
+        weight_counts = df_copy['param_bin'].value_counts().reindex(weight_labels, fill_value=0)
+    
+    x_positions = list(range(len(weight_labels)))
     ax.bar(x_positions, weight_counts.values, color='#9b59b6', alpha=0.7, edgecolor='black')
     ax.set_xticks(x_positions)
-    ax.set_xticklabels(param_labels)
+    ax.set_xticklabels(weight_labels)
     ax.set_xlabel('Parameter Count (approx)', fontsize=12, fontweight='bold')
     ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
     ax.set_title('Non-Monotonic Violations by Model Size (Weights)', fontsize=14, fontweight='bold')
@@ -1187,12 +1306,26 @@ def generate_non_monotonic_summary(
     summary_text = [
         "Non-Monotonic Analysis Summary",
         "=" * 60,
+        f"Problem: {problem_name or 'unknown'}",
         f"Total violations: {total_violations}",
         f"Total models with violations: {total_models}",
         f"Total models analyzed: {len(models_data)}",
         "",
-        "Violations by metric:",
     ]
+    
+    # Add info about which BC metrics were excluded
+    bc_config = PROBLEM_BC_CONFIG.get(problem_name, DEFAULT_BC_CONFIG)
+    excluded_metrics = []
+    if not bc_config.get('bc_value', True):
+        excluded_metrics.extend(['bc_value_l2', 'bc_value_linf'])
+    if not bc_config.get('bc_derivative', True):
+        excluded_metrics.extend(['bc_derivative_l2', 'bc_derivative_linf'])
+    
+    if excluded_metrics:
+        summary_text.append(f"Excluded BC metrics (not in loss): {', '.join(excluded_metrics)}")
+        summary_text.append("")
+    
+    summary_text.append("Violations by metric:")
     for metric_name in sorted(all_violations.keys()):
         count = len(all_violations[metric_name])
         display_name = METRICS_CONFIG[metric_name]['display_name']
@@ -1261,6 +1394,18 @@ def main(experiment_path: str):
     print("Loading model metrics...")
     models_data = load_all_model_metrics(experiment_path)
     print(f"  Loaded {len(models_data)} models")
+    
+    # Determine problem type and show BC config
+    if models_data:
+        first_model = next(iter(models_data.values()))
+        problem_name = first_model.get('problem_name')
+        if problem_name:
+            bc_config = PROBLEM_BC_CONFIG.get(problem_name, DEFAULT_BC_CONFIG)
+            print(f"  Problem type: {problem_name}")
+            print(f"  BC metrics active: bc_value={bc_config.get('bc_value', True)}, "
+                  f"bc_derivative={bc_config.get('bc_derivative', True)}")
+        else:
+            print("  Problem type: unknown (all BC metrics will be checked)")
     print()
     
     # A. Generate rankings
@@ -1328,7 +1473,7 @@ def main(experiment_path: str):
     
     # E. Generate summary statistics (directly in non_monotonic_comparisons folder)
     print("E. Generating summary statistics...")
-    generate_non_monotonic_summary(all_violations, models_data, non_mono_dir)
+    generate_non_monotonic_summary(all_violations, models_data, non_mono_dir, experiment_plan)
     print()
     
     print("=" * 70)
