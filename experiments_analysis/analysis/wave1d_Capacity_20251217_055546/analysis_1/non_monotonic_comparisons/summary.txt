@@ -1,12 +1,13 @@
 Non-Monotonic Analysis Summary
 ============================================================
-Total violations: 62
+Problem: wave1d
+Total violations: 42
 Total models with violations: 10
 Total models analyzed: 12
 
+Excluded BC metrics (not in loss): bc_derivative_l2, bc_derivative_linf
+
 Violations by metric:
-  BC Derivative L2 (eval): 10 violations in 7 models
-  BC Derivative L-inf (eval): 10 violations in 7 models
   BC Value L2 (eval): 3 violations in 3 models
   BC Value L-inf (eval): 3 violations in 3 models
   IC L2 (eval): 4 violations in 4 models
