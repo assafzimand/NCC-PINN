@@ -127,14 +127,17 @@ def run_ncc(
             _, _, _, visualize_ncc_classification, visualize_ncc_classification_input_space = viz_module[:5]
             
             # Check if heatmap functions are available (new functions)
+            # Each function is checked individually - None means not available
             try:
                 visualize_ncc_classification_heatmap = viz_module[5]
                 visualize_ncc_classification_input_space_heatmap = viz_module[6]
                 visualize_ncc_classification_accuracy_changes = viz_module[7]
                 visualize_ncc_classification_input_space_accuracy_changes = viz_module[8]
-                has_heatmap = True
             except (IndexError, AttributeError):
-                has_heatmap = False
+                visualize_ncc_classification_heatmap = None
+                visualize_ncc_classification_input_space_heatmap = None
+                visualize_ncc_classification_accuracy_changes = None
+                visualize_ncc_classification_input_space_accuracy_changes = None
             
             # Extract class labels from results (already a tensor on device)
             class_labels = ncc_results['class_labels']
@@ -154,20 +157,20 @@ def run_ncc(
             visualize_ncc_classification_input_space(x, t, class_labels, predictions_dict, viz_path_input)
             print(f"  Input space classification diagnostic saved to {viz_path_input}")
             
-            # Generate heatmap versions if available
-            if has_heatmap:
-                # Output space visualization (u, v) - heatmap
+            # Generate heatmap versions if available (each function checked individually)
+            if visualize_ncc_classification_heatmap is not None:
                 viz_path_heatmap = ncc_plots_dir / "ncc_classification_heatmap.png"
                 visualize_ncc_classification_heatmap(h_gt, class_labels, predictions_dict, bins, viz_path_heatmap, cfg)
-                
-                # Input space visualization (x, t) - heatmap
+            
+            if visualize_ncc_classification_input_space_heatmap is not None:
                 viz_path_input_heatmap = ncc_plots_dir / "ncc_classification_input_space_heatmap.png"
                 visualize_ncc_classification_input_space_heatmap(x, t, class_labels, predictions_dict, viz_path_input_heatmap, cfg)
-                
-                # Accuracy change heatmaps
+            
+            if visualize_ncc_classification_accuracy_changes is not None:
                 viz_path_accuracy_changes = ncc_plots_dir / "ncc_classification_accuracy_changes.png"
                 visualize_ncc_classification_accuracy_changes(x, t, class_labels, predictions_dict, viz_path_accuracy_changes, cfg)
-                
+            
+            if visualize_ncc_classification_input_space_accuracy_changes is not None:
                 viz_path_input_accuracy_changes = ncc_plots_dir / "ncc_classification_input_space_accuracy_changes.png"
                 visualize_ncc_classification_input_space_accuracy_changes(x, t, class_labels, predictions_dict, viz_path_input_accuracy_changes, cfg)
         except (ValueError, AttributeError) as e:

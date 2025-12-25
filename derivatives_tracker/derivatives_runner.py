@@ -82,21 +82,42 @@ def _extract_ic_profile(layer_results: Dict[str, Dict], data: Dict[str, torch.Te
     mask_ic = data['mask']['IC'].detach().cpu().numpy().astype(bool)
     if not mask_ic.any():
         return {}
-    x_vals = data['x'][:, 0].detach().cpu().numpy()
-    x_ic = x_vals[mask_ic]
-    order = np.argsort(x_ic)
-    x_sorted = x_ic[order]
-    gt_real = 2.0 / np.cosh(x_sorted)
-    gt_imag = np.zeros_like(x_sorted)
-    profiles = {
-        'x': x_sorted,
-        'gt_real': gt_real,
-        'gt_imag': gt_imag,
-        'layers': {}
-    }
-    for layer_name, results in layer_results.items():
-        preds = results['h'][mask_ic][order]
-        profiles['layers'][layer_name] = preds
+    
+    x_data = data['x'].detach().cpu().numpy()
+    spatial_dim = x_data.shape[1] if x_data.ndim > 1 else 1
+    
+    if spatial_dim == 1:
+        # 1D spatial: sort by x for line plot
+        x_vals = x_data[:, 0] if x_data.ndim > 1 else x_data.flatten()
+        x_ic = x_vals[mask_ic]
+        order = np.argsort(x_ic)
+        x_sorted = x_ic[order]
+        gt_real = 2.0 / np.cosh(x_sorted)
+        gt_imag = np.zeros_like(x_sorted)
+        profiles = {
+            'x': x_sorted,
+            'spatial_dim': 1,
+            'gt_real': gt_real,
+            'gt_imag': gt_imag,
+            'layers': {}
+        }
+        for layer_name, results in layer_results.items():
+            preds = results['h'][mask_ic][order]
+            profiles['layers'][layer_name] = preds
+    else:
+        # 2D spatial: extract x0, x1 coordinates for surface plot
+        x0_ic = x_data[mask_ic, 0]
+        x1_ic = x_data[mask_ic, 1]
+        profiles = {
+            'x0': x0_ic,
+            'x1': x1_ic,
+            'spatial_dim': 2,
+            'layers': {}
+        }
+        for layer_name, results in layer_results.items():
+            preds = results['h'][mask_ic]
+            profiles['layers'][layer_name] = preds
+    
     return profiles
 
 
@@ -207,7 +228,7 @@ def run_derivatives_tracker(
         embeddings = train_embeddings[layer_name]
         probe = train_linear_probe(embeddings, train_targets)
         probes_dict[layer_name] = probe
-        print(f"    {layer_name}: probe trained ({embeddings.shape[1]} → 2)")
+        print(f"    {layer_name}: probe trained ({embeddings.shape[1]} -> 2)")
     
     # Step 4: Track derivatives for train and eval datasets
     print("\n" + "=" * 60)
@@ -252,6 +273,10 @@ def run_derivatives_tracker(
         elif problem_name == 'burgers1d':
             ic_profile_eval['gt_real'] = lambda arr: -np.sin(np.pi * arr)
             ic_profile_eval['gt_label_0'] = 'Ground Truth -sin(πx)'
+        elif problem_name == 'burgers2d':
+            # For 2D spatial, gt_real takes (x0, x1) grid arrays
+            ic_profile_eval['gt_real'] = lambda x0_arr, x1_arr: 1.0 / (1.0 + np.exp((x0_arr + x1_arr) / 0.2))
+            ic_profile_eval['gt_label_0'] = 'Ground Truth h(x0,x1,0)'
     bc_value_train = _compute_bc_metrics(train_derivatives, train_data, cfg, use_derivative=False)
     bc_value_eval = _compute_bc_metrics(eval_derivatives, eval_data, cfg, use_derivative=False)
     bc_deriv_train = _compute_bc_metrics(train_derivatives, train_data, cfg, use_derivative=True)

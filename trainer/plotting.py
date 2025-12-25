@@ -41,7 +41,7 @@ def plot_training_curves(
     # Add optimizer switch marker
     if optimizer_switch_epoch is not None:
         ax.axvline(x=optimizer_switch_epoch, color='green', linestyle='--', 
-                   linewidth=2, alpha=0.7, label='Optimizer Switch (Adam→LBFGS)')
+                   linewidth=2, alpha=0.7, label='Optimizer Switch (Adam->LBFGS)')
     
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Loss', fontsize=12)
@@ -60,7 +60,7 @@ def plot_training_curves(
     # Add optimizer switch marker
     if optimizer_switch_epoch is not None:
         ax.axvline(x=optimizer_switch_epoch, color='green', linestyle='--', 
-                   linewidth=2, alpha=0.7, label='Optimizer Switch (Adam→LBFGS)')
+                   linewidth=2, alpha=0.7, label='Optimizer Switch (Adam->LBFGS)')
     
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Relative L2 Error', fontsize=12)
