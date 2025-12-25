@@ -7,6 +7,27 @@ from matplotlib import colors as mcolors
 import os
 
 
+def _safe_log_scale(ax, values_list):
+    """Set log scale on y-axis only if all data has positive values.
+    
+    Returns:
+        bool: True if log scale was applied, False if linear scale is used.
+    """
+    all_values = []
+    for v in values_list:
+        if isinstance(v, (list, np.ndarray)):
+            all_values.extend(np.array(v).flatten())
+        else:
+            all_values.append(v)
+    all_values = np.array(all_values)
+    # Filter out NaN values for the check
+    valid_values = all_values[~np.isnan(all_values)]
+    if len(valid_values) > 0 and np.all(valid_values > 0):
+        ax.set_yscale('log')
+        return True
+    return False
+
+
 def _build_color_map(model_names):
     """
     Deterministic color assignment per model, shared across all comparison plots.
@@ -279,6 +300,7 @@ def _plot_derivative_comparison_grid(save_dir, derivatives_data, section_key, ke
     ]
     
     for panel_idx, (ax, split, metric_id, panel_title) in enumerate(panel_cfg):
+        all_panel_values = []
         for exp_name in exp_names:
             exp_data = derivatives_data[exp_name]
             layers = exp_data['layers_analyzed']
@@ -298,16 +320,21 @@ def _plot_derivative_comparison_grid(save_dir, derivatives_data, section_key, ke
                 label=exp_name,
                 color=color_map[exp_name]
             )
+            all_panel_values.extend(values)
         
-        ax.set_title(panel_title, fontsize=13, fontweight='bold')
         ax.set_xlabel('Layer', fontsize=11)
         ax.set_ylabel('Mean Norm', fontsize=11)
         ax.set_xticks(range(1, max_layers + 1))
-        ax.set_yscale('log')
+        is_log = _safe_log_scale(ax, [all_panel_values])
+        scale_str = "[log]" if is_log else "[linear]"
+        ax.set_title(f'{panel_title} {scale_str}', fontsize=13, fontweight='bold')
         ax.grid(True, alpha=0.3)
         if panel_idx == 0:
             ax.legend(fontsize=10, loc='best')
     
+    # Determine overall scale for suptitle
+    scale_label = "(Log Scale)" if is_log else "(Linear Scale)"
+    fig.suptitle(f'{title} {scale_label}', fontsize=16, fontweight='bold', y=1.02)
     plt.tight_layout(rect=[0, 0.02, 1, 0.97])
     save_path = _long_path(Path(save_dir) / filename)
     plt.savefig(save_path, dpi=150, bbox_inches='tight')

@@ -7,6 +7,27 @@ import numpy as np
 import torch
 
 
+def _safe_log_scale(ax, values_list):
+    """Set log scale on y-axis only if all data has positive values.
+    
+    Returns:
+        bool: True if log scale was applied, False if linear scale is used.
+    """
+    all_values = []
+    for v in values_list:
+        if isinstance(v, (list, np.ndarray)):
+            all_values.extend(np.array(v).flatten())
+        else:
+            all_values.append(v)
+    all_values = np.array(all_values)
+    # Filter out NaN values for the check
+    valid_values = all_values[~np.isnan(all_values)]
+    if len(valid_values) > 0 and np.all(valid_values > 0):
+        ax.set_yscale('log')
+        return True
+    return False
+
+
 def plot_probe_metrics(probe_results: Dict, save_dir: Path):
     """
     Create line plots showing how probe metrics evolve across layers.
@@ -733,36 +754,50 @@ def plot_probe_history_shaded(history: List[tuple], save_dir: Path) -> None:
 
     # Rel-L2
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    all_rel_l2 = []
     for (epoch, metrics), alpha in zip(history, alphas):
         layers = list(range(1, len(metrics['train']['rel_l2']) + 1))
         axes[0].plot(layers, metrics['train']['rel_l2'], marker='o', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
         axes[1].plot(layers, metrics['eval']['rel_l2'], marker='s', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
-    axes[0].set_title('Train Rel-L2 (shaded)')
-    axes[1].set_title('Eval Rel-L2 (shaded)')
+        all_rel_l2.extend(metrics['train']['rel_l2'])
+        all_rel_l2.extend(metrics['eval']['rel_l2'])
+    is_log = _safe_log_scale(axes[0], [all_rel_l2])
+    _safe_log_scale(axes[1], [all_rel_l2])
+    scale_str = "[log]" if is_log else "[linear]"
+    axes[0].set_title(f'Train Rel-L2 {scale_str}')
+    axes[1].set_title(f'Eval Rel-L2 {scale_str}')
     for ax in axes:
         ax.set_xlabel('Layer')
         ax.set_ylabel('Rel-L2')
-        ax.set_yscale('log')
         ax.grid(True, alpha=0.3)
     axes[0].legend()
+    scale_label = "(Log Scale)" if is_log else "(Linear Scale)"
+    fig.suptitle(f'Probe Rel-L2 Metrics {scale_label}', fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig(save_dir / "probe_metrics.png", dpi=150, bbox_inches='tight')
     plt.close()
 
     # L_inf
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    all_inf = []
     for (epoch, metrics), alpha in zip(history, alphas):
         layers = list(range(1, len(metrics['train']['inf_norm']) + 1))
         axes[0].plot(layers, metrics['train']['inf_norm'], marker='o', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
         axes[1].plot(layers, metrics['eval']['inf_norm'], marker='s', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
-    axes[0].set_title('Train L∞ (shaded)')
-    axes[1].set_title('Eval L∞ (shaded)')
+        all_inf.extend(metrics['train']['inf_norm'])
+        all_inf.extend(metrics['eval']['inf_norm'])
+    is_log = _safe_log_scale(axes[0], [all_inf])
+    _safe_log_scale(axes[1], [all_inf])
+    scale_str = "[log]" if is_log else "[linear]"
+    axes[0].set_title(f'Train L∞ {scale_str}')
+    axes[1].set_title(f'Eval L∞ {scale_str}')
     for ax in axes:
         ax.set_xlabel('Layer')
         ax.set_ylabel('L∞')
-        ax.set_yscale('log')
         ax.grid(True, alpha=0.3)
     axes[0].legend()
+    scale_label = "(Log Scale)" if is_log else "(Linear Scale)"
+    fig.suptitle(f'Probe L∞ Metrics {scale_label}', fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig(save_dir / "probe_metrics_inf.png", dpi=150, bbox_inches='tight')
     plt.close()

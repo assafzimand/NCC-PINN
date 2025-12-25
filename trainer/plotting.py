@@ -6,6 +6,27 @@ from typing import List, Dict
 import numpy as np
 
 
+def _safe_log_scale(ax, values_list):
+    """Set log scale on y-axis only if all data has positive values.
+    
+    Returns:
+        bool: True if log scale was applied, False if linear scale is used.
+    """
+    all_values = []
+    for v in values_list:
+        if isinstance(v, (list, np.ndarray)):
+            all_values.extend(np.array(v).flatten())
+        else:
+            all_values.append(v)
+    all_values = np.array(all_values)
+    # Filter out NaN values for the check
+    valid_values = all_values[~np.isnan(all_values)]
+    if len(valid_values) > 0 and np.all(valid_values > 0):
+        ax.set_yscale('log')
+        return True
+    return False
+
+
 def plot_training_curves(
     metrics: Dict[str, List[float]], 
     save_dir: Path,
@@ -45,10 +66,11 @@ def plot_training_curves(
     
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Loss', fontsize=12)
-    ax.set_title('Training and Evaluation Loss', fontsize=14, fontweight='bold')
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
-    ax.set_yscale('log')
+    is_log_loss = _safe_log_scale(ax, [metrics['train_loss'], metrics['eval_loss']])
+    scale_str_loss = "[log]" if is_log_loss else "[linear]"
+    ax.set_title(f'Training and Evaluation Loss {scale_str_loss}', fontsize=14, fontweight='bold')
 
     # Plot 2: Relative L2 error
     ax = axes[1]
@@ -64,10 +86,11 @@ def plot_training_curves(
     
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Relative L2 Error', fontsize=12)
-    ax.set_title('Relative L2 Error', fontsize=14, fontweight='bold')
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
-    ax.set_yscale('log')
+    is_log_l2 = _safe_log_scale(ax, [metrics['train_rel_l2'], metrics['eval_rel_l2']])
+    scale_str_l2 = "[log]" if is_log_l2 else "[linear]"
+    ax.set_title(f'Relative L2 Error {scale_str_l2}', fontsize=14, fontweight='bold')
 
     plt.tight_layout()
 
