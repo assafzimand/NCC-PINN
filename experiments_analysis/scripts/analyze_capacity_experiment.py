@@ -16,6 +16,27 @@ from collections import defaultdict
 import yaml
 import matplotlib.pyplot as plt
 
+
+def _safe_log_scale(ax, values_list):
+    """Set log scale on y-axis only if all data has positive values.
+    
+    Returns:
+        bool: True if log scale was applied, False if linear scale is used.
+    """
+    all_values = []
+    for v in values_list:
+        if isinstance(v, (list, np.ndarray)):
+            all_values.extend(np.array(v).flatten())
+        else:
+            all_values.append(v)
+    all_values = np.array(all_values)
+    # Filter out NaN values for the check
+    valid_values = all_values[~np.isnan(all_values)]
+    if len(valid_values) > 0 and np.all(valid_values > 0):
+        ax.set_yscale('log')
+        return True
+    return False
+
 # Import comparison plot functions
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -979,6 +1000,7 @@ def _generate_single_derivatives_plot(
     ]
     
     for panel_idx, (ax, split, metric_id, panel_title) in enumerate(panel_cfg):
+        all_panel_values = []
         for exp_name in exp_names:
             exp_data = derivatives_data[exp_name]
             layers = exp_data['layers_analyzed']
@@ -1005,17 +1027,20 @@ def _generate_single_derivatives_plot(
                 label=exp_name,
                 color=color_map[exp_name]
             )
+            all_panel_values.extend(values)
         
-        ax.set_title(panel_title, fontsize=13, fontweight='bold')
         ax.set_xlabel('Layer', fontsize=11)
         ax.set_ylabel('Mean Norm', fontsize=11)
         ax.set_xticks(range(1, max_layers + 1))
-        ax.set_yscale('log')
+        is_log = _safe_log_scale(ax, [all_panel_values])
+        scale_str = "[log]" if is_log else "[linear]"
+        ax.set_title(f'{panel_title} {scale_str}', fontsize=13, fontweight='bold')
         ax.grid(True, alpha=0.3)
         if panel_idx == 0:
             ax.legend(fontsize=9, loc='best')
     
-    plt.suptitle(cfg['title'], fontsize=14, fontweight='bold')
+    scale_label = "(Log Scale)" if is_log else "(Linear Scale)"
+    plt.suptitle(f"{cfg['title']} {scale_label}", fontsize=14, fontweight='bold')
     plt.tight_layout(rect=[0, 0.02, 1, 0.96])
     save_path = _long_path(Path(output_dir) / cfg['filename'])
     plt.savefig(save_path, dpi=150, bbox_inches='tight')

@@ -7,6 +7,27 @@ from typing import Dict, List
 from scipy.interpolate import griddata
 
 
+def _safe_log_scale(ax, values_list):
+    """Set log scale on y-axis only if all data has positive values.
+    
+    Returns:
+        bool: True if log scale was applied, False if linear scale is used.
+    """
+    all_values = []
+    for v in values_list:
+        if isinstance(v, (list, np.ndarray)):
+            all_values.extend(np.array(v).flatten())
+        else:
+            all_values.append(v)
+    all_values = np.array(all_values)
+    # Filter out NaN values for the check
+    valid_values = all_values[~np.isnan(all_values)]
+    if len(valid_values) > 0 and np.all(valid_values > 0):
+        ax.set_yscale('log')
+        return True
+    return False
+
+
 def plot_residual_summary(
     train_results: Dict[str, Dict],
     eval_results: Dict[str, Dict],
@@ -34,17 +55,20 @@ def plot_residual_summary(
         (axes[1, 1], eval_inf, 'Eval Residual L∞'),
     ]
     
+    is_log = False
     for ax, values, title in panels:
         ax.plot(layer_indices, values, marker='o', linewidth=2, markersize=7, color='#c0392b')
-        ax.set_title(title, fontsize=13, fontweight='bold')
         ax.set_xlabel('Layer', fontsize=11)
         ax.set_ylabel('Mean Norm', fontsize=11)
         ax.set_xticks(layer_indices)
         ax.set_xticklabels(layer_names, rotation=45, ha='right')
-        ax.set_yscale('log')
+        is_log = _safe_log_scale(ax, [values])
+        scale_str = "[log]" if is_log else "[linear]"
+        ax.set_title(f'{title} {scale_str}', fontsize=13, fontweight='bold')
         ax.grid(True, alpha=0.3)
     
-    fig.suptitle('Residual Evolution Summary', fontsize=16, fontweight='bold')
+    scale_label = "(Log Scale)" if is_log else "(Linear Scale)"
+    fig.suptitle(f'Residual Evolution Summary {scale_label}', fontsize=16, fontweight='bold')
     plt.tight_layout(rect=[0, 0.02, 1, 0.97])
     
     save_path = save_dir / 'residual_evolution_summary.png'
@@ -144,12 +168,13 @@ def plot_term_magnitudes(
     
     ax.set_xlabel('Layer', fontsize=12, fontweight='bold')
     ax.set_ylabel('Mean L2 Norm', fontsize=12, fontweight='bold')
-    ax.set_title('Term Magnitudes Across Layers', fontsize=14, fontweight='bold')
     ax.set_xticks(layer_indices)
     ax.set_xticklabels(layer_names, rotation=45, ha='right')
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=10, loc='best')
-    ax.set_yscale('log')
+    is_log = _safe_log_scale(ax, [residual_norms])
+    scale_label = "(Log Scale)" if is_log else "(Linear Scale)"
+    ax.set_title(f'Term Magnitudes Across Layers {scale_label}', fontsize=14, fontweight='bold')
     
     plt.tight_layout()
     
@@ -340,20 +365,20 @@ def _plot_metrics_grid(
         (axes[1, 1], extract(eval_metrics, 'linf'), 'Eval L∞'),
     ]
     
+    is_log = False
     for ax, values, subtitle in panels:
         ax.plot(layer_indices, values, marker='o', linewidth=2, color='#8e44ad')
-        ax.set_title(subtitle, fontsize=13, fontweight='bold')
         ax.set_xlabel('Layer', fontsize=11)
         ax.set_ylabel('Mean Norm', fontsize=11)
         ax.set_xticks(layer_indices)
         ax.set_xticklabels(layer_names, rotation=45, ha='right')
-        # Only use log scale if there are positive values
-        values_arr = np.array(values)
-        if np.any(values_arr[~np.isnan(values_arr)] > 0):
-            ax.set_yscale('log')
+        is_log = _safe_log_scale(ax, [values])
+        scale_str = "[log]" if is_log else "[linear]"
+        ax.set_title(f'{subtitle} {scale_str}', fontsize=13, fontweight='bold')
         ax.grid(True, alpha=0.3)
     
-    fig.suptitle(title, fontsize=16, fontweight='bold')
+    scale_label = "(Log Scale)" if is_log else "(Linear Scale)"
+    fig.suptitle(f'{title} {scale_label}', fontsize=16, fontweight='bold')
     plt.tight_layout(rect=[0, 0.02, 1, 0.97])
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -1434,17 +1459,23 @@ def plot_derivative_history_shaded(history: List[tuple], save_dir: Path) -> None
             'train_residual_linf': 'train_residual_linf',
             'eval_residual_linf': 'eval_residual_linf',
         }
+        is_log = False
         for ax, (key, title) in zip(axes.flat, panels):
+            all_values = []
             for (epoch, metrics), alpha in zip(history, alphas):
                 layers = sorted(metrics.get('layer_norms', {}).keys(), key=lambda x: int(x.split('_')[-1]))
                 values = [metrics['layer_norms'][ln].get(key_map[key], float('nan')) for ln in layers]
                 ax.plot(range(1, len(values)+1), values, marker='o', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
-            ax.set_title(title)
+                all_values.extend(values)
             ax.set_xlabel('Layer')
             ax.set_ylabel('Mean Norm')
-            ax.set_yscale('log')
+            is_log = _safe_log_scale(ax, [all_values])
+            scale_str = "[log]" if is_log else "[linear]"
+            ax.set_title(f'{title} {scale_str}')
             ax.grid(True, alpha=0.3)
         axes[0,0].legend()
+        scale_label = "(Log Scale)" if is_log else "(Linear Scale)"
+        fig.suptitle(f'Residual Evolution {scale_label}', fontsize=14, fontweight='bold')
         plt.tight_layout()
         plt.savefig(save_dir / "residual_evolution_summary.png", dpi=150, bbox_inches='tight')
         plt.close()
@@ -1452,7 +1483,9 @@ def plot_derivative_history_shaded(history: List[tuple], save_dir: Path) -> None
     def _plot_ic_bc(key: str, title: str, filename: str):
         fig, axes = plt.subplots(2, 2, figsize=(16, 10))
         panels = [('l2', 'Train L2'), ('l2_eval', 'Eval L2'), ('linf', 'Train L∞'), ('linf_eval', 'Eval L∞')]
+        is_log = False
         for ax_idx, (metric_key, lbl) in enumerate(panels):
+            all_values = []
             for (epoch, metrics), alpha in zip(history, alphas):
                 store = metrics.get(key, {})
                 if not store:
@@ -1465,13 +1498,17 @@ def plot_derivative_history_shaded(history: List[tuple], save_dir: Path) -> None
                 values = [per_layer[ln].get(base_key, float('nan')) for ln in layers]
                 ax = axes.flatten()[ax_idx]
                 ax.plot(range(1, len(values)+1), values, marker='o', color=base_color, alpha=alpha, label=f"Epoch {epoch}")
+                all_values.extend(values)
             ax = axes.flatten()[ax_idx]
-            ax.set_title(lbl)
             ax.set_xlabel('Layer')
             ax.set_ylabel('Mean Norm')
-            ax.set_yscale('log')
+            is_log = _safe_log_scale(ax, [all_values])
+            scale_str = "[log]" if is_log else "[linear]"
+            ax.set_title(f'{lbl} {scale_str}')
             ax.grid(True, alpha=0.3)
         axes[0,0].legend()
+        scale_label = "(Log Scale)" if is_log else "(Linear Scale)"
+        fig.suptitle(f'{title} {scale_label}', fontsize=14, fontweight='bold')
         plt.tight_layout()
         plt.savefig(save_dir / filename, dpi=150, bbox_inches='tight')
         plt.close()
