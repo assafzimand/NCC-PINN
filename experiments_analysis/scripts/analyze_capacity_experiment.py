@@ -169,6 +169,10 @@ PROBLEM_BC_CONFIG = {
         'bc_value': True,       # Dirichlet: h(t,-1) = h(t,1) = 0
         'bc_derivative': False,  # Not enforced in loss
     },
+    'burgers2d': {
+        'bc_value': True,       # Dirichlet: match analytical solution at boundaries
+        'bc_derivative': False,  # Not enforced in loss
+    },
 }
 
 # Default for unknown problems (conservative: include all)

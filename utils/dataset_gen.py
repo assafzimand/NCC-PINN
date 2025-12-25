@@ -56,7 +56,8 @@ def generate_and_save_datasets(config: Dict) -> None:
         # Problem-specific visualization
         try:
             from utils.problem_specific import get_visualization_module
-            visualize_dataset, _, _, _, _ = get_visualization_module(problem)
+            viz_funcs = get_visualization_module(problem)
+            visualize_dataset = viz_funcs[0]
             visualize_dataset(train_data, dataset_dir, config, 'training')
         except ValueError:
             pass  # No custom visualization for this problem
@@ -87,7 +88,8 @@ def generate_and_save_datasets(config: Dict) -> None:
         # Problem-specific visualization
         try:
             from utils.problem_specific import get_visualization_module
-            visualize_dataset, _, _, _, _ = get_visualization_module(problem)
+            viz_funcs = get_visualization_module(problem)
+            visualize_dataset = viz_funcs[0]
             visualize_dataset(eval_data, dataset_dir, config, 'evaluation')
         except ValueError:
             pass  # No custom visualization for this problem

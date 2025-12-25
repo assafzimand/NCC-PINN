@@ -29,23 +29,27 @@ def compute_ground_truth_derivatives(
     problem_name = config.get('problem', 'schrodinger')
     solver_module = importlib.import_module(f'solvers.{problem_name}_solver')
     
-    # Get analytical solution interpolator
-    interpolator = solver_module._get_interpolator(config)
-    
     # Get coordinates as numpy (detach first)
-    x_np = x.detach().cpu().numpy().flatten()
+    x_np = x.detach().cpu().numpy()  # Keep shape for 2D spatial
     t_np = t.detach().cpu().numpy().flatten()
-    
-    # Get solution from interpolator
-    h_values = interpolator(x_np, t_np)  # (N,) - could be complex or real
     
     # Get problem config
     output_dim = config[problem_name].get('output_dim', 2)
     
     result = {}
     
+    # For problems with interpolators (schrodinger, burgers1d), get interpolator
+    # For problems with analytical solutions (wave1d, burgers2d), skip interpolator
+    interpolator = None
+    h_values = None
+    if problem_name in ['schrodinger', 'burgers1d']:
+        interpolator = solver_module._get_interpolator(config)
+        x_flat = x_np.flatten() if x_np.ndim > 1 else x_np
+        h_values = interpolator(x_flat, t_np)  # (N,) - could be complex or real
+    
     if problem_name == 'schrodinger':
         # Complex-valued solution
+        x_flat = x_np.flatten()
         h_complex = h_values  # (N,) complex
         
         # Finite difference step sizes - must be appropriate for grid resolution
@@ -54,13 +58,13 @@ def compute_ground_truth_derivatives(
         eps_t = 1e-3
         
         # Compute h_t using finite differences
-        h_t_plus = interpolator(x_np, t_np + eps_t)
-        h_t_minus = interpolator(x_np, t_np - eps_t)
+        h_t_plus = interpolator(x_flat, t_np + eps_t)
+        h_t_minus = interpolator(x_flat, t_np - eps_t)
         h_t_complex = (h_t_plus - h_t_minus) / (2 * eps_t)
         
         # Compute h_xx using finite differences
-        h_x_plus = interpolator(x_np + eps_x, t_np)
-        h_x_minus = interpolator(x_np - eps_x, t_np)
+        h_x_plus = interpolator(x_flat + eps_x, t_np)
+        h_x_minus = interpolator(x_flat - eps_x, t_np)
         h_xx_complex = (h_x_plus - 2*h_complex + h_x_minus) / (eps_x**2)
         
         # Convert to (N, 2) format [real, imag]
@@ -78,12 +82,14 @@ def compute_ground_truth_derivatives(
             analytical_derivative_xx
         )
         
+        x_flat = x_np.flatten()
+        
         # Compute all derivatives analytically (no boundary issues!)
-        h_real = analytical_solution(x_np, t_np)  # (N,) real
-        h_t_real = analytical_derivative_t(x_np, t_np)  # (N,) real
-        h_tt_real = analytical_derivative_tt(x_np, t_np)  # (N,) real
-        h_x_real = analytical_derivative_x(x_np, t_np)  # (N,) real
-        h_xx_real = analytical_derivative_xx(x_np, t_np)  # (N,) real
+        h_real = analytical_solution(x_flat, t_np)  # (N,) real
+        h_t_real = analytical_derivative_t(x_flat, t_np)  # (N,) real
+        h_tt_real = analytical_derivative_tt(x_flat, t_np)  # (N,) real
+        h_x_real = analytical_derivative_x(x_flat, t_np)  # (N,) real
+        h_xx_real = analytical_derivative_xx(x_flat, t_np)  # (N,) real
         
         # Convert to (N, 1) format for output_dim=1
         result['h_gt'] = h_real.reshape(-1, 1)
@@ -94,6 +100,7 @@ def compute_ground_truth_derivatives(
     
     elif problem_name == 'burgers1d':
         # Real-valued solution - use finite differences on interpolator
+        x_flat = x_np.flatten()
         h_real = h_values  # (N,) real
         
         # Finite difference step sizes - must be appropriate for grid resolution
@@ -116,29 +123,29 @@ def compute_ground_truth_derivatives(
         
         # Central difference for interior points
         if np.any(interior):
-            h_t_plus_int = interpolator(x_np[interior], t_np[interior] + eps_t)
-            h_t_minus_int = interpolator(x_np[interior], t_np[interior] - eps_t)
+            h_t_plus_int = interpolator(x_flat[interior], t_np[interior] + eps_t)
+            h_t_minus_int = interpolator(x_flat[interior], t_np[interior] - eps_t)
             h_t_real[interior] = (h_t_plus_int - h_t_minus_int) / (2 * eps_t)
         
         # Forward difference near t_min
         if np.any(near_t_min):
-            h_0 = interpolator(x_np[near_t_min], t_np[near_t_min])
-            h_1 = interpolator(x_np[near_t_min], t_np[near_t_min] + eps_t)
-            h_2 = interpolator(x_np[near_t_min], t_np[near_t_min] + 2*eps_t)
+            h_0 = interpolator(x_flat[near_t_min], t_np[near_t_min])
+            h_1 = interpolator(x_flat[near_t_min], t_np[near_t_min] + eps_t)
+            h_2 = interpolator(x_flat[near_t_min], t_np[near_t_min] + 2*eps_t)
             # Second-order forward difference: (-3h0 + 4h1 - h2) / (2*eps)
             h_t_real[near_t_min] = (-3*h_0 + 4*h_1 - h_2) / (2 * eps_t)
         
         # Backward difference near t_max
         if np.any(near_t_max):
-            h_0 = interpolator(x_np[near_t_max], t_np[near_t_max])
-            h_m1 = interpolator(x_np[near_t_max], t_np[near_t_max] - eps_t)
-            h_m2 = interpolator(x_np[near_t_max], t_np[near_t_max] - 2*eps_t)
+            h_0 = interpolator(x_flat[near_t_max], t_np[near_t_max])
+            h_m1 = interpolator(x_flat[near_t_max], t_np[near_t_max] - eps_t)
+            h_m2 = interpolator(x_flat[near_t_max], t_np[near_t_max] - 2*eps_t)
             # Second-order backward difference: (3h0 - 4h_{-1} + h_{-2}) / (2*eps)
             h_t_real[near_t_max] = (3*h_0 - 4*h_m1 + h_m2) / (2 * eps_t)
         
         # Compute h_x using finite differences
-        h_x_plus = interpolator(x_np + eps_x, t_np)
-        h_x_minus = interpolator(x_np - eps_x, t_np)
+        h_x_plus = interpolator(x_flat + eps_x, t_np)
+        h_x_minus = interpolator(x_flat - eps_x, t_np)
         h_x_real = (h_x_plus - h_x_minus) / (2 * eps_x)
         
         # Compute h_xx using finite differences
@@ -149,6 +156,37 @@ def compute_ground_truth_derivatives(
         result['h_t_gt'] = h_t_real.reshape(-1, 1)
         result['h_x_gt'] = h_x_real.reshape(-1, 1)
         result['h_xx_gt'] = h_xx_real.reshape(-1, 1)
+    
+    elif problem_name == 'burgers2d':
+        # Real-valued solution - use analytical derivatives directly
+        from solvers.burgers2d_solver import (
+            analytical_solution,
+            analytical_h_t,
+            analytical_h_x0,
+            analytical_h_x1,
+            analytical_h_x0x0,
+            analytical_h_x1x1
+        )
+        
+        # For 2D spatial, x has shape (N, 2)
+        x0_np = x_np[:, 0] if x_np.ndim > 1 else x_np
+        x1_np = x_np[:, 1] if x_np.ndim > 1 else np.zeros_like(x_np)
+        
+        # Compute all derivatives analytically
+        h_real = analytical_solution(x0_np, x1_np, t_np)  # (N,) real
+        h_t_real = analytical_h_t(x0_np, x1_np, t_np)  # (N,) real
+        h_x0_real = analytical_h_x0(x0_np, x1_np, t_np)  # (N,) real
+        h_x1_real = analytical_h_x1(x0_np, x1_np, t_np)  # (N,) real
+        h_x0x0_real = analytical_h_x0x0(x0_np, x1_np, t_np)  # (N,) real
+        h_x1x1_real = analytical_h_x1x1(x0_np, x1_np, t_np)  # (N,) real
+        
+        # Convert to (N, 1) format for output_dim=1
+        result['h_gt'] = h_real.reshape(-1, 1)
+        result['h_t_gt'] = h_t_real.reshape(-1, 1)
+        result['h_x0_gt'] = h_x0_real.reshape(-1, 1)
+        result['h_x1_gt'] = h_x1_real.reshape(-1, 1)
+        result['h_x0x0_gt'] = h_x0x0_real.reshape(-1, 1)
+        result['h_x1x1_gt'] = h_x1x1_real.reshape(-1, 1)
         
     return result
 
@@ -239,7 +277,7 @@ def compute_layer_derivatives_via_probe(
             )[0]
         results['h_t'] = h_t
     
-    # Compute first spatial derivative if needed
+    # Compute first spatial derivative if needed (1D spatial)
     if 'h_x' in required_derivs or 'h_xx' in required_derivs:
         h_x = torch.zeros_like(h)
         for i in range(output_dim):
@@ -253,10 +291,29 @@ def compute_layer_derivatives_via_probe(
             )[0]
         results['h_x'] = h_x
     
+    # Compute spatial derivatives for 2D spatial problems
+    if 'h_x0' in required_derivs or 'h_x0x0' in required_derivs:
+        # x has shape (N, 2) for 2D spatial
+        h_x_all = torch.zeros(h.shape[0], 2, device=h.device)
+        for i in range(output_dim):
+            grad_outputs = torch.ones_like(h[:, i])
+            grad_x = torch.autograd.grad(
+                outputs=h[:, i],
+                inputs=x,
+                grad_outputs=grad_outputs,
+                create_graph=True,
+                retain_graph=True
+            )[0]  # (N, 2)
+            h_x_all += grad_x
+        h_x_all = h_x_all / max(output_dim, 1)  # Average if multi-output
+        
+        results['h_x0'] = h_x_all[:, 0:1]  # (N, 1)
+        results['h_x1'] = h_x_all[:, 1:2]  # (N, 1)
+    
     # Check if we need h_tt (affects retain_graph for h_xx)
     need_h_tt = 'h_tt' in required_derivs and 'h_t' in results
     
-    # Compute second spatial derivative if needed
+    # Compute second spatial derivative if needed (1D spatial)
     if 'h_xx' in required_derivs and 'h_x' in results:
         h_x = results['h_x']
         h_xx = torch.zeros_like(h)
@@ -272,6 +329,35 @@ def compute_layer_derivatives_via_probe(
                 create_graph=False
             )[0]
         results['h_xx'] = h_xx
+    
+    # Compute second spatial derivatives for 2D spatial problems
+    if 'h_x0x0' in required_derivs and 'h_x0' in results:
+        h_x0 = results['h_x0']  # (N, 1)
+        h_x1 = results['h_x1']  # (N, 1)
+        
+        # Compute d(h_x0)/dx0 and d(h_x1)/dx1
+        grad_outputs = torch.ones_like(h_x0.squeeze())
+        
+        # h_x0x0
+        h_x0_grad = torch.autograd.grad(
+            outputs=h_x0.squeeze(),
+            inputs=x,
+            grad_outputs=grad_outputs,
+            retain_graph=True,
+            create_graph=False
+        )[0]  # (N, 2)
+        results['h_x0x0'] = h_x0_grad[:, 0:1]  # d(h_x0)/dx0, (N, 1)
+        
+        # h_x1x1
+        grad_outputs = torch.ones_like(h_x1.squeeze())
+        h_x1_grad = torch.autograd.grad(
+            outputs=h_x1.squeeze(),
+            inputs=x,
+            grad_outputs=grad_outputs,
+            retain_graph=need_h_tt,
+            create_graph=False
+        )[0]  # (N, 2)
+        results['h_x1x1'] = h_x1_grad[:, 1:2]  # d(h_x1)/dx1, (N, 1)
     
     # Compute second temporal derivative if needed (for wave equation)
     if need_h_tt:
@@ -360,6 +446,11 @@ def track_all_layers(
         h_xx = derivatives.get('h_xx')
         h_t = derivatives.get('h_t')
         h_tt = derivatives.get('h_tt')  # Only for wave
+        # 2D spatial derivatives
+        h_x0 = derivatives.get('h_x0')
+        h_x1 = derivatives.get('h_x1')
+        h_x0x0 = derivatives.get('h_x0x0')
+        h_x1x1 = derivatives.get('h_x1x1')
         
         # Compute residual terms using problem-specific function
         # Pass all available derivatives; function will use what it needs
@@ -368,7 +459,11 @@ def track_all_layers(
             h_t=h_t,
             h_tt=h_tt,
             h_x=h_x,
-            h_xx=h_xx
+            h_xx=h_xx,
+            h_x0=h_x0,
+            h_x1=h_x1,
+            h_x0x0=h_x0x0,
+            h_x1x1=h_x1x1
         )
         
         # Compute L2 / L_inf norms across samples (mean per-sample norms)
@@ -392,6 +487,15 @@ def track_all_layers(
             norms['h_xx_norm'] = torch.norm(h_xx, dim=1).mean().item()
         if h_tt is not None:
             norms['h_tt_norm'] = torch.norm(h_tt, dim=1).mean().item()
+        # 2D spatial derivative norms
+        if h_x0 is not None:
+            norms['h_x0_norm'] = torch.norm(h_x0, dim=1).mean().item()
+        if h_x1 is not None:
+            norms['h_x1_norm'] = torch.norm(h_x1, dim=1).mean().item()
+        if h_x0x0 is not None:
+            norms['h_x0x0_norm'] = torch.norm(h_x0x0, dim=1).mean().item()
+        if h_x1x1 is not None:
+            norms['h_x1x1_norm'] = torch.norm(h_x1x1, dim=1).mean().item()
         
         # Get problem-specific term metadata for dynamic norm computation
         term_metadata = {}
@@ -423,6 +527,15 @@ def track_all_layers(
             layer_results['h_xx'] = h_xx.cpu().numpy()
         if h_tt is not None:
             layer_results['h_tt'] = h_tt.cpu().numpy()
+        # 2D spatial derivatives
+        if h_x0 is not None:
+            layer_results['h_x0'] = h_x0.cpu().numpy()
+        if h_x1 is not None:
+            layer_results['h_x1'] = h_x1.cpu().numpy()
+        if h_x0x0 is not None:
+            layer_results['h_x0x0'] = h_x0x0.cpu().numpy()
+        if h_x1x1 is not None:
+            layer_results['h_x1x1'] = h_x1x1.cpu().numpy()
         
         # Add problem-specific terms (dynamically from term_metadata)
         for term_key in term_metadata:
