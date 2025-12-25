@@ -45,37 +45,78 @@ def _compute_bc_metrics(layer_results: Dict[str, Dict],
                         data: Dict[str, torch.Tensor],
                         config: Dict,
                         use_derivative: bool = False) -> Dict[str, Dict[str, float]]:
+    """
+    Compute BC metrics based on problem type.
+    
+    - Schrödinger (periodic BC): Compare h_left to h_right (and h_x_left to h_x_right for derivatives)
+    - Dirichlet BC problems (wave1d, burgers1d, burgers2d): Compare h_pred to h_gt at boundary points
+    
+    Args:
+        layer_results: Dictionary of layer results with 'h' and 'h_x' keys
+        data: Data dictionary with 'x', 't', 'h_gt', 'mask'
+        config: Configuration dictionary
+        use_derivative: If True, compute derivative metrics (only for periodic BC)
+        
+    Returns:
+        Dictionary mapping layer_name to metrics dict with 'l2' and 'linf'
+    """
     mask_bc = data['mask']['BC'].detach().cpu().numpy().astype(bool)
     if not mask_bc.any():
         return {}
-    x = data['x'][:, 0].detach().cpu().numpy()
-    t = data['t'][:, 0].detach().cpu().numpy()
-    problem_cfg = config[config['problem']]
-    x_min, x_max = problem_cfg['spatial_domain'][0]
     
-    left_map = _pair_boundary_indices(x, t, mask_bc, x_min)
-    right_map = _pair_boundary_indices(x, t, mask_bc, x_max)
+    problem_name = config['problem']
+    problem_cfg = config[problem_name]
     
-    # Build matched pairs using shared times
-    pairs = []
-    for time_key, left_indices in left_map.items():
-        right_indices = right_map.get(time_key, [])
-        while left_indices and right_indices:
-            pairs.append((left_indices.pop(), right_indices.pop()))
-    if not pairs:
-        return {}
+    # Check if this is a periodic BC problem (only Schrödinger)
+    is_periodic_bc = (problem_name == 'schrodinger')
     
-    left_idx = np.array([p[0] for p in pairs])
-    right_idx = np.array([p[1] for p in pairs])
-    
-    metrics = {}
-    value_key = 'h_x' if use_derivative else 'h'
-    for layer_name, results in layer_results.items():
-        values = results[value_key]
-        left_vals = values[left_idx]
-        right_vals = values[right_idx]
-        metrics[layer_name] = _compute_mean_norms(left_vals - right_vals)
-    return metrics
+    if is_periodic_bc:
+        # PERIODIC BC: Compare h_left to h_right (Schrödinger)
+        x = data['x'][:, 0].detach().cpu().numpy()
+        t = data['t'][:, 0].detach().cpu().numpy()
+        x_min, x_max = problem_cfg['spatial_domain'][0]
+        
+        left_map = _pair_boundary_indices(x, t, mask_bc, x_min)
+        right_map = _pair_boundary_indices(x, t, mask_bc, x_max)
+        
+        # Build matched pairs using shared times
+        pairs = []
+        for time_key, left_indices in left_map.items():
+            right_indices = right_map.get(time_key, [])
+            while left_indices and right_indices:
+                pairs.append((left_indices.pop(), right_indices.pop()))
+        if not pairs:
+            return {}
+        
+        left_idx = np.array([p[0] for p in pairs])
+        right_idx = np.array([p[1] for p in pairs])
+        
+        metrics = {}
+        value_key = 'h_x' if use_derivative else 'h'
+        for layer_name, results in layer_results.items():
+            values = results[value_key]
+            left_vals = values[left_idx]
+            right_vals = values[right_idx]
+            metrics[layer_name] = _compute_mean_norms(left_vals - right_vals)
+        return metrics
+    else:
+        # DIRICHLET BC: Compare h_pred to h_gt at boundary points
+        # This applies to wave1d, burgers1d, burgers2d
+        
+        # For derivative metrics, Dirichlet BCs don't enforce derivative matching
+        if use_derivative:
+            return {}  # No derivative constraint for Dirichlet BCs
+        
+        h_gt = data['h_gt'].detach().cpu().numpy()
+        h_gt_bc = h_gt[mask_bc]
+        
+        metrics = {}
+        for layer_name, results in layer_results.items():
+            h_pred = results['h']
+            h_pred_bc = h_pred[mask_bc]
+            error = h_pred_bc - h_gt_bc
+            metrics[layer_name] = _compute_mean_norms(error)
+        return metrics
 
 
 def _extract_ic_profile(layer_results: Dict[str, Dict], data: Dict[str, torch.Tensor]) -> Dict[str, np.ndarray]:
