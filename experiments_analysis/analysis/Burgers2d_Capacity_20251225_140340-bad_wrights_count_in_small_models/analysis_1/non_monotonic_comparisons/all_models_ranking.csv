@@ -1,0 +1,10 @@
+model_name,num_layers,num_parameters,worst_metric,non_monotone_layers,worst_degradation_pct,metrics_violated
+burgers2d-3-80-80-80-80-80-80-80-1-tanh,7,"39,281",BC Value L2 (eval),"3, 6",3378.8%,8
+burgers2d-3-70-70-70-70-70-70-70-1-tanh,7,"30,171",Probe L-inf (eval),"3, 5, 6",1255.1%,8
+burgers2d-3-100-100-100-100-100-1-tanh,5,"40,901",BC Value L2 (eval),5,435.6%,8
+burgers2d-3-85-85-85-85-85-1-tanh,5,"29,666",IC L2 (eval),5,427.0%,8
+burgers2d-3-58-58-58-58-58-58-58-1-tanh,7,"20,823",Residual L2 (eval),"4, 6, 7",302.2%,8
+burgers2d-3-70-70-70-70-70-1-tanh,5,"20,231",Probe L-inf (eval),5,171.8%,8
+burgers2d-3-140-140-140-1-tanh,3,"40,181",Residual L2 (eval),3,104.5%,6
+burgers2d-3-36-36-36-36-36-1-tanh,5,"5,509",IC L2 (eval),4,89.8%,6
+burgers2d-3-40-40-40-40-40-40-40-1-tanh,7,"10,041",IC L2 (eval),3,18.2%,2

@@ -1,0 +1,5 @@
+pde,model_name,layers,weights,eval_rel_l2,eval_linf
+schrodinger,schrodinger-2-120-120-120-2-tanh,3,30k,0.020337,0.012326
+burgers1d,burgers1d-2-28-28-28-28-28-28-28-1-tanh,7,5k,0.002824,0.027815
+burgers2d,burgers2d-3-100-100-100-100-100-1-tanh,5,40k,0.000084,0.000274
+wave1d,wave1d-2-85-85-85-85-85-1-tanh,5,30k,0.000417,0.001415

@@ -1,0 +1,10 @@
+model_name,num_layers,num_parameters,worst_metric,non_monotone_layers,worst_degradation_pct,metrics_violated
+burgers1d-2-50-50-50-50-50-1-tanh,5,"10,401",Residual L2 (eval),2,22059.3%,8
+burgers1d-2-70-70-70-70-70-70-70-1-tanh,7,"30,101",IC L2 (eval),3,4310.0%,8
+burgers1d-2-28-28-28-28-28-28-28-1-tanh,7,"4,985",IC L2 (eval),"2, 6",193.2%,6
+burgers1d-2-85-85-85-85-85-1-tanh,5,"29,581",BC Value L2 (eval),2,138.9%,4
+burgers1d-2-120-120-120-1-tanh,3,"29,521",Residual L2 (eval),2,95.9%,4
+burgers1d-2-58-58-58-58-58-58-58-1-tanh,7,"20,765",NCC Compactness (Margin SNR),3,37.2%,1
+burgers1d-2-36-36-36-36-36-1-tanh,5,"5,473",IC L2 (eval),3,26.3%,2
+burgers1d-2-40-40-40-40-40-40-40-1-tanh,7,"10,001",BC Value L2 (eval),4,25.9%,2
+burgers1d-2-46-46-46-1-tanh,3,"4,509",NCC Compactness (Margin SNR),3,24.1%,1

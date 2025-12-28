@@ -1,0 +1,5 @@
+model_name,num_layers,num_parameters,non_monotone_layers,worst_degradation_pct,other_metrics_violated
+wave1d-2-36-36-36-36-36-1-tanh,5,"5,473",2,46.6%,"ic_linf, probe_linf, probe_rel_l2"
+wave1d-2-28-28-28-28-28-28-28-1-tanh,7,"4,985",3,46.5%,"ic_linf, ncc_accuracy, residual_l2, residual_linf"
+wave1d-2-58-58-58-58-58-58-58-1-tanh,7,"20,765",2,12.1%,"bc_value_l2, bc_value_linf, ic_linf, ncc_compactness, residu..."
+wave1d-2-70-70-70-70-70-70-70-1-tanh,7,"30,101",2,11.8%,"ic_linf, ncc_compactness, probe_rel_l2, residual_l2, residua..."
