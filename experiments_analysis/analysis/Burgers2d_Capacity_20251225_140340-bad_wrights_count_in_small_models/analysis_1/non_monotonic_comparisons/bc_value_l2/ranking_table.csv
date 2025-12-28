@@ -1,0 +1,8 @@
+model_name,num_layers,num_parameters,non_monotone_layers,worst_degradation_pct,other_metrics_violated
+burgers2d-3-80-80-80-80-80-80-80-1-tanh,7,"39,281","3, 6",3378.8%,"bc_value_linf, ic_l2, ic_linf, probe_linf, probe_rel_l2, res..."
+burgers2d-3-70-70-70-70-70-70-70-1-tanh,7,"30,171","3, 6",776.9%,"bc_value_linf, ic_l2, ic_linf, probe_linf, probe_rel_l2, res..."
+burgers2d-3-100-100-100-100-100-1-tanh,5,"40,901",5,435.6%,"bc_value_linf, ic_l2, ic_linf, probe_linf, probe_rel_l2, res..."
+burgers2d-3-85-85-85-85-85-1-tanh,5,"29,666",5,298.1%,"bc_value_linf, ic_l2, ic_linf, probe_linf, probe_rel_l2, res..."
+burgers2d-3-58-58-58-58-58-58-58-1-tanh,7,"20,823",7,291.9%,"bc_value_linf, ic_l2, ic_linf, probe_linf, probe_rel_l2, res..."
+burgers2d-3-140-140-140-1-tanh,3,"40,181",3,93.5%,"bc_value_linf, probe_linf, probe_rel_l2, residual_l2, residu..."
+burgers2d-3-70-70-70-70-70-1-tanh,5,"20,231",5,48.7%,"bc_value_linf, ic_l2, ic_linf, probe_linf, probe_rel_l2, res..."

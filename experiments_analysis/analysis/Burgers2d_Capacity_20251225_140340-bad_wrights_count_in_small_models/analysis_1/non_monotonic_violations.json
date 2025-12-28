@@ -1,0 +1,682 @@
+{
+  "probe_rel_l2": [
+    {
+      "model_name": "burgers2d-3-100-100-100-100-100-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0006697432254441082,
+      "current_value": 0.0029233370441943407,
+      "degradation_abs": 0.0022535938187502325,
+      "degradation_rel": 3.364862432547741
+    },
+    {
+      "model_name": "burgers2d-3-140-140-140-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.0035654124803841114,
+      "current_value": 0.00569087965413928,
+      "degradation_abs": 0.002125467173755169,
+      "degradation_rel": 0.5961350013354378
+    },
+    {
+      "model_name": "burgers2d-3-36-36-36-36-36-1-tanh",
+      "layer_num": 4,
+      "prev_value": 0.0025481516495347023,
+      "current_value": 0.0029055853374302387,
+      "degradation_abs": 0.0003574336878955364,
+      "degradation_rel": 0.14027174872453316
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.0006696782656945288,
+      "current_value": 0.000885325949639082,
+      "degradation_abs": 0.00021564768394455314,
+      "degradation_rel": 0.3220168474795925
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 7,
+      "prev_value": 0.000885325949639082,
+      "current_value": 0.0031439594458788633,
+      "degradation_abs": 0.0022586334962397814,
+      "degradation_rel": 2.551188629634714
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0005110508063808084,
+      "current_value": 0.001023485092446208,
+      "degradation_abs": 0.0005124342860653996,
+      "degradation_rel": 1.0027071274857953
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.050043169409036636,
+      "current_value": 0.590183436870575,
+      "degradation_abs": 0.5401402674615383,
+      "degradation_rel": 10.793486380660804
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.008311809971928596,
+      "current_value": 0.010506918653845787,
+      "degradation_abs": 0.0021951086819171906,
+      "degradation_rel": 0.26409514766708
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.020661866292357445,
+      "current_value": 0.047979794442653656,
+      "degradation_abs": 0.02731792815029621,
+      "degradation_rel": 1.3221423352449415
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.00020050776947755367,
+      "current_value": 0.004856168292462826,
+      "degradation_abs": 0.004655660522985272,
+      "degradation_rel": 23.219352223188846
+    },
+    {
+      "model_name": "burgers2d-3-85-85-85-85-85-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.000311899755615741,
+      "current_value": 0.0012399983825162053,
+      "degradation_abs": 0.0009280986269004643,
+      "degradation_rel": 2.975631144911435
+    }
+  ],
+  "probe_linf": [
+    {
+      "model_name": "burgers2d-3-100-100-100-100-100-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.002762436866760254,
+      "current_value": 0.009091350249946117,
+      "degradation_abs": 0.0063289133831858635,
+      "degradation_rel": 2.291061728628145
+    },
+    {
+      "model_name": "burgers2d-3-140-140-140-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.012409806251525879,
+      "current_value": 0.02389991283416748,
+      "degradation_abs": 0.011490106582641602,
+      "degradation_rel": 0.9258892806024918
+    },
+    {
+      "model_name": "burgers2d-3-36-36-36-36-36-1-tanh",
+      "layer_num": 4,
+      "prev_value": 0.010314583778381348,
+      "current_value": 0.012586236000061035,
+      "degradation_abs": 0.0022716522216796875,
+      "degradation_rel": 0.22023692574400464
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 4,
+      "prev_value": 0.09028762578964233,
+      "current_value": 0.11092662066221237,
+      "degradation_abs": 0.020638994872570038,
+      "degradation_rel": 0.22859162251819576
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.003256375901401043,
+      "current_value": 0.004558912944048643,
+      "degradation_abs": 0.0013025370426476002,
+      "degradation_rel": 0.39999591020409797
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 7,
+      "prev_value": 0.004558912944048643,
+      "current_value": 0.008572220802307129,
+      "degradation_abs": 0.004013307858258486,
+      "degradation_rel": 0.8803212317308212
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0017810314893722534,
+      "current_value": 0.004840493202209473,
+      "degradation_abs": 0.0030594617128372192,
+      "degradation_rel": 1.7178032679902613
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.1741015911102295,
+      "current_value": 2.359212636947632,
+      "degradation_abs": 2.1851110458374023,
+      "degradation_rel": 12.550781597704848
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.028760910034179688,
+      "current_value": 0.05560726299881935,
+      "degradation_abs": 0.026846352964639664,
+      "degradation_rel": 0.9334319718233968
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.07634252309799194,
+      "current_value": 0.33576464653015137,
+      "degradation_abs": 0.2594221234321594,
+      "degradation_rel": 3.398134000616795
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.0006800671690143645,
+      "current_value": 0.014491518959403038,
+      "degradation_abs": 0.013811451790388674,
+      "degradation_rel": 20.30895243833914
+    },
+    {
+      "model_name": "burgers2d-3-85-85-85-85-85-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0012133121490478516,
+      "current_value": 0.005300941411405802,
+      "degradation_abs": 0.00408762926235795,
+      "degradation_rel": 3.368984037261741
+    }
+  ],
+  "residual_l2": [
+    {
+      "model_name": "burgers2d-3-100-100-100-100-100-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0059992531314492226,
+      "current_value": 0.01892952062189579,
+      "degradation_abs": 0.012930267490446568,
+      "degradation_rel": 2.1553128709744973
+    },
+    {
+      "model_name": "burgers2d-3-140-140-140-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.027915634214878082,
+      "current_value": 0.05708792060613632,
+      "degradation_abs": 0.02917228639125824,
+      "degradation_rel": 1.045016071163105
+    },
+    {
+      "model_name": "burgers2d-3-36-36-36-36-36-1-tanh",
+      "layer_num": 4,
+      "prev_value": 0.015424627810716629,
+      "current_value": 0.018052546307444572,
+      "degradation_abs": 0.0026279184967279434,
+      "degradation_rel": 0.17037159852259995
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.0035719911102205515,
+      "current_value": 0.004506380297243595,
+      "degradation_abs": 0.0009343891870230436,
+      "degradation_rel": 0.2615877694514615
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 7,
+      "prev_value": 0.004506380297243595,
+      "current_value": 0.018122473731637,
+      "degradation_abs": 0.013616093434393406,
+      "degradation_rel": 3.021514505271986
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0030789836309850216,
+      "current_value": 0.004686078988015652,
+      "degradation_abs": 0.0016070953570306301,
+      "degradation_rel": 0.5219564472047848
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.29860320687294006,
+      "current_value": 3.8718371391296387,
+      "degradation_abs": 3.5732339322566986,
+      "degradation_rel": 11.966495503101415
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.04865231737494469,
+      "current_value": 0.06384358555078506,
+      "degradation_abs": 0.015191268175840378,
+      "degradation_rel": 0.31224140997780475
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.13723205029964447,
+      "current_value": 0.22634024918079376,
+      "degradation_abs": 0.08910819888114929,
+      "degradation_rel": 0.6493249841169221
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.0018971535610035062,
+      "current_value": 0.029432862997055054,
+      "degradation_abs": 0.027535709436051548,
+      "degradation_rel": 14.51422278199053
+    },
+    {
+      "model_name": "burgers2d-3-85-85-85-85-85-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0026666047051548958,
+      "current_value": 0.006482764612883329,
+      "degradation_abs": 0.0038161599077284336,
+      "degradation_rel": 1.4310932176603819
+    }
+  ],
+  "residual_linf": [
+    {
+      "model_name": "burgers2d-3-100-100-100-100-100-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0059992531314492226,
+      "current_value": 0.01892952062189579,
+      "degradation_abs": 0.012930267490446568,
+      "degradation_rel": 2.1553128709744973
+    },
+    {
+      "model_name": "burgers2d-3-140-140-140-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.027915634214878082,
+      "current_value": 0.05708792060613632,
+      "degradation_abs": 0.02917228639125824,
+      "degradation_rel": 1.045016071163105
+    },
+    {
+      "model_name": "burgers2d-3-36-36-36-36-36-1-tanh",
+      "layer_num": 4,
+      "prev_value": 0.015424627810716629,
+      "current_value": 0.018052546307444572,
+      "degradation_abs": 0.0026279184967279434,
+      "degradation_rel": 0.17037159852259995
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.0035719911102205515,
+      "current_value": 0.004506380297243595,
+      "degradation_abs": 0.0009343891870230436,
+      "degradation_rel": 0.2615877694514615
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 7,
+      "prev_value": 0.004506380297243595,
+      "current_value": 0.018122473731637,
+      "degradation_abs": 0.013616093434393406,
+      "degradation_rel": 3.021514505271986
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0030789836309850216,
+      "current_value": 0.004686078988015652,
+      "degradation_abs": 0.0016070953570306301,
+      "degradation_rel": 0.5219564472047848
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.29860320687294006,
+      "current_value": 3.8718371391296387,
+      "degradation_abs": 3.5732339322566986,
+      "degradation_rel": 11.966495503101415
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.04865231737494469,
+      "current_value": 0.06384358555078506,
+      "degradation_abs": 0.015191268175840378,
+      "degradation_rel": 0.31224140997780475
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.13723205029964447,
+      "current_value": 0.22634024918079376,
+      "degradation_abs": 0.08910819888114929,
+      "degradation_rel": 0.6493249841169221
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.0018971535610035062,
+      "current_value": 0.029432862997055054,
+      "degradation_abs": 0.027535709436051548,
+      "degradation_rel": 14.51422278199053
+    },
+    {
+      "model_name": "burgers2d-3-85-85-85-85-85-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0026666047051548958,
+      "current_value": 0.006482764612883329,
+      "degradation_abs": 0.0038161599077284336,
+      "degradation_rel": 1.4310932176603819
+    }
+  ],
+  "ic_l2": [
+    {
+      "model_name": "burgers2d-3-100-100-100-100-100-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.000580487831030041,
+      "current_value": 0.0025293075013905764,
+      "degradation_abs": 0.0019488196703605354,
+      "degradation_rel": 3.357210205255244
+    },
+    {
+      "model_name": "burgers2d-3-36-36-36-36-36-1-tanh",
+      "layer_num": 4,
+      "prev_value": 0.001534713082946837,
+      "current_value": 0.00291241891682148,
+      "degradation_abs": 0.0013777058338746428,
+      "degradation_rel": 0.8976960248682307
+    },
+    {
+      "model_name": "burgers2d-3-40-40-40-40-40-40-40-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.04536934942007065,
+      "current_value": 0.05361542850732803,
+      "degradation_abs": 0.008246079087257385,
+      "degradation_rel": 0.18175440451895605
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 7,
+      "prev_value": 0.0007035293965600431,
+      "current_value": 0.0019493065774440765,
+      "degradation_abs": 0.0012457771808840334,
+      "degradation_rel": 1.7707535562484658
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0006355767836794257,
+      "current_value": 0.0013875970616936684,
+      "degradation_abs": 0.0007520202780142426,
+      "degradation_rel": 1.1832091689389792
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.05916392430663109,
+      "current_value": 0.6259679198265076,
+      "degradation_abs": 0.5668039955198765,
+      "degradation_rel": 9.580229881004515
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.007426033727824688,
+      "current_value": 0.011625593528151512,
+      "degradation_abs": 0.004199559800326824,
+      "degradation_rel": 0.565518546541399
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.01804167404770851,
+      "current_value": 0.04647478088736534,
+      "degradation_abs": 0.02843310683965683,
+      "degradation_rel": 1.5759683255816355
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.00016240205150097609,
+      "current_value": 0.0033123106695711613,
+      "degradation_abs": 0.003149908618070185,
+      "degradation_rel": 19.39574401282273
+    },
+    {
+      "model_name": "burgers2d-3-85-85-85-85-85-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0003417251573409885,
+      "current_value": 0.0018009219784289598,
+      "degradation_abs": 0.0014591968210879713,
+      "degradation_rel": 4.2700889581621295
+    }
+  ],
+  "ic_linf": [
+    {
+      "model_name": "burgers2d-3-100-100-100-100-100-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.000580487831030041,
+      "current_value": 0.0025293075013905764,
+      "degradation_abs": 0.0019488196703605354,
+      "degradation_rel": 3.357210205255244
+    },
+    {
+      "model_name": "burgers2d-3-36-36-36-36-36-1-tanh",
+      "layer_num": 4,
+      "prev_value": 0.001534713082946837,
+      "current_value": 0.00291241891682148,
+      "degradation_abs": 0.0013777058338746428,
+      "degradation_rel": 0.8976960248682307
+    },
+    {
+      "model_name": "burgers2d-3-40-40-40-40-40-40-40-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.04536934942007065,
+      "current_value": 0.05361542850732803,
+      "degradation_abs": 0.008246079087257385,
+      "degradation_rel": 0.18175440451895605
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 7,
+      "prev_value": 0.0007035293965600431,
+      "current_value": 0.0019493065774440765,
+      "degradation_abs": 0.0012457771808840334,
+      "degradation_rel": 1.7707535562484658
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0006355767836794257,
+      "current_value": 0.0013875970616936684,
+      "degradation_abs": 0.0007520202780142426,
+      "degradation_rel": 1.1832091689389792
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.05916392430663109,
+      "current_value": 0.6259679198265076,
+      "degradation_abs": 0.5668039955198765,
+      "degradation_rel": 9.580229881004515
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.007426033727824688,
+      "current_value": 0.011625593528151512,
+      "degradation_abs": 0.004199559800326824,
+      "degradation_rel": 0.565518546541399
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.01804167404770851,
+      "current_value": 0.04647478088736534,
+      "degradation_abs": 0.02843310683965683,
+      "degradation_rel": 1.5759683255816355
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.00016240205150097609,
+      "current_value": 0.0033123106695711613,
+      "degradation_abs": 0.003149908618070185,
+      "degradation_rel": 19.39574401282273
+    },
+    {
+      "model_name": "burgers2d-3-85-85-85-85-85-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0003417251573409885,
+      "current_value": 0.0018009219784289598,
+      "degradation_abs": 0.0014591968210879713,
+      "degradation_rel": 4.2700889581621295
+    }
+  ],
+  "bc_value_l2": [
+    {
+      "model_name": "burgers2d-3-100-100-100-100-100-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.00042298054904676974,
+      "current_value": 0.0022655182983726263,
+      "degradation_abs": 0.0018425377493258566,
+      "degradation_rel": 4.356081511261464
+    },
+    {
+      "model_name": "burgers2d-3-140-140-140-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.002612209413200617,
+      "current_value": 0.005054463166743517,
+      "degradation_abs": 0.0024422537535429,
+      "degradation_rel": 0.9349379652340054
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 7,
+      "prev_value": 0.0005169982323423028,
+      "current_value": 0.0020259195007383823,
+      "degradation_abs": 0.0015089212683960795,
+      "degradation_rel": 2.918619782430954
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0004259265260770917,
+      "current_value": 0.0006332932971417904,
+      "degradation_abs": 0.0002073667710646987,
+      "degradation_rel": 0.48686042866267926
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.04108184948563576,
+      "current_value": 0.36025699973106384,
+      "degradation_abs": 0.3191751502454281,
+      "degradation_rel": 7.7692497840689345
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.005169516429305077,
+      "current_value": 0.010694087482988834,
+      "degradation_abs": 0.005524571053683758,
+      "degradation_rel": 1.0686823669552414
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.015400063246488571,
+      "current_value": 0.03047092631459236,
+      "degradation_abs": 0.01507086306810379,
+      "degradation_rel": 0.9786234528316081
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.0001318071153946221,
+      "current_value": 0.004585270304232836,
+      "degradation_abs": 0.004453463188838214,
+      "degradation_rel": 33.78772971022717
+    },
+    {
+      "model_name": "burgers2d-3-85-85-85-85-85-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0002046538284048438,
+      "current_value": 0.0008147334447130561,
+      "degradation_abs": 0.0006100796163082123,
+      "degradation_rel": 2.9810320239959545
+    }
+  ],
+  "bc_value_linf": [
+    {
+      "model_name": "burgers2d-3-100-100-100-100-100-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.00042298054904676974,
+      "current_value": 0.0022655182983726263,
+      "degradation_abs": 0.0018425377493258566,
+      "degradation_rel": 4.356081511261464
+    },
+    {
+      "model_name": "burgers2d-3-140-140-140-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.002612209413200617,
+      "current_value": 0.005054463166743517,
+      "degradation_abs": 0.0024422537535429,
+      "degradation_rel": 0.9349379652340054
+    },
+    {
+      "model_name": "burgers2d-3-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 7,
+      "prev_value": 0.0005169982323423028,
+      "current_value": 0.0020259195007383823,
+      "degradation_abs": 0.0015089212683960795,
+      "degradation_rel": 2.918619782430954
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0004259265260770917,
+      "current_value": 0.0006332932971417904,
+      "degradation_abs": 0.0002073667710646987,
+      "degradation_rel": 0.48686042866267926
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.04108184948563576,
+      "current_value": 0.36025699973106384,
+      "degradation_abs": 0.3191751502454281,
+      "degradation_rel": 7.7692497840689345
+    },
+    {
+      "model_name": "burgers2d-3-70-70-70-70-70-70-70-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.005169516429305077,
+      "current_value": 0.010694087482988834,
+      "degradation_abs": 0.005524571053683758,
+      "degradation_rel": 1.0686823669552414
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.015400063246488571,
+      "current_value": 0.03047092631459236,
+      "degradation_abs": 0.01507086306810379,
+      "degradation_rel": 0.9786234528316081
+    },
+    {
+      "model_name": "burgers2d-3-80-80-80-80-80-80-80-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.0001318071153946221,
+      "current_value": 0.004585270304232836,
+      "degradation_abs": 0.004453463188838214,
+      "degradation_rel": 33.78772971022717
+    },
+    {
+      "model_name": "burgers2d-3-85-85-85-85-85-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.0002046538284048438,
+      "current_value": 0.0008147334447130561,
+      "degradation_abs": 0.0006100796163082123,
+      "degradation_rel": 2.9810320239959545
+    }
+  ]
+}
