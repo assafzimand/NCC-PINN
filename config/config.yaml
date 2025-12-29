@@ -54,13 +54,12 @@ lbfgs_tolerance_change: 0.0
 lbfgs_tolerance_grad: 0.0
 lr: 0.0001
 n_bin_visualize_ncc: 100
-n_boundary_eval: 25
-n_boundary_train: 100
-n_initial_eval: 25
-n_initial_train: 100
-n_residual_eval: 5000
-n_residual_train: 20000
-n_samples_ncc: 5000
+sampling:
+  sample_volume_ratio: 35      # Target: S^(1/d) / V^(1/d) = 35
+  initial_train_ratio: 0.005   # 0.5% of residual_train
+  boundary_train_ratio: 0.005  # 0.5% of residual_train
+  eval_train_ratio: 0.25       # eval = 25% of train (all types)
+  ncc_train_ratio: 0.25        # ncc = 25% of residual_train
 name: 3lyr_30k_Wn_flat
 optimizer_switch_at: 0.9
 print_every: 1

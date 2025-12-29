@@ -10,17 +10,86 @@ from utils.dataset_plotting import (
 )
 
 
+def calculate_dataset_sizes(config: Dict) -> Dict[str, int]:
+    """
+    Calculate dataset sizes from ratios and problem domain.
+    
+    Args:
+        config: Configuration dictionary containing problem name,
+                sampling ratios, and problem-specific domain info.
+    
+    Returns:
+        Dictionary with calculated dataset sizes.
+    """
+    problem = config['problem']
+    problem_cfg = config[problem]
+    sampling = config['sampling']
+    
+    # Get dimensionality: d = spatial_dim + 1 (time)
+    spatial_dim = problem_cfg['spatial_dim']
+    d = spatial_dim + 1
+    
+    # Calculate volume V = product of all domain ranges
+    spatial_domain = problem_cfg['spatial_domain']
+    temporal_domain = problem_cfg['temporal_domain']
+    
+    V = 1.0
+    for i in range(spatial_dim):
+        V *= (spatial_domain[i][1] - spatial_domain[i][0])
+    V *= (temporal_domain[1] - temporal_domain[0])
+    
+    # Calculate n_residual_train from: ratio = S^(1/d) / V^(1/d)
+    # Solving: S = (ratio * V^(1/d))^d
+    ratio = sampling['sample_volume_ratio']
+    n_residual_train = int(round((ratio * (V ** (1/d))) ** d))
+    
+    # Calculate other sizes from ratios
+    sizes = {
+        'n_residual_train': n_residual_train,
+        'n_initial_train': int(round(n_residual_train * sampling['initial_train_ratio'])),
+        'n_boundary_train': int(round(n_residual_train * sampling['boundary_train_ratio'])),
+        'n_residual_eval': int(round(n_residual_train * sampling['eval_train_ratio'])),
+        'n_initial_eval': int(round(n_residual_train * sampling['initial_train_ratio'] * sampling['eval_train_ratio'])),
+        'n_boundary_eval': int(round(n_residual_train * sampling['boundary_train_ratio'] * sampling['eval_train_ratio'])),
+        'n_samples_ncc': int(round(n_residual_train * sampling['ncc_train_ratio'])),
+    }
+    
+    # Print calculated values
+    print(f"\n{'='*60}")
+    print(f"Dataset Size Calculation for {problem}")
+    print(f"{'='*60}")
+    print(f"  Dimensionality (d): {d} ({spatial_dim} spatial + 1 time)")
+    print(f"  Domain Volume (V): {V:.4f}")
+    print(f"  Target Ratio (S^(1/d) / V^(1/d)): {ratio}")
+    calculated_ratio = (sizes['n_residual_train'] ** (1/d)) / (V ** (1/d))
+    print(f"  Calculated Ratio: {calculated_ratio:.2f}")
+    print(f"\n  Dataset Sizes:")
+    print(f"    n_residual_train: {sizes['n_residual_train']:,}")
+    print(f"    n_initial_train:  {sizes['n_initial_train']:,}")
+    print(f"    n_boundary_train: {sizes['n_boundary_train']:,}")
+    print(f"    n_residual_eval:  {sizes['n_residual_eval']:,}")
+    print(f"    n_initial_eval:   {sizes['n_initial_eval']:,}")
+    print(f"    n_boundary_eval:  {sizes['n_boundary_eval']:,}")
+    print(f"    n_samples_ncc:    {sizes['n_samples_ncc']:,}")
+    print(f"{'='*60}\n")
+    
+    return sizes
+
+
 def generate_and_save_datasets(config: Dict) -> None:
     """
     Generate training and evaluation datasets if they don't exist.
 
     Args:
         config: Configuration dictionary containing problem name,
-                dataset sizes, etc.
+                sampling ratios, etc.
     """
     problem = config['problem']
     cuda_available = config['cuda'] and torch.cuda.is_available()
     device = torch.device('cuda' if cuda_available else 'cpu')
+
+    # Calculate dataset sizes from ratios
+    sizes = calculate_dataset_sizes(config)
 
     # Create datasets directory
     dataset_dir = Path("datasets") / problem
@@ -36,9 +105,9 @@ def generate_and_save_datasets(config: Dict) -> None:
     if not train_path.exists():
         print(f"Generating training data for {problem}...")
         train_data = solver_module.generate_dataset(
-            n_residual=config['n_residual_train'],
-            n_ic=config['n_initial_train'],
-            n_bc=config['n_boundary_train'],
+            n_residual=sizes['n_residual_train'],
+            n_ic=sizes['n_initial_train'],
+            n_bc=sizes['n_boundary_train'],
             device=device,
             config=config
         )
@@ -68,9 +137,9 @@ def generate_and_save_datasets(config: Dict) -> None:
     if not eval_path.exists():
         print(f"Generating evaluation data for {problem}...")
         eval_data = solver_module.generate_dataset(
-            n_residual=config['n_residual_eval'],
-            n_ic=config['n_initial_eval'],
-            n_bc=config['n_boundary_eval'],
+            n_residual=sizes['n_residual_eval'],
+            n_ic=sizes['n_initial_eval'],
+            n_bc=sizes['n_boundary_eval'],
             device=device,
             config=config
         )
@@ -102,7 +171,7 @@ def generate_and_save_datasets(config: Dict) -> None:
         print(f"Generating stratified NCC data for {problem}...")
         
         # Generate large dataset for stratification (10x target size)
-        n_large = config['n_samples_ncc'] * 10
+        n_large = sizes['n_samples_ncc'] * 10
         print(f"  Generating large dataset ({n_large} samples) for stratification...")
         large_data = solver_module.generate_dataset(
             n_residual=n_large,
@@ -116,13 +185,13 @@ def generate_and_save_datasets(config: Dict) -> None:
         output_dim = large_data['h_gt'].shape[1]
         
         # Apply uniform sampling
-        print(f"  Applying uniform sampling (target: {config['n_samples_ncc']} samples)...")
+        print(f"  Applying uniform sampling (target: {sizes['n_samples_ncc']} samples)...")
         from utils.stratified_sampling import stratify_by_bins
         ncc_data = stratify_by_bins(
             large_data, 
             bins=config['bins'],
             output_dim=output_dim,
-            target_size=config['n_samples_ncc'],
+            target_size=sizes['n_samples_ncc'],
             device=device
         )
         
