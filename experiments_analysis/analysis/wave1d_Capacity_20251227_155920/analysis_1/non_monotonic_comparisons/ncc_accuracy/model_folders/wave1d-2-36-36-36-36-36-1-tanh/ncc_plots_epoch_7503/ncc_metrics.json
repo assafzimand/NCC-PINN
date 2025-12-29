@@ -1,0 +1,78 @@
+{
+  "bins": 5,
+  "num_classes": 5,
+  "num_samples": 4000,
+  "layers_analyzed": [
+    "layer_1",
+    "layer_2",
+    "layer_3",
+    "layer_4",
+    "layer_5"
+  ],
+  "layer_accuracies": {
+    "layer_1": 0.2435,
+    "layer_2": 0.24975,
+    "layer_3": 0.211,
+    "layer_4": 0.31175,
+    "layer_5": 0.36175
+  },
+  "layer_compactness": {
+    "layer_1": {
+      "intra_class": 0.4054055273532867,
+      "intra_class_std": 0.2039717879284169,
+      "inter_class_mean": 0.3020511567592621,
+      "inter_class_std": 0.3100472390651703
+    },
+    "layer_2": {
+      "intra_class": 0.2588123917579651,
+      "intra_class_std": 0.13012145366681863,
+      "inter_class_mean": 0.1734337955713272,
+      "inter_class_std": 0.16485673189163208
+    },
+    "layer_3": {
+      "intra_class": 0.2354838728904724,
+      "intra_class_std": 0.1181603387091434,
+      "inter_class_mean": 0.14091384410858154,
+      "inter_class_std": 0.11509722471237183
+    },
+    "layer_4": {
+      "intra_class": 0.2532809734344482,
+      "intra_class_std": 0.12718499176996198,
+      "inter_class_mean": 0.19003444910049438,
+      "inter_class_std": 0.1362810879945755
+    },
+    "layer_5": {
+      "intra_class": 0.2560678482055664,
+      "intra_class_std": 0.12862673758108525,
+      "inter_class_mean": 0.24099946022033691,
+      "inter_class_std": 0.1371411681175232
+    }
+  },
+  "layer_margins": {
+    "layer_1": {
+      "mean_margin": -0.10181895643472672,
+      "std_margin": 0.1736948937177658,
+      "fraction_positive": 0.2435
+    },
+    "layer_2": {
+      "mean_margin": -0.05379723012447357,
+      "std_margin": 0.09145322442054749,
+      "fraction_positive": 0.24975
+    },
+    "layer_3": {
+      "mean_margin": -0.030768509954214096,
+      "std_margin": 0.055145375430583954,
+      "fraction_positive": 0.211
+    },
+    "layer_4": {
+      "mean_margin": -0.04110659286379814,
+      "std_margin": 0.07767290621995926,
+      "fraction_positive": 0.31175
+    },
+    "layer_5": {
+      "mean_margin": -0.03390279412269592,
+      "std_margin": 0.08276873826980591,
+      "fraction_positive": 0.36175
+    }
+  }
+}

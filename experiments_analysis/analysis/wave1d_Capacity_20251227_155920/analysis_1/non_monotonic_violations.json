@@ -1,0 +1,390 @@
+{
+  "probe_rel_l2": [
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.15614590048789978,
+      "current_value": 0.21752788126468658,
+      "degradation_abs": 0.061381980776786804,
+      "degradation_rel": 0.3931065790711776
+    },
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.21752788126468658,
+      "current_value": 0.2764856517314911,
+      "degradation_abs": 0.058957770466804504,
+      "degradation_rel": 0.2710354650816695
+    },
+    {
+      "model_name": "wave1d-2-70-70-70-70-70-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.12405619770288467,
+      "current_value": 0.44959330558776855,
+      "degradation_abs": 0.3255371078848839,
+      "degradation_rel": 2.624109991381061
+    },
+    {
+      "model_name": "wave1d-2-85-85-85-85-85-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.289612740278244,
+      "current_value": 2.4486634731292725,
+      "degradation_abs": 2.1590507328510284,
+      "degradation_rel": 7.45495771621349
+    }
+  ],
+  "probe_linf": [
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.5048965215682983,
+      "current_value": 0.6257647275924683,
+      "degradation_abs": 0.12086820602416992,
+      "degradation_rel": 0.23939203551795482
+    },
+    {
+      "model_name": "wave1d-2-70-70-70-70-70-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.5275011658668518,
+      "current_value": 1.222388744354248,
+      "degradation_abs": 0.6948875784873962,
+      "degradation_rel": 1.3173195121672867
+    },
+    {
+      "model_name": "wave1d-2-85-85-85-85-85-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.786338210105896,
+      "current_value": 6.596918106079102,
+      "degradation_abs": 5.810579895973206,
+      "degradation_rel": 7.3894156754645
+    }
+  ],
+  "residual_l2": [
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.1901959627866745,
+      "current_value": 0.4087460935115814,
+      "degradation_abs": 0.21855013072490692,
+      "degradation_rel": 1.1490787055771248
+    },
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 4,
+      "prev_value": 0.392809122800827,
+      "current_value": 0.4461279809474945,
+      "degradation_abs": 0.05331885814666748,
+      "degradation_rel": 0.13573732139032496
+    },
+    {
+      "model_name": "wave1d-2-36-36-36-36-36-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.23553627729415894,
+      "current_value": 0.2892683446407318,
+      "degradation_abs": 0.053732067346572876,
+      "degradation_rel": 0.2281265033303869
+    },
+    {
+      "model_name": "wave1d-2-40-40-40-40-40-40-40-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.17437908053398132,
+      "current_value": 0.19408266246318817,
+      "degradation_abs": 0.019703581929206848,
+      "degradation_rel": 0.1129928077890467
+    },
+    {
+      "model_name": "wave1d-2-70-70-70-70-70-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.3409998416900635,
+      "current_value": 1.9184813499450684,
+      "degradation_abs": 1.5774815082550049,
+      "degradation_rel": 4.626047626405604
+    },
+    {
+      "model_name": "wave1d-2-85-85-85-85-85-1-tanh",
+      "layer_num": 2,
+      "prev_value": 1.3095077276229858,
+      "current_value": 14.252202987670898,
+      "degradation_abs": 12.942695260047913,
+      "degradation_rel": 9.883634122221983
+    }
+  ],
+  "residual_linf": [
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.1901959627866745,
+      "current_value": 0.4087460935115814,
+      "degradation_abs": 0.21855013072490692,
+      "degradation_rel": 1.1490787055771248
+    },
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 4,
+      "prev_value": 0.392809122800827,
+      "current_value": 0.4461279809474945,
+      "degradation_abs": 0.05331885814666748,
+      "degradation_rel": 0.13573732139032496
+    },
+    {
+      "model_name": "wave1d-2-36-36-36-36-36-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.23553627729415894,
+      "current_value": 0.2892683446407318,
+      "degradation_abs": 0.053732067346572876,
+      "degradation_rel": 0.2281265033303869
+    },
+    {
+      "model_name": "wave1d-2-40-40-40-40-40-40-40-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.17437908053398132,
+      "current_value": 0.19408266246318817,
+      "degradation_abs": 0.019703581929206848,
+      "degradation_rel": 0.1129928077890467
+    },
+    {
+      "model_name": "wave1d-2-70-70-70-70-70-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.3409998416900635,
+      "current_value": 1.9184813499450684,
+      "degradation_abs": 1.5774815082550049,
+      "degradation_rel": 4.626047626405604
+    },
+    {
+      "model_name": "wave1d-2-85-85-85-85-85-1-tanh",
+      "layer_num": 2,
+      "prev_value": 1.3095077276229858,
+      "current_value": 14.252202987670898,
+      "degradation_abs": 12.942695260047913,
+      "degradation_rel": 9.883634122221983
+    }
+  ],
+  "ic_l2": [
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.05648195371031761,
+      "current_value": 0.17156708240509033,
+      "degradation_abs": 0.11508512869477272,
+      "degradation_rel": 2.037555734793041
+    },
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.17156708240509033,
+      "current_value": 0.248637393116951,
+      "degradation_abs": 0.07707031071186066,
+      "degradation_rel": 0.4492138563613763
+    },
+    {
+      "model_name": "wave1d-2-36-36-36-36-36-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.064381904900074,
+      "current_value": 0.11232122778892517,
+      "degradation_abs": 0.047939322888851166,
+      "degradation_rel": 0.7446086437370395
+    },
+    {
+      "model_name": "wave1d-2-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.06372039020061493,
+      "current_value": 0.08169624954462051,
+      "degradation_abs": 0.017975859344005585,
+      "degradation_rel": 0.2821052929432957
+    },
+    {
+      "model_name": "wave1d-2-70-70-70-70-70-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.0814930722117424,
+      "current_value": 0.36998412013053894,
+      "degradation_abs": 0.28849104791879654,
+      "degradation_rel": 3.5400683774593005
+    },
+    {
+      "model_name": "wave1d-2-85-85-85-85-85-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.31864115595817566,
+      "current_value": 2.0815958976745605,
+      "degradation_abs": 1.7629547417163849,
+      "degradation_rel": 5.532727674223564
+    }
+  ],
+  "ic_linf": [
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.05648195371031761,
+      "current_value": 0.17156708240509033,
+      "degradation_abs": 0.11508512869477272,
+      "degradation_rel": 2.037555734793041
+    },
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.17156708240509033,
+      "current_value": 0.248637393116951,
+      "degradation_abs": 0.07707031071186066,
+      "degradation_rel": 0.4492138563613763
+    },
+    {
+      "model_name": "wave1d-2-36-36-36-36-36-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.064381904900074,
+      "current_value": 0.11232122778892517,
+      "degradation_abs": 0.047939322888851166,
+      "degradation_rel": 0.7446086437370395
+    },
+    {
+      "model_name": "wave1d-2-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.06372039020061493,
+      "current_value": 0.08169624954462051,
+      "degradation_abs": 0.017975859344005585,
+      "degradation_rel": 0.2821052929432957
+    },
+    {
+      "model_name": "wave1d-2-70-70-70-70-70-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.0814930722117424,
+      "current_value": 0.36998412013053894,
+      "degradation_abs": 0.28849104791879654,
+      "degradation_rel": 3.5400683774593005
+    },
+    {
+      "model_name": "wave1d-2-85-85-85-85-85-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.31864115595817566,
+      "current_value": 2.0815958976745605,
+      "degradation_abs": 1.7629547417163849,
+      "degradation_rel": 5.532727674223564
+    }
+  ],
+  "bc_value_l2": [
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.08575181663036346,
+      "current_value": 0.15751945972442627,
+      "degradation_abs": 0.0717676430940628,
+      "degradation_rel": 0.836922713875789
+    },
+    {
+      "model_name": "wave1d-2-40-40-40-40-40-40-40-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.05385422334074974,
+      "current_value": 0.0732831209897995,
+      "degradation_abs": 0.01942889764904976,
+      "degradation_rel": 0.3607683194337062
+    },
+    {
+      "model_name": "wave1d-2-70-70-70-70-70-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.12388616800308228,
+      "current_value": 0.27999168634414673,
+      "degradation_abs": 0.15610551834106445,
+      "degradation_rel": 1.2600722167561156
+    },
+    {
+      "model_name": "wave1d-2-85-85-85-85-85-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.22593703866004944,
+      "current_value": 2.142019271850586,
+      "degradation_abs": 1.9160822331905365,
+      "degradation_rel": 8.480602580940799
+    }
+  ],
+  "bc_value_linf": [
+    {
+      "model_name": "wave1d-2-28-28-28-28-28-28-28-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.08575181663036346,
+      "current_value": 0.15751945972442627,
+      "degradation_abs": 0.0717676430940628,
+      "degradation_rel": 0.836922713875789
+    },
+    {
+      "model_name": "wave1d-2-40-40-40-40-40-40-40-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.05385422334074974,
+      "current_value": 0.0732831209897995,
+      "degradation_abs": 0.01942889764904976,
+      "degradation_rel": 0.3607683194337062
+    },
+    {
+      "model_name": "wave1d-2-70-70-70-70-70-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.12388616800308228,
+      "current_value": 0.27999168634414673,
+      "degradation_abs": 0.15610551834106445,
+      "degradation_rel": 1.2600722167561156
+    },
+    {
+      "model_name": "wave1d-2-85-85-85-85-85-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.22593703866004944,
+      "current_value": 2.142019271850586,
+      "degradation_abs": 1.9160822331905365,
+      "degradation_rel": 8.480602580940799
+    }
+  ],
+  "ncc_accuracy": [
+    {
+      "model_name": "wave1d-2-36-36-36-36-36-1-tanh",
+      "layer_num": 3,
+      "prev_value": 0.24925,
+      "current_value": 0.18125,
+      "degradation_abs": 0.068,
+      "degradation_rel": 0.27281845536609833
+    },
+    {
+      "model_name": "wave1d-2-40-40-40-40-40-40-40-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.3205,
+      "current_value": 0.2805,
+      "degradation_abs": 0.03999999999999998,
+      "degradation_rel": 0.12480499219968792
+    },
+    {
+      "model_name": "wave1d-2-40-40-40-40-40-40-40-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.2805,
+      "current_value": 0.239,
+      "degradation_abs": 0.04150000000000004,
+      "degradation_rel": 0.14795008912655983
+    },
+    {
+      "model_name": "wave1d-2-46-46-46-1-tanh",
+      "layer_num": 2,
+      "prev_value": 0.233,
+      "current_value": 0.205,
+      "degradation_abs": 0.028000000000000025,
+      "degradation_rel": 0.12017167381974259
+    },
+    {
+      "model_name": "wave1d-2-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 5,
+      "prev_value": 0.39175,
+      "current_value": 0.343,
+      "degradation_abs": 0.04874999999999996,
+      "degradation_rel": 0.12444160816847469
+    },
+    {
+      "model_name": "wave1d-2-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 6,
+      "prev_value": 0.343,
+      "current_value": 0.281,
+      "degradation_abs": 0.062,
+      "degradation_rel": 0.18075801749271136
+    }
+  ],
+  "ncc_compactness": [
+    {
+      "model_name": "wave1d-2-58-58-58-58-58-58-58-1-tanh",
+      "layer_num": 5,
+      "prev_value": -0.40797376630962484,
+      "current_value": -0.48732983040772465,
+      "degradation_abs": 0.07935606409809981,
+      "degradation_rel": 0.19451266392916514
+    }
+  ]
+}
