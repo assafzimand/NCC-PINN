@@ -1,11 +1,11 @@
 # Experiment plan configuration
-experiment_name: "wave1d_frequency_gpu_test"
+experiment_name: "wave1d_convergence_freq_test"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: wave1d
   activation: tanh
-  epochs: 3
+  epochs: 10000
   batch_size: 512
   lr: 0.0001
   
@@ -30,10 +30,10 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 32
-  eval_every: 2
-  print_every: 1
-  save_every: 2
-  inner_metrics_eval_every: 2
+  eval_every: 500
+  print_every: 1000
+  save_every: 5000
+  inner_metrics_eval_every: 2501
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -101,15 +101,15 @@ base_config:
 experiments:  
   - name: "3lyr_40k_Wn_flat"
     problem: wave1d
-    architecture: [2, 14, 14, 14, 1]
+    architecture: [2, 140, 140, 140, 1]
 
   - name: "5lyr_40k_Wn_flat"
     problem: wave1d  
-    architecture: [2, 10, 10, 10, 10, 10, 1]
+    architecture: [2, 100, 100, 100, 100, 100, 1]
 
-  # - name: "7lyr_40k_Wn_flat"
-  #   problem: schrodinger
-  #   architecture: [2, 80, 80, 80, 80, 80, 80, 80, 2]
+  - name: "7lyr_40k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 80, 80, 80, 80, 80, 80, 80, 1]
 
   # - name: "3lyr_30k_Wn_flat"
   #   problem: schrodinger
