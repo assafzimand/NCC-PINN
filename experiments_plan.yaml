@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "wave1d_frequency_gpu_test"
+experiment_name: "wave1d_"
 
 # Base configuration (will be used for all experiments)
 base_config:
