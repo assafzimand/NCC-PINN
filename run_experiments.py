@@ -271,6 +271,7 @@ def generate_comparison_report(parent_dir, results):
     ncc_data = {}  # Store all NCC data for periodic plots
     probe_data = {}  # Store all probe data for comparison plots
     derivatives_data = {}  # Store all derivatives data for comparison plots
+    frequency_data = {}  # Store all frequency data for comparison plots
     
     for exp_name, result_path in results.items():
         if result_path is None:
@@ -325,6 +326,14 @@ def generate_comparison_report(parent_dir, results):
             with open(deriv_file) as f:
                 deriv_metrics = json.load(f)
                 derivatives_data[exp_name] = deriv_metrics
+        
+        # Load frequency metrics
+        freq_file = result_path / "frequency_plots" / "frequency_metrics.json"
+        freq_metrics = None
+        if freq_file.exists():
+            with open(freq_file) as f:
+                freq_metrics = json.load(f)
+                frequency_data[exp_name] = freq_metrics
         
         # Extract margin SNR for final layer
         final_layer = list(final_ncc['layer_accuracies'].keys())[-1]
@@ -386,6 +395,11 @@ def generate_comparison_report(parent_dir, results):
     if derivatives_data:
         from utils.comparison_plots import generate_derivatives_comparison_plots
         generate_derivatives_comparison_plots(parent_dir, derivatives_data)
+    
+    # Generate frequency coverage comparison if frequency data available
+    if frequency_data:
+        from experiments_analysis.scripts.analyze_capacity_experiment import generate_frequency_coverage_comparison
+        generate_frequency_coverage_comparison(parent_dir, frequency_data)
     
     print(f"\nComparison report saved to {parent_dir}")
 
