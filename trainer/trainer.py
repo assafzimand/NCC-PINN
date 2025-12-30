@@ -336,12 +336,13 @@ def train(
             _save_checkpoint(best_checkpoint_path, model, optimizer, current_optimizer_name, epoch,
                            train_loss, eval_loss, cfg, metrics)
 
-        # Periodic inner metrics (NCC + probes + derivatives)
+        # Periodic inner metrics (NCC + probes + derivatives + frequency)
         if inner_metrics_every > 0 and epoch % inner_metrics_every == 0:
-            print(f"\n  Running inner metrics at epoch {epoch} (NCC/Probes/Derivatives)...")
+            print(f"\n  Running inner metrics at epoch {epoch} (NCC/Probes/Derivatives/Frequency)...")
             ncc_metrics = _run_intermediate_ncc(model, cfg, run_dir, epoch)
             probe_metrics = _run_intermediate_probes(model, cfg, run_dir, epoch)
             deriv_metrics = _run_intermediate_derivatives(model, cfg, run_dir, epoch)
+            freq_metrics = _run_intermediate_frequency(model, cfg, run_dir, epoch)
             # Cache for post-run shading overlays
             if 'ncc_history' not in metrics:
                 metrics['ncc_history'] = []
@@ -354,6 +355,10 @@ def train(
                 metrics['deriv_history'] = []
             if deriv_metrics is not None:
                 metrics['deriv_history'].append((epoch, deriv_metrics))
+            if 'freq_history' not in metrics:
+                metrics['freq_history'] = []
+            if freq_metrics is not None:
+                metrics['freq_history'].append((epoch, freq_metrics))
 
     # Save final model
     final_checkpoint_path = checkpoint_dir / "final_model.pt"
@@ -386,13 +391,14 @@ def train(
         training_plots_dir
     )
 
-    # Run final probes and derivatives analysis (without epoch_suffix for main directory)
+    # Run final probes, derivatives, and frequency analysis (without epoch_suffix for main directory)
     print("\n" + "=" * 60)
-    print("Running Final Probe and Derivative Analysis")
+    print("Running Final Probe, Derivative, and Frequency Analysis")
     print("=" * 60)
     
     from probes.probe_runner import run_probes
     from derivatives_tracker.derivatives_runner import run_derivatives_tracker
+    from frequency_tracker.frequency_runner import run_frequency_tracker
     
     train_data_path = Path("datasets") / cfg['problem'] / "training_data.pt"
     eval_data_path = Path("datasets") / cfg['problem'] / "eval_data.pt"
@@ -417,6 +423,16 @@ def train(
         run_dir=run_dir
     )
     
+    # Final frequency (saves to main frequency_plots/ directory)
+    print("\nRunning final frequency analysis...")
+    final_freq_metrics = run_frequency_tracker(
+        model=model,
+        train_data_path=str(train_data_path),
+        eval_data_path=str(eval_data_path),
+        cfg=cfg,
+        run_dir=run_dir
+    )
+    
     # Add final results to history for shaded plotting
     if 'probe_history' not in metrics:
         metrics['probe_history'] = []
@@ -427,6 +443,11 @@ def train(
         metrics['deriv_history'] = []
     if final_deriv_metrics is not None:
         metrics['deriv_history'].append((epochs, final_deriv_metrics))
+    
+    if 'freq_history' not in metrics:
+        metrics['freq_history'] = []
+    if final_freq_metrics is not None:
+        metrics['freq_history'].append((epochs, final_freq_metrics))
     
     # Post-run shaded overlays for mid-training metrics (if collected)
     _maybe_plot_ncc_history(metrics, run_dir)
@@ -620,6 +641,21 @@ def _run_intermediate_derivatives(model, cfg, run_dir, epoch):
     train_data_path = Path("datasets") / cfg['problem'] / "training_data.pt"
     eval_data_path = Path("datasets") / cfg['problem'] / "eval_data.pt"
     return run_derivatives_tracker(
+        model=model,
+        train_data_path=str(train_data_path),
+        eval_data_path=str(eval_data_path),
+        cfg=cfg,
+        run_dir=run_dir,
+        epoch_suffix=f"_epoch_{epoch}"
+    )
+
+
+def _run_intermediate_frequency(model, cfg, run_dir, epoch):
+    """Run frequency tracker at intermediate epoch."""
+    from frequency_tracker.frequency_runner import run_frequency_tracker
+    train_data_path = Path("datasets") / cfg['problem'] / "training_data.pt"
+    eval_data_path = Path("datasets") / cfg['problem'] / "eval_data.pt"
+    return run_frequency_tracker(
         model=model,
         train_data_path=str(train_data_path),
         eval_data_path=str(eval_data_path),

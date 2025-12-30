@@ -365,6 +365,13 @@ def load_all_model_metrics(experiment_path: Path) -> Dict[str, Dict[str, Any]]:
             with open(deriv_file, 'r') as f:
                 derivatives_metrics = json.load(f)
         
+        # Load frequency metrics
+        frequency_metrics = None
+        freq_file = run_dir / "frequency_plots" / "frequency_metrics.json"
+        if freq_file.exists():
+            with open(freq_file, 'r') as f:
+                frequency_metrics = json.load(f)
+        
         # Parse architecture
         architecture = parse_model_name(model_name)
         num_layers = len(architecture) - 2  # Exclude input and output layers
@@ -383,6 +390,7 @@ def load_all_model_metrics(experiment_path: Path) -> Dict[str, Dict[str, Any]]:
             'ncc_metrics': ncc_metrics,
             'probe_metrics': probe_metrics,
             'derivatives_metrics': derivatives_metrics,
+            'frequency_metrics': frequency_metrics,
             'eval_rel_l2': final_eval_rel_l2,
             'eval_linf': final_eval_linf,
             'problem_name': problem_name
@@ -1138,6 +1146,17 @@ def generate_comparison_plots(
             generate_probe_comparison_plots(group_dir, probe_data)
         if derivatives_data:
             generate_derivatives_comparison_plots(group_dir, derivatives_data)
+        
+        # Generate frequency coverage comparison
+        frequency_data = {}
+        for model_name in model_names:
+            data = models_data[model_name]
+            display_name = label_map.get(model_name, model_name)
+            if data.get('frequency_metrics'):
+                frequency_data[display_name] = data['frequency_metrics']
+        
+        if frequency_data:
+            generate_frequency_coverage_comparison(group_dir, frequency_data)
         
         print(f"  Comparison plots saved to {group_dir}")
 

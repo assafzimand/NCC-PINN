@@ -114,6 +114,19 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
         if result_derivatives.returncode != 0:
             print(f"\nWARNING in {exp_name} Derivatives: Process exited with code {result_derivatives.returncode}")
         
+        # Step 4: Run frequency tracker analysis in eval-only mode on the trained checkpoint
+        print(f"\n{'='*70}")
+        print(f"Running Frequency Tracker for: {exp_name} (eval-only mode)")
+        print(f"{'='*70}\n")
+        
+        with open('config/config.yaml', 'w') as f:
+            yaml.dump(eval_config, f, default_flow_style=False)
+        
+        result_frequency = subprocess.run([sys.executable, 'run_frequency_tracker.py'])
+        
+        if result_frequency.returncode != 0:
+            print(f"\nWARNING in {exp_name} Frequency: Process exited with code {result_frequency.returncode}")
+        
         # Move outputs to experiment directory
         # Find latest architecture directory matching this experiment
         outputs_root = Path("outputs")
@@ -124,17 +137,18 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             arch_dir = outputs_root / arch_folder_name
             
             if arch_dir.exists():
-                # Find the THREE LATEST timestamp directories (NCC, probes, derivatives)
+                # Find the FOUR LATEST timestamp directories (NCC, probes, derivatives, frequency)
                 timestamp_dirs = sorted(
                     [d for d in arch_dir.glob("*/") if d.is_dir()], 
                     key=lambda x: x.stat().st_mtime
                 )
                 
-                if len(timestamp_dirs) >= 3:
-                    # Get the three most recent directories
-                    ncc_dir = timestamp_dirs[-3]  # Third to last (NCC ran first)
-                    probe_dir = timestamp_dirs[-2]  # Second to last (Probes ran second)
-                    deriv_dir = timestamp_dirs[-1]  # Last (Derivatives ran third)
+                if len(timestamp_dirs) >= 4:
+                    # Get the four most recent directories
+                    ncc_dir = timestamp_dirs[-4]    # Fourth to last (NCC ran first)
+                    probe_dir = timestamp_dirs[-3]  # Third to last (Probes ran second)
+                    deriv_dir = timestamp_dirs[-2]  # Second to last (Derivatives ran third)
+                    freq_dir = timestamp_dirs[-1]   # Last (Frequency ran fourth)
                     
                     # Create experiment output directory
                     exp_output_dir.mkdir(parents=True, exist_ok=True)
@@ -180,6 +194,22 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
                     # Clean up the derivatives directory
                     if deriv_dir.exists():
                         shutil.rmtree(deriv_dir)
+                    
+                    # Merge frequency results into the same directory
+                    freq_plots_src = freq_dir / "frequency_plots"
+                    if freq_plots_src.exists():
+                        freq_plots_dest = dest_dir / "frequency_plots"
+                        freq_plots_dest.mkdir(parents=True, exist_ok=True)
+                        
+                        # Copy files (not subdirs) from source to dest
+                        for item in freq_plots_src.iterdir():
+                            if item.is_file():
+                                if item.suffix == '.json':
+                                    shutil.copy2(item, freq_plots_dest / item.name)
+                    
+                    # Clean up the frequency directory
+                    if freq_dir.exists():
+                        shutil.rmtree(freq_dir)
                     
                     # Also move corresponding checkpoints to experiment folder
                     checkpoints_root = Path("checkpoints") / config['problem']

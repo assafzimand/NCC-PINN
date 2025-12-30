@@ -359,3 +359,29 @@ def generate_dataset(
         }
     }
 
+
+def evaluate_on_grid(x_grid: torch.Tensor, config: Dict) -> torch.Tensor:
+    """
+    Evaluate ground truth solution on a regular grid for frequency analysis.
+    
+    Args:
+        x_grid: Grid points (N, 2) with columns [x, t]
+        config: Configuration dictionary
+        
+    Returns:
+        h_gt: Ground truth values (N, 1)
+    """
+    # Get interpolator (which solves the Burgers equation)
+    interpolator = _get_interpolator(config)
+    
+    x_np = x_grid.cpu().numpy()
+    
+    # Extract coordinates
+    x = x_np[:, 0]
+    t = x_np[:, 1]
+    
+    # Evaluate using interpolator
+    h = interpolator(x, t)
+    
+    return torch.from_numpy(h.reshape(-1, 1).astype(np.float32))
+
