@@ -8,7 +8,8 @@ from typing import Dict
 
 from frequency_tracker.frequency_core import (
     analyze_all_layers_frequency,
-    compute_frequency_spectrum
+    compute_frequency_spectrum,
+    compute_binned_frequency_errors
 )
 from frequency_tracker.frequency_plotting import generate_all_frequency_plots
 
@@ -166,12 +167,40 @@ def run_frequency_tracker(
     print("Step 5: Saving Metrics")
     print("=" * 60)
     
+    # Compute binned error matrix for spectral learning efficiency
+    n_bins = 20
+    error_matrix_list = []
+    k_radial_ref = None
+    
+    for layer_name in hidden_layers:
+        layer_data = freq_results[layer_name]
+        leftover = layer_data['leftover']
+        
+        # Compute binned errors for radial spectrum
+        binned_errors = compute_binned_frequency_errors(
+            power_pred=leftover['power'],
+            power_gt=h_gt_spectrum['power'],
+            freqs=leftover['freqs'],
+            spatial_dim=spatial_dim,
+            n_bins=n_bins,
+            is_leftover=True
+        )
+        
+        k_radial, mean_error = binned_errors['radial']
+        if k_radial_ref is None:
+            k_radial_ref = k_radial.tolist()
+        error_matrix_list.append(mean_error.tolist())
+    
     metrics_summary = {
         'layers_analyzed': hidden_layers,
         'num_layers': len(hidden_layers),
         'grid_shape': list(grid_shape),
         'n_grid_points': N_grid,
-        'layer_metrics': {}
+        'layer_metrics': {},
+        'spectral_efficiency': {
+            'k_radial_bins': k_radial_ref,
+            'error_matrix': error_matrix_list  # List of lists: [layer][freq_bin]
+        }
     }
     
     # Collect per-layer metrics

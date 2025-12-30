@@ -1156,8 +1156,11 @@ def generate_comparison_plots(
                 frequency_data[display_name] = data['frequency_metrics']
         
         if frequency_data:
-            print(f"  Generating frequency coverage comparison for {len(frequency_data)} models...")
+            print(f"  Generating frequency comparison plots for {len(frequency_data)} models...")
+            from frequency_tracker.frequency_plotting import plot_spectral_learning_efficiency_comparison
+            
             generate_frequency_coverage_comparison(group_dir, frequency_data)
+            plot_spectral_learning_efficiency_comparison(frequency_data, group_dir)
         else:
             print(f"  No frequency metrics found for models in this group")
         

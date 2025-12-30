@@ -306,3 +306,103 @@ def generate_all_frequency_plots(
     )
     
     print(f"  All frequency plots saved to {save_dir}")
+
+
+def plot_spectral_learning_efficiency_comparison(
+    frequency_data: Dict[str, Dict],
+    output_dir: Path
+) -> None:
+    """
+    Generate side-by-side comparison of spectral learning efficiency for all models.
+    
+    Creates a grid layout (2 columns, multiple rows) showing each model's
+    spectral learning efficiency heatmap.
+    
+    Args:
+        frequency_data: Dict mapping model_name -> frequency_metrics dict
+        output_dir: Directory to save plot
+    """
+    model_names = list(frequency_data.keys())
+    if not model_names:
+        return
+    
+    # Check if all models have spectral efficiency data
+    models_with_data = {}
+    for model_name, metrics in frequency_data.items():
+        if 'spectral_efficiency' in metrics:
+            models_with_data[model_name] = metrics['spectral_efficiency']
+    
+    if not models_with_data:
+        print("  No spectral efficiency data found in frequency metrics")
+        return
+    
+    n_models = len(models_with_data)
+    
+    # Calculate grid layout: 2 columns, multiple rows
+    n_cols = 2
+    n_rows = (n_models + n_cols - 1) // n_cols  # Ceiling division
+    
+    # Create figure with subplots
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(12 * n_cols, 8 * n_rows))
+    if n_rows == 1:
+        axes = axes.reshape(1, -1) if n_cols > 1 else axes.reshape(1, 1)
+    elif n_cols == 1:
+        axes = axes.reshape(-1, 1)
+    
+    # Flatten axes for easier indexing
+    axes_flat = axes.flatten()
+    
+    for idx, (model_name, spectral_data) in enumerate(models_with_data.items()):
+        ax = axes_flat[idx]
+        
+        # Extract error matrix and k_radial bins
+        error_matrix = np.array(spectral_data['error_matrix']).T  # Transpose: rows = freq, cols = layers
+        k_radial_ref = np.array(spectral_data['k_radial_bins'])
+        
+        n_freq_bins, n_layers = error_matrix.shape
+        
+        # Get layer names from frequency_data
+        layers = frequency_data[model_name]['layers_analyzed']
+        
+        # Create heatmap
+        im = ax.imshow(error_matrix, aspect='auto', cmap='viridis_r', 
+                       interpolation='bilinear', origin='lower')
+        
+        # Set ticks
+        ax.set_xticks(range(n_layers))
+        ax.set_xticklabels(layers, rotation=45, ha='right', fontsize=9)
+        ax.set_xlabel('Layer', fontsize=10, fontweight='bold')
+        
+        # Y-axis: frequency bins
+        y_ticks = np.linspace(0, n_freq_bins - 1, min(10, n_freq_bins))
+        y_tick_labels = [f'{k_radial_ref[int(i)]:.2f}' for i in y_ticks]
+        ax.set_yticks(y_ticks)
+        ax.set_yticklabels(y_tick_labels)
+        ax.set_ylabel('Radial Frequency |k|', fontsize=10, fontweight='bold')
+        
+        # Colorbar for each subplot
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label('Remaining Error', fontsize=9, rotation=270, labelpad=15)
+        
+        # Try log scale for colorbar
+        if np.all(error_matrix > 0):
+            im.set_norm(LogNorm(vmin=error_matrix[error_matrix > 0].min(), 
+                               vmax=error_matrix.max()))
+            cbar.set_label('Remaining Error [log]', fontsize=9, rotation=270, labelpad=15)
+        
+        ax.set_title(f'{model_name}\nSpectral Learning Efficiency', 
+                     fontsize=11, fontweight='bold', pad=10)
+    
+    # Hide unused subplots
+    for idx in range(n_models, len(axes_flat)):
+        axes_flat[idx].axis('off')
+    
+    plt.suptitle('Spectral Learning Efficiency Comparison\n(Layer vs Frequency: Remaining Error)', 
+                 fontsize=14, fontweight='bold', y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.99])
+    
+    save_path = output_dir / 'spectral_learning_efficiency_comparison.png'
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Spectral learning efficiency comparison saved to {save_path}")
