@@ -1,9 +1,9 @@
 # Experiment plan configuration
-experiment_name: "burgers2d_datasize_test"
+experiment_name: "wave1d_frequency_gpu_test"
 
 # Base configuration (will be used for all experiments)
 base_config:
-  problem: burgers2d
+  problem: wave1d
   activation: tanh
   epochs: 3
   batch_size: 512
@@ -29,6 +29,7 @@ base_config:
   resume_from: null
   bins: 5
   n_bin_visualize_ncc: 100
+  n_freq_grid: 32
   eval_every: 2
   print_every: 1
   save_every: 2
@@ -98,13 +99,13 @@ base_config:
 
 # Experiments to run
 experiments:  
-  # - name: "3lyr_40k_Wn_flat"
-  #   problem: schrodinger
-  #   architecture: [2, 140, 140, 140, 2]
+  - name: "3lyr_40k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 14, 14, 14, 1]
 
   - name: "5lyr_40k_Wn_flat"
-    problem: burgers2d  
-    architecture: [3, 10, 10, 10, 10, 10, 1]
+    problem: wave1d  
+    architecture: [2, 10, 10, 10, 10, 10, 1]
 
   # - name: "7lyr_40k_Wn_flat"
   #   problem: schrodinger

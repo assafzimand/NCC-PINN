@@ -217,6 +217,31 @@ def generate_and_save_datasets(config: Dict) -> None:
     else:
         print(f"NCC data already exists: {ncc_path}")
 
+    # Generate frequency grid if missing
+    freq_grid_path = dataset_dir / "frequency_grid.pt"
+    if not freq_grid_path.exists():
+        print(f"Generating frequency grid for {problem}...")
+        from frequency_tracker.frequency_core import generate_frequency_grid
+        
+        x_grid, grid_shape, n_dims = generate_frequency_grid(config)
+        N_grid = x_grid.shape[0]
+        print(f"  Grid shape: {grid_shape} ({N_grid:,} total points)")
+        
+        # Compute h_gt on grid using solver
+        print(f"  Computing ground truth on grid...")
+        h_gt_grid = solver_module.evaluate_on_grid(x_grid, config)
+        
+        freq_data = {
+            'x_grid': x_grid,           # (N_grid, d_in)
+            'h_gt_grid': h_gt_grid,     # (N_grid, d_o)
+            'grid_shape': list(grid_shape),  # Convert tuple to list for JSON serialization
+            'n_dims': n_dims            # int
+        }
+        torch.save(freq_data, freq_grid_path)
+        print(f"  Saved to {freq_grid_path}")
+    else:
+        print(f"Frequency grid already exists: {freq_grid_path}")
+
 
 def load_dataset(
     path: str,

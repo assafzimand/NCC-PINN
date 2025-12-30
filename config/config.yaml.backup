@@ -4,12 +4,10 @@ adam_betas:
 - 0.999
 adam_eps: 1.0e-08
 architecture:
-- 2
-- 10
-- 10
-- 10
-- 10
-- 10
+- 3
+- 12
+- 12
+- 12
 - 1
 batch_size: 512
 bins: 5
@@ -57,10 +55,16 @@ lbfgs_tolerance_grad: 0.0
 lr: 0.0001
 n_bin_visualize_ncc: 100
 n_freq_grid: 32
-name: 5lyr_40k_Wn_flat
+sampling:
+  sample_volume_ratio: 35      # Target: S^(1/d) / V^(1/d) = 35
+  initial_train_ratio: 0.005   # 0.5% of residual_train
+  boundary_train_ratio: 0.005  # 0.5% of residual_train
+  eval_train_ratio: 0.25       # eval = 25% of train (all types)
+  ncc_train_ratio: 0.25        # ncc = 25% of residual_train
+name: 3lyr_30k_Wn_flat
 optimizer_switch_at: 0.9
 print_every: 1
-problem: wave1d
+problem: burgers2d
 problem2:
   loss_weights:
     bc: 1.0
@@ -75,12 +79,6 @@ problem2:
   - 0.0
   - 1.0
 resume_from: null
-sampling:
-  boundary_train_ratio: 0.005
-  eval_train_ratio: 0.25
-  initial_train_ratio: 0.005
-  ncc_train_ratio: 0.25
-  sample_volume_ratio: 35
 save_every: 2
 schrodinger:
   loss_weights:

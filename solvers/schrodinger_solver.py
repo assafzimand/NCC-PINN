@@ -392,3 +392,34 @@ def generate_dataset(
             "BC": mask_bc
         }
     }
+
+
+def evaluate_on_grid(x_grid: torch.Tensor, config: Dict) -> torch.Tensor:
+    """
+    Evaluate ground truth solution on a regular grid for frequency analysis.
+    
+    Args:
+        x_grid: Grid points (N, 2) with columns [x, t]
+        config: Configuration dictionary
+        
+    Returns:
+        h_gt: Ground truth values (N, 2) with columns [real, imag]
+    """
+    # Get interpolator (which solves the NLSE)
+    interpolator = _get_interpolator(config)
+    
+    x_np = x_grid.cpu().numpy()
+    
+    # Extract coordinates
+    x = x_np[:, 0]
+    t = x_np[:, 1]
+    
+    # Evaluate using interpolator
+    h_complex = interpolator(x, t)
+    
+    # Convert to (real, imag) format
+    h_gt = np.zeros((len(x), 2), dtype=np.float32)
+    h_gt[:, 0] = h_complex.real.astype(np.float32)
+    h_gt[:, 1] = h_complex.imag.astype(np.float32)
+    
+    return torch.from_numpy(h_gt)
