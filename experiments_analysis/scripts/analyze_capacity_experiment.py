@@ -1172,12 +1172,12 @@ def generate_frequency_coverage_comparison(
     frequency_data: Dict[str, Dict]
 ) -> None:
     """
-    Generate frequency coverage comparison as grouped bar charts.
+    Generate frequency coverage comparison as continuous line plot.
     
-    Creates a grouped bar chart where:
-    - X-axis: Frequency band |k| (binned into low/mid/high)
-    - Y-axis: Final leftover power (log scale)
-    - Bars: One bar per model, grouped by frequency band
+    Creates a line plot where:
+    - X-axis: Continuous radial frequency |k| (Hz)
+    - Y-axis: Relative error (|FFT(error)|² / |FFT(gt)|²)
+    - Lines: One colored line per model
     
     Args:
         output_dir: Directory to save plot
@@ -1196,104 +1196,48 @@ def generate_frequency_coverage_comparison(
             models_with_data[model_name] = metrics['spectral_efficiency']
     
     if not models_with_data:
-        # Fallback: use overall leftover ratio
-        print("  No detailed spectral_efficiency data found, using fallback method")
-        
-        # Create simple bar chart showing overall leftover ratio per model
-        fig, ax = plt.subplots(figsize=(max(10, len(model_names) * 1.5), 6))
-        
-        leftover_ratios = []
-        for model_name in model_names:
-            metrics = frequency_data[model_name]
-            final_layer = metrics['layers_analyzed'][-1]
-            leftover_ratio = metrics['layer_metrics'][final_layer].get('leftover_ratio', 1.0)
-            leftover_ratios.append(leftover_ratio)
-        
-        colors = plt.cm.tab10(np.linspace(0, 1, len(model_names)))
-        bars = ax.bar(range(len(model_names)), leftover_ratios, color=colors)
-        
-        ax.set_xticks(range(len(model_names)))
-        ax.set_xticklabels(model_names, rotation=45, ha='right', fontsize=10)
-        ax.set_xlabel('Model', fontsize=12, fontweight='bold')
-        ax.set_ylabel('Final Leftover Ratio', fontsize=12, fontweight='bold')
-        ax.set_yscale('log')
-        ax.set_title('Frequency Coverage Comparison\n(Final Leftover Power Ratio) [log]', 
-                     fontsize=13, fontweight='bold', pad=15)
-        ax.grid(True, alpha=0.3, axis='y')
-        
-        plt.tight_layout()
-        save_path = output_dir / 'frequency_coverage_comparison.png'
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        plt.close()
-        print(f"  Frequency coverage comparison saved to {save_path}")
+        print("  No spectral_efficiency data found in frequency metrics")
         return
     
-    # Use detailed spectral_efficiency data
-    model_names_with_data = list(models_with_data.keys())
-    n_models = len(model_names_with_data)
+    # Create continuous line plot
+    fig, ax = plt.subplots(figsize=(12, 7))
     
-    # Get frequency bins from first model
-    first_data = models_with_data[model_names_with_data[0]]
-    k_radial_bins = np.array(first_data['k_radial_bins'])
-    n_freq_bins = len(k_radial_bins)
-    
-    # Get final layer error for each model (last row of error_matrix)
-    model_final_errors = {}
-    for model_name, spectral_data in models_with_data.items():
-        error_matrix = np.array(spectral_data['error_matrix'])  # Shape: [layers, freq_bins]
-        final_layer_error = error_matrix[-1]  # Last layer's error per frequency bin
-        model_final_errors[model_name] = final_layer_error
-    
-    # Group frequency bins into bands (low, mid-low, mid, mid-high, high)
-    n_bands = min(5, n_freq_bins)
-    bins_per_band = n_freq_bins // n_bands
-    
-    band_names = []
-    band_errors = {model: [] for model in model_names_with_data}
-    
-    for band_idx in range(n_bands):
-        start_idx = band_idx * bins_per_band
-        end_idx = (band_idx + 1) * bins_per_band if band_idx < n_bands - 1 else n_freq_bins
-        
-        k_start = k_radial_bins[start_idx]
-        k_end = k_radial_bins[min(end_idx - 1, n_freq_bins - 1)]
-        band_names.append(f'{k_start:.1f}-{k_end:.1f}')
-        
-        for model_name in model_names_with_data:
-            band_mean_error = model_final_errors[model_name][start_idx:end_idx].mean()
-            band_errors[model_name].append(band_mean_error)
-    
-    # Create grouped bar chart
-    fig, ax = plt.subplots(figsize=(max(12, n_bands * 2), 8))
-    
-    x = np.arange(n_bands)
-    bar_width = 0.8 / n_models
-    
+    n_models = len(models_with_data)
     colors = plt.cm.tab10(np.linspace(0, 1, n_models))
     
-    for idx, model_name in enumerate(model_names_with_data):
-        offset = (idx - n_models / 2 + 0.5) * bar_width
-        errors = band_errors[model_name]
-        bars = ax.bar(x + offset, errors, bar_width, label=model_name, 
-                     color=colors[idx], alpha=0.8, edgecolor='black', linewidth=0.5)
+    all_errors = []
     
-    ax.set_xlabel('Radial Frequency |k| Band', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Final Leftover Power', fontsize=12, fontweight='bold')
-    ax.set_xticks(x)
-    ax.set_xticklabels(band_names, fontsize=10)
+    for idx, (model_name, spectral_data) in enumerate(models_with_data.items()):
+        k_radial_bins = np.array(spectral_data['k_radial_bins'])
+        error_matrix = np.array(spectral_data['error_matrix'])  # Shape: [layers, freq_bins]
+        
+        # Get final layer error (last row)
+        final_layer_error = error_matrix[-1]
+        
+        all_errors.extend(final_layer_error[final_layer_error > 0].tolist())
+        
+        # Plot continuous line
+        ax.plot(k_radial_bins, final_layer_error, color=colors[idx], 
+               label=model_name, linewidth=2.5, alpha=0.85)
     
-    # Try log scale
-    all_errors = [e for errors in band_errors.values() for e in errors if e > 0]
-    if all_errors:
+    ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Relative Error', fontsize=12, fontweight='bold')
+    
+    # Log scale for y-axis
+    scale_str = '[linear]'
+    if all_errors and min(all_errors) > 0:
         ax.set_yscale('log')
         scale_str = '[log]'
-    else:
-        scale_str = '[linear]'
     
-    ax.set_title(f'Frequency Coverage Comparison\n(Final Leftover Power per Frequency Band) {scale_str}', 
+    ax.set_title(f'Frequency Coverage Comparison (Final Layer)\n'
+                f'Relative Error: |FFT(ĥ - h_gt)|² / |FFT(h_gt)|² {scale_str}', 
                  fontsize=13, fontweight='bold', pad=15)
-    ax.legend(loc='upper right', fontsize=9, ncol=min(3, n_models))
-    ax.grid(True, alpha=0.3, axis='y')
+    ax.legend(loc='upper left', fontsize=10, ncol=1)
+    ax.grid(True, alpha=0.3)
+    
+    # Add annotation
+    ax.text(0.98, 0.02, 'Lower = Better', transform=ax.transAxes, 
+           fontsize=10, ha='right', va='bottom', style='italic', alpha=0.7)
     
     plt.tight_layout()
     save_path = output_dir / 'frequency_coverage_comparison.png'

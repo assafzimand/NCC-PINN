@@ -136,13 +136,19 @@ def plot_learned_frequencies(
             return freq_1d, power_1d
     
     # Pre-compute GT marginals and error spectra for all layers
+    # Only keep positive frequencies (negative frequencies mirror positive for real signals)
     gt_marginals = {}
     for dim_name in dim_names:
         freq_1d, power_1d = compute_marginal(gt_power, gt_freqs, dim_name, spatial_dim)
+        if dim_name != 'radial':
+            pos_mask = freq_1d >= 0
+            freq_1d = freq_1d[pos_mask]
+            power_1d = power_1d[pos_mask]
         gt_marginals[dim_name] = (freq_1d, power_1d)
     
     # Compute error spectra: |FFT(ĥ_i - h_gt)|² for each layer
     # Note: leftover spectrum = |FFT(h_gt - ĥ_i)|² = |FFT(ĥ_i - h_gt)|² (same magnitude)
+    # Only keep positive frequencies
     layer_error_marginals = {}
     for layer_name in layer_names:
         layer_data = freq_results[layer_name]
@@ -153,6 +159,10 @@ def plot_learned_frequencies(
         layer_error_marginals[layer_name] = {}
         for dim_name in dim_names:
             freq_1d, error_1d = compute_marginal(error_power, error_freqs, dim_name, spatial_dim)
+            if dim_name != 'radial':
+                pos_mask = freq_1d >= 0
+                freq_1d = freq_1d[pos_mask]
+                error_1d = error_1d[pos_mask]
             layer_error_marginals[layer_name][dim_name] = (freq_1d, error_1d)
     
     # Row 1: Cumulative Error (relative error at layer i)
@@ -163,15 +173,12 @@ def plot_learned_frequencies(
         gt_freq, gt_power_1d = gt_marginals[dim_name]
         gt_power_safe = np.where(gt_power_1d > 1e-15, gt_power_1d, 1e-15)
         
-        # Plot GT spectrum as reference (dashed black line)
-        ax.axhline(y=1.0, color='black', linestyle='--', linewidth=1.5, 
-                   label='Perfect (Error=0)', alpha=0.7)
-        
         for layer_idx, layer_name in enumerate(layer_names):
             freq_1d, error_1d = layer_error_marginals[layer_name][dim_name]
             
             # Relative error: error_power / gt_power
             relative_error = error_1d / gt_power_safe
+            
             all_values.append(relative_error)
             
             ax.plot(freq_1d, relative_error, color=colors[layer_idx], 
