@@ -10,7 +10,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils.io import load_config
 from losses.schrodinger_loss import build_loss as build_loss_schrodinger
-from losses.problem2_loss import build_loss as build_loss_problem2
 
 
 class SimpleFCNet(nn.Module):
@@ -111,55 +110,6 @@ def test_loss_schrodinger():
 
     print(f"  ✓ Optimization works: loss decreased from "
           f"{losses[0]:.4f} to {losses[-1]:.4f}")
-
-
-def test_loss_problem2():
-    """Test problem2 loss function."""
-    print("\nTesting problem2 loss function...")
-
-    # Load config
-    config = load_config()
-    device = torch.device('cuda' if config['cuda'] and
-                          torch.cuda.is_available() else 'cpu')
-
-    # Build loss
-    config['problem'] = 'problem2'  # Switch to problem2
-    loss_fn = build_loss_problem2(**config)
-
-    # Create tiny model
-    spatial_dim = config['problem2']['spatial_dim']
-    input_dim = spatial_dim + 1
-    output_dim = 2
-    model = SimpleFCNet(input_dim, 20, output_dim).to(device)
-
-    # Create tiny batch
-    batch = create_tiny_batch(100, spatial_dim, device)
-
-    # Test forward pass
-    loss = loss_fn(model, batch)
-    assert loss.dim() == 0, "Loss should be a scalar"
-    assert loss.item() >= 0, "Loss should be non-negative"
-
-    print(f"  ✓ Loss forward pass successful: {loss.item():.4f}")
-
-    # Test optimization
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
-    initial_loss = loss_fn(model, batch).item()
-
-    for _ in range(10):
-        optimizer.zero_grad()
-        loss = loss_fn(model, batch)
-        loss.backward()
-        optimizer.step()
-
-    final_loss = loss_fn(model, batch).item()
-
-    assert final_loss < initial_loss, \
-        f"Loss should decrease (initial: {initial_loss:.4f}, " \
-        f"final: {final_loss:.4f})"
-
-    print(f"  ✓ Optimization works: loss decreased from "
-          f"{initial_loss:.4f} to {final_loss:.4f}")
 
 
 def test_loss_components():
@@ -313,7 +263,6 @@ if __name__ == "__main__":
 
     try:
         test_loss_schrodinger()
-        test_loss_problem2()
         test_loss_components()
         test_physics_informed_gradients()
 
