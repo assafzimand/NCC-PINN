@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 from matplotlib import colors as mcolors
+from matplotlib.colors import LogNorm
 import os
+from typing import Dict
 
 
 def _safe_log_scale(ax, values_list):
@@ -380,3 +382,214 @@ def generate_derivatives_comparison_plots(save_dir, derivatives_data):
         title='Derivatives BC derivative comparison',
         filename="derivatives_bc_derivative_comparison.png"
     )
+
+
+def generate_frequency_coverage_comparison(
+    output_dir: Path,
+    frequency_data: Dict[str, Dict]
+) -> None:
+    """
+    Generate frequency coverage comparison as continuous line plot with GT reference.
+    
+    Creates a 2-subplot figure:
+    - Top: Ground Truth radial power spectrum (shows where the signal is)
+    - Bottom: Relative error per model (shows where errors are)
+    
+    Args:
+        output_dir: Directory to save plot
+        frequency_data: Dict mapping model_name -> frequency_metrics dict
+    """
+    # Collect data for all models
+    model_names = list(frequency_data.keys())
+    if not model_names:
+        return
+    
+    # Check if we have spectral_efficiency data (from frequency_metrics.json)
+    models_with_data = {}
+    for model_name in model_names:
+        metrics = frequency_data[model_name]
+        if 'spectral_efficiency' in metrics and metrics['spectral_efficiency']:
+            models_with_data[model_name] = metrics['spectral_efficiency']
+    
+    if not models_with_data:
+        print("  No spectral_efficiency data found in frequency metrics")
+        return
+    
+    # Check if GT radial power is available
+    first_model_data = list(models_with_data.values())[0]
+    has_gt_spectrum = 'gt_radial_power' in first_model_data
+    
+    # Create figure with 2 subplots if GT spectrum available, else 1
+    if has_gt_spectrum:
+        fig, (ax_gt, ax_err) = plt.subplots(2, 1, figsize=(12, 10), 
+                                             gridspec_kw={'height_ratios': [1, 2]})
+    else:
+        fig, ax_err = plt.subplots(figsize=(12, 7))
+        ax_gt = None
+    
+    n_models = len(models_with_data)
+    colors = plt.cm.tab10(np.linspace(0, 1, n_models))
+    
+    # Plot GT spectrum if available
+    if has_gt_spectrum and ax_gt is not None:
+        k_radial_bins = np.array(first_model_data['k_radial_bins'])
+        gt_radial_power = np.array(first_model_data['gt_radial_power'])
+        
+        ax_gt.fill_between(k_radial_bins, 0, gt_radial_power, alpha=0.4, color='steelblue')
+        ax_gt.plot(k_radial_bins, gt_radial_power, color='steelblue', linewidth=2, label='GT Power')
+        
+        ax_gt.set_xlabel('Radial Frequency |k| (Hz)', fontsize=11)
+        ax_gt.set_ylabel('Power |FFT|²', fontsize=11)
+        
+        # Try log scale
+        if np.all(gt_radial_power > 0):
+            ax_gt.set_yscale('log')
+            scale_str_gt = '[log]'
+        else:
+            scale_str_gt = '[linear]'
+        
+        ax_gt.set_title(f'Ground Truth Frequency Content: |FFT(h_gt)|² {scale_str_gt}', 
+                       fontsize=11, fontweight='bold')
+        ax_gt.grid(True, alpha=0.3)
+        ax_gt.legend(loc='upper right', fontsize=9)
+    
+    # Plot model errors
+    all_errors = []
+    
+    for idx, (model_name, spectral_data) in enumerate(models_with_data.items()):
+        k_radial_bins = np.array(spectral_data['k_radial_bins'])
+        error_matrix = np.array(spectral_data['error_matrix'])  # Shape: [layers, freq_bins]
+        
+        # Get final layer error (last row)
+        final_layer_error = error_matrix[-1]
+        
+        all_errors.extend(final_layer_error[final_layer_error > 0].tolist())
+        
+        # Plot continuous line
+        ax_err.plot(k_radial_bins, final_layer_error, color=colors[idx], 
+                   label=model_name, linewidth=2.5, alpha=0.85)
+    
+    ax_err.set_xlabel('Radial Frequency |k| (Hz)', fontsize=12, fontweight='bold')
+    ax_err.set_ylabel('Relative Error', fontsize=12, fontweight='bold')
+    
+    # Log scale for y-axis
+    scale_str = '[linear]'
+    if all_errors and min(all_errors) > 0:
+        ax_err.set_yscale('log')
+        scale_str = '[log]'
+    
+    ax_err.set_title(f'Model Errors: |FFT(ĥ - h_gt)|² / |FFT(h_gt)|² {scale_str}\n(Lower = Better)', 
+                    fontsize=11, fontweight='bold')
+    ax_err.legend(loc='upper left', fontsize=10, ncol=1)
+    ax_err.grid(True, alpha=0.3)
+    
+    plt.suptitle('Frequency Coverage Comparison (Final Layer)', 
+                fontsize=14, fontweight='bold', y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.98])
+    
+    save_path = _long_path(Path(output_dir) / 'frequency_coverage_comparison.png')
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Frequency coverage comparison saved to {save_path}")
+
+
+def plot_spectral_learning_efficiency_comparison(
+    frequency_data: Dict[str, Dict],
+    output_dir: Path
+) -> None:
+    """
+    Generate side-by-side comparison of spectral learning efficiency for all models.
+    
+    Creates a grid layout (2 columns, multiple rows) showing each model's
+    spectral learning efficiency heatmap.
+    
+    Args:
+        frequency_data: Dict mapping model_name -> frequency_metrics dict
+        output_dir: Directory to save plot
+    """
+    model_names = list(frequency_data.keys())
+    if not model_names:
+        return
+    
+    # Check if all models have spectral efficiency data
+    models_with_data = {}
+    for model_name, metrics in frequency_data.items():
+        if 'spectral_efficiency' in metrics:
+            models_with_data[model_name] = metrics['spectral_efficiency']
+    
+    if not models_with_data:
+        print("  No spectral efficiency data found in frequency metrics")
+        return
+    
+    n_models = len(models_with_data)
+    
+    # Calculate grid layout: 2 columns, multiple rows
+    n_cols = 2
+    n_rows = (n_models + n_cols - 1) // n_cols  # Ceiling division
+    
+    # Create figure with subplots
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(12 * n_cols, 8 * n_rows))
+    if n_rows == 1:
+        axes = axes.reshape(1, -1) if n_cols > 1 else axes.reshape(1, 1)
+    elif n_cols == 1:
+        axes = axes.reshape(-1, 1)
+    
+    # Flatten axes for easier indexing
+    axes_flat = axes.flatten()
+    
+    for idx, (model_name, spectral_data) in enumerate(models_with_data.items()):
+        ax = axes_flat[idx]
+        
+        # Extract error matrix and k_radial bins
+        error_matrix = np.array(spectral_data['error_matrix']).T  # Transpose: rows = freq, cols = layers
+        k_radial_ref = np.array(spectral_data['k_radial_bins'])
+        
+        n_freq_bins, n_layers = error_matrix.shape
+        
+        # Get layer names from frequency_data
+        layers = frequency_data[model_name]['layers_analyzed']
+        
+        # Create heatmap
+        im = ax.imshow(error_matrix, aspect='auto', cmap='viridis_r', 
+                       interpolation='bilinear', origin='lower')
+        
+        # Set ticks
+        ax.set_xticks(range(n_layers))
+        ax.set_xticklabels(layers, rotation=45, ha='right', fontsize=9)
+        ax.set_xlabel('Layer', fontsize=10, fontweight='bold')
+        
+        # Y-axis: frequency bins
+        y_ticks = np.linspace(0, n_freq_bins - 1, min(10, n_freq_bins))
+        y_tick_labels = [f'{k_radial_ref[int(i)]:.1f}' for i in y_ticks]
+        ax.set_yticks(y_ticks)
+        ax.set_yticklabels(y_tick_labels)
+        ax.set_ylabel('|k| (Hz)', fontsize=10, fontweight='bold')
+        
+        # Colorbar for each subplot
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        
+        # Try log scale for colorbar
+        scale_str = '[linear]'
+        if np.all(error_matrix > 0):
+            im.set_norm(LogNorm(vmin=error_matrix[error_matrix > 0].min(), 
+                               vmax=error_matrix.max()))
+            scale_str = '[log]'
+        cbar.set_label(f'Relative Error {scale_str}', fontsize=9, rotation=270, labelpad=15)
+        
+        ax.set_title(f'{model_name}\n(Lower = Better)', 
+                     fontsize=11, fontweight='bold', pad=10)
+    
+    # Hide unused subplots
+    for idx in range(n_models, len(axes_flat)):
+        axes_flat[idx].axis('off')
+    
+    plt.suptitle('Spectral Learning Efficiency Comparison\nRelative Error |FFT(error)|²/|FFT(gt)|² by Layer and Frequency', 
+                 fontsize=14, fontweight='bold', y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.99])
+    
+    save_path = _long_path(Path(output_dir) / 'spectral_learning_efficiency_comparison.png')
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Spectral learning efficiency comparison saved to {save_path}")

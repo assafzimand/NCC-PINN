@@ -240,7 +240,8 @@ def run_frequency_tracker(
         'layer_metrics': {},
         'spectral_efficiency': {
             'k_radial_bins': k_radial_ref,
-            'error_matrix': error_matrix_list  # List of lists: [layer][freq_bin]
+            'error_matrix': error_matrix_list,  # List of lists: [layer][freq_bin]
+            'gt_radial_power': gt_radial.tolist()  # GT radial power spectrum
         }
     }
     

@@ -1157,7 +1157,7 @@ def generate_comparison_plots(
         
         if frequency_data:
             print(f"  Generating frequency comparison plots for {len(frequency_data)} models...")
-            from frequency_tracker.frequency_plotting import plot_spectral_learning_efficiency_comparison
+            from utils.comparison_plots import generate_frequency_coverage_comparison, plot_spectral_learning_efficiency_comparison
             
             generate_frequency_coverage_comparison(group_dir, frequency_data)
             plot_spectral_learning_efficiency_comparison(frequency_data, group_dir)
@@ -1165,86 +1165,6 @@ def generate_comparison_plots(
             print(f"  No frequency metrics found for models in this group")
         
         print(f"  Comparison plots saved to {group_dir}")
-
-
-def generate_frequency_coverage_comparison(
-    output_dir: Path,
-    frequency_data: Dict[str, Dict]
-) -> None:
-    """
-    Generate frequency coverage comparison as continuous line plot.
-    
-    Creates a line plot where:
-    - X-axis: Continuous radial frequency |k| (Hz)
-    - Y-axis: Relative error (|FFT(error)|² / |FFT(gt)|²)
-    - Lines: One colored line per model
-    
-    Args:
-        output_dir: Directory to save plot
-        frequency_data: Dict mapping model_name -> frequency_metrics dict
-    """
-    # Collect data for all models
-    model_names = list(frequency_data.keys())
-    if not model_names:
-        return
-    
-    # Check if we have spectral_efficiency data (from frequency_metrics.json)
-    models_with_data = {}
-    for model_name in model_names:
-        metrics = frequency_data[model_name]
-        if 'spectral_efficiency' in metrics and metrics['spectral_efficiency']:
-            models_with_data[model_name] = metrics['spectral_efficiency']
-    
-    if not models_with_data:
-        print("  No spectral_efficiency data found in frequency metrics")
-        return
-    
-    # Create continuous line plot
-    fig, ax = plt.subplots(figsize=(12, 7))
-    
-    n_models = len(models_with_data)
-    colors = plt.cm.tab10(np.linspace(0, 1, n_models))
-    
-    all_errors = []
-    
-    for idx, (model_name, spectral_data) in enumerate(models_with_data.items()):
-        k_radial_bins = np.array(spectral_data['k_radial_bins'])
-        error_matrix = np.array(spectral_data['error_matrix'])  # Shape: [layers, freq_bins]
-        
-        # Get final layer error (last row)
-        final_layer_error = error_matrix[-1]
-        
-        all_errors.extend(final_layer_error[final_layer_error > 0].tolist())
-        
-        # Plot continuous line
-        ax.plot(k_radial_bins, final_layer_error, color=colors[idx], 
-               label=model_name, linewidth=2.5, alpha=0.85)
-    
-    ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Relative Error', fontsize=12, fontweight='bold')
-    
-    # Log scale for y-axis
-    scale_str = '[linear]'
-    if all_errors and min(all_errors) > 0:
-        ax.set_yscale('log')
-        scale_str = '[log]'
-    
-    ax.set_title(f'Frequency Coverage Comparison (Final Layer)\n'
-                f'Relative Error: |FFT(ĥ - h_gt)|² / |FFT(h_gt)|² {scale_str}', 
-                 fontsize=13, fontweight='bold', pad=15)
-    ax.legend(loc='upper left', fontsize=10, ncol=1)
-    ax.grid(True, alpha=0.3)
-    
-    # Add annotation
-    ax.text(0.98, 0.02, 'Lower = Better', transform=ax.transAxes, 
-           fontsize=10, ha='right', va='bottom', style='italic', alpha=0.7)
-    
-    plt.tight_layout()
-    save_path = output_dir / 'frequency_coverage_comparison.png'
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    print(f"  Frequency coverage comparison saved to {save_path}")
 
 
 # =============================================================================
