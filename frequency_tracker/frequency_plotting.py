@@ -38,13 +38,14 @@ def plot_learned_frequencies(
     config: Dict
 ) -> None:
     """
-    Generate the unified learned_frequencies visualization.
+    Generate the learned_frequencies visualization.
     
     Creates one figure with all layers overlaid:
-    - Rows: Cumulative, Added, Leftover
-    - Columns: k_x0, k_x1, k_t, |k| (or k_x, k_t, |k| for 2D)
+    - Row 1: Cumulative Error - relative error at each frequency for layer i
+    - Row 2: Added (Improvement) - error reduction from layer i-1 to layer i
+    - Columns: k_x, k_t, |k| (or k_x0, k_x1, k_t, |k| for 2D)
     
-    Shows absolute power spectrum (log scale) for each perspective.
+    All values are RELATIVE to ground truth power for comparability.
     
     Args:
         freq_results: Dictionary mapping layer_name -> results dict
@@ -70,7 +71,8 @@ def plot_learned_frequencies(
         dim_names = ['x', 't', 'radial']
         n_cols = 3
     
-    n_rows = 3  # Cumulative, Added, Leftover
+    n_rows = 2  # Cumulative Error, Added (Improvement)
+    n_bins = 40  # Number of bins for marginal spectra
     
     # Create figure
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows))
@@ -83,167 +85,182 @@ def plot_learned_frequencies(
     cmap = plt.cm.viridis
     colors = [cmap(i / max(n_layers - 1, 1)) for i in range(n_layers)]
     
-    # Also add ground truth as reference
-    gt_color = 'red'
+    # Pre-compute ground truth power spectrum (marginal) for each dimension
+    gt_power = h_gt_spectrum['power']
+    gt_freqs = h_gt_spectrum['freqs']
+    n_dims_gt = len(gt_freqs)
+    if gt_power.ndim > n_dims_gt:
+        gt_power_avg = gt_power.mean(axis=-1)
+    else:
+        gt_power_avg = gt_power
     
-    # Compute marginal spectra for each layer and perspective
-    n_bins = 30  # Number of bins for marginal spectra
-    
-    for row_idx, perspective in enumerate(['cumulative', 'added', 'leftover']):
-        for col_idx, dim_name in enumerate(dim_names):
-            ax = axes[row_idx, col_idx]
+    def compute_marginal(power_nd, freqs, dim_name, spatial_dim):
+        """Compute 1D marginal spectrum for a specific dimension."""
+        n_dims = len(freqs)
+        if power_nd.ndim > n_dims:
+            power_avg = power_nd.mean(axis=-1)
+        else:
+            power_avg = power_nd
+        
+        if dim_name == 'radial':
+            mesh_freqs = np.meshgrid(*freqs, indexing='ij')
+            k_magnitude = np.sqrt(sum(f**2 for f in mesh_freqs))
+            k_max = k_magnitude.max()
+            if k_max == 0:
+                k_max = 1.0
+            k_bin_edges = np.linspace(0, k_max, n_bins + 1)
+            k_bin_centers = (k_bin_edges[:-1] + k_bin_edges[1:]) / 2
             
-            all_powers = []
-            
-            # Plot ground truth as reference (only for cumulative row)
-            if perspective == 'cumulative' and col_idx == 0:
-                # Will add to legend
-                pass
-            
-            for layer_idx, layer_name in enumerate(layer_names):
-                layer_data = freq_results[layer_name]
-                
-                if perspective == 'cumulative':
-                    spectrum = layer_data['cumulative']
-                elif perspective == 'added':
-                    spectrum = layer_data['added']
-                else:  # leftover
-                    spectrum = layer_data['leftover']
-                
-                power = spectrum['power']
-                freqs = spectrum['freqs']
-                n_dims = len(freqs)
-                
-                # Handle multi-output: average over output dimension first
-                if power.ndim > n_dims:
-                    power_avg = power.mean(axis=-1)
+            power_binned = np.zeros(n_bins)
+            for bin_idx in range(n_bins):
+                if bin_idx == n_bins - 1:
+                    mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude <= k_bin_edges[bin_idx + 1])
                 else:
-                    power_avg = power
-                
-                # Compute marginal spectrum for the specified dimension
-                if dim_name == 'radial':
-                    # Radial spectrum
-                    mesh_freqs = np.meshgrid(*freqs, indexing='ij')
-                    k_magnitude = np.sqrt(sum(f**2 for f in mesh_freqs))
-                    
-                    k_max = k_magnitude.max()
-                    if k_max == 0:
-                        k_max = 1.0
-                    k_bin_edges = np.linspace(0, k_max, n_bins + 1)
-                    k_bin_centers = (k_bin_edges[:-1] + k_bin_edges[1:]) / 2
-                    
-                    power_binned = np.zeros(n_bins)
-                    for bin_idx in range(n_bins):
-                        mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude < k_bin_edges[bin_idx + 1])
-                        if bin_idx == n_bins - 1:
-                            mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude <= k_bin_edges[bin_idx + 1])
-                        if mask.sum() > 0:
-                            power_binned[bin_idx] = power_avg[mask].mean()
-                    
-                    bin_centers = k_bin_centers
-                    power_1d = power_binned
-                else:
-                    # Marginal spectrum for specific dimension
-                    if spatial_dim == 2:
-                        dim_idx = {'x0': 0, 'x1': 1, 't': 2}.get(dim_name, 0)
-                    else:
-                        dim_idx = {'x': 0, 't': 1}.get(dim_name, 0)
-                    
-                    freq_1d = freqs[dim_idx]
-                    axes_to_avg = tuple(j for j in range(n_dims) if j != dim_idx)
-                    if axes_to_avg:
-                        power_1d = power_avg.mean(axis=axes_to_avg)
-                    else:
-                        power_1d = power_avg
-                    bin_centers = freq_1d
-                
-                all_powers.append(power_1d)
-                
-                # Plot continuous line
-                ax.plot(bin_centers, power_1d, color=colors[layer_idx], 
-                       label=layer_name, linewidth=2, alpha=0.8)
+                    mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude < k_bin_edges[bin_idx + 1])
+                if mask.sum() > 0:
+                    power_binned[bin_idx] = power_avg[mask].mean()
             
-            # Plot ground truth reference for cumulative only
-            if perspective == 'cumulative':
-                gt_power = h_gt_spectrum['power']
-                gt_freqs = h_gt_spectrum['freqs']
-                n_dims_gt = len(gt_freqs)
-                if gt_power.ndim > n_dims_gt:
-                    gt_power_avg = gt_power.mean(axis=-1)
-                else:
-                    gt_power_avg = gt_power
-                
-                if dim_name == 'radial':
-                    mesh_freqs = np.meshgrid(*gt_freqs, indexing='ij')
-                    k_magnitude = np.sqrt(sum(f**2 for f in mesh_freqs))
-                    k_max = k_magnitude.max()
-                    if k_max == 0:
-                        k_max = 1.0
-                    k_bin_edges = np.linspace(0, k_max, n_bins + 1)
-                    k_bin_centers = (k_bin_edges[:-1] + k_bin_edges[1:]) / 2
-                    
-                    gt_binned = np.zeros(n_bins)
-                    for bin_idx in range(n_bins):
-                        mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude < k_bin_edges[bin_idx + 1])
-                        if bin_idx == n_bins - 1:
-                            mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude <= k_bin_edges[bin_idx + 1])
-                        if mask.sum() > 0:
-                            gt_binned[bin_idx] = gt_power_avg[mask].mean()
-                    
-                    ax.plot(k_bin_centers, gt_binned, color=gt_color, linestyle='--', 
-                           label='Ground Truth', linewidth=2, alpha=0.9)
-                    all_powers.append(gt_binned)
-                else:
-                    if spatial_dim == 2:
-                        dim_idx = {'x0': 0, 'x1': 1, 't': 2}.get(dim_name, 0)
-                    else:
-                        dim_idx = {'x': 0, 't': 1}.get(dim_name, 0)
-                    
-                    gt_freq_1d = gt_freqs[dim_idx]
-                    axes_to_avg = tuple(j for j in range(n_dims_gt) if j != dim_idx)
-                    if axes_to_avg:
-                        gt_power_1d = gt_power_avg.mean(axis=axes_to_avg)
-                    else:
-                        gt_power_1d = gt_power_avg
-                    
-                    ax.plot(gt_freq_1d, gt_power_1d, color=gt_color, linestyle='--', 
-                           label='Ground Truth', linewidth=2, alpha=0.9)
-                    all_powers.append(gt_power_1d)
-            
-            # Formatting
-            if dim_name == 'radial':
-                ax.set_xlabel('|k| (Radial Frequency)', fontsize=11)
+            return k_bin_centers, power_binned
+        else:
+            if spatial_dim == 2:
+                dim_idx = {'x0': 0, 'x1': 1, 't': 2}.get(dim_name, 0)
             else:
-                ax.set_xlabel(f'k_{dim_name} (Frequency)', fontsize=11)
+                dim_idx = {'x': 0, 't': 1}.get(dim_name, 0)
             
-            ax.set_ylabel('Power |FFT|²', fontsize=11)
-            
-            # Try log scale
-            is_log = _safe_log_scale(ax, all_powers)
-            scale_str = "[log]" if is_log else "[linear]"
-            
-            # Math expression titles
-            if perspective == 'cumulative':
-                math_expr = r'$|\mathcal{F}[\hat{h}_i]|^2$'
-                subtitle = f'Approximation Power (layer 1→i) {scale_str}'
-            elif perspective == 'added':
-                math_expr = r'$|\mathcal{F}[\hat{h}_i - \hat{h}_{i-1}]|^2$'
-                subtitle = f'Added Power (layer i contribution) {scale_str}'
-            else:  # leftover
-                math_expr = r'$|\mathcal{F}[h_{gt} - \hat{h}_i]|^2$'
-                subtitle = f'Leftover Power (error after layer i) {scale_str}'
-            
-            ax.set_title(f'{math_expr}\n{subtitle}', fontsize=11, fontweight='bold')
-            
-            ax.grid(True, alpha=0.3)
-            
-            # Legend only on first subplot of each row
-            if col_idx == 0:
-                ax.legend(loc='upper right', fontsize=8, ncol=1)
+            freq_1d = freqs[dim_idx]
+            axes_to_avg = tuple(j for j in range(n_dims) if j != dim_idx)
+            if axes_to_avg:
+                power_1d = power_avg.mean(axis=axes_to_avg)
+            else:
+                power_1d = power_avg
+            return freq_1d, power_1d
     
-    plt.suptitle('Frequency Learning Analysis - Power Spectrum by Layer', 
+    # Pre-compute GT marginals and error spectra for all layers
+    gt_marginals = {}
+    for dim_name in dim_names:
+        freq_1d, power_1d = compute_marginal(gt_power, gt_freqs, dim_name, spatial_dim)
+        gt_marginals[dim_name] = (freq_1d, power_1d)
+    
+    # Compute error spectra: |FFT(ĥ_i - h_gt)|² for each layer
+    # Note: leftover spectrum = |FFT(h_gt - ĥ_i)|² = |FFT(ĥ_i - h_gt)|² (same magnitude)
+    layer_error_marginals = {}
+    for layer_name in layer_names:
+        layer_data = freq_results[layer_name]
+        error_spectrum = layer_data['leftover']  # This is |FFT(h_gt - ĥ_i)|²
+        error_power = error_spectrum['power']
+        error_freqs = error_spectrum['freqs']
+        
+        layer_error_marginals[layer_name] = {}
+        for dim_name in dim_names:
+            freq_1d, error_1d = compute_marginal(error_power, error_freqs, dim_name, spatial_dim)
+            layer_error_marginals[layer_name][dim_name] = (freq_1d, error_1d)
+    
+    # Row 1: Cumulative Error (relative error at layer i)
+    for col_idx, dim_name in enumerate(dim_names):
+        ax = axes[0, col_idx]
+        all_values = []
+        
+        gt_freq, gt_power_1d = gt_marginals[dim_name]
+        gt_power_safe = np.where(gt_power_1d > 1e-15, gt_power_1d, 1e-15)
+        
+        # Plot GT spectrum as reference (dashed black line)
+        ax.axhline(y=1.0, color='black', linestyle='--', linewidth=1.5, 
+                   label='Perfect (Error=0)', alpha=0.7)
+        
+        for layer_idx, layer_name in enumerate(layer_names):
+            freq_1d, error_1d = layer_error_marginals[layer_name][dim_name]
+            
+            # Relative error: error_power / gt_power
+            relative_error = error_1d / gt_power_safe
+            all_values.append(relative_error)
+            
+            ax.plot(freq_1d, relative_error, color=colors[layer_idx], 
+                   label=layer_name, linewidth=2, alpha=0.8)
+        
+        # Formatting
+        if dim_name == 'radial':
+            ax.set_xlabel('|k| (Radial Frequency)', fontsize=11)
+        else:
+            ax.set_xlabel(f'k_{dim_name} (Hz)', fontsize=11)
+        
+        ax.set_ylabel('Relative Error', fontsize=11)
+        
+        # Log scale for y-axis
+        is_log = _safe_log_scale(ax, all_values)
+        scale_str = "[log]" if is_log else "[linear]"
+        
+        # Title with math expression
+        ax.set_title(f'Error at Layer i: |FFT(ĥᵢ - h_gt)|² / |FFT(h_gt)|²\n'
+                    f'(Lower = Better) {scale_str}', fontsize=10, fontweight='bold')
+        
+        ax.grid(True, alpha=0.3)
+        if col_idx == 0:
+            ax.legend(loc='upper right', fontsize=7, ncol=1)
+    
+    # Row 2: Added (Error Reduction from layer i-1 to layer i)
+    for col_idx, dim_name in enumerate(dim_names):
+        ax = axes[1, col_idx]
+        all_values = []
+        
+        gt_freq, gt_power_1d = gt_marginals[dim_name]
+        gt_power_safe = np.where(gt_power_1d > 1e-15, gt_power_1d, 1e-15)
+        
+        # Zero line (no change)
+        ax.axhline(y=0, color='black', linestyle='-', linewidth=1, alpha=0.5)
+        
+        prev_error = None
+        for layer_idx, layer_name in enumerate(layer_names):
+            freq_1d, error_1d = layer_error_marginals[layer_name][dim_name]
+            
+            # Relative error at this layer
+            rel_error_i = error_1d / gt_power_safe
+            
+            if prev_error is None:
+                # First layer: Added = Cumulative (full error to learn)
+                # Show as improvement from "nothing learned" (error = GT power = 1.0 relative)
+                # Improvement = 1.0 - rel_error_i (how much of the GT was captured)
+                improvement = 1.0 - rel_error_i
+            else:
+                # Improvement = prev_error - current_error (positive = good)
+                improvement = prev_error - rel_error_i
+            
+            all_values.append(improvement)
+            
+            ax.plot(freq_1d, improvement, color=colors[layer_idx], 
+                   label=layer_name, linewidth=2, alpha=0.8)
+            
+            prev_error = rel_error_i
+        
+        # Formatting
+        if dim_name == 'radial':
+            ax.set_xlabel('|k| (Radial Frequency)', fontsize=11)
+        else:
+            ax.set_xlabel(f'k_{dim_name} (Hz)', fontsize=11)
+        
+        ax.set_ylabel('Error Reduction', fontsize=11)
+        
+        # Symmetric scale around 0 if there are negative values
+        all_flat = np.concatenate([np.array(v).flatten() for v in all_values])
+        max_abs = np.abs(all_flat[np.isfinite(all_flat)]).max() if len(all_flat[np.isfinite(all_flat)]) > 0 else 1
+        ax.set_ylim(-max_abs * 1.1, max_abs * 1.1)
+        
+        # Title
+        ax.set_title(f'Error Reduction: Eᵢ₋₁ - Eᵢ (relative)\n'
+                    f'(↑ Positive = Improvement, ↓ Negative = Degradation)', 
+                    fontsize=10, fontweight='bold')
+        
+        ax.grid(True, alpha=0.3)
+        
+        # Add shading for positive (good) and negative (bad) regions
+        ax.axhspan(0, max_abs * 1.1, alpha=0.1, color='green')
+        ax.axhspan(-max_abs * 1.1, 0, alpha=0.1, color='red')
+        
+        if col_idx == 0:
+            ax.legend(loc='upper right', fontsize=7, ncol=1)
+    
+    plt.suptitle('Frequency Learning Analysis by Layer', 
                  fontsize=14, fontweight='bold', y=0.995)
-    plt.tight_layout(rect=[0, 0, 1, 0.99])
+    plt.tight_layout(rect=[0, 0, 1, 0.98])
     
     save_path = save_dir / 'learned_frequencies.png'
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
@@ -276,46 +293,70 @@ def plot_spectral_learning_efficiency(
     
     layer_names = sorted(freq_results.keys())
     n_layers = len(layer_names)
+    n_bins = 30
     
-    # Get radial frequency bins and leftover errors for each layer
-    n_bins = 20
-    all_k_radial = []
-    all_leftover_errors = []
+    # Compute GT radial spectrum
+    gt_power = h_gt_spectrum['power']
+    gt_freqs = h_gt_spectrum['freqs']
+    n_dims = len(gt_freqs)
+    if gt_power.ndim > n_dims:
+        gt_power_avg = gt_power.mean(axis=-1)
+    else:
+        gt_power_avg = gt_power
     
-    for layer_name in layer_names:
+    # Create radial frequency grid
+    mesh_freqs = np.meshgrid(*gt_freqs, indexing='ij')
+    k_magnitude = np.sqrt(sum(f**2 for f in mesh_freqs))
+    k_max = k_magnitude.max()
+    if k_max == 0:
+        k_max = 1.0
+    k_bin_edges = np.linspace(0, k_max, n_bins + 1)
+    k_bin_centers = (k_bin_edges[:-1] + k_bin_edges[1:]) / 2
+    
+    # Compute GT radial power
+    gt_radial = np.zeros(n_bins)
+    for bin_idx in range(n_bins):
+        if bin_idx == n_bins - 1:
+            mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude <= k_bin_edges[bin_idx + 1])
+        else:
+            mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude < k_bin_edges[bin_idx + 1])
+        if mask.sum() > 0:
+            gt_radial[bin_idx] = gt_power_avg[mask].mean()
+    gt_radial_safe = np.where(gt_radial > 1e-15, gt_radial, 1e-15)
+    
+    # Compute relative error for each layer
+    error_matrix = np.zeros((n_bins, n_layers))
+    
+    for layer_idx, layer_name in enumerate(layer_names):
         layer_data = freq_results[layer_name]
         leftover = layer_data['leftover']
+        leftover_power = leftover['power']
+        leftover_freqs = leftover['freqs']
         
-        # Compute binned errors for radial spectrum
-        binned_errors = compute_binned_frequency_errors(
-            power_pred=leftover['power'],
-            power_gt=h_gt_spectrum['power'],
-            freqs=leftover['freqs'],
-            spatial_dim=config[config['problem']].get('spatial_dim', 1),
-            n_bins=n_bins,
-            is_leftover=True
-        )
+        if leftover_power.ndim > len(leftover_freqs):
+            leftover_avg = leftover_power.mean(axis=-1)
+        else:
+            leftover_avg = leftover_power
         
-        k_radial, mean_error = binned_errors['radial']
-        all_k_radial.append(k_radial)
-        all_leftover_errors.append(mean_error)
-    
-    # Create 2D array: rows = frequency bins, cols = layers
-    # Use the first layer's k_radial as reference (all should be same)
-    k_radial_ref = all_k_radial[0]
-    n_freq_bins = len(k_radial_ref)
-    
-    error_matrix = np.zeros((n_freq_bins, n_layers))
-    for layer_idx, mean_error in enumerate(all_leftover_errors):
-        error_matrix[:, layer_idx] = mean_error
+        # Compute radial leftover power
+        mesh_freqs_l = np.meshgrid(*leftover_freqs, indexing='ij')
+        k_mag_l = np.sqrt(sum(f**2 for f in mesh_freqs_l))
+        
+        leftover_radial = np.zeros(n_bins)
+        for bin_idx in range(n_bins):
+            if bin_idx == n_bins - 1:
+                mask = (k_mag_l >= k_bin_edges[bin_idx]) & (k_mag_l <= k_bin_edges[bin_idx + 1])
+            else:
+                mask = (k_mag_l >= k_bin_edges[bin_idx]) & (k_mag_l < k_bin_edges[bin_idx + 1])
+            if mask.sum() > 0:
+                leftover_radial[bin_idx] = leftover_avg[mask].mean()
+        
+        # Relative error
+        error_matrix[:, layer_idx] = leftover_radial / gt_radial_safe
     
     # Create heatmap
     fig, ax = plt.subplots(figsize=(10, 8))
     
-    # Layer indices for x-axis
-    layer_indices = list(range(1, n_layers + 1))
-    
-    # Create heatmap
     im = ax.imshow(error_matrix, aspect='auto', cmap='viridis_r', 
                    interpolation='bilinear', origin='lower')
     
@@ -324,26 +365,24 @@ def plot_spectral_learning_efficiency(
     ax.set_xticklabels(layer_names, rotation=45, ha='right')
     ax.set_xlabel('Layer', fontsize=12, fontweight='bold')
     
-    # Y-axis: frequency bins (show every 5th or so)
-    y_ticks = np.linspace(0, n_freq_bins - 1, min(10, n_freq_bins))
-    y_tick_labels = [f'{k_radial_ref[int(i)]:.2f}' for i in y_ticks]
+    # Y-axis: frequency bins
+    y_ticks = np.linspace(0, n_bins - 1, min(10, n_bins))
+    y_tick_labels = [f'{k_bin_centers[int(i)]:.1f}' for i in y_ticks]
     ax.set_yticks(y_ticks)
     ax.set_yticklabels(y_tick_labels)
-    ax.set_ylabel('Radial Frequency |k|', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Radial Frequency |k| (Hz)', fontsize=12, fontweight='bold')
     
-    # Colorbar
+    # Colorbar with log scale
     cbar = plt.colorbar(im, ax=ax)
-    cbar.set_label('Remaining Error (lower = better learned)', 
-                   fontsize=11, rotation=270, labelpad=20)
-    
-    # Try log scale for colorbar
+    scale_str = '[linear]'
     if np.all(error_matrix > 0):
         im.set_norm(LogNorm(vmin=error_matrix[error_matrix > 0].min(), 
                            vmax=error_matrix.max()))
-        cbar.set_label('Remaining Error (log scale) [log]', 
-                       fontsize=11, rotation=270, labelpad=20)
+        scale_str = '[log]'
+    cbar.set_label(f'Relative Error (|FFT(error)|²/|FFT(gt)|²) {scale_str}', 
+                   fontsize=11, rotation=270, labelpad=20)
     
-    ax.set_title('Spectral Learning Efficiency\n(Layer vs Frequency: Remaining Error)', 
+    ax.set_title('Spectral Learning Efficiency\n(Relative Error by Layer and Frequency - Lower = Better)', 
                  fontsize=13, fontweight='bold', pad=15)
     
     plt.tight_layout()
@@ -457,29 +496,30 @@ def plot_spectral_learning_efficiency_comparison(
         
         # Y-axis: frequency bins
         y_ticks = np.linspace(0, n_freq_bins - 1, min(10, n_freq_bins))
-        y_tick_labels = [f'{k_radial_ref[int(i)]:.2f}' for i in y_ticks]
+        y_tick_labels = [f'{k_radial_ref[int(i)]:.1f}' for i in y_ticks]
         ax.set_yticks(y_ticks)
         ax.set_yticklabels(y_tick_labels)
-        ax.set_ylabel('Radial Frequency |k|', fontsize=10, fontweight='bold')
+        ax.set_ylabel('|k| (Hz)', fontsize=10, fontweight='bold')
         
         # Colorbar for each subplot
         cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label('Remaining Error', fontsize=9, rotation=270, labelpad=15)
         
         # Try log scale for colorbar
+        scale_str = '[linear]'
         if np.all(error_matrix > 0):
             im.set_norm(LogNorm(vmin=error_matrix[error_matrix > 0].min(), 
                                vmax=error_matrix.max()))
-            cbar.set_label('Remaining Error [log]', fontsize=9, rotation=270, labelpad=15)
+            scale_str = '[log]'
+        cbar.set_label(f'Relative Error {scale_str}', fontsize=9, rotation=270, labelpad=15)
         
-        ax.set_title(f'{model_name}\nSpectral Learning Efficiency', 
+        ax.set_title(f'{model_name}\n(Lower = Better)', 
                      fontsize=11, fontweight='bold', pad=10)
     
     # Hide unused subplots
     for idx in range(n_models, len(axes_flat)):
         axes_flat[idx].axis('off')
     
-    plt.suptitle('Spectral Learning Efficiency Comparison\n(Layer vs Frequency: Remaining Error)', 
+    plt.suptitle('Spectral Learning Efficiency Comparison\nRelative Error |FFT(error)|²/|FFT(gt)|² by Layer and Frequency', 
                  fontsize=14, fontweight='bold', y=0.995)
     plt.tight_layout(rect=[0, 0, 1, 0.99])
     
