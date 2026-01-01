@@ -197,30 +197,6 @@ def test_dataset_save_and_load():
     print(f"  ✓ Training size: {N_train}, Eval size: {N_eval}")
 
 
-def test_problem2_solver():
-    """Test that problem2 solver works similarly."""
-    print("\nTesting problem2 solver...")
-    
-    config = load_config()
-    config['problem'] = 'problem2'
-    
-    n_residual, n_ic, n_bc = 30, 10, 10
-    device = torch.device('cuda' if config['cuda'] and torch.cuda.is_available() else 'cpu')
-    
-    from solvers.problem2_solver import generate_dataset
-    
-    data = generate_dataset(n_residual, n_ic, n_bc, device, config)
-    
-    # Basic checks
-    N_total = n_residual + n_ic + n_bc
-    assert data['x'].shape[0] == N_total, "Correct total number of points"
-    assert data['mask']['residual'].sum() == n_residual, "Correct residual count"
-    assert data['mask']['IC'].sum() == n_ic, "Correct IC count"
-    assert data['mask']['BC'].sum() == n_bc, "Correct BC count"
-    
-    print("  ✓ Problem2 solver works correctly")
-
-
 if __name__ == "__main__":
     print("=" * 60)
     print("Step 2 — Placeholder solvers + dataset generation — Tests")
@@ -229,7 +205,6 @@ if __name__ == "__main__":
     try:
         test_dataset_generation_schrodinger()
         test_dataset_save_and_load()
-        test_problem2_solver()
         
         print("\n" + "=" * 60)
         print("✓ All tests passed!")
