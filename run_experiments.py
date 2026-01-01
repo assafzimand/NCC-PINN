@@ -398,8 +398,7 @@ def generate_comparison_report(parent_dir, results):
     
     # Generate frequency comparison plots if frequency data available
     if frequency_data:
-        from experiments_analysis.scripts.analyze_capacity_experiment import generate_frequency_coverage_comparison
-        from frequency_tracker.frequency_plotting import plot_spectral_learning_efficiency_comparison
+        from utils.comparison_plots import generate_frequency_coverage_comparison, plot_spectral_learning_efficiency_comparison
         
         generate_frequency_coverage_comparison(parent_dir, frequency_data)
         plot_spectral_learning_efficiency_comparison(frequency_data, parent_dir)
