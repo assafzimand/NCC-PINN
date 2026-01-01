@@ -1,11 +1,11 @@
 # Experiment plan configuration
-experiment_name: "wave1d_convergence_freq_test"
+experiment_name: "wave1d_capacity"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: wave1d
   activation: tanh
-  epochs: 3
+  epochs: 10000
   batch_size: 512
   lr: 0.0001
   
@@ -30,10 +30,10 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 2
-  print_every: 1
-  save_every: 2
-  inner_metrics_eval_every: 2
+  eval_every: 500
+  print_every: 1000
+  save_every: 5000
+  inner_metrics_eval_every: 2501
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -101,48 +101,48 @@ base_config:
 experiments:  
   - name: "3lyr_40k_Wn_flat"
     problem: wave1d
-    architecture: [2, 14, 14, 14, 1]
+    architecture: [2, 140, 140, 140, 1]
 
   - name: "5lyr_40k_Wn_flat"
     problem: wave1d  
-    architecture: [2, 10, 10, 10, 10, 10, 1]
+    architecture: [2, 100, 100, 100, 100, 100, 1]
 
-  # - name: "7lyr_40k_Wn_flat"
-  #   problem: wave1d
-  #   architecture: [2, 80, 80, 80, 80, 80, 80, 80, 1]
+  - name: "7lyr_40k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 80, 80, 80, 80, 80, 80, 80, 1]
 
-  # - name: "3lyr_30k_Wn_flat"
-  #   problem: schrodinger
-  #   architecture: [2, 120, 120, 120, 2]
+  - name: "3lyr_30k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 120, 120, 120, 1]
 
-  # - name: "5lyr_30k_Wn_flat"
-  #   problem: schrodinger
-  #   architecture: [2, 85, 85, 85, 85, 85, 2]
+  - name: "5lyr_30k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 85, 85, 85, 85, 85, 1]
 
-  # - name: "7lyr_30k_Wn_flat"
-  #   problem: schrodinger
-  #   architecture: [2, 70, 70, 70, 70, 70, 70, 70, 2]
+  - name: "7lyr_30k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 70, 70, 70, 70, 70, 70, 70, 1]
 
-  # - name: "3lyr_20k_Wn_flat"
-  #   problem: schrodinger
-  #   architecture: [2, 100, 100, 100, 2]
+  - name: "3lyr_20k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 100, 100, 100, 1]
 
-  # - name: "5lyr_20k_Wn_flat"
-  #   problem: schrodinger
-  #   architecture: [2, 70, 70, 70, 70, 70, 2]
+  - name: "5lyr_20k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 70, 70, 70, 70, 70, 1]
 
-  # - name: "7lyr_20k_Wn_flat"
-  #   problem: schrodinger
-  #   architecture: [2, 58, 58, 58, 58, 58, 58, 58, 2]
+  - name: "7lyr_20k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 58, 58, 58, 58, 58, 58, 58, 1]
 
-  # - name: "3lyr_10k_Wn_flat"
-  #   problem: schrodinger
-  #   architecture: [2, 70, 70, 70, 2]
+  - name: "3lyr_10k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 70, 70, 70, 1]
 
-  # - name: "5lyr_10k_Wn_flat"
-  #   problem: schrodinger
-  #   architecture: [2, 50, 50, 50, 50, 50, 2]
+  - name: "5lyr_10k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 50, 50, 50, 50, 50, 1]
 
-  # - name: "7lyr_10k_Wn_flat"
-  #   problem: schrodinger
-  #   architecture: [2, 40, 40, 40, 40, 40, 40, 40, 2]
+  - name: "7lyr_10k_Wn_flat"
+    problem: wave1d
+    architecture: [2, 40, 40, 40, 40, 40, 40, 40, 1]
