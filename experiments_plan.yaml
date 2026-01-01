@@ -29,7 +29,7 @@ base_config:
   resume_from: null
   bins: 5
   n_bin_visualize_ncc: 100
-  n_freq_grid: 32
+  n_freq_grid: 128
   eval_every: 2
   print_every: 1
   save_every: 2

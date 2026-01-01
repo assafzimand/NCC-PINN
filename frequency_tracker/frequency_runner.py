@@ -167,29 +167,70 @@ def run_frequency_tracker(
     print("Step 5: Saving Metrics")
     print("=" * 60)
     
-    # Compute binned error matrix for spectral learning efficiency
-    n_bins = 20
+    # Compute relative error matrix for spectral learning efficiency
+    # Relative error = |FFT(h_gt - h_pred)|² / |FFT(h_gt)|²
+    n_bins = 30
+    
+    # First compute GT radial spectrum
+    gt_power = h_gt_spectrum['power']
+    gt_freqs = h_gt_spectrum['freqs']
+    n_dims = len(gt_freqs)
+    if gt_power.ndim > n_dims:
+        gt_power_avg = gt_power.mean(axis=-1)
+    else:
+        gt_power_avg = gt_power
+    
+    # Create radial frequency grid
+    mesh_freqs = np.meshgrid(*gt_freqs, indexing='ij')
+    k_magnitude = np.sqrt(sum(f**2 for f in mesh_freqs))
+    k_max = k_magnitude.max()
+    if k_max == 0:
+        k_max = 1.0
+    k_bin_edges = np.linspace(0, k_max, n_bins + 1)
+    k_bin_centers = (k_bin_edges[:-1] + k_bin_edges[1:]) / 2
+    
+    # Compute GT radial power
+    gt_radial = np.zeros(n_bins)
+    for bin_idx in range(n_bins):
+        if bin_idx == n_bins - 1:
+            mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude <= k_bin_edges[bin_idx + 1])
+        else:
+            mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude < k_bin_edges[bin_idx + 1])
+        if mask.sum() > 0:
+            gt_radial[bin_idx] = gt_power_avg[mask].mean()
+    gt_radial_safe = np.where(gt_radial > 1e-15, gt_radial, 1e-15)
+    
+    # Compute relative error for each layer
     error_matrix_list = []
-    k_radial_ref = None
+    k_radial_ref = k_bin_centers.tolist()
     
     for layer_name in hidden_layers:
         layer_data = freq_results[layer_name]
         leftover = layer_data['leftover']
+        leftover_power = leftover['power']
+        leftover_freqs = leftover['freqs']
         
-        # Compute binned errors for radial spectrum
-        binned_errors = compute_binned_frequency_errors(
-            power_pred=leftover['power'],
-            power_gt=h_gt_spectrum['power'],
-            freqs=leftover['freqs'],
-            spatial_dim=spatial_dim,
-            n_bins=n_bins,
-            is_leftover=True
-        )
+        if leftover_power.ndim > len(leftover_freqs):
+            leftover_avg = leftover_power.mean(axis=-1)
+        else:
+            leftover_avg = leftover_power
         
-        k_radial, mean_error = binned_errors['radial']
-        if k_radial_ref is None:
-            k_radial_ref = k_radial.tolist()
-        error_matrix_list.append(mean_error.tolist())
+        # Compute radial leftover power
+        mesh_freqs_l = np.meshgrid(*leftover_freqs, indexing='ij')
+        k_mag_l = np.sqrt(sum(f**2 for f in mesh_freqs_l))
+        
+        leftover_radial = np.zeros(n_bins)
+        for bin_idx in range(n_bins):
+            if bin_idx == n_bins - 1:
+                mask = (k_mag_l >= k_bin_edges[bin_idx]) & (k_mag_l <= k_bin_edges[bin_idx + 1])
+            else:
+                mask = (k_mag_l >= k_bin_edges[bin_idx]) & (k_mag_l < k_bin_edges[bin_idx + 1])
+            if mask.sum() > 0:
+                leftover_radial[bin_idx] = leftover_avg[mask].mean()
+        
+        # Relative error
+        relative_error = leftover_radial / gt_radial_safe
+        error_matrix_list.append(relative_error.tolist())
     
     metrics_summary = {
         'layers_analyzed': hidden_layers,

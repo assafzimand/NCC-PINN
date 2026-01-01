@@ -54,7 +54,7 @@ lbfgs_tolerance_change: 0.0
 lbfgs_tolerance_grad: 0.0
 lr: 0.0001
 n_bin_visualize_ncc: 100
-n_freq_grid: 32
+n_freq_grid: 128
 sampling:
   sample_volume_ratio: 35      # Target: S^(1/d) / V^(1/d) = 35
   initial_train_ratio: 0.005   # 0.5% of residual_train
