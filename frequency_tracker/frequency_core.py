@@ -49,7 +49,8 @@ def generate_frequency_grid(config: Dict) -> Tuple[torch.Tensor, Tuple[int, ...]
 
 def compute_frequency_spectrum(
     values: np.ndarray,
-    grid_shape: Tuple[int, ...]
+    grid_shape: Tuple[int, ...],
+    sample_spacings: List[float] = None
 ) -> Dict[str, np.ndarray]:
     """
     Compute N-D FFT and power spectrum.
@@ -57,14 +58,19 @@ def compute_frequency_spectrum(
     Args:
         values: (N,) or (N, d_o) probe outputs on flattened grid
         grid_shape: Shape to reshape to (n_grid, n_grid, ...)
+        sample_spacings: List of sample spacings per dimension (for physical frequencies)
         
     Returns:
         Dict with:
             'power': Power spectrum |FFT|² with shape grid_shape (+ d_o if multi-output)
-            'freqs': List of frequency arrays for each dimension
+            'freqs': List of frequency arrays for each dimension (physical frequencies)
             'output_dim': Number of output dimensions
     """
     n_dims = len(grid_shape)
+    
+    # Default sample spacing = 1 (normalized frequencies)
+    if sample_spacings is None:
+        sample_spacings = [1.0] * n_dims
     
     # Handle multi-output
     if values.ndim == 1:
@@ -83,8 +89,13 @@ def compute_frequency_spectrum(
     # Power spectrum
     power = np.abs(fft_shifted) ** 2
     
-    # Frequency coordinates (normalized: -0.5 to 0.5)
-    freqs = [np.fft.fftshift(np.fft.fftfreq(n)) for n in grid_shape]
+    # Frequency coordinates with physical units based on sample spacing
+    # fftfreq returns normalized freq, divide by spacing to get physical freq
+    freqs = []
+    for i, n in enumerate(grid_shape):
+        d = sample_spacings[i]
+        freq = np.fft.fftshift(np.fft.fftfreq(n, d=d))
+        freqs.append(freq)
     
     return {
         'power': power,
@@ -191,7 +202,7 @@ def analyze_all_layers_frequency(
     freq_data: Dict,
     device: torch.device,
     config: Dict
-) -> Dict[str, Dict]:
+) -> Tuple[Dict[str, Dict], List[float]]:
     """
     Analyze frequency content for all layers.
     
@@ -208,16 +219,18 @@ def analyze_all_layers_frequency(
         config: Configuration dict
         
     Returns:
-        Dict mapping layer_name -> {
-            'h_pred': (N, d_o) probe predictions on grid
-            'cumulative': spectrum dict
-            'added': spectrum dict (vs previous layer)
-            'leftover': spectrum dict (h_gt - h_pred)
-            'radial': (k, power) tuple for cumulative
-            'radial_added': (k, power) tuple for added
-            'radial_leftover': (k, power) tuple for leftover
-            'marginal': dict of 1D spectra
-        }
+        Tuple of:
+            - Dict mapping layer_name -> {
+                'h_pred': (N, d_o) probe predictions on grid
+                'cumulative': spectrum dict
+                'added': spectrum dict (vs previous layer)
+                'leftover': spectrum dict (h_gt - h_pred)
+                'radial': (k, power) tuple for cumulative
+                'radial_added': (k, power) tuple for added
+                'radial_leftover': (k, power) tuple for leftover
+                'marginal': dict of 1D spectra
+              }
+            - sample_spacings: List of sample spacings per dimension
     """
     model.eval()
     
@@ -229,6 +242,23 @@ def analyze_all_layers_frequency(
     # Get problem info
     problem_cfg = config[config['problem']]
     spatial_dim = problem_cfg['spatial_dim']
+    
+    # Compute sample spacings for physical frequency units
+    # sample_spacing[i] = domain_length[i] / n_grid
+    n_grid = grid_shape[0]  # Assuming uniform grid
+    sample_spacings = []
+    
+    spatial_domain = problem_cfg['spatial_domain']
+    temporal_domain = problem_cfg['temporal_domain']
+    
+    # Spatial dimensions
+    for dom in spatial_domain:
+        domain_length = dom[1] - dom[0]
+        sample_spacings.append(domain_length / n_grid)
+    
+    # Time dimension
+    time_length = temporal_domain[1] - temporal_domain[0]
+    sample_spacings.append(time_length / n_grid)
     
     results = {}
     prev_h_pred = None
@@ -261,16 +291,16 @@ def analyze_all_layers_frequency(
             h_pred_flat = h_pred
             h_gt_flat = h_gt_grid
         
-        # Compute spectra
-        cumulative = compute_frequency_spectrum(h_pred_flat, grid_shape)
-        leftover = compute_frequency_spectrum(h_gt_flat - h_pred_flat, grid_shape)
+        # Compute spectra with physical frequency units
+        cumulative = compute_frequency_spectrum(h_pred_flat, grid_shape, sample_spacings)
+        leftover = compute_frequency_spectrum(h_gt_flat - h_pred_flat, grid_shape, sample_spacings)
         
         if prev_h_pred is not None:
             if prev_h_pred.shape[1] == 1 if prev_h_pred.ndim > 1 else True:
                 prev_flat = prev_h_pred.flatten() if prev_h_pred.ndim > 1 else prev_h_pred
             else:
                 prev_flat = prev_h_pred
-            added = compute_frequency_spectrum(h_pred_flat - prev_flat, grid_shape)
+            added = compute_frequency_spectrum(h_pred_flat - prev_flat, grid_shape, sample_spacings)
         else:
             added = cumulative  # First layer: everything is "added"
         
@@ -300,7 +330,7 @@ def analyze_all_layers_frequency(
         leftover_power = leftover['power'].sum()
         print(f"    Total power: {total_power:.2e}, Leftover power: {leftover_power:.2e}")
     
-    return results
+    return results, sample_spacings
 
 
 def compute_binned_frequency_errors(
