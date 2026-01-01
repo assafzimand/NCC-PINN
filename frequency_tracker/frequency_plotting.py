@@ -44,6 +44,8 @@ def plot_learned_frequencies(
     - Rows: Cumulative, Added, Leftover
     - Columns: k_x0, k_x1, k_t, |k| (or k_x, k_t, |k| for 2D)
     
+    Shows absolute power spectrum (log scale) for each perspective.
+    
     Args:
         freq_results: Dictionary mapping layer_name -> results dict
         h_gt_spectrum: Ground truth spectrum dict
@@ -81,77 +83,157 @@ def plot_learned_frequencies(
     cmap = plt.cm.viridis
     colors = [cmap(i / max(n_layers - 1, 1)) for i in range(n_layers)]
     
-    # Compute binned errors for each layer and perspective
+    # Also add ground truth as reference
+    gt_color = 'red'
+    
+    # Compute marginal spectra for each layer and perspective
+    n_bins = 30  # Number of bins for marginal spectra
+    
     for row_idx, perspective in enumerate(['cumulative', 'added', 'leftover']):
         for col_idx, dim_name in enumerate(dim_names):
             ax = axes[row_idx, col_idx]
             
-            all_errors = []
+            all_powers = []
+            
+            # Plot ground truth as reference (only for cumulative row)
+            if perspective == 'cumulative' and col_idx == 0:
+                # Will add to legend
+                pass
             
             for layer_idx, layer_name in enumerate(layer_names):
                 layer_data = freq_results[layer_name]
                 
                 if perspective == 'cumulative':
-                    power_pred = layer_data['cumulative']['power']
-                    power_gt = h_gt_spectrum['power']
-                    freqs = layer_data['cumulative']['freqs']
+                    spectrum = layer_data['cumulative']
                 elif perspective == 'added':
-                    power_pred = layer_data['added']['power']
-                    # For "added", compare what layer added vs what remains to be learned
-                    # Reference: what should have been added = remaining error from previous layer
-                    if layer_idx == 0:
-                        # First layer: compare against ground truth (everything needs to be learned)
-                        power_gt = h_gt_spectrum['power']
-                    else:
-                        prev_layer = layer_names[layer_idx - 1]
-                        prev_leftover = freq_results[prev_layer]['leftover']['power']
-                        # What should be added = leftover from previous layer
-                        power_gt = np.maximum(prev_leftover, 1e-10)
-                    freqs = layer_data['added']['freqs']
+                    spectrum = layer_data['added']
                 else:  # leftover
-                    # Leftover: power of (h_gt - h_pred)
-                    power_pred = layer_data['leftover']['power']
-                    # Normalize by ground truth to get relative leftover
-                    power_gt = h_gt_spectrum['power']
-                    freqs = layer_data['leftover']['freqs']
+                    spectrum = layer_data['leftover']
                 
-                # Compute binned errors
-                binned_errors = compute_binned_frequency_errors(
-                    power_pred=power_pred,
-                    power_gt=power_gt,
-                    freqs=freqs,
-                    spatial_dim=spatial_dim,
-                    n_bins=20,
-                    is_leftover=(perspective == 'leftover')
-                )
+                power = spectrum['power']
+                freqs = spectrum['freqs']
+                n_dims = len(freqs)
                 
-                bin_centers, mean_error = binned_errors[dim_name]
-                all_errors.append(mean_error)
+                # Handle multi-output: average over output dimension first
+                if power.ndim > n_dims:
+                    power_avg = power.mean(axis=-1)
+                else:
+                    power_avg = power
+                
+                # Compute marginal spectrum for the specified dimension
+                if dim_name == 'radial':
+                    # Radial spectrum
+                    mesh_freqs = np.meshgrid(*freqs, indexing='ij')
+                    k_magnitude = np.sqrt(sum(f**2 for f in mesh_freqs))
+                    
+                    k_max = k_magnitude.max()
+                    if k_max == 0:
+                        k_max = 1.0
+                    k_bin_edges = np.linspace(0, k_max, n_bins + 1)
+                    k_bin_centers = (k_bin_edges[:-1] + k_bin_edges[1:]) / 2
+                    
+                    power_binned = np.zeros(n_bins)
+                    for bin_idx in range(n_bins):
+                        mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude < k_bin_edges[bin_idx + 1])
+                        if bin_idx == n_bins - 1:
+                            mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude <= k_bin_edges[bin_idx + 1])
+                        if mask.sum() > 0:
+                            power_binned[bin_idx] = power_avg[mask].mean()
+                    
+                    bin_centers = k_bin_centers
+                    power_1d = power_binned
+                else:
+                    # Marginal spectrum for specific dimension
+                    if spatial_dim == 2:
+                        dim_idx = {'x0': 0, 'x1': 1, 't': 2}.get(dim_name, 0)
+                    else:
+                        dim_idx = {'x': 0, 't': 1}.get(dim_name, 0)
+                    
+                    freq_1d = freqs[dim_idx]
+                    axes_to_avg = tuple(j for j in range(n_dims) if j != dim_idx)
+                    if axes_to_avg:
+                        power_1d = power_avg.mean(axis=axes_to_avg)
+                    else:
+                        power_1d = power_avg
+                    bin_centers = freq_1d
+                
+                all_powers.append(power_1d)
                 
                 # Plot continuous line
-                ax.plot(bin_centers, mean_error, color=colors[layer_idx], 
+                ax.plot(bin_centers, power_1d, color=colors[layer_idx], 
                        label=layer_name, linewidth=2, alpha=0.8)
+            
+            # Plot ground truth reference for cumulative only
+            if perspective == 'cumulative':
+                gt_power = h_gt_spectrum['power']
+                gt_freqs = h_gt_spectrum['freqs']
+                n_dims_gt = len(gt_freqs)
+                if gt_power.ndim > n_dims_gt:
+                    gt_power_avg = gt_power.mean(axis=-1)
+                else:
+                    gt_power_avg = gt_power
+                
+                if dim_name == 'radial':
+                    mesh_freqs = np.meshgrid(*gt_freqs, indexing='ij')
+                    k_magnitude = np.sqrt(sum(f**2 for f in mesh_freqs))
+                    k_max = k_magnitude.max()
+                    if k_max == 0:
+                        k_max = 1.0
+                    k_bin_edges = np.linspace(0, k_max, n_bins + 1)
+                    k_bin_centers = (k_bin_edges[:-1] + k_bin_edges[1:]) / 2
+                    
+                    gt_binned = np.zeros(n_bins)
+                    for bin_idx in range(n_bins):
+                        mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude < k_bin_edges[bin_idx + 1])
+                        if bin_idx == n_bins - 1:
+                            mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude <= k_bin_edges[bin_idx + 1])
+                        if mask.sum() > 0:
+                            gt_binned[bin_idx] = gt_power_avg[mask].mean()
+                    
+                    ax.plot(k_bin_centers, gt_binned, color=gt_color, linestyle='--', 
+                           label='Ground Truth', linewidth=2, alpha=0.9)
+                    all_powers.append(gt_binned)
+                else:
+                    if spatial_dim == 2:
+                        dim_idx = {'x0': 0, 'x1': 1, 't': 2}.get(dim_name, 0)
+                    else:
+                        dim_idx = {'x': 0, 't': 1}.get(dim_name, 0)
+                    
+                    gt_freq_1d = gt_freqs[dim_idx]
+                    axes_to_avg = tuple(j for j in range(n_dims_gt) if j != dim_idx)
+                    if axes_to_avg:
+                        gt_power_1d = gt_power_avg.mean(axis=axes_to_avg)
+                    else:
+                        gt_power_1d = gt_power_avg
+                    
+                    ax.plot(gt_freq_1d, gt_power_1d, color=gt_color, linestyle='--', 
+                           label='Ground Truth', linewidth=2, alpha=0.9)
+                    all_powers.append(gt_power_1d)
             
             # Formatting
             if dim_name == 'radial':
                 ax.set_xlabel('|k| (Radial Frequency)', fontsize=11)
             else:
-                ax.set_xlabel(f'k_{dim_name}', fontsize=11)
+                ax.set_xlabel(f'k_{dim_name} (Frequency)', fontsize=11)
             
-            ax.set_ylabel('Mean Relative Error', fontsize=11)
+            ax.set_ylabel('Power |FFT|²', fontsize=11)
             
             # Try log scale
-            is_log = _safe_log_scale(ax, all_errors)
+            is_log = _safe_log_scale(ax, all_powers)
             scale_str = "[log]" if is_log else "[linear]"
             
-            # Title
-            title_map = {
-                'cumulative': 'Approximation Error (up to layer i)\n(model output vs ground truth)',
-                'added': 'Layer Contribution\n(what layer i added)',
-                'leftover': 'Remaining Gap (after layer i)\n(what\'s left to learn)'
-            }
-            ax.set_title(f'{title_map[perspective]} - {dim_name} {scale_str}', 
-                        fontsize=11, fontweight='bold')
+            # Math expression titles
+            if perspective == 'cumulative':
+                math_expr = r'$|\mathcal{F}[\hat{h}_i]|^2$'
+                subtitle = f'Approximation Power (layer 1→i) {scale_str}'
+            elif perspective == 'added':
+                math_expr = r'$|\mathcal{F}[\hat{h}_i - \hat{h}_{i-1}]|^2$'
+                subtitle = f'Added Power (layer i contribution) {scale_str}'
+            else:  # leftover
+                math_expr = r'$|\mathcal{F}[h_{gt} - \hat{h}_i]|^2$'
+                subtitle = f'Leftover Power (error after layer i) {scale_str}'
+            
+            ax.set_title(f'{math_expr}\n{subtitle}', fontsize=11, fontweight='bold')
             
             ax.grid(True, alpha=0.3)
             
@@ -159,7 +241,7 @@ def plot_learned_frequencies(
             if col_idx == 0:
                 ax.legend(loc='upper right', fontsize=8, ncol=1)
     
-    plt.suptitle('Frequency Learning Analysis - Relative Error by Frequency Band', 
+    plt.suptitle('Frequency Learning Analysis - Power Spectrum by Layer', 
                  fontsize=14, fontweight='bold', y=0.995)
     plt.tight_layout(rect=[0, 0, 1, 0.99])
     

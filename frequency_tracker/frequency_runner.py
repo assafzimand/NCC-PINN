@@ -121,7 +121,7 @@ def run_frequency_tracker(
     print("Step 3: Computing Frequency Spectra")
     print("=" * 60)
     
-    freq_results = analyze_all_layers_frequency(
+    freq_results, sample_spacings = analyze_all_layers_frequency(
         model=model,
         probes_dict=probes_dict,
         freq_data=freq_data,
@@ -129,13 +129,13 @@ def run_frequency_tracker(
         config=cfg
     )
     
-    # Compute ground truth spectrum for comparison
+    # Compute ground truth spectrum for comparison (with same physical frequency units)
     h_gt_grid = freq_data['h_gt_grid'].cpu().numpy()
     if h_gt_grid.shape[1] == 1:
         h_gt_flat = h_gt_grid.flatten()
     else:
         h_gt_flat = h_gt_grid
-    h_gt_spectrum = compute_frequency_spectrum(h_gt_flat, grid_shape)
+    h_gt_spectrum = compute_frequency_spectrum(h_gt_flat, grid_shape, sample_spacings)
     
     # Step 4: Generate visualizations
     print("\n" + "=" * 60)
