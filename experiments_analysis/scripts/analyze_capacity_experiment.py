@@ -207,6 +207,8 @@ def get_problem_from_model_name(model_name: str) -> Optional[str]:
         return 'schrodinger'
     elif 'wave1d' in model_lower:
         return 'wave1d'
+    elif 'burgers2d' in model_lower:
+        return 'burgers2d'
     elif 'burgers1d' in model_lower:
         return 'burgers1d'
     return None
@@ -597,6 +599,69 @@ def generate_rankings(models_data: Dict[str, Dict[str, Any]], output_dir: Path):
     )
     
     print(f"  Rankings saved to {output_dir}")
+
+
+def generate_frequency_summary_table(models_data: Dict[str, Dict[str, Any]], output_dir: Path):
+    """Generate frequency metrics summary table."""
+    rows = []
+    
+    for model_name, data in models_data.items():
+        freq = data.get('frequency_metrics')
+        if not freq:
+            continue
+        
+        # Extract metrics
+        leftover_ratio = freq.get('final_layer_leftover_ratio', 0)
+        gt_power = freq.get('ground_truth_total_power', 0)
+        
+        # Get peak error frequency from spectral_efficiency
+        peak_error_freq = 'N/A'
+        spectral = freq.get('spectral_efficiency', {})
+        if spectral:
+            error_matrix = spectral.get('error_matrix', [])
+            k_bins = spectral.get('k_radial_bins', [])
+            if error_matrix and k_bins:
+                # Get final layer error (last row)
+                final_error = error_matrix[-1] if error_matrix else []
+                if final_error and k_bins:
+                    peak_idx = np.argmax(final_error)
+                    if peak_idx < len(k_bins):
+                        peak_error_freq = f"{k_bins[peak_idx]:.2f} Hz"
+        
+        rows.append({
+            'model_name': model_name,
+            'num_layers': str(data['num_layers']),
+            'weights': data.get('weight_label') or f"{data['num_parameters']:,}",
+            'leftover_ratio': f"{leftover_ratio:.4f}",
+            'gt_power': f"{gt_power:.2e}",
+            'peak_error_freq': peak_error_freq,
+            '_sort_leftover': leftover_ratio
+        })
+    
+    if not rows:
+        print("  No frequency metrics found - skipping frequency summary")
+        return
+    
+    # Sort by leftover ratio (best = lowest)
+    rows.sort(key=lambda x: x['_sort_leftover'])
+    
+    df = pd.DataFrame(rows)
+    
+    # Save CSV
+    cols_csv = ['model_name', 'num_layers', 'weights', 'leftover_ratio', 'gt_power', 'peak_error_freq']
+    df[cols_csv].to_csv(output_dir / "frequency_summary.csv", index=False)
+    
+    # Create table image
+    columns = ['model_name', 'num_layers', 'weights', 'leftover_ratio', 'peak_error_freq']
+    col_labels = ['Model Name', 'Layers', 'Weights', 'Leftover Ratio', 'Peak Error Freq']
+    
+    create_table_image(
+        df, columns, col_labels,
+        'Frequency Metrics Summary\n(Sorted by Leftover Ratio - Lower is Better)',
+        output_dir / "frequency_summary.png"
+    )
+    
+    print(f"  Frequency summary saved to {output_dir}")
 
 
 def create_table_image(
@@ -1465,6 +1530,11 @@ def main(experiment_path: str):
     # A. Generate rankings
     print("A. Generating model rankings...")
     generate_rankings(models_data, output_dir)
+    print()
+    
+    # A2. Generate frequency summary table
+    print("A2. Generating frequency summary table...")
+    generate_frequency_summary_table(models_data, output_dir)
     print()
     
     # B. Generate comparison plots by layers and weights

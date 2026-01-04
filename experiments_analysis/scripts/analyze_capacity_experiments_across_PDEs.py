@@ -1100,6 +1100,600 @@ def _plot_violations_by_weights(pde_data: Dict, pde_names: List[str], output_dir
 
 
 # =============================================================================
+# SECTION 5: FREQUENCY DOMAIN ANALYSIS
+# =============================================================================
+
+def get_frequency_data_for_pde(pde_data: Dict) -> Dict[str, Any]:
+    """Extract frequency data from all models in a PDE experiment.
+    
+    Returns dict with:
+    - gt_radial_power: Ground truth radial power spectrum (from any model)
+    - k_radial_bins: Frequency bins
+    - model_errors: Dict[model_name -> final layer error array]
+    - model_error_matrices: Dict[model_name -> full error matrix [layers x freq]]
+    """
+    result = {
+        'gt_radial_power': None,
+        'k_radial_bins': None,
+        'model_errors': {},
+        'model_error_matrices': {},
+        'model_layer_counts': {},
+        'model_weight_labels': {}
+    }
+    
+    for model_name, model_data in pde_data['models'].items():
+        freq = model_data.get('frequency_metrics')
+        if not freq:
+            continue
+        
+        spectral = freq.get('spectral_efficiency', {})
+        if not spectral:
+            continue
+        
+        # Get GT spectrum (same for all models of same PDE)
+        if result['gt_radial_power'] is None:
+            result['gt_radial_power'] = np.array(spectral.get('gt_radial_power', []))
+            result['k_radial_bins'] = np.array(spectral.get('k_radial_bins', []))
+        
+        error_matrix = spectral.get('error_matrix', [])
+        if error_matrix:
+            result['model_errors'][model_name] = np.array(error_matrix[-1])  # Final layer
+            result['model_error_matrices'][model_name] = np.array(error_matrix)
+            result['model_layer_counts'][model_name] = model_data['num_layers']
+            result['model_weight_labels'][model_name] = model_data.get('weight_label')
+    
+    return result
+
+
+def generate_gt_frequency_heatmap(pde_data: Dict[str, Dict], output_dir: Path):
+    """Generate GT frequency content heatmap (rows=PDEs, cols=frequency bins)."""
+    freq_dir = output_dir / "frequency_analysis"
+    freq_dir.mkdir(parents=True, exist_ok=True)
+    
+    pde_names = sorted(pde_data.keys())
+    
+    # Collect GT spectra
+    gt_spectra = {}
+    k_bins = None
+    
+    for pde_name in pde_names:
+        freq_data = get_frequency_data_for_pde(pde_data[pde_name])
+        if freq_data['gt_radial_power'] is not None and len(freq_data['gt_radial_power']) > 0:
+            gt_spectra[pde_name] = freq_data['gt_radial_power']
+            if k_bins is None:
+                k_bins = freq_data['k_radial_bins']
+    
+    if not gt_spectra:
+        print("  No GT frequency data found - skipping GT heatmap")
+        return
+    
+    # Normalize each spectrum to sum to 1 for fair comparison
+    normalized_spectra = {}
+    for pde_name, spectrum in gt_spectra.items():
+        total = spectrum.sum()
+        if total > 0:
+            normalized_spectra[pde_name] = spectrum / total
+        else:
+            normalized_spectra[pde_name] = spectrum
+    
+    # Create heatmap
+    fig, ax = plt.subplots(figsize=(14, 4 + len(pde_names) * 0.5))
+    
+    # Build matrix
+    matrix = np.array([normalized_spectra[pde] for pde in pde_names])
+    
+    im = ax.imshow(matrix, aspect='auto', cmap='viridis', interpolation='bilinear')
+    
+    # Labels
+    ax.set_yticks(range(len(pde_names)))
+    ax.set_yticklabels([p.capitalize() for p in pde_names], fontsize=11)
+    
+    # X-axis: frequency bins
+    n_bins = len(k_bins) if k_bins is not None else matrix.shape[1]
+    n_ticks = min(10, n_bins)
+    tick_positions = np.linspace(0, n_bins - 1, n_ticks, dtype=int)
+    if k_bins is not None:
+        tick_labels = [f'{k_bins[i]:.1f}' for i in tick_positions]
+    else:
+        tick_labels = [str(i) for i in tick_positions]
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels)
+    ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=11, fontweight='bold')
+    
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Normalized Power', fontsize=10)
+    
+    ax.set_title('Ground Truth Frequency Content by PDE\n(Normalized Power Distribution)', 
+                 fontsize=13, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(freq_dir / "gt_frequency_heatmap.png", dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  GT frequency heatmap saved")
+
+
+def generate_frequency_error_heatmaps(pde_data: Dict[str, Dict], output_dir: Path):
+    """Generate frequency error heatmaps - overall and grouped by layers/weights."""
+    freq_dir = output_dir / "frequency_analysis"
+    freq_dir.mkdir(parents=True, exist_ok=True)
+    
+    pde_names = sorted(pde_data.keys())
+    
+    # Collect all frequency data
+    all_freq_data = {}
+    k_bins = None
+    
+    for pde_name in pde_names:
+        freq_data = get_frequency_data_for_pde(pde_data[pde_name])
+        if freq_data['model_errors']:
+            all_freq_data[pde_name] = freq_data
+            if k_bins is None and freq_data['k_radial_bins'] is not None:
+                k_bins = freq_data['k_radial_bins']
+    
+    if not all_freq_data:
+        print("  No frequency error data found - skipping error heatmaps")
+        return
+    
+    # 2a. Overall mean (all models per PDE)
+    _generate_error_heatmap_overall(all_freq_data, pde_names, k_bins, freq_dir)
+    
+    # Get all unique layer counts and weight categories
+    all_layer_counts = set()
+    all_weight_cats = set()
+    for pde_name, freq_data in all_freq_data.items():
+        all_layer_counts.update(freq_data['model_layer_counts'].values())
+        all_weight_cats.update([w for w in freq_data['model_weight_labels'].values() if w])
+    
+    all_layer_counts = sorted(all_layer_counts)
+    all_weight_cats = sorted(all_weight_cats, key=lambda w: int(w.replace('k', '')) * 1000 if w else 0)
+    
+    # 2b. Grouped by layers
+    if len(all_layer_counts) > 1:
+        _generate_error_heatmap_grouped(all_freq_data, pde_names, k_bins, 
+                                        all_layer_counts, 'layers', freq_dir)
+    
+    # 2c. Grouped by weights
+    if len(all_weight_cats) > 1:
+        _generate_error_heatmap_grouped(all_freq_data, pde_names, k_bins,
+                                        all_weight_cats, 'weights', freq_dir)
+
+
+def _generate_error_heatmap_overall(all_freq_data: Dict, pde_names: List[str], 
+                                     k_bins: np.ndarray, output_dir: Path):
+    """Generate overall frequency error heatmap (mean across all models)."""
+    fig, ax = plt.subplots(figsize=(14, 4 + len(pde_names) * 0.5))
+    
+    # Build matrix: mean error per PDE
+    rows = []
+    valid_pdes = []
+    for pde_name in pde_names:
+        if pde_name not in all_freq_data:
+            continue
+        freq_data = all_freq_data[pde_name]
+        if not freq_data['model_errors']:
+            continue
+        
+        # Mean across all models
+        errors = list(freq_data['model_errors'].values())
+        mean_error = np.mean(errors, axis=0)
+        rows.append(mean_error)
+        valid_pdes.append(pde_name)
+    
+    if not rows:
+        plt.close()
+        return
+    
+    matrix = np.array(rows)
+    
+    # Use log scale for better visibility
+    matrix_log = np.log10(matrix + 1e-10)
+    
+    im = ax.imshow(matrix_log, aspect='auto', cmap='Reds', interpolation='bilinear')
+    
+    ax.set_yticks(range(len(valid_pdes)))
+    ax.set_yticklabels([p.capitalize() for p in valid_pdes], fontsize=11)
+    
+    n_bins = matrix.shape[1]
+    n_ticks = min(10, n_bins)
+    tick_positions = np.linspace(0, n_bins - 1, n_ticks, dtype=int)
+    if k_bins is not None and len(k_bins) > 0:
+        tick_labels = [f'{k_bins[i]:.1f}' for i in tick_positions if i < len(k_bins)]
+    else:
+        tick_labels = [str(i) for i in tick_positions]
+    ax.set_xticks(tick_positions[:len(tick_labels)])
+    ax.set_xticklabels(tick_labels)
+    ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=11, fontweight='bold')
+    
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Log10 Relative Error', fontsize=10)
+    
+    ax.set_title('Frequency Learning Difficulty by PDE\n(Mean Error Across All Models) [log scale]',
+                 fontsize=13, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / "frequency_error_heatmap_overall.png", dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def _generate_error_heatmap_grouped(all_freq_data: Dict, pde_names: List[str],
+                                     k_bins: np.ndarray, group_values: List,
+                                     group_by: str, output_dir: Path):
+    """Generate side-by-side error heatmaps grouped by layers or weights."""
+    n_groups = len(group_values)
+    fig, axes = plt.subplots(1, n_groups, figsize=(5 * n_groups, 4 + len(pde_names) * 0.4))
+    if n_groups == 1:
+        axes = [axes]
+    
+    for idx, group_val in enumerate(group_values):
+        ax = axes[idx]
+        
+        # Build matrix for this group
+        rows = []
+        valid_pdes = []
+        
+        for pde_name in pde_names:
+            if pde_name not in all_freq_data:
+                continue
+            freq_data = all_freq_data[pde_name]
+            
+            # Filter models by group
+            group_errors = []
+            for model_name, error in freq_data['model_errors'].items():
+                if group_by == 'layers':
+                    if freq_data['model_layer_counts'].get(model_name) == group_val:
+                        group_errors.append(error)
+                else:  # weights
+                    if freq_data['model_weight_labels'].get(model_name) == group_val:
+                        group_errors.append(error)
+            
+            if group_errors:
+                mean_error = np.mean(group_errors, axis=0)
+                rows.append(mean_error)
+                valid_pdes.append(pde_name)
+        
+        if not rows:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=12)
+            ax.set_title(f'{group_val} {group_by.capitalize()}', fontsize=11, fontweight='bold')
+            ax.axis('off')
+            continue
+        
+        matrix = np.array(rows)
+        matrix_log = np.log10(matrix + 1e-10)
+        
+        im = ax.imshow(matrix_log, aspect='auto', cmap='Reds', interpolation='bilinear')
+        
+        ax.set_yticks(range(len(valid_pdes)))
+        ax.set_yticklabels([p.capitalize() for p in valid_pdes], fontsize=9)
+        
+        n_bins = matrix.shape[1]
+        n_ticks = min(6, n_bins)
+        tick_positions = np.linspace(0, n_bins - 1, n_ticks, dtype=int)
+        if k_bins is not None and len(k_bins) > 0:
+            tick_labels = [f'{k_bins[i]:.1f}' for i in tick_positions if i < len(k_bins)]
+        else:
+            tick_labels = [str(i) for i in tick_positions]
+        ax.set_xticks(tick_positions[:len(tick_labels)])
+        ax.set_xticklabels(tick_labels, fontsize=8)
+        
+        if idx == 0:
+            ax.set_ylabel('PDE', fontsize=10, fontweight='bold')
+        ax.set_xlabel('|k| (Hz)', fontsize=9)
+        ax.set_title(f'{group_val} {group_by.capitalize()}', fontsize=11, fontweight='bold')
+    
+    # Add shared colorbar
+    fig.subplots_adjust(right=0.92)
+    cbar_ax = fig.add_axes([0.94, 0.15, 0.02, 0.7])
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_label('Log10 Error', fontsize=10)
+    
+    fig.suptitle(f'Frequency Error by {group_by.capitalize()} [log scale]', 
+                 fontsize=14, fontweight='bold', y=1.02)
+    
+    plt.savefig(output_dir / f"frequency_error_by_{group_by}.png", dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def generate_layerwise_frequency_heatmaps(pde_data: Dict[str, Dict], output_dir: Path):
+    """Generate layer-wise frequency error heatmaps grouped by layers/weights."""
+    freq_dir = output_dir / "frequency_analysis"
+    freq_dir.mkdir(parents=True, exist_ok=True)
+    
+    pde_names = sorted(pde_data.keys())
+    
+    # Collect all frequency data
+    all_freq_data = {}
+    k_bins = None
+    
+    for pde_name in pde_names:
+        freq_data = get_frequency_data_for_pde(pde_data[pde_name])
+        if freq_data['model_error_matrices']:
+            all_freq_data[pde_name] = freq_data
+            if k_bins is None and freq_data['k_radial_bins'] is not None:
+                k_bins = freq_data['k_radial_bins']
+    
+    if not all_freq_data:
+        print("  No layerwise frequency data found - skipping")
+        return
+    
+    # Get all unique layer counts and weight categories
+    all_layer_counts = set()
+    all_weight_cats = set()
+    for pde_name, freq_data in all_freq_data.items():
+        all_layer_counts.update(freq_data['model_layer_counts'].values())
+        all_weight_cats.update([w for w in freq_data['model_weight_labels'].values() if w])
+    
+    all_layer_counts = sorted(all_layer_counts)
+    all_weight_cats = sorted(all_weight_cats, key=lambda w: int(w.replace('k', '')) * 1000 if w else 0)
+    
+    # 3a. By layer count - show layer-by-layer progression
+    if len(all_layer_counts) > 1:
+        _generate_layerwise_by_group(all_freq_data, pde_names, k_bins,
+                                      all_layer_counts, 'layers', freq_dir)
+    
+    # 3b. By weights
+    if len(all_weight_cats) > 1:
+        _generate_layerwise_by_group(all_freq_data, pde_names, k_bins,
+                                      all_weight_cats, 'weights', freq_dir)
+
+
+def _generate_layerwise_by_group(all_freq_data: Dict, pde_names: List[str],
+                                  k_bins: np.ndarray, group_values: List,
+                                  group_by: str, output_dir: Path):
+    """Generate layer-wise heatmaps for each group value."""
+    n_groups = len(group_values)
+    
+    for group_val in group_values:
+        # Collect all error matrices for this group across PDEs
+        all_matrices = []
+        max_layers = 0
+        
+        for pde_name in pde_names:
+            if pde_name not in all_freq_data:
+                continue
+            freq_data = all_freq_data[pde_name]
+            
+            for model_name, error_matrix in freq_data['model_error_matrices'].items():
+                if group_by == 'layers':
+                    if freq_data['model_layer_counts'].get(model_name) == group_val:
+                        all_matrices.append(error_matrix)
+                        max_layers = max(max_layers, error_matrix.shape[0])
+                else:
+                    if freq_data['model_weight_labels'].get(model_name) == group_val:
+                        all_matrices.append(error_matrix)
+                        max_layers = max(max_layers, error_matrix.shape[0])
+        
+        if not all_matrices or max_layers == 0:
+            continue
+        
+        # Pad matrices to same size and compute mean
+        n_freq = all_matrices[0].shape[1]
+        padded = np.full((len(all_matrices), max_layers, n_freq), np.nan)
+        for i, mat in enumerate(all_matrices):
+            padded[i, :mat.shape[0], :] = mat
+        
+        mean_matrix = np.nanmean(padded, axis=0)
+        
+        # Create heatmap
+        fig, ax = plt.subplots(figsize=(12, 4 + max_layers * 0.3))
+        
+        matrix_log = np.log10(mean_matrix + 1e-10)
+        im = ax.imshow(matrix_log, aspect='auto', cmap='Reds', interpolation='bilinear')
+        
+        ax.set_yticks(range(max_layers))
+        ax.set_yticklabels([f'Layer {i+1}' for i in range(max_layers)], fontsize=10)
+        ax.set_ylabel('Layer', fontsize=11, fontweight='bold')
+        
+        n_bins = n_freq
+        n_ticks = min(10, n_bins)
+        tick_positions = np.linspace(0, n_bins - 1, n_ticks, dtype=int)
+        if k_bins is not None and len(k_bins) > 0:
+            tick_labels = [f'{k_bins[i]:.1f}' for i in tick_positions if i < len(k_bins)]
+        else:
+            tick_labels = [str(i) for i in tick_positions]
+        ax.set_xticks(tick_positions[:len(tick_labels)])
+        ax.set_xticklabels(tick_labels)
+        ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=11, fontweight='bold')
+        
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label('Log10 Relative Error', fontsize=10)
+        
+        ax.set_title(f'Layer-wise Frequency Learning: {group_val} {group_by.capitalize()}\n'
+                     f'(Mean Across {len(all_matrices)} Models, All PDEs) [log scale]',
+                     fontsize=13, fontweight='bold')
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / f"layerwise_frequency_{group_by}_{group_val}.png", 
+                    dpi=150, bbox_inches='tight')
+        plt.close()
+
+
+def generate_learning_progression_comparison(pde_data: Dict[str, Dict], output_dir: Path):
+    """Generate layer-wise learning progression comparison (probe vs frequency)."""
+    freq_dir = output_dir / "frequency_analysis"
+    freq_dir.mkdir(parents=True, exist_ok=True)
+    
+    pde_names = sorted(pde_data.keys())
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    for pde_name in pde_names:
+        # Get best model (by eval_rel_l2)
+        models = pde_data[pde_name]['models']
+        best_model = None
+        best_val = float('inf')
+        
+        for model_name, model_data in models.items():
+            val = model_data.get('eval_rel_l2')
+            if val is not None and val < best_val:
+                best_val = val
+                best_model = model_data
+        
+        if not best_model:
+            continue
+        
+        color = PDE_COLORS.get(pde_name, 'gray')
+        
+        # Probe error per layer
+        probe = best_model.get('probe_metrics')
+        if probe and 'eval' in probe:
+            rel_l2 = probe['eval'].get('rel_l2', [])
+            if rel_l2:
+                layers = list(range(1, len(rel_l2) + 1))
+                ax1.plot(layers, rel_l2, 'o-', color=color, label=pde_name.capitalize(),
+                        linewidth=2, markersize=6)
+        
+        # Frequency leftover ratio per layer
+        freq = best_model.get('frequency_metrics')
+        if freq and 'layer_metrics' in freq:
+            layer_metrics = freq['layer_metrics']
+            if layer_metrics:
+                layers_analyzed = list(layer_metrics.keys())
+                leftover_ratios = [layer_metrics[l].get('leftover_ratio', 0) for l in layers_analyzed]
+                layer_nums = list(range(1, len(leftover_ratios) + 1))
+                ax2.plot(layer_nums, leftover_ratios, 's-', color=color, 
+                        label=pde_name.capitalize(), linewidth=2, markersize=6)
+    
+    # Configure probe plot
+    ax1.set_xlabel('Layer', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Probe Rel-L2 Error', fontsize=12, fontweight='bold')
+    ax1.set_title('Probe Error per Layer\n(Best Model per PDE)', fontsize=13, fontweight='bold')
+    ax1.legend(loc='upper right')
+    ax1.grid(True, alpha=0.3)
+    ax1.set_yscale('log')
+    
+    # Configure frequency plot
+    ax2.set_xlabel('Layer', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('Frequency Leftover Ratio', fontsize=12, fontweight='bold')
+    ax2.set_title('Frequency Leftover Ratio per Layer\n(Best Model per PDE)', 
+                  fontsize=13, fontweight='bold')
+    ax2.legend(loc='upper right')
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(freq_dir / "learning_progression_comparison.png", dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Learning progression comparison saved")
+
+
+def generate_complexity_frequency_table(pde_data: Dict[str, Dict], output_dir: Path):
+    """Generate PDE complexity vs frequency metrics table."""
+    freq_dir = output_dir / "frequency_analysis"
+    freq_dir.mkdir(parents=True, exist_ok=True)
+    
+    pde_names = sorted(pde_data.keys())
+    rows = []
+    
+    for pde_name in pde_names:
+        # Get PDE stats
+        stats = extract_pde_stats(pde_name, pde_data[pde_name]['config'])
+        
+        # Get frequency data
+        freq_data = get_frequency_data_for_pde(pde_data[pde_name])
+        
+        # Calculate GT high-freq percentage (power in upper 50% of frequencies)
+        gt_high_freq_pct = 0
+        if freq_data['gt_radial_power'] is not None and len(freq_data['gt_radial_power']) > 0:
+            gt_power = freq_data['gt_radial_power']
+            mid_idx = len(gt_power) // 2
+            high_freq_power = gt_power[mid_idx:].sum()
+            total_power = gt_power.sum()
+            if total_power > 0:
+                gt_high_freq_pct = high_freq_power / total_power * 100
+        
+        # Calculate mean error at high frequencies
+        mean_high_freq_error = 0
+        best_leftover = 1.0
+        if freq_data['model_errors']:
+            all_errors = list(freq_data['model_errors'].values())
+            mean_error = np.mean(all_errors, axis=0)
+            mid_idx = len(mean_error) // 2
+            mean_high_freq_error = np.mean(mean_error[mid_idx:])
+            
+            # Get best model's leftover ratio
+            models = pde_data[pde_name]['models']
+            for model_name, model_data in models.items():
+                freq = model_data.get('frequency_metrics')
+                if freq:
+                    leftover = freq.get('final_layer_leftover_ratio', 1.0)
+                    best_leftover = min(best_leftover, leftover)
+        
+        rows.append({
+            'pde': pde_name.capitalize(),
+            'deriv_order': stats['deriv_order'],
+            'nonlin_rank': stats['nonlin_rank'],
+            'gt_high_freq': f"{gt_high_freq_pct:.1f}%",
+            'mean_high_freq_err': f"{mean_high_freq_error:.4f}",
+            'best_leftover': f"{best_leftover:.4f}"
+        })
+    
+    df = pd.DataFrame(rows)
+    
+    # Save CSV
+    df.to_csv(freq_dir / "complexity_frequency_table.csv", index=False)
+    
+    # Create table image
+    columns = ['pde', 'deriv_order', 'nonlin_rank', 'gt_high_freq', 'mean_high_freq_err', 'best_leftover']
+    col_labels = ['PDE', 'Deriv Order', 'Nonlin Rank', 'GT High-Freq %', 'Mean High-Freq Error', 'Best Leftover']
+    
+    # Simple table image
+    fig, ax = plt.subplots(figsize=(14, 3 + len(rows) * 0.5))
+    ax.axis('tight')
+    ax.axis('off')
+    
+    table_data = df[columns].values.tolist()
+    
+    table = ax.table(
+        cellText=table_data,
+        colLabels=col_labels,
+        cellLoc='center',
+        loc='center',
+        bbox=[0, 0, 1, 1]
+    )
+    
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 1.8)
+    
+    for i in range(len(col_labels)):
+        cell = table[(0, i)]
+        cell.set_facecolor('#34495e')
+        cell.set_text_props(weight='bold', color='white')
+    
+    plt.title('PDE Complexity vs Frequency Metrics', fontsize=14, fontweight='bold', pad=20)
+    plt.savefig(freq_dir / "complexity_frequency_table.png", dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Complexity-frequency table saved")
+
+
+def generate_cross_pde_frequency_analysis(pde_data: Dict[str, Dict], output_dir: Path):
+    """Generate all cross-PDE frequency analysis plots."""
+    print("\nSection 5: Generating frequency domain analysis...")
+    
+    freq_dir = output_dir / "frequency_analysis"
+    freq_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Plot 1: GT frequency heatmap
+    generate_gt_frequency_heatmap(pde_data, output_dir)
+    
+    # Plot 2: Frequency error heatmaps (overall + grouped)
+    generate_frequency_error_heatmaps(pde_data, output_dir)
+    
+    # Plot 3: Layer-wise frequency heatmaps
+    generate_layerwise_frequency_heatmaps(pde_data, output_dir)
+    
+    # Plot 4: Learning progression comparison
+    generate_learning_progression_comparison(pde_data, output_dir)
+    
+    # Plot 5: Complexity vs frequency table
+    generate_complexity_frequency_table(pde_data, output_dir)
+    
+    print(f"  Frequency analysis saved to {freq_dir}")
+
+
+# =============================================================================
 # MAIN FUNCTION
 # =============================================================================
 
@@ -1191,6 +1785,10 @@ def main(experiment_paths: List[str]):
     # Section 4: Non-Monotonic Analysis
     print("Section 4: Generating non-monotonic analysis plots...")
     generate_cross_pde_violation_plots(pde_data, output_dir)
+    print()
+    
+    # Section 5: Frequency Domain Analysis
+    generate_cross_pde_frequency_analysis(pde_data, output_dir)
     print()
     
     print("=" * 70)
