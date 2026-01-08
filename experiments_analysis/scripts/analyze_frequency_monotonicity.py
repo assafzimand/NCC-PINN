@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import torch
 from models.fc_model import FCNet
 from probes.probe_core import train_linear_probe, compute_probe_predictions
+from frequency_tracker.frequency_core import compute_frequency_spectrum, compute_radial_spectrum
 
 
 # =============================================================================
@@ -256,6 +257,119 @@ def detect_violations_per_metric(
 # FREQUENCY ERROR REDUCTION FUNCTIONS
 # =============================================================================
 
+def compute_spectral_errors_from_predictions(
+    predictions: Dict[str, np.ndarray],
+    targets: np.ndarray,
+    coordinates: np.ndarray,
+    problem_config: Dict,
+    n_bins: int = 32
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute spectral errors from probe predictions on eval data.
+    
+    This computes the frequency-domain error for each layer using FFT,
+    allowing us to see which frequencies have errors at each layer.
+    
+    Args:
+        predictions: Dict {layer_name: predictions (N, d_o)}
+        targets: Ground truth (N, d_o) 
+        coordinates: (N, d) spatial+temporal coordinates
+        problem_config: Problem config with domain info
+        n_bins: Number of radial frequency bins
+        
+    Returns:
+        k_bins: Radial frequency bin centers
+        error_matrix: (n_layers, n_bins) spectral error for each layer
+        gt_radial: (n_bins,) ground truth radial power
+    """
+    layer_names = sorted(predictions.keys(), key=lambda x: int(x.split('_')[1]))
+    n_layers = len(layer_names)
+    
+    # Determine grid shape from coordinates
+    # For irregular data, we need to interpolate to a regular grid for FFT
+    n_dims = coordinates.shape[1]
+    
+    # Create a regular grid for FFT
+    n_grid = 64  # Grid resolution for FFT
+    
+    # Get domain bounds from coordinates
+    domain_mins = coordinates.min(axis=0)
+    domain_maxs = coordinates.max(axis=0)
+    
+    # Create regular grid
+    grids = [np.linspace(domain_mins[i], domain_maxs[i], n_grid) for i in range(n_dims)]
+    mesh = np.meshgrid(*grids, indexing='ij')
+    grid_points = np.stack([m.flatten() for m in mesh], axis=1)  # (N_grid, n_dims)
+    
+    # Compute sample spacings for physical frequencies
+    sample_spacings = [(domain_maxs[i] - domain_mins[i]) / n_grid for i in range(n_dims)]
+    grid_shape = tuple([n_grid] * n_dims)
+    
+    # Interpolate ground truth to regular grid
+    from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
+    
+    if targets.ndim == 1:
+        targets_flat = targets
+    else:
+        # For multi-output, use magnitude
+        if targets.shape[1] > 1:
+            targets_flat = np.sqrt(np.sum(targets ** 2, axis=1))
+        else:
+            targets_flat = targets.flatten()
+    
+    # Create interpolator
+    try:
+        interp_gt = LinearNDInterpolator(coordinates, targets_flat)
+        gt_on_grid = interp_gt(grid_points)
+        # Fill NaN with nearest neighbor
+        nan_mask = np.isnan(gt_on_grid)
+        if nan_mask.any():
+            interp_nearest = NearestNDInterpolator(coordinates, targets_flat)
+            gt_on_grid[nan_mask] = interp_nearest(grid_points[nan_mask])
+    except Exception:
+        # Fallback to nearest neighbor
+        interp_nearest = NearestNDInterpolator(coordinates, targets_flat)
+        gt_on_grid = interp_nearest(grid_points)
+    
+    # Compute ground truth spectrum
+    gt_spectrum = compute_frequency_spectrum(gt_on_grid, grid_shape, sample_spacings)
+    k_bins, gt_radial = compute_radial_spectrum(gt_spectrum['power'], gt_spectrum['freqs'], n_bins)
+    gt_radial_safe = np.where(gt_radial > 1e-15, gt_radial, 1e-15)
+    
+    # Compute spectral error for each layer
+    error_matrix = np.zeros((n_layers, n_bins))
+    
+    for layer_idx, layer_name in enumerate(layer_names):
+        preds = predictions[layer_name]
+        
+        # Handle multi-output
+        if preds.ndim > 1 and preds.shape[1] > 1:
+            preds_flat = np.sqrt(np.sum(preds ** 2, axis=1))
+        else:
+            preds_flat = preds.flatten()
+        
+        # Interpolate predictions to regular grid
+        try:
+            interp_pred = LinearNDInterpolator(coordinates, preds_flat)
+            pred_on_grid = interp_pred(grid_points)
+            nan_mask = np.isnan(pred_on_grid)
+            if nan_mask.any():
+                interp_nearest = NearestNDInterpolator(coordinates, preds_flat)
+                pred_on_grid[nan_mask] = interp_nearest(grid_points[nan_mask])
+        except Exception:
+            interp_nearest = NearestNDInterpolator(coordinates, preds_flat)
+            pred_on_grid = interp_nearest(grid_points)
+        
+        # Compute error spectrum (leftover = gt - pred)
+        error = gt_on_grid - pred_on_grid
+        error_spectrum = compute_frequency_spectrum(error, grid_shape, sample_spacings)
+        _, error_radial = compute_radial_spectrum(error_spectrum['power'], error_spectrum['freqs'], n_bins)
+        
+        # Store relative error
+        error_matrix[layer_idx] = error_radial / gt_radial_safe
+    
+    return k_bins, error_matrix, gt_radial
+
+
 def get_frequency_reduction_at_layer(
     freq_metrics: Dict,
     layer_idx: int
@@ -263,7 +377,7 @@ def get_frequency_reduction_at_layer(
     """Get frequency error reduction E_{i-1} - E_i at a specific layer transition.
     
     Args:
-        freq_metrics: frequency_metrics.json data
+        freq_metrics: frequency_metrics.json data OR computed spectral data
         layer_idx: 0-based index of the layer (error at layer_idx vs layer_idx-1)
         
     Returns:
@@ -284,6 +398,91 @@ def get_frequency_reduction_at_layer(
     return k_bins, error_reduction
 
 
+def get_frequency_reduction_from_matrix(
+    k_bins: np.ndarray,
+    error_matrix: np.ndarray,
+    layer_idx: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Get frequency error reduction from pre-computed error matrix.
+    
+    Args:
+        k_bins: Radial frequency bin centers
+        error_matrix: (n_layers, n_bins) spectral error matrix
+        layer_idx: 0-based index of the layer
+        
+    Returns:
+        (k_bins, error_reduction) where positive = improvement
+    """
+    if len(error_matrix) == 0 or layer_idx <= 0 or layer_idx >= len(error_matrix):
+        return np.array([]), np.array([])
+    
+    prev_error = error_matrix[layer_idx - 1]
+    curr_error = error_matrix[layer_idx]
+    error_reduction = prev_error - curr_error
+    
+    return k_bins, error_reduction
+
+
+def plot_freq_reduction_from_eval(
+    model_name: str,
+    k_bins: np.ndarray,
+    error_matrix: np.ndarray,
+    violation_layers: List[int],
+    output_dir: Path
+):
+    """Generate per-model frequency reduction plot using eval data computed spectra.
+    
+    Args:
+        model_name: Name of the model
+        k_bins: Radial frequency bin centers
+        error_matrix: (n_layers, n_bins) spectral error matrix computed from eval data
+        violation_layers: List of layer indices (0-based) where violations occurred
+        output_dir: Directory to save plot
+    """
+    if not violation_layers or len(k_bins) == 0:
+        return
+    
+    n_violations = len(violation_layers)
+    fig, axes = plt.subplots(1, n_violations, figsize=(5 * n_violations, 4), squeeze=False)
+    
+    for idx, layer_idx in enumerate(violation_layers):
+        ax = axes[0, idx]
+        
+        k_bins_layer, error_reduction = get_frequency_reduction_from_matrix(
+            k_bins, error_matrix, layer_idx
+        )
+        
+        if len(error_reduction) == 0:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes)
+            continue
+        
+        # Plot error reduction
+        ax.axhline(y=0, color='gray', linestyle='--', alpha=0.5, linewidth=1)
+        
+        # Fill positive (improvement) in green, negative (degradation) in red
+        ax.fill_between(k_bins_layer, 0, error_reduction, 
+                       where=(error_reduction >= 0), color='#2ecc71', alpha=0.5, label='Improved')
+        ax.fill_between(k_bins_layer, 0, error_reduction,
+                       where=(error_reduction < 0), color='#e74c3c', alpha=0.5, label='Degraded')
+        ax.plot(k_bins_layer, error_reduction, 'k-', linewidth=1.5)
+        
+        ax.set_xlabel('Radial Frequency |k| (Hz)')
+        ax.set_ylabel('Error Reduction (E_{i-1} - E_i)')
+        # Use 1-based layer numbering for display
+        ax.set_title(f'Layer {layer_idx} → {layer_idx + 1}')
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, alpha=0.3)
+    
+    fig.suptitle(f'{model_name}\nFrequency Error Reduction at Violation Layers (from eval data)', fontsize=12)
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = model_name.replace('/', '_').replace('\\', '_')
+    save_path = output_dir / f'{safe_name}_freq_reduction.png'
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
 def plot_freq_reduction_per_model(
     model_name: str,
     freq_metrics: Dict,
@@ -291,6 +490,9 @@ def plot_freq_reduction_per_model(
     output_dir: Path
 ):
     """Generate per-model frequency reduction plot for violation layers.
+    
+    DEPRECATED: This uses frequency_metrics.json from grid data.
+    Use plot_freq_reduction_from_eval for accurate results on eval data.
     
     Args:
         model_name: Name of the model
@@ -406,6 +608,107 @@ def plot_aggregated_freq_reduction(
     ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=11)
     ax.set_ylabel('Mean Error Reduction (E_{i-1} - E_i)', fontsize=11)
     ax.set_title(f'Aggregated Frequency Error Reduction\n({len(all_reductions)} violations from {len(violations)} models)', fontsize=12)
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
+    
+    # Add annotation for problem frequencies
+    if np.any(mean_reduction < 0):
+        problem_freqs = k_bins_ref[mean_reduction < 0]
+        if len(problem_freqs) > 0:
+            ax.axvspan(problem_freqs.min(), problem_freqs.max(), 
+                      alpha=0.1, color='red', label='Problem range')
+    
+    output_dir.mkdir(parents=True, exist_ok=True)
+    save_path = output_dir / 'aggregated_freq_reduction.png'
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def plot_aggregated_freq_reduction_v2(
+    models_data: Dict[str, Dict[str, Any]],
+    violations: Dict[str, List[Dict]],
+    eval_spectral_data: Dict[str, Dict],
+    output_dir: Path
+):
+    """Plot aggregated frequency reduction using eval-computed spectral data.
+    
+    This version prioritizes eval-computed spectral data for accuracy,
+    falling back to frequency_metrics.json only if eval data unavailable.
+    
+    Args:
+        models_data: All model data
+        violations: {model_name: [violation dicts]} for this metric
+        eval_spectral_data: {model_name: {'k_bins': array, 'error_matrix': array}}
+        output_dir: Directory to save plot
+    """
+    if not violations:
+        return
+    
+    # Collect all error reductions
+    all_reductions = []
+    k_bins_ref = None
+    
+    for model_name, model_violations in violations.items():
+        # Try eval-computed spectral data first
+        if model_name in eval_spectral_data:
+            k_bins = eval_spectral_data[model_name]['k_bins']
+            error_matrix = eval_spectral_data[model_name]['error_matrix']
+            
+            for v in model_violations:
+                layer_idx = v['layer_idx']
+                if layer_idx > 0 and layer_idx < len(error_matrix):
+                    k_bins_layer, error_reduction = get_frequency_reduction_from_matrix(
+                        k_bins, error_matrix, layer_idx
+                    )
+                    if len(error_reduction) > 0:
+                        if k_bins_ref is None:
+                            k_bins_ref = k_bins_layer
+                        all_reductions.append(error_reduction)
+        else:
+            # Fallback to frequency_metrics.json
+            freq_metrics = models_data[model_name].get('frequency_metrics')
+            if freq_metrics is None:
+                continue
+            
+            for v in model_violations:
+                layer_idx = v['layer_idx']
+                k_bins, error_reduction = get_frequency_reduction_at_layer(freq_metrics, layer_idx)
+                
+                if len(error_reduction) > 0:
+                    if k_bins_ref is None:
+                        k_bins_ref = k_bins
+                    all_reductions.append(error_reduction)
+    
+    if not all_reductions or k_bins_ref is None:
+        return
+    
+    # Compute statistics
+    all_reductions = np.array(all_reductions)
+    mean_reduction = np.mean(all_reductions, axis=0)
+    std_reduction = np.std(all_reductions, axis=0)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    ax.axhline(y=0, color='gray', linestyle='--', alpha=0.5, linewidth=1)
+    
+    # Mean with confidence band
+    ax.fill_between(k_bins_ref, mean_reduction - std_reduction, mean_reduction + std_reduction,
+                   alpha=0.3, color='#3498db', label='±1 std')
+    ax.plot(k_bins_ref, mean_reduction, 'b-', linewidth=2, label='Mean')
+    
+    # Color the zero crossing regions
+    ax.fill_between(k_bins_ref, 0, mean_reduction,
+                   where=(mean_reduction >= 0), color='#2ecc71', alpha=0.2)
+    ax.fill_between(k_bins_ref, 0, mean_reduction,
+                   where=(mean_reduction < 0), color='#e74c3c', alpha=0.2)
+    
+    ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=11)
+    ax.set_ylabel('Mean Error Reduction (E_{i-1} - E_i)', fontsize=11)
+    n_from_eval = len(eval_spectral_data)
+    ax.set_title(f'Aggregated Frequency Error Reduction (from eval data)\n'
+                f'({len(all_reductions)} violations from {len(violations)} models, '
+                f'{n_from_eval} computed from eval)', fontsize=12)
     ax.legend(loc='upper right')
     ax.grid(True, alpha=0.3)
     
@@ -663,28 +966,21 @@ def find_model_checkpoint(run_dir: Path, problem: str, model_name: str) -> Optio
     
     Checks several possible locations based on the project structure.
     """
-    # Extract architecture from model name (e.g., "wave1d-2-128-128-128-1-tanh")
-    parts = model_name.split('-')
+    # Get model_dir (parent of run_dir, which is the timestamped directory)
+    model_dir = run_dir.parent
     
-    # Find architecture part (numbers after problem name)
-    arch_parts = []
-    for part in parts[1:]:  # Skip problem name
-        if part.isdigit():
-            arch_parts.append(part)
-        elif part in ['tanh', 'relu', 'sin', 'gelu']:
-            break  # Stop at activation
-    
-    if not arch_parts:
-        return None
-    
-    architecture_str = "-".join(arch_parts)
-    activation = parts[-1] if parts[-1] in ['tanh', 'relu', 'sin', 'gelu'] else 'tanh'
-    
-    # Possible checkpoint locations
-    checkpoint_name = f"{problem}-{architecture_str}-{activation}"
+    # Possible checkpoint locations (in order of priority):
+    # 1. Inside model folder: model_dir/checkpoints/model_name/best_model.pt
+    # 2. Global checkpoints folder: checkpoints/problem/model_name/best_model.pt
+    # 3. Inside run directory: run_dir/checkpoints/best_model.pt
     possible_paths = [
-        Path("checkpoints") / problem / checkpoint_name / "best_model.pt",
-        Path("checkpoints") / problem / checkpoint_name / "final_model.pt",
+        # Inside experiment's model folder (AWS experiment structure)
+        model_dir / "checkpoints" / model_name / "best_model.pt",
+        model_dir / "checkpoints" / model_name / "final_model.pt",
+        # Global checkpoints folder (local development structure)
+        Path("checkpoints") / problem / model_name / "best_model.pt",
+        Path("checkpoints") / problem / model_name / "final_model.pt",
+        # Inside run directory
         run_dir / "checkpoints" / "best_model.pt",
         run_dir / "checkpoints" / "final_model.pt",
     ]
@@ -873,12 +1169,23 @@ def generate_overlay_for_model(
         print(f"  Warning: Could not parse architecture from {model_name}")
         return
     
-    # Create minimal config
+    # Determine spatial_dim and output_dim based on problem
+    PROBLEM_CONFIGS = {
+        'wave1d': {'spatial_dim': 1, 'output_dim': 1},
+        'burgers1d': {'spatial_dim': 1, 'output_dim': 1},
+        'burgers2d': {'spatial_dim': 2, 'output_dim': 1},
+        'schrodinger': {'spatial_dim': 1, 'output_dim': 2},
+    }
+    
+    problem_config = PROBLEM_CONFIGS.get(problem, {'spatial_dim': 1, 'output_dim': 1})
+    
+    # Create config matching FCNet requirements
     config = {
         'architecture': architecture,
         'activation': activation,
         'cuda': torch.cuda.is_available(),
         'problem': problem,
+        problem: problem_config,  # FCNet requires config[problem]['spatial_dim'] etc.
     }
     
     # Load model
@@ -992,6 +1299,140 @@ def _generate_overlay_with_aggregate_errors(
             metric_name=metric_name,
             output_path=output_path
         )
+
+
+def generate_freq_reduction_from_eval(
+    model_name: str,
+    model_data: Dict[str, Any],
+    violation_layers: List[int],
+    output_dir: Path
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """Generate frequency reduction plot using spectral errors from eval data.
+    
+    This ensures the frequency analysis is on the same data where violations were detected.
+    
+    Args:
+        model_name: Name of the model
+        model_data: Model data dict including run_dir
+        violation_layers: List of layer indices where violations occurred
+        output_dir: Directory to save the plot
+        
+    Returns:
+        (k_bins, error_matrix) if successful, None otherwise
+    """
+    run_dir = model_data['run_dir']
+    
+    # Extract problem from model name
+    problem = extract_problem_from_name(model_name)
+    if problem is None:
+        print(f"    Warning: Cannot extract problem from {model_name}, falling back to JSON metrics")
+        return None
+    
+    # Load datasets
+    eval_data_path = Path('datasets') / problem / 'eval_data.pt'
+    train_data_path = Path('datasets') / problem / 'training_data.pt'
+    
+    if not eval_data_path.exists() or not train_data_path.exists():
+        print(f"    Warning: Dataset not found for {problem}, falling back to JSON metrics")
+        return None
+    
+    eval_data = torch.load(eval_data_path, weights_only=False)
+    train_data = torch.load(train_data_path, weights_only=False)
+    
+    eval_x = eval_data['x'].numpy()
+    eval_t = eval_data['t'].numpy()
+    h_gt = eval_data['h_gt'].numpy()
+    
+    # Combine coordinates
+    if eval_x.ndim == 1:
+        eval_x_coords = eval_x.reshape(-1, 1)
+    else:
+        eval_x_coords = eval_x
+    if eval_t.ndim == 1:
+        eval_t_coords = eval_t.reshape(-1, 1)
+    else:
+        eval_t_coords = eval_t
+    coordinates = np.hstack([eval_x_coords, eval_t_coords])
+    
+    # Find model checkpoint
+    checkpoint_path = find_model_checkpoint(run_dir, problem, model_name)
+    if checkpoint_path is None:
+        print(f"    Warning: No checkpoint found for {model_name}, falling back to JSON metrics")
+        return None
+    
+    # Parse architecture from model name
+    parts = model_name.split('-')
+    architecture = []
+    activation = 'tanh'
+    for part in parts[1:]:
+        if part.isdigit():
+            architecture.append(int(part))
+        elif part in ['tanh', 'relu', 'sin', 'gelu']:
+            activation = part
+            break
+    
+    if len(architecture) < 2:
+        print(f"    Warning: Could not parse architecture from {model_name}")
+        return None
+    
+    # Problem-specific config
+    PROBLEM_CONFIGS = {
+        'wave1d': {'spatial_dim': 1, 'output_dim': 1},
+        'burgers1d': {'spatial_dim': 1, 'output_dim': 1},
+        'burgers2d': {'spatial_dim': 2, 'output_dim': 1},
+        'schrodinger': {'spatial_dim': 1, 'output_dim': 2},
+    }
+    
+    problem_config = PROBLEM_CONFIGS.get(problem, {'spatial_dim': 1, 'output_dim': 1})
+    
+    config = {
+        'architecture': architecture,
+        'activation': activation,
+        'cuda': torch.cuda.is_available(),
+        'problem': problem,
+        problem: problem_config,
+    }
+    
+    # Load model
+    model = load_model_from_checkpoint(checkpoint_path, architecture, activation, config)
+    if model is None:
+        print(f"    Warning: Failed to load model, falling back to JSON metrics")
+        return None
+    
+    # Compute per-point probe predictions
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    try:
+        predictions, targets = compute_per_point_probe_predictions(
+            model, train_data, eval_data, device
+        )
+    except Exception as e:
+        print(f"    Warning: Failed to compute predictions: {e}")
+        return None
+    
+    # Compute spectral errors from predictions on eval data
+    print(f"    Computing spectral errors from eval data...")
+    try:
+        k_bins, error_matrix, gt_radial = compute_spectral_errors_from_predictions(
+            predictions=predictions,
+            targets=targets,
+            coordinates=coordinates,
+            problem_config=problem_config
+        )
+    except Exception as e:
+        print(f"    Warning: Failed to compute spectral errors: {e}")
+        return None
+    
+    # Generate the plot
+    plot_freq_reduction_from_eval(
+        model_name=model_name,
+        k_bins=k_bins,
+        error_matrix=error_matrix,
+        violation_layers=violation_layers,
+        output_dir=output_dir
+    )
+    
+    return k_bins, error_matrix
 
 
 # =============================================================================
@@ -1201,23 +1642,46 @@ def main(experiment_dir: str):
         per_model_dir = metric_dir / "per_model"
         overlay_dir = metric_dir / "spatial_freq_overlay"
         
-        # Generate per-model frequency reduction plots
+        # Generate per-model frequency reduction plots from EVAL DATA
+        # This ensures consistency with where violations were detected
+        eval_spectral_data = {}  # Store computed spectral data for aggregation
+        
         for model_name, model_violations in violations.items():
             violation_layers = [v['layer_idx'] for v in model_violations]
-            freq_metrics = models_data[model_name].get('frequency_metrics')
             
-            if freq_metrics:
-                plot_freq_reduction_per_model(
-                    model_name=model_name,
-                    freq_metrics=freq_metrics,
-                    violation_layers=violation_layers,
-                    output_dir=per_model_dir
-                )
+            print(f"    Processing {model_name}...")
+            
+            # Try to compute from eval data first (accurate)
+            result = generate_freq_reduction_from_eval(
+                model_name=model_name,
+                model_data=models_data[model_name],
+                violation_layers=violation_layers,
+                output_dir=per_model_dir
+            )
+            
+            if result is not None:
+                k_bins, error_matrix = result
+                eval_spectral_data[model_name] = {
+                    'k_bins': k_bins,
+                    'error_matrix': error_matrix
+                }
+            else:
+                # Fallback to frequency_metrics.json (from grid, may differ from eval)
+                print(f"    Falling back to frequency_metrics.json for {model_name}")
+                freq_metrics = models_data[model_name].get('frequency_metrics')
+                if freq_metrics:
+                    plot_freq_reduction_per_model(
+                        model_name=model_name,
+                        freq_metrics=freq_metrics,
+                        violation_layers=violation_layers,
+                        output_dir=per_model_dir
+                    )
         
-        # Generate aggregated plot
-        plot_aggregated_freq_reduction(
+        # Generate aggregated plot using eval-computed spectral data where available
+        plot_aggregated_freq_reduction_v2(
             models_data=models_data,
             violations=violations,
+            eval_spectral_data=eval_spectral_data,
             output_dir=metric_dir
         )
         
