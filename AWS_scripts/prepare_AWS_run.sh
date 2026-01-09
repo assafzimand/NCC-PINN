@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -e
+
+# Helper script to prepare an EC2 GPU instance for running NCC-PINN.
+# Run this *on the EC2 machine* after you SSH in.
+#
+# Usage:
+#   bash ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh
+#   # or if copied elsewhere:
+#   bash prepare_AWS_run.sh
+
+# === Configuration ===
+REPO_URL="https://github.com/assafzimand/NCC-PINN.git"
+REPO_DIR="$HOME/NCC-PINN"
+VENV_DIR="$HOME/.venv_ncc_pinn"
+
+echo "=== Updating apt and installing dependencies (python3, venv, git, screen) ==="
+sudo apt update
+sudo apt install -y python3 python3-venv git screen
+
+echo
+echo "=== Creating Python virtual environment (if missing) ==="
+if [ ! -d "$VENV_DIR" ]; then
+  python3 -m venv "$VENV_DIR"
+fi
+
+echo "=== Activating virtual environment ==="
+# shellcheck disable=SC1090
+source "$VENV_DIR/bin/activate"
+
+echo
+echo "=== Cloning or updating NCC-PINN repo ==="
+if [ ! -d "$REPO_DIR" ]; then
+  git clone "$REPO_URL" "$REPO_DIR"
+else
+  cd "$REPO_DIR"
+  echo "  Fetching latest changes from GitHub..."
+  git fetch origin
+  echo "  Force updating to match GitHub (discards local changes)..."
+  git reset --hard origin/main
+fi
+
+cd "$REPO_DIR"
+
+echo
+echo "=== Clearing Python cache ==="
+echo "  Removing __pycache__ directories and .pyc files..."
+find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find . -name "*.pyc" -delete 2>/dev/null || true
+echo "  Cache cleared"
+
+echo
+echo "=== Installing Python dependencies ==="
+pip install --upgrade pip
+if [ -f "requirements.txt" ]; then
+  pip install -r requirements.txt
+else
+  echo "WARNING: requirements.txt not found in $REPO_DIR"
+fi
+
+echo
+echo "=== Environment ready ==="
+echo "To start working on this instance next time, run:"
+echo "  source $VENV_DIR/bin/activate"
+echo "  cd $REPO_DIR"
+echo
+echo "To launch experiments with screen (recommended for long runs):"
+echo "  screen -S ncc_experiment"
+echo "  source $VENV_DIR/bin/activate"
+echo "  cd $REPO_DIR"
+echo "  python run_experiments.py"
+echo "  # Press Ctrl+A then D to detach and disconnect safely"
+echo
+echo "To reattach to a running screen session:"
+echo "  screen -r ncc_experiment"
+echo
+echo "To list all screen sessions:"
+echo "  screen -ls"
+echo
+echo "Or run directly without screen (will stop if you disconnect):"
+echo "  python run_experiments.py"
+
+
