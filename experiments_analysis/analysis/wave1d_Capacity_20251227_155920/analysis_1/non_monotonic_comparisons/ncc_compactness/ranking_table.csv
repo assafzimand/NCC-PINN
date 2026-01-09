@@ -1,2 +1,0 @@
-model_name,num_layers,num_parameters,non_monotone_layers,worst_degradation_pct,other_metrics_violated
-wave1d-2-58-58-58-58-58-58-58-1-tanh,7,"20,765",5,19.5%,"ic_l2, ic_linf, ncc_accuracy"

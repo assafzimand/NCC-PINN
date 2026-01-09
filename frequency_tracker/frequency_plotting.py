@@ -42,7 +42,7 @@ def plot_learned_frequencies(
     
     Creates one figure with all layers overlaid:
     - Row 1: Cumulative Error - relative error at each frequency for layer i
-    - Row 2: Added (Improvement) - error reduction from layer i-1 to layer i
+    - Row 2: Error Change Ratio - error ratio E_i / E_{i-1} from layer i-1 to layer i
     - Columns: k_x, k_t, |k| (or k_x0, k_x1, k_t, |k| for 2D)
     
     All values are RELATIVE to ground truth power for comparability.
@@ -158,7 +158,7 @@ def plot_learned_frequencies(
         
         # Formatting
         if dim_name == 'radial':
-            ax.set_xlabel('|k| (Radial Frequency)', fontsize=11)
+            ax.set_xlabel('|k| (Radial Frequency, Hz)', fontsize=11)
         else:
             ax.set_xlabel(f'k_{dim_name} (Hz)', fontsize=11)
         
@@ -215,7 +215,7 @@ def plot_learned_frequencies(
         
         # Formatting
         if dim_name == 'radial':
-            ax.set_xlabel('|k| (Radial Frequency)', fontsize=11)
+            ax.set_xlabel('|k| (Radial Frequency, Hz)', fontsize=11)
         else:
             ax.set_xlabel(f'k_{dim_name} (Hz)', fontsize=11)
         
@@ -233,7 +233,7 @@ def plot_learned_frequencies(
         if col_idx == 0:
             ax.legend(loc='upper right', fontsize=7, ncol=1)
     
-    # Row 2: Added (Error Reduction from layer i-1 to layer i)
+    # Row 2: Error Change Ratio from layer i-1 to layer i
     for col_idx, dim_name in enumerate(dim_names):
         ax = axes[2, col_idx]
         all_values = []
@@ -241,8 +241,8 @@ def plot_learned_frequencies(
         gt_freq, gt_power_1d = gt_marginals[dim_name]
         gt_power_safe = np.where(gt_power_1d > 1e-15, gt_power_1d, 1e-15)
         
-        # Zero line (no change)
-        ax.axhline(y=0, color='black', linestyle='-', linewidth=1, alpha=0.5)
+        # Reference line at 1 (no change)
+        ax.axhline(y=1, color='gray', linestyle='--', linewidth=1.5, alpha=0.7, label='No change (ratio = 1)')
         
         prev_error = None
         for layer_idx, layer_name in enumerate(layer_names):
@@ -252,44 +252,51 @@ def plot_learned_frequencies(
             rel_error_i = error_1d / gt_power_safe
             
             if prev_error is None:
-                # First layer: Added = Cumulative (full error to learn)
-                # Show as improvement from "nothing learned" (error = GT power = 1.0 relative)
-                # Improvement = 1.0 - rel_error_i (how much of the GT was captured)
-                improvement = 1.0 - rel_error_i
+                # First layer: Compare to "nothing learned" (error = GT power = 1.0 relative)
+                # Ratio = rel_error_i / 1.0 = rel_error_i
+                error_ratio = rel_error_i
             else:
-                # Improvement = prev_error - current_error (positive = good)
-                improvement = prev_error - rel_error_i
+                # Error ratio: E_i / E_{i-1}
+                # < 1 = improvement (error decreased), > 1 = degradation (error increased)
+                eps = 1e-10
+                error_ratio = rel_error_i / (prev_error + eps)
             
-            all_values.append(improvement)
+            all_values.append(error_ratio)
             
-            ax.plot(freq_1d, improvement, color=colors[layer_idx], 
+            ax.plot(freq_1d, error_ratio, color=colors[layer_idx], 
                    label=layer_name, linewidth=2, alpha=0.8)
             
             prev_error = rel_error_i
         
         # Formatting
         if dim_name == 'radial':
-            ax.set_xlabel('|k| (Radial Frequency)', fontsize=11)
+            ax.set_xlabel('|k| (Radial Frequency, Hz)', fontsize=11)
         else:
             ax.set_xlabel(f'k_{dim_name} (Hz)', fontsize=11)
         
-        ax.set_ylabel('Error Reduction', fontsize=11)
+        ax.set_ylabel('Error Ratio (Eᵢ / Eᵢ₋₁)', fontsize=11)
         
-        # Symmetric scale around 0 if there are negative values
+        # Scale with 1.0 as center (log scale might be better, but keep linear for now)
         all_flat = np.concatenate([np.array(v).flatten() for v in all_values])
-        max_abs = np.abs(all_flat[np.isfinite(all_flat)]).max() if len(all_flat[np.isfinite(all_flat)]) > 0 else 1
-        ax.set_ylim(-max_abs * 1.1, max_abs * 1.1)
+        valid_values = all_flat[np.isfinite(all_flat) & (all_flat > 0)]
+        if len(valid_values) > 0:
+            min_val = valid_values.min()
+            max_val = valid_values.max()
+            # Symmetric log scale around 1
+            margin = max(1.0 - min_val, max_val - 1.0) * 1.2
+            ax.set_ylim(max(0.01, 1.0 - margin), 1.0 + margin)
         
         # Title
-        ax.set_title(f'Error Reduction: Eᵢ₋₁ - Eᵢ (relative)\n'
-                    f'(↑ Positive = Improvement, ↓ Negative = Degradation)', 
+        ax.set_title(f'Error Change Ratio: Eᵢ / Eᵢ₋₁\n'
+                    f'(< 1: Improvement, = 1: No change, > 1: Degradation)', 
                     fontsize=10, fontweight='bold')
         
         ax.grid(True, alpha=0.3)
         
-        # Add shading for positive (good) and negative (bad) regions
-        ax.axhspan(0, max_abs * 1.1, alpha=0.1, color='green')
-        ax.axhspan(-max_abs * 1.1, 0, alpha=0.1, color='red')
+        # Add shading for improvement (< 1) and degradation (> 1) regions
+        ylim = ax.get_ylim()
+        ax.axhspan(ylim[0], 1.0, alpha=0.1, color='green')
+        ax.axhspan(1.0, ylim[1], alpha=0.1, color='red')
         
         if col_idx == 0:
             ax.legend(loc='upper right', fontsize=7, ncol=1)

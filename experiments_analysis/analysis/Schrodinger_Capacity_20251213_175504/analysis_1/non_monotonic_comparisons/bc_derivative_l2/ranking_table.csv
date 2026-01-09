@@ -1,4 +1,0 @@
-model_name,num_layers,num_parameters,non_monotone_layers,worst_degradation_pct,other_metrics_violated
-schrodinger-2-70-70-70-70-70-70-70-2-tanh,7,"30,172",3,209.5%,"bc_derivative_linf, residual_l2, residual_linf"
-schrodinger-2-58-58-58-58-58-58-58-2-tanh,7,"20,824",6,20.9%,None
-schrodinger-2-70-70-70-70-70-2-tanh,5,"20,232",4,14.6%,bc_derivative_linf
