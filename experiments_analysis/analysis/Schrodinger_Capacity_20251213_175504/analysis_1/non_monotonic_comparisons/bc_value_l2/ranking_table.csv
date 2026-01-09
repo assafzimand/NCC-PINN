@@ -1,4 +1,0 @@
-model_name,num_layers,num_parameters,non_monotone_layers,worst_degradation_pct,other_metrics_violated
-schrodinger-2-40-40-40-40-40-40-40-2-tanh,7,"10,042",2,74.6%,"bc_value_linf, ncc_compactness"
-schrodinger-2-140-140-140-2-tanh,3,"40,182",2,47.5%,"bc_value_linf, ic_l2, ic_linf, residual_l2, residual_linf"
-schrodinger-2-85-85-85-85-85-2-tanh,5,"29,667",5,10.7%,None

@@ -3,18 +3,46 @@
 This script analyzes experiment folders containing multiple model runs,
 identifies non-monotonic metrics, generates comparison plots, and provides
 detailed statistics on model performance.
+
+IMPORTANT: This script recomputes all metrics using the SAME probes
+fitted once on training data. This ensures consistency across all metrics.
+Checkpoints MUST be available - there is no fallback to pre-saved JSONs.
 """
 
 import json
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import shutil
 import re
 from collections import defaultdict
 import yaml
 import matplotlib.pyplot as plt
+from matplotlib.colors import TwoSlopeNorm
+import torch
+
+# Import analysis core for consistent metric computation
+from analysis_core import (
+    compute_all_metrics_consistently,
+    extract_problem_from_name
+)
+
+
+def _long_path(path):
+    """Handle Windows long path limitation by adding \\\\?\\ prefix.
+    
+    Windows has a MAX_PATH limit of 260 characters. Adding \\\\?\\ prefix
+    allows paths up to ~32K characters.
+    """
+    import os
+    path = Path(path)
+    if os.name == 'nt':  # Windows
+        abs_path = path.resolve()
+        path_str = str(abs_path)
+        if not path_str.startswith('\\\\?\\'):
+            return Path('\\\\?\\' + path_str)
+    return path
 
 
 def _safe_log_scale(ax, values_list):
@@ -200,6 +228,7 @@ PROBLEM_BC_CONFIG = {
 DEFAULT_BC_CONFIG = {'bc_value': True, 'bc_derivative': True}
 
 
+
 def get_problem_from_model_name(model_name: str) -> Optional[str]:
     """Extract problem type from model name."""
     model_lower = model_name.lower()
@@ -293,8 +322,20 @@ def load_experiment_plan(experiment_path: Path) -> Optional[Dict[str, Any]]:
     return name_to_arch
 
 
-def load_all_model_metrics(experiment_path: Path) -> Dict[str, Dict[str, Any]]:
-    """Load all metrics from all models in experiment.
+def load_all_model_metrics(experiment_path: Path, device: torch.device = None) -> Dict[str, Dict[str, Any]]:
+    """Load experiment structure and compute all metrics consistently.
+    
+    This function:
+    1. Scans the experiment folder to find model directories
+    2. For each model, loads the checkpoint and datasets
+    3. Fits probes ONCE per model
+    4. Computes ALL metrics using those same probes
+    
+    No fallback to pre-saved JSON metrics - checkpoints MUST exist.
+    
+    Args:
+        experiment_path: Path to experiment folder
+        device: Device for computation (auto-detected if None)
     
     Returns:
         Dict mapping model_name -> {
@@ -303,16 +344,27 @@ def load_all_model_metrics(experiment_path: Path) -> Dict[str, Dict[str, Any]]:
             'num_layers': int,
             'num_parameters': int,
             'run_dir': Path,
-            'metrics': dict from metrics.json,
-            'ncc_metrics': dict from ncc_metrics.json,
-            'probe_metrics': dict from probe_metrics.json,
-            'derivatives_metrics': dict from derivatives_metrics.json,
+            'metrics': dict from metrics.json (training metrics only),
+            'ncc_metrics': dict (recomputed with consistent probes),
+            'probe_metrics': dict (recomputed with consistent probes),
+            'derivatives_metrics': dict (recomputed with consistent probes),
+            'frequency_metrics': dict (recomputed),
             'eval_rel_l2': float,
-            'eval_linf': float
+            'eval_linf': float,
+            'problem_name': str
         }
+        
+    Raises:
+        FileNotFoundError: If checkpoints are missing for any model
     """
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     models_data = {}
     experiment_path = Path(experiment_path)
+    
+    # First pass: collect all model directories
+    model_dirs_to_process = []
     
     for model_dir in experiment_path.iterdir():
         if not model_dir.is_dir():
@@ -331,48 +383,28 @@ def load_all_model_metrics(experiment_path: Path) -> Dict[str, Dict[str, Any]]:
         
         run_dir = max(run_dirs, key=lambda x: x.stat().st_mtime)
         
-        # Load metrics.json
+        # Load metrics.json for training metrics
         metrics_file = run_dir / "metrics.json"
         if not metrics_file.exists():
             continue
         
+        model_dirs_to_process.append((model_name, run_dir, metrics_file))
+    
+    print(f"  Found {len(model_dirs_to_process)} models to analyze")
+    
+    # Second pass: compute metrics consistently for each model
+    for idx, (model_name, run_dir, metrics_file) in enumerate(model_dirs_to_process, 1):
+        print(f"\n  [{idx}/{len(model_dirs_to_process)}] Processing {model_name}...")
+        
+        # Load training metrics from JSON
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
         
-        # Extract eval metrics
+        # Extract final eval metrics from training
         eval_rel_l2 = metrics.get('eval_rel_l2', [])
         eval_linf = metrics.get('eval_inf_norm', [])
-        
         final_eval_rel_l2 = eval_rel_l2[-1] if eval_rel_l2 else None
         final_eval_linf = eval_linf[-1] if eval_linf else None
-        
-        # Load NCC metrics
-        ncc_metrics = None
-        ncc_file = run_dir / "ncc_plots" / "ncc_metrics.json"
-        if ncc_file.exists():
-            with open(ncc_file, 'r') as f:
-                ncc_metrics = json.load(f)
-        
-        # Load probe metrics
-        probe_metrics = None
-        probe_file = run_dir / "probe_plots" / "probe_metrics.json"
-        if probe_file.exists():
-            with open(probe_file, 'r') as f:
-                probe_metrics = json.load(f)
-        
-        # Load derivatives metrics
-        derivatives_metrics = None
-        deriv_file = run_dir / "derivatives_plots" / "derivatives_metrics.json"
-        if deriv_file.exists():
-            with open(deriv_file, 'r') as f:
-                derivatives_metrics = json.load(f)
-        
-        # Load frequency metrics
-        frequency_metrics = None
-        freq_file = run_dir / "frequency_plots" / "frequency_metrics.json"
-        if freq_file.exists():
-            with open(freq_file, 'r') as f:
-                frequency_metrics = json.load(f)
         
         # Parse architecture
         architecture = parse_model_name(model_name)
@@ -381,6 +413,32 @@ def load_all_model_metrics(experiment_path: Path) -> Dict[str, Dict[str, Any]]:
         
         # Determine problem type from model name
         problem_name = get_problem_from_model_name(model_name)
+        
+        # Compute all metrics consistently using analysis_core
+        try:
+            computed_metrics = compute_all_metrics_consistently(
+                model_name=model_name,
+                run_dir=run_dir,
+                device=device,
+                ncc_bins=10,
+                n_freq=64
+            )
+            
+            ncc_metrics = computed_metrics['ncc_metrics']
+            probe_metrics = computed_metrics['probe_metrics']
+            derivatives_metrics = computed_metrics['derivatives_metrics']
+            frequency_metrics = computed_metrics['frequency_metrics']
+            
+        except FileNotFoundError as e:
+            print(f"    ERROR: {e}")
+            raise FileNotFoundError(
+                f"Checkpoint or dataset not found for {model_name}. "
+                f"Consistent analysis requires all checkpoints to be available. "
+                f"Original error: {e}"
+            )
+        except Exception as e:
+            print(f"    ERROR computing metrics: {e}")
+            raise RuntimeError(f"Failed to compute metrics for {model_name}: {e}")
         
         models_data[model_name] = {
             'model_name': model_name,
@@ -871,7 +929,7 @@ def generate_overall_non_monotonic_ranking(
 
 
 # =============================================================================
-# COPYING METRIC FOLDERS
+# COPYING METRIC FOLDERS (DEPRECATED)
 # =============================================================================
 
 def copy_metric_folders(
@@ -880,7 +938,14 @@ def copy_metric_folders(
     models_data: Dict[str, Dict[str, Any]],
     output_dir: Path
 ):
-    """Copy entire metric folder for each violating model.
+    """[DEPRECATED] Copy entire metric folder for each violating model.
+    
+    NOTE: This function is no longer used because the old metric folders
+    contain data computed with different probe weights than the current analysis.
+    This leads to inconsistent values (e.g., old residuals vs new residuals).
+    
+    All metrics are now recomputed consistently in load_all_model_metrics(),
+    ensuring probe/NCC/derivatives/frequency metrics all use the same probes.
     
     Args:
         metric_name: Name of the metric
@@ -893,7 +958,7 @@ def copy_metric_folders(
     
     folder_name = METRICS_CONFIG[metric_name]['folder']
     model_folders_dir = output_dir / "model_folders"
-    model_folders_dir.mkdir(parents=True, exist_ok=True)
+    _long_path(model_folders_dir).mkdir(parents=True, exist_ok=True)
     
     # Get unique models
     violating_models = set(v['model_name'] for v in violations)
@@ -910,12 +975,13 @@ def copy_metric_folders(
             continue
         
         dst = model_folders_dir / model_name
+        dst_long = _long_path(dst)
         
-        # Copy entire folder
+        # Copy entire folder (use long paths for Windows compatibility)
         try:
-            if dst.exists():
-                shutil.rmtree(dst)
-            shutil.copytree(src, dst)
+            if dst_long.exists():
+                shutil.rmtree(dst_long)
+            shutil.copytree(_long_path(src), dst_long)
         except Exception as e:
             print(f"      Warning: Failed to copy {src} to {dst}: {e}")
 
@@ -1325,17 +1391,24 @@ def generate_non_monotonic_summary(
     
     # Plot 2: Violations by layer count (depth)
     fig, ax = plt.subplots(figsize=(10, 6))
-    layer_counts = df['num_layers'].value_counts().sort_index()
-    x_positions = list(range(len(layer_counts)))
-    ax.bar(x_positions, layer_counts.values, color='#e74c3c', alpha=0.7, edgecolor='black')
+    
+    # Get ALL unique layer counts from models_data (so we show bars even for 0 violations)
+    all_layer_counts = sorted(set(data['num_layers'] for data in models_data.values()))
+    
+    # Count violations per layer count
+    layer_counts_violations = df['num_layers'].value_counts() if len(df) > 0 else pd.Series()
+    counts_by_layer = [layer_counts_violations.get(lc, 0) for lc in all_layer_counts]
+    
+    x_positions = list(range(len(all_layer_counts)))
+    ax.bar(x_positions, counts_by_layer, color='#e74c3c', alpha=0.7, edgecolor='black')
     ax.set_xticks(x_positions)
-    ax.set_xticklabels([str(x) for x in layer_counts.index])
+    ax.set_xticklabels([str(x) for x in all_layer_counts])
     ax.set_xlabel('Number of Hidden Layers', fontsize=12, fontweight='bold')
     ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
     ax.set_title('Non-Monotonic Violations by Model Depth', fontsize=14, fontweight='bold')
     ax.grid(True, alpha=0.3, axis='y')
-    for i, count in enumerate(layer_counts.values):
-        ax.text(i, count + 0.1, str(count), ha='center', va='bottom', fontweight='bold')
+    for i, count in enumerate(counts_by_layer):
+        ax.text(i, count + 0.1, str(int(count)), ha='center', va='bottom', fontweight='bold')
     plt.tight_layout()
     plt.savefig(summary_dir / "violations_by_depth.png", dpi=150, bbox_inches='tight')
     plt.close()
@@ -1458,6 +1531,662 @@ def generate_non_monotonic_summary(
 
 
 # =============================================================================
+# FREQUENCY-VIOLATION CORRELATION (Merged from analyze_frequency_monotonicity.py)
+# =============================================================================
+
+def get_frequency_reduction_at_layer(
+    freq_metrics: Dict,
+    layer_idx: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Get frequency error change ratio E_i / E_{i-1} at a specific layer transition.
+    
+    Args:
+        freq_metrics: frequency_metrics data (computed on frequency grid)
+        layer_idx: 0-based index of the layer (error at layer_idx vs layer_idx-1)
+        
+    Returns:
+        (k_bins, error_ratio) where:
+        - < 1 = improvement (gets greener as it approaches 0)
+        - 1 = no change
+        - > 1 = degradation (gets redder as it increases)
+    """
+    spectral_eff = freq_metrics.get('spectral_efficiency', {})
+    k_bins = np.array(spectral_eff.get('k_radial_bins', []))
+    error_matrix = np.array(spectral_eff.get('error_matrix', []))
+    
+    if len(error_matrix) == 0 or layer_idx <= 0 or layer_idx >= len(error_matrix):
+        return np.array([]), np.array([])
+    
+    # Error ratio: curr_error / prev_error (similar to change_heatmaps)
+    prev_error = error_matrix[layer_idx - 1]
+    curr_error = error_matrix[layer_idx]
+    
+    # Avoid division by zero
+    eps = 1e-10
+    error_ratio = curr_error / (prev_error + eps)
+    
+    return k_bins, error_ratio
+
+
+def plot_freq_reduction_per_model(
+    model_name: str,
+    freq_metrics: Dict,
+    violation_layers: List[int],
+    output_dir: Path
+):
+    """Generate per-model frequency reduction plot for violation layers.
+    
+    Args:
+        model_name: Name of the model
+        freq_metrics: frequency_metrics data (computed on frequency grid)
+        violation_layers: List of layer indices (0-based) where violations occurred
+        output_dir: Directory to save plot
+    """
+    if not violation_layers:
+        return
+    
+    spectral_eff = freq_metrics.get('spectral_efficiency', {})
+    k_bins = np.array(spectral_eff.get('k_radial_bins', []))
+    
+    if len(k_bins) == 0:
+        return
+    
+    n_violations = len(violation_layers)
+    fig, axes = plt.subplots(1, n_violations, figsize=(5 * n_violations, 4), squeeze=False)
+    
+    for idx, layer_idx in enumerate(violation_layers):
+        ax = axes[0, idx]
+        
+        k_bins_layer, error_ratio = get_frequency_reduction_at_layer(freq_metrics, layer_idx)
+        
+        if len(error_ratio) == 0:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes)
+            continue
+        
+        # Plot error ratio with reference line at 1 (no change)
+        ax.axhline(y=1, color='gray', linestyle='--', alpha=0.7, linewidth=1.5, label='No change (ratio = 1)')
+        
+        # Fill regions: < 1 = improvement (green), > 1 = degradation (red)
+        ax.fill_between(k_bins_layer, 1, error_ratio, 
+                       where=(error_ratio < 1), color='#2ecc71', alpha=0.5, label='Improved')
+        ax.fill_between(k_bins_layer, 1, error_ratio,
+                       where=(error_ratio > 1), color='#e74c3c', alpha=0.5, label='Degraded')
+        ax.plot(k_bins_layer, error_ratio, 'k-', linewidth=1.5)
+        
+        ax.set_xlabel('Radial Frequency |k| (Hz)')
+        ax.set_ylabel('Error Ratio (E_i / E_{i-1})')
+        ax.set_title(f'Layer {layer_idx} → {layer_idx + 1}')
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, alpha=0.3)
+    
+    fig.suptitle(f'{model_name}\nFrequency Error Change at Violation Layers', fontsize=12)
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    
+    # Handle Windows long paths
+    output_dir_long = _long_path(output_dir)
+    output_dir_long.mkdir(parents=True, exist_ok=True)
+    safe_name = model_name.replace('/', '_').replace('\\', '_')
+    save_path = _long_path(output_dir / f'{safe_name}_freq_reduction.png')
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def plot_aggregated_freq_reduction(
+    models_data: Dict[str, Dict[str, Any]],
+    violations: Dict[str, List[Dict]],
+    output_dir: Path
+):
+    """Plot aggregated frequency reduction across all violating models.
+    
+    Args:
+        models_data: All model data
+        violations: {model_name: [violation dicts]} for this metric
+        output_dir: Directory to save plot
+    """
+    if not violations:
+        return
+    
+    # Collect all error ratios
+    all_ratios = []
+    k_bins_ref = None
+    
+    for model_name, model_violations in violations.items():
+        freq_metrics = models_data[model_name].get('frequency_metrics')
+        if freq_metrics is None:
+            continue
+        
+        for v in model_violations:
+            layer_idx = v.get('layer_idx', v.get('layer_num', 0) - 1)  # Handle both formats
+            k_bins, error_ratio = get_frequency_reduction_at_layer(freq_metrics, layer_idx)
+            
+            if len(error_ratio) > 0:
+                if k_bins_ref is None:
+                    k_bins_ref = k_bins
+                all_ratios.append(error_ratio)
+    
+    if not all_ratios or k_bins_ref is None:
+        return
+    
+    # Compute statistics
+    all_ratios = np.array(all_ratios)
+    mean_ratio = np.mean(all_ratios, axis=0)
+    std_ratio = np.std(all_ratios, axis=0)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    ax.axhline(y=1, color='gray', linestyle='--', alpha=0.7, linewidth=1.5, label='No change (ratio = 1)')
+    
+    # Mean with confidence band
+    ax.fill_between(k_bins_ref, mean_ratio - std_ratio, mean_ratio + std_ratio,
+                   alpha=0.3, color='#3498db', label='±1 std')
+    ax.plot(k_bins_ref, mean_ratio, 'b-', linewidth=2, label='Mean')
+    
+    # Color the regions: < 1 = improvement (green), > 1 = degradation (red)
+    ax.fill_between(k_bins_ref, 1, mean_ratio,
+                   where=(mean_ratio < 1), color='#2ecc71', alpha=0.2, label='Improved')
+    ax.fill_between(k_bins_ref, 1, mean_ratio,
+                   where=(mean_ratio > 1), color='#e74c3c', alpha=0.2, label='Degraded')
+    
+    ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=11)
+    ax.set_ylabel('Mean Error Ratio (E_i / E_{i-1})', fontsize=11)
+    ax.set_title(f'Aggregated Frequency Error Change\n'
+                f'({len(all_ratios)} violations from {len(violations)} models)', fontsize=12)
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
+    
+    # Add annotation for problem frequencies (where ratio > 1)
+    if np.any(mean_ratio > 1):
+        problem_freqs = k_bins_ref[mean_ratio > 1]
+        if len(problem_freqs) > 0:
+            ax.axvspan(problem_freqs.min(), problem_freqs.max(), 
+                      alpha=0.1, color='red', label='Problem range')
+    
+    output_dir_long = _long_path(output_dir)
+    output_dir_long.mkdir(parents=True, exist_ok=True)
+    save_path = _long_path(output_dir / 'aggregated_freq_reduction.png')
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+# =============================================================================
+# SPATIAL-FREQUENCY OVERLAY FUNCTIONS
+# =============================================================================
+
+def compute_local_frequency_continuous(
+    h_gt: np.ndarray,
+    coordinates: np.ndarray
+) -> np.ndarray:
+    """Compute local frequency content at each point using gradient magnitude.
+    
+    Uses gradient magnitude as a proxy for local high-frequency content.
+    Returns normalized continuous values [0, 1].
+    
+    Args:
+        h_gt: Ground truth values (N,) or (N, output_dim)
+        coordinates: (N, d) spatial+temporal coordinates
+        
+    Returns:
+        (N,) array of normalized frequency values (0 = low freq, 1 = high freq)
+    """
+    from scipy.spatial import KDTree
+    
+    if h_gt.ndim > 1:
+        h_gt = np.linalg.norm(h_gt, axis=1)  # Use magnitude for multi-output
+    
+    N = len(h_gt)
+    n_dims = coordinates.shape[1]
+    
+    # Build KD-tree for neighbor queries
+    tree = KDTree(coordinates)
+    
+    # Estimate local gradient magnitude at each point
+    gradient_magnitudes = np.zeros(N)
+    k_neighbors = min(2 * n_dims + 1, N)
+    
+    for i in range(N):
+        distances, indices = tree.query(coordinates[i], k=k_neighbors)
+        
+        if len(indices) < 2:
+            continue
+        
+        neighbor_values = h_gt[indices[1:]]  # Exclude self
+        neighbor_dists = distances[1:]
+        
+        valid_mask = neighbor_dists > 1e-10
+        if not np.any(valid_mask):
+            continue
+        
+        value_diffs = np.abs(neighbor_values - h_gt[i])
+        gradients = value_diffs[valid_mask] / neighbor_dists[valid_mask]
+        gradient_magnitudes[i] = np.max(gradients)
+    
+    # Normalize to [0, 1] using percentile-based scaling (robust to outliers)
+    if gradient_magnitudes.max() > 0:
+        p5 = np.percentile(gradient_magnitudes, 5)
+        p95 = np.percentile(gradient_magnitudes, 95)
+        freq_normalized = (gradient_magnitudes - p5) / (p95 - p5 + 1e-10)
+        freq_normalized = np.clip(freq_normalized, 0, 1)
+    else:
+        freq_normalized = np.zeros(N)
+    
+    return freq_normalized
+
+
+def plot_overlay_contour_lines(
+    problem_name: str,
+    change_ratios: np.ndarray,
+    freq_values: np.ndarray,
+    coordinates: np.ndarray,
+    layer_transition: str,
+    metric_name: str,
+    output_path: Path
+):
+    """Option 2: Error heatmap with frequency contour lines overlaid.
+    
+    Clean visualization with topographic-style frequency contours.
+    """
+    from scipy.interpolate import griddata
+    
+    n_dims = coordinates.shape[1]
+    
+    if n_dims != 2:
+        print(f"  Contour overlay only supports 2D (1D spatial + time), got {n_dims}D")
+        return
+    
+    fig, ax = plt.subplots(figsize=(12, 8))
+    x_coord = coordinates[:, 0]
+    t_coord = coordinates[:, 1]
+    
+    # Create regular grid
+    x_min, x_max = x_coord.min(), x_coord.max()
+    t_min, t_max = t_coord.min(), t_coord.max()
+    grid_x, grid_t = np.meshgrid(
+        np.linspace(x_min, x_max, 200),
+        np.linspace(t_min, t_max, 200)
+    )
+    
+    # Interpolate both fields
+    points = np.column_stack([x_coord, t_coord])
+    grid_change = griddata(points, change_ratios, (grid_x, grid_t),
+                          method='linear', fill_value=1.0)
+    grid_freq = griddata(points, freq_values, (grid_x, grid_t),
+                        method='linear', fill_value=0.5)
+    
+    # Background: Error change heatmap
+    norm = TwoSlopeNorm(vmin=0.0, vcenter=1.0, vmax=3.0)
+    im = ax.contourf(grid_x, grid_t, grid_change, levels=50,
+                    cmap='RdYlGn_r', norm=norm, alpha=1.0)
+    
+    # Overlay: Frequency contour lines (dense topographic style)
+    # Dynamically set levels based on actual frequency range
+    freq_min = np.nanmin(grid_freq)
+    freq_max = np.nanmax(grid_freq)
+    freq_range = freq_max - freq_min
+    
+    if freq_range > 0.01:  # Only draw contours if there's meaningful variation
+        num_levels = 20
+        if problem_name == 'wave1d':
+            num_levels = 5
+        margin = freq_range * 0.01
+        contour_levels = np.linspace(freq_min + margin, freq_max - margin, num_levels)
+        cs = ax.contour(grid_x, grid_t, grid_freq, levels=contour_levels,
+                       colors='black', linewidths=0.8, alpha=0.7)
+        # Label every other contour to avoid clutter
+        label_levels = contour_levels[1::2]  # Every 2nd level
+        ax.clabel(cs, levels=label_levels, inline=True, fontsize=8, fmt='%.2f')
+    
+    ax.set_xlabel('x', fontsize=11)
+    ax.set_ylabel('t', fontsize=11)
+    
+    cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+    cbar.set_label('Error Ratio (<1: improved, >1: degraded)', fontsize=10)
+    
+    # Legend for contours
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], color='black', linestyle='-', linewidth=0.8, 
+               label=f'Freq range: {freq_min:.2f}-{freq_max:.2f}\nHigher = more high-freq content')
+    ]
+    ax.legend(handles=legend_elements, loc='upper left', 
+             bbox_to_anchor=(1.02, 0.5), fontsize=9, title='Frequency Contours')
+    
+    ax.set_title(f'{metric_name}: {layer_transition}\n'
+                f'Error Change (color) + Frequency Contours (lines)',
+                fontsize=12, fontweight='bold')
+    
+    plt.tight_layout()
+    _long_path(output_path.parent).mkdir(parents=True, exist_ok=True)
+    plt.savefig(_long_path(output_path), dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def generate_overlay_for_model(
+    model_name: str,
+    model_data: Dict[str, Any],
+    violation_layers: List[int],
+    metric_name: str,
+    output_dir: Path
+):
+    """Generate spatial-frequency overlay plots for a model's violation layers.
+    
+    Loads the model and computes per-point probe predictions to get accurate
+    per-point error change ratios (not aggregate values).
+    """
+    from probes.probe_core import train_linear_probe, compute_probe_predictions
+    from analysis_core import (
+        find_model_checkpoint, load_model_from_checkpoint,
+        parse_architecture_from_name, get_problem_config
+    )
+    
+    # Extract problem
+    problem = extract_problem_from_name(model_name)
+    if problem is None:
+        return
+    
+    # Load datasets
+    eval_data_path = Path('datasets') / problem / 'eval_data.pt'
+    train_data_path = Path('datasets') / problem / 'training_data.pt'
+    
+    if not eval_data_path.exists() or not train_data_path.exists():
+        return
+    
+    eval_data = torch.load(eval_data_path, weights_only=False)
+    train_data = torch.load(train_data_path, weights_only=False)
+    
+    # Get run_dir and find checkpoint
+    run_dir = model_data.get('run_dir')
+    if run_dir is None:
+        return
+    
+    checkpoint_path = find_model_checkpoint(run_dir, problem, model_name)
+    if checkpoint_path is None:
+        print(f"    No checkpoint found for {model_name}, skipping overlay")
+        return
+    
+    # Parse architecture and load model
+    architecture, activation = parse_architecture_from_name(model_name)
+    if architecture is None:
+        return
+    
+    problem_config = get_problem_config(problem)
+    config = {
+        'architecture': architecture,
+        'activation': activation,
+        'cuda': torch.cuda.is_available(),
+        'problem': problem,
+        problem: problem_config,
+    }
+    
+    model = load_model_from_checkpoint(checkpoint_path, architecture, activation, config)
+    if model is None:
+        return
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = model.to(device)
+    model.eval()
+    
+    # Get hidden layer names
+    all_layers = model.get_layer_names()
+    hidden_layers = all_layers[:-1]
+    
+    # Extract data
+    train_x = train_data['x'].to(device)
+    train_t = train_data['t'].to(device)
+    train_targets = train_data['h_gt'].to(device)
+    
+    eval_x = eval_data['x'].to(device)
+    eval_t = eval_data['t'].to(device)
+    eval_targets = eval_data['h_gt'].to(device)
+    
+    if train_targets.dim() == 1:
+        train_targets = train_targets.unsqueeze(1)
+    if eval_targets.dim() == 1:
+        eval_targets = eval_targets.unsqueeze(1)
+    
+    # Collect embeddings for all layers
+    handles = model.register_ncc_hooks(hidden_layers)
+    with torch.no_grad():
+        train_inputs = torch.cat([train_x, train_t], dim=1)
+        _ = model(train_inputs)
+    train_embeddings = model.activations.copy()
+    model.remove_hooks()
+    
+    _ = model.register_ncc_hooks(hidden_layers)
+    with torch.no_grad():
+        eval_inputs = torch.cat([eval_x, eval_t], dim=1)
+        _ = model(eval_inputs)
+    eval_embeddings = model.activations.copy()
+    model.remove_hooks()
+    
+    # Train probes and get per-point predictions for each layer
+    layer_predictions = {}
+    for layer_name in hidden_layers:
+        train_emb = train_embeddings[layer_name]
+        eval_emb = eval_embeddings[layer_name]
+        
+        probe = train_linear_probe(train_emb, train_targets)
+        eval_preds = compute_probe_predictions(probe, eval_emb)
+        layer_predictions[layer_name] = eval_preds.cpu().numpy()
+    
+    eval_targets_np = eval_targets.cpu().numpy()
+    
+    # Prepare coordinates
+    eval_x_np = eval_data['x'].numpy()
+    eval_t_np = eval_data['t'].numpy()
+    h_gt = eval_data['h_gt'].numpy()
+    
+    if eval_x_np.ndim == 1:
+        eval_x_coords = eval_x_np.reshape(-1, 1)
+    else:
+        eval_x_coords = eval_x_np
+    if eval_t_np.ndim == 1:
+        eval_t_coords = eval_t_np.reshape(-1, 1)
+    else:
+        eval_t_coords = eval_t_np
+    coordinates = np.hstack([eval_x_coords, eval_t_coords])
+    
+    # Compute continuous frequency values (not binned)
+    freq_values = compute_local_frequency_continuous(h_gt, coordinates)
+    
+    display_name = METRICS_CONFIG.get(metric_name, {}).get('display_name', metric_name)
+    layer_names = sorted(hidden_layers, key=lambda x: int(x.split('_')[1]))
+    
+    for layer_idx in violation_layers:
+        if layer_idx <= 0 or layer_idx >= len(layer_names):
+            continue
+        
+        prev_layer = layer_names[layer_idx - 1]
+        curr_layer = layer_names[layer_idx]
+        
+        prev_preds = layer_predictions[prev_layer]
+        curr_preds = layer_predictions[curr_layer]
+        
+        # Compute per-point absolute errors
+        if prev_preds.ndim > 1 and prev_preds.shape[1] > 1:
+            # Multi-output: use magnitude of error
+            prev_error = np.sqrt(np.sum((prev_preds - eval_targets_np) ** 2, axis=1))
+            curr_error = np.sqrt(np.sum((curr_preds - eval_targets_np) ** 2, axis=1))
+        else:
+            prev_error = np.abs(prev_preds.flatten() - eval_targets_np.flatten())
+            curr_error = np.abs(curr_preds.flatten() - eval_targets_np.flatten())
+        
+        # Compute per-point change ratio: curr_error / prev_error
+        eps = 1e-10
+        change_ratios = curr_error / (prev_error + eps)
+        change_ratios = np.clip(change_ratios, 0, 5)  # Cap extreme values
+        
+        layer_transition = f"Layer {layer_idx} → {layer_idx + 1}"
+        safe_name = model_name.replace('/', '_').replace('\\', '_')
+        
+        # Generate overlay: error heatmap with frequency contour lines
+        plot_overlay_contour_lines(
+            problem_name=problem,
+            change_ratios=change_ratios,
+            freq_values=freq_values,
+            coordinates=coordinates,
+            layer_transition=layer_transition,
+            metric_name=display_name,
+            output_path=output_dir / f"{safe_name}_overlay_layer{layer_idx + 1}.png"
+        )
+
+
+def generate_frequency_violation_correlation(
+    all_violations: Dict[str, List[Dict[str, Any]]],
+    models_data: Dict[str, Dict[str, Any]],
+    output_dir: Path
+):
+    """Generate frequency-violation correlation analysis.
+    
+    Creates per-model and aggregated frequency reduction plots for all violations.
+    
+    Args:
+        all_violations: Dict mapping metric_name -> list of violations
+        models_data: Dict mapping model_name -> model data
+        output_dir: Directory to save outputs
+    """
+    freq_corr_dir = output_dir / "frequency_violation_correlation"
+    _long_path(freq_corr_dir).mkdir(parents=True, exist_ok=True)
+    
+    # Process each metric separately
+    for metric_name, violations in all_violations.items():
+        if not violations:
+            continue
+        
+        display_name = METRICS_CONFIG[metric_name]['display_name']
+        metric_dir = freq_corr_dir / metric_name
+        per_model_dir = metric_dir / "per_model"
+        
+        # Group violations by model
+        violations_by_model = defaultdict(list)
+        for v in violations:
+            violations_by_model[v['model_name']].append(v)
+        
+        print(f"    {display_name}: {len(violations_by_model)} models with violations")
+        
+        # Generate per-model frequency reduction plots
+        for model_name, model_violations in violations_by_model.items():
+            freq_metrics = models_data[model_name].get('frequency_metrics')
+            if freq_metrics is None:
+                continue
+            
+            # Get layer indices for violations
+            violation_layers = []
+            for v in model_violations:
+                # layer_num is 1-based, convert to 0-based layer_idx
+                layer_idx = v.get('layer_idx', v.get('layer_num', 0) - 1)
+                if layer_idx > 0:  # Only valid if comparing layer i to layer i-1
+                    violation_layers.append(layer_idx)
+            
+            if violation_layers:
+                plot_freq_reduction_per_model(
+                    model_name=model_name,
+                    freq_metrics=freq_metrics,
+                    violation_layers=violation_layers,
+                    output_dir=per_model_dir
+                )
+                
+                # Also generate spatial-frequency overlay plots
+                overlay_dir = metric_dir / "overlays"
+                generate_overlay_for_model(
+                    model_name=model_name,
+                    model_data=models_data[model_name],
+                    violation_layers=violation_layers,
+                    metric_name=metric_name,
+                    output_dir=overlay_dir
+                )
+        
+        # Generate aggregated plot for this metric
+        plot_aggregated_freq_reduction(
+            models_data=models_data,
+            violations=violations_by_model,
+            output_dir=metric_dir
+        )
+    
+    # Generate overall summary table
+    _generate_frequency_correlation_summary(all_violations, models_data, freq_corr_dir)
+
+
+def _generate_frequency_correlation_summary(
+    all_violations: Dict[str, List[Dict[str, Any]]],
+    models_data: Dict[str, Dict[str, Any]],
+    output_dir: Path
+):
+    """Generate summary table of frequency-violation correlations."""
+    summary_data = []
+    
+    for metric_name in METRICS_CONFIG.keys():
+        violations = all_violations.get(metric_name, [])
+        
+        # Group by model
+        violations_by_model = defaultdict(list)
+        for v in violations:
+            violations_by_model[v['model_name']].append(v)
+        
+        n_models = len(violations_by_model)
+        total_violations = len(violations)
+        
+        # Compute average frequency where metric degraded
+        mean_neg_freqs = []
+        
+        for model_name, model_violations in violations_by_model.items():
+            freq_metrics = models_data.get(model_name, {}).get('frequency_metrics')
+            if freq_metrics is None:
+                continue
+            
+            for v in model_violations:
+                layer_idx = v.get('layer_idx', v.get('layer_num', 0) - 1)
+                k_bins, error_reduction = get_frequency_reduction_at_layer(freq_metrics, layer_idx)
+                if len(error_reduction) > 0 and len(k_bins) > 0:
+                    # Find frequencies where error increased (negative reduction)
+                    neg_mask = error_reduction < 0
+                    if np.any(neg_mask):
+                        neg_freqs = k_bins[neg_mask]
+                        mean_neg_freqs.append(np.mean(neg_freqs))
+        
+        avg_decreasing_freq = f"{np.mean(mean_neg_freqs):.2f}" if mean_neg_freqs else "N/A"
+        
+        summary_data.append({
+            'Metric': METRICS_CONFIG[metric_name]['display_name'],
+            '# Models': n_models,
+            '# Violations': total_violations,
+            'Avg Degrading Freq': avg_decreasing_freq,
+        })
+    
+    # Create table plot
+    fig, ax = plt.subplots(figsize=(12, 4))
+    ax.axis('off')
+    
+    if summary_data:
+        columns = list(summary_data[0].keys())
+        cell_text = [[str(row[col]) for col in columns] for row in summary_data]
+        
+        table = ax.table(
+            cellText=cell_text,
+            colLabels=columns,
+            loc='center',
+            cellLoc='center'
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1.2, 1.5)
+        
+        # Style header
+        for (row, col), cell in table.get_celld().items():
+            if row == 0:
+                cell.set_facecolor('#2c3e50')
+                cell.set_text_props(color='white', fontweight='bold')
+    
+    ax.set_title('Frequency-Violation Correlation Summary', fontsize=14, fontweight='bold', pad=20)
+    
+    save_path = _long_path(output_dir / 'summary.png')
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"    Frequency correlation summary saved to {output_dir / 'summary.png'}")
+
+
+# =============================================================================
 # MAIN ANALYSIS FUNCTION
 # =============================================================================
 
@@ -1498,21 +2227,25 @@ def main(experiment_path: str):
     output_dir = analysis_base_dir / experiment_name / index
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    # Set up device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     print("=" * 70)
-    print("Capacity Experiment Analysis")
+    print("Capacity Experiment Analysis (Consistent Probe Fitting)")
     print("=" * 70)
     print(f"Experiment: {experiment_name}")
     print(f"Output directory: {output_dir}")
     print(f"Analysis index: {index}")
+    print(f"Device: {device}")
     print()
     
     # Load experiment plan for weight-based grouping
     experiment_plan = load_experiment_plan(experiment_path)
     
-    # Load all model metrics
-    print("Loading model metrics...")
-    models_data = load_all_model_metrics(experiment_path)
-    print(f"  Loaded {len(models_data)} models")
+    # Load all model metrics - this now recomputes metrics with consistent probes
+    print("Computing metrics with consistent probes (frequency grid for frequency analysis)...")
+    models_data = load_all_model_metrics(experiment_path, device=device)
+    print(f"  Analyzed {len(models_data)} models")
     
     # Determine problem type and show BC config
     if models_data:
@@ -1591,7 +2324,9 @@ def main(experiment_path: str):
         generate_metric_comparison_plots(metric_name, violations, models_data, metric_dir)
         
         # C. Copy entire metric folders for violating models
-        copy_metric_folders(metric_name, violations, models_data, metric_dir)
+        # DISABLED: Old metric folders use different probes than the recomputed metrics,
+        # leading to data inconsistency. All plots now use consistently recomputed metrics.
+        # copy_metric_folders(metric_name, violations, models_data, metric_dir)
     
     print()
     
@@ -1599,6 +2334,12 @@ def main(experiment_path: str):
     print("E. Generating summary statistics...")
     generate_non_monotonic_summary(all_violations, models_data, non_mono_dir, experiment_plan)
     print()
+    
+    # F. Generate frequency-violation correlation analysis
+    if total_violations > 0:
+        print("F. Generating frequency-violation correlation analysis...")
+        generate_frequency_violation_correlation(all_violations, models_data, non_mono_dir)
+        print()
     
     print("=" * 70)
     print("Analysis complete!")

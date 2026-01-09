@@ -5,9 +5,8 @@ cursor/
 outputs/
 IMPROVEMENT_PLAN.md
 .cursor/
-AWS_scripts/
 checkpoints/
-experiments_analysis/analysis/OLD/
+experiments_analysis/analysis/
 __pycache__/
 *.pyc
 *.pyo
