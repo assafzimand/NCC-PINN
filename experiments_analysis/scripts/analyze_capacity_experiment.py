@@ -419,9 +419,7 @@ def load_all_model_metrics(experiment_path: Path, device: torch.device = None) -
             computed_metrics = compute_all_metrics_consistently(
                 model_name=model_name,
                 run_dir=run_dir,
-                device=device,
-                ncc_bins=10,
-                n_freq=64
+                device=device
             )
             
             ncc_metrics = computed_metrics['ncc_metrics']
@@ -451,6 +449,7 @@ def load_all_model_metrics(experiment_path: Path, device: torch.device = None) -
             'probe_metrics': probe_metrics,
             'derivatives_metrics': derivatives_metrics,
             'frequency_metrics': frequency_metrics,
+            'probes': computed_metrics['probes'],  # Store probes for consistent reuse
             'eval_rel_l2': final_eval_rel_l2,
             'eval_linf': final_eval_linf,
             'problem_name': problem_name
@@ -461,6 +460,18 @@ def load_all_model_metrics(experiment_path: Path, device: torch.device = None) -
 
 # =============================================================================
 # NON-MONOTONIC DETECTION
+# =============================================================================
+
+# =============================================================================
+# LAYER INDEXING CONVENTION
+# =============================================================================
+# - layer_num: 1-based index for display (Layer 1, Layer 2, ...)
+# - layer_idx: 0-based index for array access (values[0], values[1], ...)
+# 
+# Violations occur when layer N is worse than layer N-1:
+# - layer_num=2 means Layer 2 is worse than Layer 1 (first possible violation)
+# - Layer 1 can NEVER have a violation (no previous layer to compare)
+# - Conversion: layer_idx = layer_num - 1
 # =============================================================================
 
 def check_monotonicity(
@@ -1574,7 +1585,7 @@ def plot_freq_reduction_per_model(
     violation_layers: List[int],
     output_dir: Path
 ):
-    """Generate per-model frequency reduction plot for violation layers.
+    """Generate per-model frequency reduction plot for violation layers with GT reference.
     
     Args:
         model_name: Name of the model
@@ -1587,16 +1598,30 @@ def plot_freq_reduction_per_model(
     
     spectral_eff = freq_metrics.get('spectral_efficiency', {})
     k_bins = np.array(spectral_eff.get('k_radial_bins', []))
+    gt_radial = np.array(spectral_eff.get('gt_radial_power', []))
     
     if len(k_bins) == 0:
         return
     
     n_violations = len(violation_layers)
-    fig, axes = plt.subplots(1, n_violations, figsize=(5 * n_violations, 4), squeeze=False)
+    # 2 rows: GT on top, error ratio below
+    fig, axes = plt.subplots(2, n_violations, figsize=(5 * n_violations, 8), squeeze=False)
     
     for idx, layer_idx in enumerate(violation_layers):
-        ax = axes[0, idx]
+        # Top subplot: GT power spectrum
+        ax_gt = axes[0, idx]
+        ax_gt.fill_between(k_bins, 0, gt_radial, alpha=0.4, color='steelblue')
+        ax_gt.plot(k_bins, gt_radial, color='steelblue', linewidth=2, label='GT Power')
+        ax_gt.set_xlabel('Radial Frequency |k| (Hz)')
+        ax_gt.set_ylabel('Power |FFT|²')
+        if np.all(gt_radial > 0):
+            ax_gt.set_yscale('log')
+        ax_gt.set_title(f'Ground Truth: Layer {layer_idx} → {layer_idx + 1}')
+        ax_gt.grid(True, alpha=0.3)
+        ax_gt.legend(loc='upper right', fontsize=8)
         
+        # Bottom subplot: Error ratio
+        ax = axes[1, idx]
         k_bins_layer, error_ratio = get_frequency_reduction_at_layer(freq_metrics, layer_idx)
         
         if len(error_ratio) == 0:
@@ -1615,12 +1640,12 @@ def plot_freq_reduction_per_model(
         
         ax.set_xlabel('Radial Frequency |k| (Hz)')
         ax.set_ylabel('Error Ratio (E_i / E_{i-1})')
-        ax.set_title(f'Layer {layer_idx} → {layer_idx + 1}')
+        ax.set_title(f'Error Change: Layer {layer_idx} → {layer_idx + 1}')
         ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.3)
     
     fig.suptitle(f'{model_name}\nFrequency Error Change at Violation Layers', fontsize=12)
-    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
     
     # Handle Windows long paths
     output_dir_long = _long_path(output_dir)
@@ -1636,7 +1661,7 @@ def plot_aggregated_freq_reduction(
     violations: Dict[str, List[Dict]],
     output_dir: Path
 ):
-    """Plot aggregated frequency reduction across all violating models.
+    """Plot aggregated frequency reduction across all violating models with GT reference.
     
     Args:
         models_data: All model data
@@ -1646,22 +1671,27 @@ def plot_aggregated_freq_reduction(
     if not violations:
         return
     
-    # Collect all error ratios
+    # Collect all error ratios and get GT from first model
     all_ratios = []
     k_bins_ref = None
+    gt_radial_ref = None
     
     for model_name, model_violations in violations.items():
         freq_metrics = models_data[model_name].get('frequency_metrics')
         if freq_metrics is None:
             continue
         
+        # Get GT spectrum (same for all models, just take first)
+        if gt_radial_ref is None:
+            spectral_eff = freq_metrics.get('spectral_efficiency', {})
+            k_bins_ref = np.array(spectral_eff.get('k_radial_bins', []))
+            gt_radial_ref = np.array(spectral_eff.get('gt_radial_power', []))
+        
         for v in model_violations:
             layer_idx = v.get('layer_idx', v.get('layer_num', 0) - 1)  # Handle both formats
             k_bins, error_ratio = get_frequency_reduction_at_layer(freq_metrics, layer_idx)
             
             if len(error_ratio) > 0:
-                if k_bins_ref is None:
-                    k_bins_ref = k_bins
                 all_ratios.append(error_ratio)
     
     if not all_ratios or k_bins_ref is None:
@@ -1672,35 +1702,51 @@ def plot_aggregated_freq_reduction(
     mean_ratio = np.mean(all_ratios, axis=0)
     std_ratio = np.std(all_ratios, axis=0)
     
-    # Plot
-    fig, ax = plt.subplots(figsize=(10, 6))
+    # Create 2-subplot figure
+    fig, (ax_gt, ax_err) = plt.subplots(2, 1, figsize=(10, 10), 
+                                         gridspec_kw={'height_ratios': [1, 2]})
     
-    ax.axhline(y=1, color='gray', linestyle='--', alpha=0.7, linewidth=1.5, label='No change (ratio = 1)')
+    # Top: GT power spectrum
+    ax_gt.fill_between(k_bins_ref, 0, gt_radial_ref, alpha=0.4, color='steelblue')
+    ax_gt.plot(k_bins_ref, gt_radial_ref, color='steelblue', linewidth=2, label='GT Power')
+    ax_gt.set_xlabel('Radial Frequency |k| (Hz)', fontsize=11)
+    ax_gt.set_ylabel('Power |FFT|²', fontsize=11)
+    if np.all(gt_radial_ref > 0):
+        ax_gt.set_yscale('log')
+    ax_gt.set_title('Ground Truth Frequency Content', fontsize=11, fontweight='bold')
+    ax_gt.grid(True, alpha=0.3)
+    ax_gt.legend(loc='upper right', fontsize=9)
+    
+    # Bottom: Error ratio
+    ax_err.axhline(y=1, color='gray', linestyle='--', alpha=0.7, linewidth=1.5, label='No change (ratio = 1)')
     
     # Mean with confidence band
-    ax.fill_between(k_bins_ref, mean_ratio - std_ratio, mean_ratio + std_ratio,
-                   alpha=0.3, color='#3498db', label='±1 std')
-    ax.plot(k_bins_ref, mean_ratio, 'b-', linewidth=2, label='Mean')
+    ax_err.fill_between(k_bins_ref, mean_ratio - std_ratio, mean_ratio + std_ratio,
+                       alpha=0.3, color='#3498db', label='±1 std')
+    ax_err.plot(k_bins_ref, mean_ratio, 'b-', linewidth=2, label='Mean')
     
     # Color the regions: < 1 = improvement (green), > 1 = degradation (red)
-    ax.fill_between(k_bins_ref, 1, mean_ratio,
-                   where=(mean_ratio < 1), color='#2ecc71', alpha=0.2, label='Improved')
-    ax.fill_between(k_bins_ref, 1, mean_ratio,
-                   where=(mean_ratio > 1), color='#e74c3c', alpha=0.2, label='Degraded')
+    ax_err.fill_between(k_bins_ref, 1, mean_ratio,
+                       where=(mean_ratio < 1), color='#2ecc71', alpha=0.2, label='Improved')
+    ax_err.fill_between(k_bins_ref, 1, mean_ratio,
+                       where=(mean_ratio > 1), color='#e74c3c', alpha=0.2, label='Degraded')
     
-    ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=11)
-    ax.set_ylabel('Mean Error Ratio (E_i / E_{i-1})', fontsize=11)
-    ax.set_title(f'Aggregated Frequency Error Change\n'
-                f'({len(all_ratios)} violations from {len(violations)} models)', fontsize=12)
-    ax.legend(loc='upper right')
-    ax.grid(True, alpha=0.3)
+    ax_err.set_xlabel('Radial Frequency |k| (Hz)', fontsize=11)
+    ax_err.set_ylabel('Mean Error Ratio (E_i / E_{i-1})', fontsize=11)
+    ax_err.set_title(f'Aggregated Frequency Error Change\n'
+                    f'({len(all_ratios)} violations from {len(violations)} models)', fontsize=12)
+    ax_err.legend(loc='upper right')
+    ax_err.grid(True, alpha=0.3)
     
     # Add annotation for problem frequencies (where ratio > 1)
     if np.any(mean_ratio > 1):
         problem_freqs = k_bins_ref[mean_ratio > 1]
         if len(problem_freqs) > 0:
-            ax.axvspan(problem_freqs.min(), problem_freqs.max(), 
+            ax_err.axvspan(problem_freqs.min(), problem_freqs.max(), 
                       alpha=0.1, color='red', label='Problem range')
+    
+    plt.suptitle('Frequency-Violation Correlation', fontsize=14, fontweight='bold')
+    plt.tight_layout(rect=[0, 0, 1, 0.98])
     
     output_dir_long = _long_path(output_dir)
     output_dir_long.mkdir(parents=True, exist_ok=True)
@@ -1713,152 +1759,269 @@ def plot_aggregated_freq_reduction(
 # SPATIAL-FREQUENCY OVERLAY FUNCTIONS
 # =============================================================================
 
-def compute_local_frequency_continuous(
+def compute_gradient_frequency_map(
     h_gt: np.ndarray,
-    coordinates: np.ndarray
+    grid_shape: Tuple[int, ...],
+    sample_spacings: List[float]
 ) -> np.ndarray:
-    """Compute local frequency content at each point using gradient magnitude.
+    """Compute local frequency content at each grid point using gradient magnitude.
     
     Uses gradient magnitude as a proxy for local high-frequency content.
-    Returns normalized continuous values [0, 1].
+    High gradient = rapid spatial/temporal variation = high frequency content.
+    
+    Works on uniform grid data from frequency_grid.pt for consistency.
+    Returns raw gradient magnitude values (not normalized).
     
     Args:
-        h_gt: Ground truth values (N,) or (N, output_dim)
-        coordinates: (N, d) spatial+temporal coordinates
+        h_gt: Ground truth values on uniform grid, flattened (N,) or (N, output_dim)
+        grid_shape: Shape of the uniform grid (e.g., (128, 128))
+        sample_spacings: Physical spacing in each dimension [dx, dt]
         
     Returns:
-        (N,) array of normalized frequency values (0 = low freq, 1 = high freq)
+        (grid_shape) array of gradient magnitudes at each grid point
     """
-    from scipy.spatial import KDTree
-    
-    if h_gt.ndim > 1:
-        h_gt = np.linalg.norm(h_gt, axis=1)  # Use magnitude for multi-output
-    
-    N = len(h_gt)
-    n_dims = coordinates.shape[1]
-    
-    # Build KD-tree for neighbor queries
-    tree = KDTree(coordinates)
-    
-    # Estimate local gradient magnitude at each point
-    gradient_magnitudes = np.zeros(N)
-    k_neighbors = min(2 * n_dims + 1, N)
-    
-    for i in range(N):
-        distances, indices = tree.query(coordinates[i], k=k_neighbors)
-        
-        if len(indices) < 2:
-            continue
-        
-        neighbor_values = h_gt[indices[1:]]  # Exclude self
-        neighbor_dists = distances[1:]
-        
-        valid_mask = neighbor_dists > 1e-10
-        if not np.any(valid_mask):
-            continue
-        
-        value_diffs = np.abs(neighbor_values - h_gt[i])
-        gradients = value_diffs[valid_mask] / neighbor_dists[valid_mask]
-        gradient_magnitudes[i] = np.max(gradients)
-    
-    # Normalize to [0, 1] using percentile-based scaling (robust to outliers)
-    if gradient_magnitudes.max() > 0:
-        p5 = np.percentile(gradient_magnitudes, 5)
-        p95 = np.percentile(gradient_magnitudes, 95)
-        freq_normalized = (gradient_magnitudes - p5) / (p95 - p5 + 1e-10)
-        freq_normalized = np.clip(freq_normalized, 0, 1)
+    # Handle multi-output: use magnitude
+    if h_gt.ndim > 1 and h_gt.shape[-1] > 1:
+        h_gt_scalar = np.sqrt(np.sum(h_gt ** 2, axis=-1))
     else:
-        freq_normalized = np.zeros(N)
+        h_gt_scalar = h_gt.flatten()
     
-    return freq_normalized
+    # Reshape to grid
+    h_grid = h_gt_scalar.reshape(grid_shape)
+    
+    # Compute gradients using central differences with proper spacing
+    # For 2D grid: gradients in x (axis 0) and t (axis 1)
+    grad_x = np.gradient(h_grid, sample_spacings[0], axis=0)
+    grad_t = np.gradient(h_grid, sample_spacings[1], axis=1)
+    
+    # Gradient magnitude (proxy for local frequency content)
+    grad_magnitude = np.sqrt(grad_x**2 + grad_t**2)
+    
+    return grad_magnitude
 
 
-def plot_overlay_contour_lines(
+def plot_overlay_with_ground_truth(
     problem_name: str,
     change_ratios: np.ndarray,
     freq_values: np.ndarray,
-    coordinates: np.ndarray,
+    h_gt_grid: np.ndarray,
+    grid_x: np.ndarray,
+    grid_t: np.ndarray,
+    grid_shape: Tuple[int, ...],
     layer_transition: str,
     metric_name: str,
     output_path: Path
 ):
-    """Option 2: Error heatmap with frequency contour lines overlaid.
+    """Side-by-side: Ground truth heatmap + Error overlay with gradient contours.
     
-    Clean visualization with topographic-style frequency contours.
+    Left panel: Ground truth solution heatmap (magnitude for multi-output)
+    Right panel: Error change heatmap with gradient magnitude contour lines
+    
+    Uses percentile-based contour levels for adaptive spacing.
+    
+    Args:
+        problem_name: Name of the PDE problem
+        change_ratios: (n_grid_t, n_grid_x) error change ratio grid
+        freq_values: (n_grid_t, n_grid_x) gradient magnitude at each point
+        h_gt_grid: Ground truth values, shape (N,) or (N, output_dim)
+        grid_x: (n_grid_t, n_grid_x) x coordinate meshgrid
+        grid_t: (n_grid_t, n_grid_x) t coordinate meshgrid
+        grid_shape: Shape of the uniform grid (e.g., (128, 128))
+        layer_transition: String describing the layer transition
+        metric_name: Display name of the metric
+        output_path: Where to save the plot
     """
-    from scipy.interpolate import griddata
+    from matplotlib.lines import Line2D
     
-    n_dims = coordinates.shape[1]
+    fig, axes = plt.subplots(1, 2, figsize=(20, 8))
     
-    if n_dims != 2:
-        print(f"  Contour overlay only supports 2D (1D spatial + time), got {n_dims}D")
-        return
+    # === Left panel: Ground truth heatmap ===
+    ax_gt = axes[0]
     
-    fig, ax = plt.subplots(figsize=(12, 8))
-    x_coord = coordinates[:, 0]
-    t_coord = coordinates[:, 1]
+    # Handle multi-output: use magnitude
+    if h_gt_grid.ndim > 1 and h_gt_grid.shape[-1] > 1:
+        h_gt_scalar = np.sqrt(np.sum(h_gt_grid ** 2, axis=-1))
+        gt_label = '|h(x,t)| (magnitude)'
+    else:
+        h_gt_scalar = h_gt_grid.flatten()
+        gt_label = 'h(x,t)'
     
-    # Create regular grid
-    x_min, x_max = x_coord.min(), x_coord.max()
-    t_min, t_max = t_coord.min(), t_coord.max()
-    grid_x, grid_t = np.meshgrid(
-        np.linspace(x_min, x_max, 200),
-        np.linspace(t_min, t_max, 200)
-    )
+    h_gt_reshaped = h_gt_scalar.reshape(grid_shape)
+    # Transpose to match (t, x) orientation
+    if grid_shape[0] == grid_x.shape[1]:  # grid is (nx, nt)
+        h_gt_plot = h_gt_reshaped.T
+    else:
+        h_gt_plot = h_gt_reshaped
     
-    # Interpolate both fields
-    points = np.column_stack([x_coord, t_coord])
-    grid_change = griddata(points, change_ratios, (grid_x, grid_t),
-                          method='linear', fill_value=1.0)
-    grid_freq = griddata(points, freq_values, (grid_x, grid_t),
-                        method='linear', fill_value=0.5)
+    im_gt = ax_gt.contourf(grid_x, grid_t, h_gt_plot, levels=50, cmap='viridis')
+    cbar_gt = plt.colorbar(im_gt, ax=ax_gt, shrink=0.8)
+    cbar_gt.set_label(gt_label, fontsize=10)
+    
+    ax_gt.set_xlabel('x', fontsize=11)
+    ax_gt.set_ylabel('t', fontsize=11)
+    ax_gt.set_title(f'Ground Truth Solution', fontsize=12, fontweight='bold')
+    
+    # === Right panel: Error overlay with gradient contours ===
+    ax_err = axes[1]
     
     # Background: Error change heatmap
     norm = TwoSlopeNorm(vmin=0.0, vcenter=1.0, vmax=3.0)
-    im = ax.contourf(grid_x, grid_t, grid_change, levels=50,
-                    cmap='RdYlGn_r', norm=norm, alpha=1.0)
+    im_err = ax_err.contourf(grid_x, grid_t, change_ratios, levels=50,
+                             cmap='RdYlGn_r', norm=norm, alpha=1.0)
     
-    # Overlay: Frequency contour lines (dense topographic style)
-    # Dynamically set levels based on actual frequency range
-    freq_min = np.nanmin(grid_freq)
-    freq_max = np.nanmax(grid_freq)
+    # Overlay: Gradient magnitude contour lines with PERCENTILE-based levels
+    freq_min = np.nanmin(freq_values)
+    freq_max = np.nanmax(freq_values)
     freq_range = freq_max - freq_min
     
-    if freq_range > 0.01:  # Only draw contours if there's meaningful variation
-        num_levels = 20
-        if problem_name == 'wave1d':
-            num_levels = 5
-        margin = freq_range * 0.01
-        contour_levels = np.linspace(freq_min + margin, freq_max - margin, num_levels)
-        cs = ax.contour(grid_x, grid_t, grid_freq, levels=contour_levels,
-                       colors='black', linewidths=0.8, alpha=0.7)
-        # Label every other contour to avoid clutter
-        label_levels = contour_levels[1::2]  # Every 2nd level
-        ax.clabel(cs, levels=label_levels, inline=True, fontsize=8, fmt='%.2f')
+    if freq_range > 1e-6:  # Only draw contours if there's meaningful variation
+        # Use percentile-based levels for adaptive spacing
+        # This ensures contours are spread across the data distribution
+        percentiles = np.linspace(5, 95, 12)  # 12 levels from 5th to 95th percentile
+        contour_levels = np.percentile(freq_values.flatten(), percentiles)
+        # Remove duplicates (can happen if data is very uniform in some regions)
+        contour_levels = np.unique(contour_levels)
+        
+        if len(contour_levels) > 2:
+            cs = ax_err.contour(grid_x, grid_t, freq_values, levels=contour_levels,
+                               colors='black', linewidths=1.0, alpha=0.8)
+            # Label every 3rd contour
+            if len(contour_levels) > 3:
+                label_levels = contour_levels[::3]
+                ax_err.clabel(cs, levels=label_levels, inline=True, fontsize=8, fmt='%.2f')
     
-    ax.set_xlabel('x', fontsize=11)
-    ax.set_ylabel('t', fontsize=11)
+    ax_err.set_xlabel('x', fontsize=11)
+    ax_err.set_ylabel('t', fontsize=11)
     
-    cbar = plt.colorbar(im, ax=ax, shrink=0.8)
-    cbar.set_label('Error Ratio (<1: improved, >1: degraded)', fontsize=10)
+    cbar_err = plt.colorbar(im_err, ax=ax_err, shrink=0.8)
+    cbar_err.set_label('Error Ratio (<1: improved, >1: degraded)', fontsize=10)
     
-    # Legend for contours
-    from matplotlib.lines import Line2D
+    # Legend for contours - inside plot
     legend_elements = [
-        Line2D([0], [0], color='black', linestyle='-', linewidth=0.8, 
-               label=f'Freq range: {freq_min:.2f}-{freq_max:.2f}\nHigher = more high-freq content')
+        Line2D([0], [0], color='black', linestyle='-', linewidth=1.0, 
+               label=f'Gradient: {freq_min:.2f}-{freq_max:.2f}')
     ]
-    ax.legend(handles=legend_elements, loc='upper left', 
-             bbox_to_anchor=(1.02, 0.5), fontsize=9, title='Frequency Contours')
+    ax_err.legend(handles=legend_elements, loc='lower right', fontsize=9, 
+                  framealpha=0.9, title='Solution Gradient')
     
-    ax.set_title(f'{metric_name}: {layer_transition}\n'
-                f'Error Change (color) + Frequency Contours (lines)',
-                fontsize=12, fontweight='bold')
+    ax_err.set_title(f'{metric_name}: {layer_transition}\n'
+                     f'Error Change (color) + Gradient Contours (lines)',
+                     fontsize=12, fontweight='bold')
     
     plt.tight_layout()
     _long_path(output_path.parent).mkdir(parents=True, exist_ok=True)
     plt.savefig(_long_path(output_path), dpi=150, bbox_inches='tight')
     plt.close()
+
+
+def compute_metric_specific_error(
+    metric_name: str,
+    layer_name: str,
+    model: torch.nn.Module,
+    probe: torch.nn.Linear,
+    x_grid_tensor: torch.Tensor,
+    h_gt_grid: np.ndarray,
+    config: Dict[str, Any],
+    device: torch.device
+) -> np.ndarray:
+    """Compute per-point error for a specific metric.
+    
+    Different metrics require different error computations:
+    - probe_*: |prediction - ground_truth|
+    - residual_*: |PDE_residual| at each point
+    - ncc_*, ic_*, bc_*: Fall back to probe error (no spatial structure)
+    
+    Args:
+        metric_name: Name of the metric (e.g., 'probe_rel_l2', 'residual_l2')
+        layer_name: Layer name (e.g., 'layer_1')
+        model: Neural network model
+        probe: Linear probe for this layer
+        x_grid_tensor: Input coordinates tensor (N, input_dim)
+        h_gt_grid: Ground truth values (N,) or (N, output_dim)
+        config: Configuration dict with problem info
+        device: Computation device
+        
+    Returns:
+        (N,) array of per-point error values
+    """
+    from probes.probe_core import compute_probe_predictions
+    
+    model = model.to(device)
+    model.eval()
+    
+    # Get probe predictions for this layer
+    hidden_layers = [layer_name]
+    handles = model.register_ncc_hooks(hidden_layers)
+    with torch.no_grad():
+        _ = model(x_grid_tensor)
+    grid_embedding = model.activations[layer_name]
+    model.remove_hooks()
+    
+    predictions = compute_probe_predictions(probe, grid_embedding).cpu().numpy()
+    
+    # Handle multi-output ground truth
+    if h_gt_grid.ndim > 1 and h_gt_grid.shape[-1] > 1:
+        targets_scalar = np.sqrt(np.sum(h_gt_grid ** 2, axis=-1))
+        if predictions.ndim > 1 and predictions.shape[-1] > 1:
+            predictions_scalar = np.sqrt(np.sum(predictions ** 2, axis=-1))
+        else:
+            predictions_scalar = predictions.flatten()
+    else:
+        targets_scalar = h_gt_grid.flatten()
+        predictions_scalar = predictions.flatten()
+    
+    # Check metric type and compute appropriate error
+    if metric_name.startswith('residual'):
+        # Compute PDE residual at each point
+        from derivatives_tracker.derivatives_core import compute_layer_derivatives_via_probe
+        
+        # Split x_grid into spatial and temporal components
+        problem = config.get('problem', 'schrodinger')
+        problem_config = config.get(problem, {})
+        spatial_dim = problem_config.get('spatial_dim', 1)
+        
+        x_spatial = x_grid_tensor[:, :spatial_dim]
+        t = x_grid_tensor[:, -1:]
+        
+        # Compute derivatives and residual
+        derivatives = compute_layer_derivatives_via_probe(
+            model=model,
+            layer_name=layer_name,
+            probe=probe,
+            x=x_spatial,
+            t=t,
+            config=config
+        )
+        
+        # Get residual using problem-specific computation
+        from derivatives_tracker.residuals import get_residual_module
+        residual_module = get_residual_module(problem)
+        residual_terms = residual_module.compute_residual_terms(
+            h=derivatives['h'],
+            h_t=derivatives.get('h_t'),
+            h_tt=derivatives.get('h_tt'),
+            h_x=derivatives.get('h_x'),
+            h_xx=derivatives.get('h_xx'),
+            h_x0=derivatives.get('h_x0'),
+            h_x1=derivatives.get('h_x1'),
+            h_x0x0=derivatives.get('h_x0x0'),
+            h_x1x1=derivatives.get('h_x1x1')
+        )
+        
+        residual = residual_terms['residual'].cpu().numpy()
+        
+        # Compute per-point residual magnitude
+        if residual.ndim > 1:
+            error = np.sqrt(np.sum(residual ** 2, axis=-1))
+        else:
+            error = np.abs(residual.flatten())
+        
+        return error
+    
+    else:
+        # Default: probe prediction error (for probe_*, ncc_*, ic_*, bc_*)
+        error = np.abs(predictions_scalar - targets_scalar)
+        return error
 
 
 def generate_overlay_for_model(
@@ -1870,10 +2033,16 @@ def generate_overlay_for_model(
 ):
     """Generate spatial-frequency overlay plots for a model's violation layers.
     
-    Loads the model and computes per-point probe predictions to get accurate
-    per-point error change ratios (not aggregate values).
+    Uses frequency_grid.pt (uniform grid) for consistent analysis.
+    Uses stored probes from model_data (fitted once during initial metric computation).
+    
+    Computes METRIC-SPECIFIC error at each point:
+    - probe_*: |prediction - ground_truth|
+    - residual_*: |PDE_residual|
+    - ncc_*, ic_*, bc_*: Falls back to probe prediction error
+    
+    Gradient contours show local solution variation (high gradient = rapid change).
     """
-    from probes.probe_core import train_linear_probe, compute_probe_predictions
     from analysis_core import (
         find_model_checkpoint, load_model_from_checkpoint,
         parse_architecture_from_name, get_problem_config
@@ -1884,15 +2053,19 @@ def generate_overlay_for_model(
     if problem is None:
         return
     
-    # Load datasets
-    eval_data_path = Path('datasets') / problem / 'eval_data.pt'
-    train_data_path = Path('datasets') / problem / 'training_data.pt'
-    
-    if not eval_data_path.exists() or not train_data_path.exists():
+    # Load frequency_grid.pt (uniform grid for FFT-consistent analysis)
+    freq_grid_path = Path('datasets') / problem / 'frequency_grid.pt'
+    if not freq_grid_path.exists():
+        print(f"    No frequency_grid.pt found for {problem}, skipping overlay")
         return
     
-    eval_data = torch.load(eval_data_path, weights_only=False)
-    train_data = torch.load(train_data_path, weights_only=False)
+    freq_grid_data = torch.load(freq_grid_path, weights_only=False)
+    
+    # Get stored probes (fitted once during load_all_model_metrics)
+    probes = model_data.get('probes')
+    if probes is None:
+        print(f"    No stored probes found for {model_name}, skipping overlay")
+        return
     
     # Get run_dir and find checkpoint
     run_dir = model_data.get('run_dir')
@@ -1926,105 +2099,96 @@ def generate_overlay_for_model(
     model = model.to(device)
     model.eval()
     
-    # Get hidden layer names
-    all_layers = model.get_layer_names()
-    hidden_layers = all_layers[:-1]
+    # Get hidden layer names (should match probe keys)
+    hidden_layers = sorted(probes.keys(), key=lambda x: int(x.split('_')[1]))
     
-    # Extract data
-    train_x = train_data['x'].to(device)
-    train_t = train_data['t'].to(device)
-    train_targets = train_data['h_gt'].to(device)
+    # Extract grid data
+    x_grid_tensor = freq_grid_data['x_grid'].to(device)
+    h_gt_grid = freq_grid_data['h_gt_grid'].detach().cpu().numpy()
+    grid_shape = tuple(freq_grid_data['grid_shape'])
     
-    eval_x = eval_data['x'].to(device)
-    eval_t = eval_data['t'].to(device)
-    eval_targets = eval_data['h_gt'].to(device)
+    # Compute sample spacings for gradient computation
+    n_grid = grid_shape[0]
+    spatial_domain = problem_config['spatial_domain']
+    temporal_domain = problem_config['temporal_domain']
     
-    if train_targets.dim() == 1:
-        train_targets = train_targets.unsqueeze(1)
-    if eval_targets.dim() == 1:
-        eval_targets = eval_targets.unsqueeze(1)
+    sample_spacings = []
+    for dom in spatial_domain:
+        domain_length = dom[1] - dom[0]
+        sample_spacings.append(domain_length / n_grid)
+    time_length = temporal_domain[1] - temporal_domain[0]
+    sample_spacings.append(time_length / n_grid)
     
-    # Collect embeddings for all layers
-    handles = model.register_ncc_hooks(hidden_layers)
-    with torch.no_grad():
-        train_inputs = torch.cat([train_x, train_t], dim=1)
-        _ = model(train_inputs)
-    train_embeddings = model.activations.copy()
-    model.remove_hooks()
+    # Compute gradient-based frequency map (gradient magnitude = local variation)
+    freq_values_grid = compute_gradient_frequency_map(h_gt_grid, grid_shape, sample_spacings)
     
-    _ = model.register_ncc_hooks(hidden_layers)
-    with torch.no_grad():
-        eval_inputs = torch.cat([eval_x, eval_t], dim=1)
-        _ = model(eval_inputs)
-    eval_embeddings = model.activations.copy()
-    model.remove_hooks()
-    
-    # Train probes and get per-point predictions for each layer
-    layer_predictions = {}
-    for layer_name in hidden_layers:
-        train_emb = train_embeddings[layer_name]
-        eval_emb = eval_embeddings[layer_name]
-        
-        probe = train_linear_probe(train_emb, train_targets)
-        eval_preds = compute_probe_predictions(probe, eval_emb)
-        layer_predictions[layer_name] = eval_preds.cpu().numpy()
-    
-    eval_targets_np = eval_targets.cpu().numpy()
-    
-    # Prepare coordinates
-    eval_x_np = eval_data['x'].numpy()
-    eval_t_np = eval_data['t'].numpy()
-    h_gt = eval_data['h_gt'].numpy()
-    
-    if eval_x_np.ndim == 1:
-        eval_x_coords = eval_x_np.reshape(-1, 1)
-    else:
-        eval_x_coords = eval_x_np
-    if eval_t_np.ndim == 1:
-        eval_t_coords = eval_t_np.reshape(-1, 1)
-    else:
-        eval_t_coords = eval_t_np
-    coordinates = np.hstack([eval_x_coords, eval_t_coords])
-    
-    # Compute continuous frequency values (not binned)
-    freq_values = compute_local_frequency_continuous(h_gt, coordinates)
+    # Create coordinate grids for plotting
+    x_min, x_max = spatial_domain[0]
+    t_min, t_max = temporal_domain
+    grid_x_1d = np.linspace(x_min, x_max, grid_shape[0])
+    grid_t_1d = np.linspace(t_min, t_max, grid_shape[1])
+    grid_x, grid_t = np.meshgrid(grid_x_1d, grid_t_1d, indexing='xy')
     
     display_name = METRICS_CONFIG.get(metric_name, {}).get('display_name', metric_name)
-    layer_names = sorted(hidden_layers, key=lambda x: int(x.split('_')[1]))
     
     for layer_idx in violation_layers:
-        if layer_idx <= 0 or layer_idx >= len(layer_names):
+        if layer_idx <= 0 or layer_idx >= len(hidden_layers):
             continue
         
-        prev_layer = layer_names[layer_idx - 1]
-        curr_layer = layer_names[layer_idx]
+        prev_layer = hidden_layers[layer_idx - 1]
+        curr_layer = hidden_layers[layer_idx]
         
-        prev_preds = layer_predictions[prev_layer]
-        curr_preds = layer_predictions[curr_layer]
+        # Compute METRIC-SPECIFIC error for both layers
+        prev_error = compute_metric_specific_error(
+            metric_name=metric_name,
+            layer_name=prev_layer,
+            model=model,
+            probe=probes[prev_layer],
+            x_grid_tensor=x_grid_tensor,
+            h_gt_grid=h_gt_grid,
+            config=config,
+            device=device
+        )
         
-        # Compute per-point absolute errors
-        if prev_preds.ndim > 1 and prev_preds.shape[1] > 1:
-            # Multi-output: use magnitude of error
-            prev_error = np.sqrt(np.sum((prev_preds - eval_targets_np) ** 2, axis=1))
-            curr_error = np.sqrt(np.sum((curr_preds - eval_targets_np) ** 2, axis=1))
-        else:
-            prev_error = np.abs(prev_preds.flatten() - eval_targets_np.flatten())
-            curr_error = np.abs(curr_preds.flatten() - eval_targets_np.flatten())
+        curr_error = compute_metric_specific_error(
+            metric_name=metric_name,
+            layer_name=curr_layer,
+            model=model,
+            probe=probes[curr_layer],
+            x_grid_tensor=x_grid_tensor,
+            h_gt_grid=h_gt_grid,
+            config=config,
+            device=device
+        )
         
         # Compute per-point change ratio: curr_error / prev_error
         eps = 1e-10
         change_ratios = curr_error / (prev_error + eps)
         change_ratios = np.clip(change_ratios, 0, 5)  # Cap extreme values
         
+        # Reshape to grid for plotting
+        change_ratios_grid = change_ratios.reshape(grid_shape)
+        
+        # Transpose if needed to match (t, x) orientation for plotting
+        if grid_shape[0] == len(grid_x_1d):  # grid is (nx, nt)
+            change_ratios_plot = change_ratios_grid.T
+            freq_values_plot = freq_values_grid.T
+        else:
+            change_ratios_plot = change_ratios_grid
+            freq_values_plot = freq_values_grid
+        
         layer_transition = f"Layer {layer_idx} → {layer_idx + 1}"
         safe_name = model_name.replace('/', '_').replace('\\', '_')
         
-        # Generate overlay: error heatmap with frequency contour lines
-        plot_overlay_contour_lines(
+        # Generate combined plot: GT heatmap + error overlay with gradient contours
+        plot_overlay_with_ground_truth(
             problem_name=problem,
-            change_ratios=change_ratios,
-            freq_values=freq_values,
-            coordinates=coordinates,
+            change_ratios=change_ratios_plot,
+            freq_values=freq_values_plot,
+            h_gt_grid=h_gt_grid,
+            grid_x=grid_x,
+            grid_t=grid_t,
+            grid_shape=grid_shape,
             layer_transition=layer_transition,
             metric_name=display_name,
             output_path=output_dir / f"{safe_name}_overlay_layer{layer_idx + 1}.png"
