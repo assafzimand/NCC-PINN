@@ -677,30 +677,32 @@ def compute_radial_power_spectrum(
     k_edges = np.linspace(0, k_max, n_bins + 1)
     k_centers = (k_edges[:-1] + k_edges[1:]) / 2
     
-    # Sum power in each bin
+    # Average power in each bin (matches training computation)
     power_radial = np.zeros(n_bins)
     for i in range(n_bins):
-        mask = (k_magnitude >= k_edges[i]) & (k_magnitude < k_edges[i + 1])
+        if i == n_bins - 1:
+            mask = (k_magnitude >= k_edges[i]) & (k_magnitude <= k_edges[i + 1])
+        else:
+            mask = (k_magnitude >= k_edges[i]) & (k_magnitude < k_edges[i + 1])
         if mask.sum() > 0:
-            power_radial[i] = power[mask].sum()
+            power_radial[i] = power[mask].mean()  # Use mean() to match training
     
     return k_centers, power_radial
 
 
-def compute_frequency_metrics_nufft(
+def compute_frequency_metrics_fft(
     probes: Dict[str, torch.nn.Linear],
     model: torch.nn.Module,
     freq_grid_data: Dict,
     device: torch.device,
     problem_config: Dict,
-    n_freq: int = 64,
-    n_bins: int = 32,
-    n_grid_ref: int = 100
+    n_bins: int = 30
 ) -> Dict:
-    """Compute frequency metrics using NUFFT on frequency grid data.
+    """Compute frequency metrics using standard FFT on frequency grid data.
     
     Uses frequency_grid.pt (same as training) for consistent frequency analysis.
-    Frequency calculation matches training: sample_spacing = domain_length / n_grid_ref
+    Matches training-time computation exactly: uses grid_shape from data file,
+    standard FFT (not NUFFT), and n_bins=30.
     
     Args:
         probes: Dict of trained probes from fit_probes()
@@ -708,9 +710,7 @@ def compute_frequency_metrics_nufft(
         freq_grid_data: Frequency grid data dict (from frequency_grid.pt)
         device: Device for computation
         problem_config: Problem configuration with domain bounds
-        n_freq: NUFFT frequency grid resolution (output size)
-        n_bins: Number of radial frequency bins
-        n_grid_ref: Reference grid size for frequency calculation (default 100, matches training)
+        n_bins: Number of radial frequency bins (default 30, matches training)
         
     Returns:
         Dict with:
@@ -719,135 +719,160 @@ def compute_frequency_metrics_nufft(
             - error_matrix: (n_layers, n_bins) relative spectral error per layer
             - layers_analyzed: list of layer names
     """
+    from frequency_tracker.frequency_core import (
+        compute_frequency_spectrum
+    )
+    
     model = model.to(device)
     model.eval()
     
     layer_names = sorted(probes.keys(), key=lambda x: int(x.split('_')[1]))
     n_layers = len(layer_names)
     
-    # Extract grid data (detach to avoid requires_grad issues)
-    # freq_grid_data has x_grid (already concatenated coords) and h_gt_grid
+    # Extract grid data - grid_shape is stored in the file (e.g., (128, 128) if n_freq_grid=128)
     x_grid_tensor = freq_grid_data['x_grid'].to(device)
     h_gt_grid = freq_grid_data['h_gt_grid'].detach().cpu().numpy()
-    grid_shape = tuple(freq_grid_data['grid_shape'])
+    grid_shape = tuple(freq_grid_data['grid_shape'])  # Use actual grid_shape from file
     
-    # Flatten grid for coordinate extraction
-    # x_grid has shape (N_grid_total, n_dims) where n_dims = spatial_dim + 1 (time)
-    spatial_dim = x_grid_tensor.shape[1] - 1  # Last dimension is time
+    # Compute sample spacings exactly as in training (frequency_core.py:249-264)
+    n_grid = grid_shape[0]  # Assuming uniform grid (matches training)
+    sample_spacings = []
     
-    if spatial_dim == 1:
-        eval_x = x_grid_tensor[:, 0].detach().cpu().numpy()
-        eval_t = x_grid_tensor[:, 1].detach().cpu().numpy()
-    elif spatial_dim == 2:
-        eval_x = x_grid_tensor[:, :2].detach().cpu().numpy()  # (N, 2)
-        eval_t = x_grid_tensor[:, 2].detach().cpu().numpy()
-    else:
-        raise ValueError(f"Unsupported spatial dimension: {spatial_dim}")
-    
-    # Handle multi-output ground truth
-    if h_gt_grid.ndim > 1 and h_gt_grid.shape[-1] > 1:
-        # Flatten spatial dimensions, keep output dim
-        targets_flat = h_gt_grid.reshape(-1, h_gt_grid.shape[-1])
-        targets_scalar = np.sqrt(np.sum(targets_flat ** 2, axis=1))
-    else:
-        eval_targets = h_gt_grid
-        targets_scalar = h_gt_grid.flatten()
-    
-    # Compute domain bounds from problem config
     spatial_domain = problem_config['spatial_domain']
     temporal_domain = problem_config['temporal_domain']
     
-    # Compute ground truth spectrum
-    if spatial_dim == 1:
-        eval_x_flat = eval_x.reshape(-1)
-        eval_t_flat = eval_t.reshape(-1)
-        
-        domain_bounds = {
-            'x_min': spatial_domain[0][0], 'x_max': spatial_domain[0][1],
-            't_min': temporal_domain[0], 't_max': temporal_domain[1]
-        }
-        
-        F_gt, freq_x, freq_t = nufft_spectrum_2d(
-            targets_scalar, eval_x_flat, eval_t_flat, domain_bounds, n_freq, n_grid_ref
-        )
-        power_gt = np.abs(F_gt) ** 2
-        k_bins, gt_radial = compute_radial_power_spectrum(power_gt, [freq_x, freq_t], n_bins)
-        
-    elif spatial_dim == 2:
-        x0 = eval_x[:, 0]
-        x1 = eval_x[:, 1]
-        eval_t_flat = eval_t.reshape(-1)
-        
-        domain_bounds = {
-            'x0_min': spatial_domain[0][0], 'x0_max': spatial_domain[0][1],
-            'x1_min': spatial_domain[1][0], 'x1_max': spatial_domain[1][1],
-            't_min': temporal_domain[0], 't_max': temporal_domain[1]
-        }
-        
-        # Use smaller n_freq for 3D to manage memory
-        n_freq_3d = min(n_freq, 32)
-        
-        F_gt, freq_x0, freq_x1, freq_t = nufft_spectrum_3d(
-            targets_scalar, x0, x1, eval_t_flat, domain_bounds, n_freq_3d, n_grid_ref
-        )
-        power_gt = np.abs(F_gt) ** 2
-        k_bins, gt_radial = compute_radial_power_spectrum(
-            power_gt, [freq_x0, freq_x1, freq_t], n_bins
-        )
+    # Spatial dimensions (exactly as training: frequency_core.py:257-260)
+    for dom in spatial_domain:
+        domain_length = dom[1] - dom[0]
+        sample_spacings.append(domain_length / n_grid)
+    
+    # Time dimension (exactly as training: frequency_core.py:262-264)
+    time_length = temporal_domain[1] - temporal_domain[0]
+    sample_spacings.append(time_length / n_grid)
+    
+    # Debug: print domain info
+    print(f"    Domain debug: spatial_domain={spatial_domain}, temporal_domain={temporal_domain}")
+    print(f"    Domain debug: grid_shape={grid_shape}, n_grid={n_grid}")
+    print(f"    Domain debug: sample_spacings={sample_spacings}")
+    
+    # Handle multi-output ground truth
+    if h_gt_grid.ndim > 1 and h_gt_grid.shape[-1] > 1:
+        targets_flat = h_gt_grid.reshape(-1, h_gt_grid.shape[-1])
+        targets_scalar = np.sqrt(np.sum(targets_flat ** 2, axis=1))
     else:
-        raise ValueError(f"Unsupported spatial dimension: {spatial_dim}")
+        targets_scalar = h_gt_grid.flatten()
+    
+    # Compute ground truth spectrum using standard FFT (matches training exactly)
+    gt_spectrum = compute_frequency_spectrum(targets_scalar, grid_shape, sample_spacings)
+    
+    # Compute radial spectrum manually (matching frequency_runner.py exactly)
+    gt_power = gt_spectrum['power']
+    gt_freqs = gt_spectrum['freqs']
+    n_dims = len(gt_freqs)
+    
+    # Handle multi-output: average over output dimension first
+    if gt_power.ndim > n_dims:
+        gt_power_avg = gt_power.mean(axis=-1)
+    else:
+        gt_power_avg = gt_power
+    
+    # Create radial frequency grid and compute k_max ONCE (matching training)
+    mesh_freqs = np.meshgrid(*gt_freqs, indexing='ij')
+    k_magnitude = np.sqrt(sum(f**2 for f in mesh_freqs))
+    k_max = k_magnitude.max()
+    if k_max == 0:
+        k_max = 1.0
+    
+    # Compute k_max exactly as in training (no filtering, use full range)
+    # This matches frequency_runner.py:185-189 and frequency_plotting.py:108-112
+    
+    # Debug: print frequency info
+    print(f"    Frequency debug: grid_shape={grid_shape}, n_grid={n_grid}")
+    print(f"    Frequency debug: sample_spacings={sample_spacings}")
+    for i, freq_arr in enumerate(gt_freqs):
+        print(f"    Frequency debug: dim {i}: min={freq_arr.min():.3f}, max={freq_arr.max():.3f}, shape={freq_arr.shape}")
+    print(f"    Frequency debug: k_max={k_max:.3f}")
+    
+    k_bin_edges = np.linspace(0, k_max, n_bins + 1)
+    k_bin_centers = (k_bin_edges[:-1] + k_bin_edges[1:]) / 2
+    
+    # Compute GT radial power using .mean() (matching training)
+    gt_radial = np.zeros(n_bins)
+    for bin_idx in range(n_bins):
+        if bin_idx == n_bins - 1:
+            mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude <= k_bin_edges[bin_idx + 1])
+        else:
+            mask = (k_magnitude >= k_bin_edges[bin_idx]) & (k_magnitude < k_bin_edges[bin_idx + 1])
+        if mask.sum() > 0:
+            gt_radial[bin_idx] = gt_power_avg[mask].mean()  # Use .mean() to match training
     
     gt_radial_safe = np.where(gt_radial > 1e-15, gt_radial, 1e-15)
     
-    # Get grid embeddings for all layers using x_grid
+    # Get grid embeddings for all layers
     handles = model.register_ncc_hooks(layer_names)
     with torch.no_grad():
         _ = model(x_grid_tensor)
     grid_embeddings = model.activations.copy()
     model.remove_hooks()
     
-    # Compute spectral error for each layer
+    # Compute spectral error for each layer using SAME bin edges from GT
     error_matrix = np.zeros((n_layers, n_bins))
     
     for layer_idx, layer_name in enumerate(layer_names):
         probe = probes[layer_name]
-        grid_emb = grid_embeddings[layer_name]
+        embeddings = grid_embeddings[layer_name]
         
         with torch.no_grad():
-            predictions = probe(grid_emb).detach().cpu().numpy()
+            h_pred = probe(embeddings).cpu().numpy()
         
         # Handle multi-output
-        if predictions.ndim > 1 and predictions.shape[1] > 1:
-            preds_scalar = np.sqrt(np.sum(predictions ** 2, axis=1))
+        if h_pred.ndim > 1 and h_pred.shape[1] > 1:
+            h_pred_scalar = np.sqrt(np.sum(h_pred ** 2, axis=1))
         else:
-            preds_scalar = predictions.flatten()
+            h_pred_scalar = h_pred.flatten()
         
-        # Compute error spectrum (leftover = gt - pred)
-        error = targets_scalar - preds_scalar
+        # Compute error spectrum using standard FFT
+        error = targets_scalar - h_pred_scalar
+        error_spectrum = compute_frequency_spectrum(error, grid_shape, sample_spacings)
         
-        if spatial_dim == 1:
-            F_error, _, _ = nufft_spectrum_2d(error, eval_x_flat, eval_t_flat, domain_bounds, n_freq, n_grid_ref)
-            power_error = np.abs(F_error) ** 2
-            _, error_radial = compute_radial_power_spectrum(power_error, [freq_x, freq_t], n_bins)
+        # Compute radial leftover power using SAME k_bin_edges from GT
+        leftover_power = error_spectrum['power']
+        leftover_freqs = error_spectrum['freqs']
+        
+        # Handle multi-output
+        if leftover_power.ndim > len(leftover_freqs):
+            leftover_avg = leftover_power.mean(axis=-1)
         else:
-            F_error, _, _, _ = nufft_spectrum_3d(error, x0, x1, eval_t_flat, domain_bounds, n_freq_3d, n_grid_ref)
-            power_error = np.abs(F_error) ** 2
-            _, error_radial = compute_radial_power_spectrum(
-                power_error, [freq_x0, freq_x1, freq_t], n_bins
-            )
+            leftover_avg = leftover_power
         
-        # Store relative error
-        error_matrix[layer_idx] = error_radial / gt_radial_safe
+        # Create radial frequency grid for error (frequencies should match GT, but compute to be safe)
+        mesh_freqs_l = np.meshgrid(*leftover_freqs, indexing='ij')
+        k_mag_l = np.sqrt(sum(f**2 for f in mesh_freqs_l))
+        
+        # Use SAME bin edges from GT (not recompute k_max)
+        leftover_radial = np.zeros(n_bins)
+        for bin_idx in range(n_bins):
+            if bin_idx == n_bins - 1:
+                mask = (k_mag_l >= k_bin_edges[bin_idx]) & (k_mag_l <= k_bin_edges[bin_idx + 1])
+            else:
+                mask = (k_mag_l >= k_bin_edges[bin_idx]) & (k_mag_l < k_bin_edges[bin_idx + 1])
+            if mask.sum() > 0:
+                leftover_radial[bin_idx] = leftover_avg[mask].mean()  # Use .mean() to match training
+        
+        # Relative error: |FFT(error)|² / |FFT(gt)|²
+        relative_error = leftover_radial / gt_radial_safe
+        error_matrix[layer_idx] = relative_error
     
+    # Format to match expected structure
     return {
         'layers_analyzed': layer_names,
-        'k_bins': k_bins.tolist(),
-        'gt_radial_power': gt_radial.tolist(),
         'spectral_efficiency': {
-            'k_radial_bins': k_bins.tolist(),
+            'k_radial_bins': k_bin_centers.tolist(),  # Use manually computed k_bin_centers
             'error_matrix': error_matrix.tolist(),
             'gt_radial_power': gt_radial.tolist()
-        }
+        },
+        'final_layer_leftover_ratio': float(error_matrix[-1].mean()),
+        'ground_truth_total_power': float(gt_radial.sum())
     }
 
 
@@ -859,8 +884,7 @@ def compute_all_metrics_consistently(
     model_name: str,
     run_dir: Path,
     device: torch.device,
-    ncc_bins: int = 10,
-    n_freq: int = 64
+    bins: int = None
 ) -> Dict[str, Any]:
     """Compute all metrics for a model using consistent probes.
     
@@ -873,8 +897,8 @@ def compute_all_metrics_consistently(
         model_name: Model folder name
         run_dir: Path to the timestamped run directory
         device: Device for computation
-        ncc_bins: Number of bins for NCC classification
-        n_freq: NUFFT frequency grid resolution
+        bins: Number of bins for NCC classification. If None, will read from
+              saved ncc_metrics.json (preferred) or config_used.yaml (fallback)
         
     Returns:
         Dict with all computed metrics
@@ -890,7 +914,21 @@ def compute_all_metrics_consistently(
     if problem is None:
         raise ValueError(f"Cannot extract problem from model name: {model_name}")
     
-    problem_config = get_problem_config(problem)
+    # Try to read problem config from config_used.yaml (matches training exactly)
+    problem_config = None
+    config_file = run_dir / "config_used.yaml"
+    if config_file.exists():
+        import yaml
+        with open(config_file, 'r') as f:
+            saved_config = yaml.safe_load(f)
+            if problem in saved_config:
+                problem_config = saved_config[problem].copy()
+                print(f"    Read {problem} config from config_used.yaml")
+    
+    # Fallback to hardcoded config if not found
+    if problem_config is None:
+        problem_config = get_problem_config(problem)
+        print(f"    Using default {problem} config (config_used.yaml not found)")
     
     # Find checkpoint
     checkpoint_path = find_model_checkpoint(run_dir, problem, model_name)
@@ -918,6 +956,33 @@ def compute_all_metrics_consistently(
     if model is None:
         raise ValueError(f"Failed to load model from {checkpoint_path}")
     
+    # Try to read bins from saved ncc_metrics.json (preferred - matches what was actually used)
+    if bins is None:
+        ncc_metrics_file = run_dir / "ncc_plots" / "ncc_metrics.json"
+        if ncc_metrics_file.exists():
+            import json
+            with open(ncc_metrics_file, 'r') as f:
+                saved_ncc_metrics = json.load(f)
+                bins = saved_ncc_metrics.get('bins', None)
+            if bins is not None:
+                print(f"    Read bins={bins} from saved ncc_metrics.json")
+        
+        # Fallback: try config_used.yaml
+        if bins is None:
+            config_file = run_dir / "config_used.yaml"
+            if config_file.exists():
+                import yaml
+                with open(config_file, 'r') as f:
+                    saved_config = yaml.safe_load(f)
+                    bins = saved_config.get('bins', None)
+                if bins is not None:
+                    print(f"    Read bins={bins} from config_used.yaml")
+        
+        # Final fallback: default to 5
+        if bins is None:
+            bins = 5
+            print(f"    Using default bins={bins} (not found in saved files)")
+    
     # Load datasets
     print(f"    Loading datasets for {problem}...")
     train_data, eval_data, ncc_data, freq_grid_data = load_datasets(problem)
@@ -943,20 +1008,17 @@ def compute_all_metrics_consistently(
     print(f"    Computing probe metrics (on frequency grid)...")
     probe_metrics = compute_probe_metrics(probes, model, train_data, freq_grid_compat, device)
     
-    print(f"    Computing NCC metrics (on NCC data)...")
-    ncc_metrics = compute_ncc_metrics(probes, model, ncc_data, device, bins=ncc_bins)
+    print(f"    Computing NCC metrics (on NCC data, bins={bins})...")
+    ncc_metrics = compute_ncc_metrics(probes, model, ncc_data, device, bins=bins)
     
     print(f"    Computing derivatives metrics (on frequency grid)...")
     derivatives_metrics = compute_derivatives_metrics(probes, model, freq_grid_compat, config, device)
     
-    print(f"    Computing frequency metrics (on frequency grid, grid-based FFT)...")
-    # Extract grid shape to determine n_grid_ref for frequency calculation
-    grid_shape = tuple(freq_grid_data.get('grid_shape', [100, 100]))
-    n_grid_ref = grid_shape[0]  # Typically 100 for all problems
-    
-    frequency_metrics = compute_frequency_metrics_nufft(
+    print(f"    Computing frequency metrics (on frequency grid, standard FFT matching training)...")
+    # Grid shape is already in freq_grid_data, use it directly in the function
+    frequency_metrics = compute_frequency_metrics_fft(
         probes, model, freq_grid_data, device, problem_config, 
-        n_freq=n_freq, n_grid_ref=n_grid_ref
+        n_bins=30  # Match training-time default
     )
     
     return {
