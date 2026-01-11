@@ -1772,10 +1772,13 @@ def compute_gradient_frequency_map(
     Works on uniform grid data from frequency_grid.pt for consistency.
     Returns raw gradient magnitude values (not normalized).
     
+    NOTE: This function is designed for 2D grids (1D spatial + 1D temporal).
+    For higher-dimensional problems, overlay plots are skipped in generate_overlay_for_model.
+    
     Args:
         h_gt: Ground truth values on uniform grid, flattened (N,) or (N, output_dim)
-        grid_shape: Shape of the uniform grid (e.g., (128, 128))
-        sample_spacings: Physical spacing in each dimension [dx, dt]
+        grid_shape: Shape of the uniform grid (e.g., (128, 128) for 2D)
+        sample_spacings: Physical spacing in each dimension [dx₀, dt]
         
     Returns:
         (grid_shape) array of gradient magnitudes at each grid point
@@ -1810,12 +1813,16 @@ def plot_overlay_with_ground_truth(
     grid_shape: Tuple[int, ...],
     layer_transition: str,
     metric_name: str,
-    output_path: Path
+    output_path: Path,
+    prev_error_grid: np.ndarray = None,
+    curr_error_grid: np.ndarray = None,
+    sample_spacings: List[float] = None
 ):
-    """Side-by-side: Ground truth heatmap + Error overlay with gradient contours.
+    """Side-by-side: Ground truth + Spatial error overlay + Frequency domain error.
     
     Left panel: Ground truth solution heatmap (magnitude for multi-output)
-    Right panel: Error change heatmap with gradient magnitude contour lines
+    Middle panel: Error change heatmap with gradient magnitude contour lines
+    Right panel: Error change heatmap in frequency domain (k_x, k_t)
     
     Uses percentile-based contour levels for adaptive spacing.
     
@@ -1830,14 +1837,27 @@ def plot_overlay_with_ground_truth(
         layer_transition: String describing the layer transition
         metric_name: Display name of the metric
         output_path: Where to save the plot
+        prev_error_grid: (nx, nt) previous layer error grid (for FFT)
+        curr_error_grid: (nx, nt) current layer error grid (for FFT)
+        sample_spacings: [dx, dt] for frequency axis computation
     """
     from matplotlib.lines import Line2D
     
-    fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+    # Determine if we can show frequency domain panel
+    show_freq_domain = (prev_error_grid is not None and 
+                        curr_error_grid is not None and 
+                        sample_spacings is not None)
+    
+    n_panels = 3 if show_freq_domain else 2
+    fig, axes = plt.subplots(1, n_panels, figsize=(10 * n_panels, 8))
+    
+    if n_panels == 2:
+        ax_gt, ax_err = axes
+        ax_freq = None
+    else:
+        ax_gt, ax_err, ax_freq = axes
     
     # === Left panel: Ground truth heatmap ===
-    ax_gt = axes[0]
-    
     # Handle multi-output: use magnitude
     if h_gt_grid.ndim > 1 and h_gt_grid.shape[-1] > 1:
         h_gt_scalar = np.sqrt(np.sum(h_gt_grid ** 2, axis=-1))
@@ -1857,13 +1877,11 @@ def plot_overlay_with_ground_truth(
     cbar_gt = plt.colorbar(im_gt, ax=ax_gt, shrink=0.8)
     cbar_gt.set_label(gt_label, fontsize=10)
     
-    ax_gt.set_xlabel('x', fontsize=11)
-    ax_gt.set_ylabel('t', fontsize=11)
+    ax_gt.set_xlabel('$x_0$', fontsize=11)
+    ax_gt.set_ylabel('$t$', fontsize=11)
     ax_gt.set_title(f'Ground Truth Solution', fontsize=12, fontweight='bold')
     
-    # === Right panel: Error overlay with gradient contours ===
-    ax_err = axes[1]
-    
+    # === Middle panel: Error overlay with gradient contours ===
     # Background: Error change heatmap
     norm = TwoSlopeNorm(vmin=0.0, vcenter=1.0, vmax=3.0)
     im_err = ax_err.contourf(grid_x, grid_t, change_ratios, levels=50,
@@ -1877,7 +1895,7 @@ def plot_overlay_with_ground_truth(
     if freq_range > 1e-6:  # Only draw contours if there's meaningful variation
         # Use percentile-based levels for adaptive spacing
         # This ensures contours are spread across the data distribution
-        percentiles = np.linspace(5, 95, 12)  # 12 levels from 5th to 95th percentile
+        percentiles = np.linspace(1, 99, 20)  # 12 levels from 5th to 95th percentile
         contour_levels = np.percentile(freq_values.flatten(), percentiles)
         # Remove duplicates (can happen if data is very uniform in some regions)
         contour_levels = np.unique(contour_levels)
@@ -1890,8 +1908,8 @@ def plot_overlay_with_ground_truth(
                 label_levels = contour_levels[::3]
                 ax_err.clabel(cs, levels=label_levels, inline=True, fontsize=8, fmt='%.2f')
     
-    ax_err.set_xlabel('x', fontsize=11)
-    ax_err.set_ylabel('t', fontsize=11)
+    ax_err.set_xlabel('$x_0$', fontsize=11)
+    ax_err.set_ylabel('$t$', fontsize=11)
     
     cbar_err = plt.colorbar(im_err, ax=ax_err, shrink=0.8)
     cbar_err.set_label('Error Ratio (<1: improved, >1: degraded)', fontsize=10)
@@ -1907,6 +1925,71 @@ def plot_overlay_with_ground_truth(
     ax_err.set_title(f'{metric_name}: {layer_transition}\n'
                      f'Error Change (color) + Gradient Contours (lines)',
                      fontsize=12, fontweight='bold')
+    
+    # === Right panel: Frequency domain error change ===
+    if show_freq_domain and ax_freq is not None:
+        from scipy.fft import fft2, fftfreq
+        
+        # Get shape from actual data
+        n_t, n_x = prev_error_grid.shape
+        
+        # Compute 2D FFT of errors
+        prev_fft = fft2(prev_error_grid)
+        curr_fft = fft2(curr_error_grid)
+        
+        # Power spectra
+        prev_power = np.abs(prev_fft) ** 2
+        curr_power = np.abs(curr_fft) ** 2
+        
+        # Error ratio in frequency domain
+        eps = 1e-10
+        freq_error_ratio = curr_power / (prev_power + eps)
+        
+        # Log scale for better visualization
+        log_ratio = np.log10(freq_error_ratio + eps)
+        
+        # For real-valued signals, FFT is conjugate symmetric
+        # We only need the positive frequency quadrant (0 to Nyquist)
+        n_t_half = n_t // 2 + 1
+        n_x_half = n_x // 2 + 1
+        
+        # Extract positive frequency quadrant (no shift needed - DC at index 0)
+        log_ratio_pos = log_ratio[:n_t_half, :n_x_half]
+        
+        # Compute positive frequency axes only
+        dt, dx = sample_spacings[0], sample_spacings[1]
+        freq_x = fftfreq(n_x, dx)[:n_x_half]  # 0 to Nyquist
+        freq_t = fftfreq(n_t, dt)[:n_t_half]  # 0 to Nyquist
+        
+        # Extent for imshow: [x_min, x_max, y_min, y_max]
+        k_x_max = freq_x[-1]
+        k_t_max = freq_t[-1]
+        
+        # Use actual data range (symmetric around 0 for balanced colormap)
+        data_max = max(abs(np.nanmin(log_ratio_pos)), abs(np.nanmax(log_ratio_pos)))
+        log_limit = data_max if data_max > 0 else 1.0
+        
+        # Plot with imshow
+        # origin='lower' puts k_t=0 at bottom, k_x=0 at left
+        norm_freq = TwoSlopeNorm(vmin=-log_limit, vcenter=0.0, vmax=log_limit)
+        im_freq = ax_freq.imshow(
+            log_ratio_pos,
+            extent=[0, k_x_max, 0, k_t_max],
+            origin='lower',
+            aspect='auto',
+            cmap='RdYlGn_r',
+            norm=norm_freq,
+            interpolation='bilinear'
+        )
+        
+        cbar_freq = plt.colorbar(im_freq, ax=ax_freq, shrink=0.8)
+        cbar_freq.set_label('log₁₀(Error Ratio)\n(<0: improved, >0: degraded)', fontsize=10)
+        
+        ax_freq.set_xlabel('$|k_{x_0}|$ (Hz)', fontsize=11)
+        ax_freq.set_ylabel('$|k_t|$ (Hz)', fontsize=11)
+        ax_freq.set_title(f'{metric_name}: {layer_transition}\n'
+                          f'Error Change in Frequency Domain',
+                          fontsize=12, fontweight='bold')
     
     plt.tight_layout()
     _long_path(output_path.parent).mkdir(parents=True, exist_ok=True)
@@ -2042,6 +2125,9 @@ def generate_overlay_for_model(
     - ncc_*, ic_*, bc_*: Falls back to probe prediction error
     
     Gradient contours show local solution variation (high gradient = rapid change).
+    
+    NOTE: Only generates plots for 1D spatial problems. For higher-dimensional
+    spatial domains (spatial_dim > 1), 2D contour plots are not meaningful.
     """
     from analysis_core import (
         find_model_checkpoint, load_model_from_checkpoint,
@@ -2051,6 +2137,14 @@ def generate_overlay_for_model(
     # Extract problem
     problem = extract_problem_from_name(model_name)
     if problem is None:
+        return
+    
+    # Check spatial dimension - skip overlay for multi-dimensional spatial domains
+    problem_config = get_problem_config(problem)
+    spatial_dim = problem_config.get('spatial_dim', 1)
+    if spatial_dim > 1:
+        # Skip overlay plots for 2D+ spatial domains (e.g., burgers2d)
+        # These 2D contour plots only make sense for 1D spatial + 1D temporal
         return
     
     # Load frequency_grid.pt (uniform grid for FFT-consistent analysis)
@@ -2082,7 +2176,7 @@ def generate_overlay_for_model(
     if architecture is None:
         return
     
-    problem_config = get_problem_config(problem)
+    # problem_config already loaded above for spatial_dim check
     config = {
         'architecture': architecture,
         'activation': activation,
@@ -2169,18 +2263,29 @@ def generate_overlay_for_model(
         # Reshape to grid for plotting
         change_ratios_grid = change_ratios.reshape(grid_shape)
         
+        # Reshape errors to grid for frequency domain analysis
+        prev_error_grid = prev_error.reshape(grid_shape)
+        curr_error_grid = curr_error.reshape(grid_shape)
+        
         # Transpose if needed to match (t, x) orientation for plotting
         if grid_shape[0] == len(grid_x_1d):  # grid is (nx, nt)
             change_ratios_plot = change_ratios_grid.T
             freq_values_plot = freq_values_grid.T
+            prev_error_plot = prev_error_grid.T
+            curr_error_plot = curr_error_grid.T
+            # After transpose, shape is (nt, nx), so spacing order is [dt, dx]
+            sample_spacings_plot = [sample_spacings[1], sample_spacings[0]]
         else:
             change_ratios_plot = change_ratios_grid
             freq_values_plot = freq_values_grid
+            prev_error_plot = prev_error_grid
+            curr_error_plot = curr_error_grid
+            sample_spacings_plot = sample_spacings
         
         layer_transition = f"Layer {layer_idx} → {layer_idx + 1}"
         safe_name = model_name.replace('/', '_').replace('\\', '_')
         
-        # Generate combined plot: GT heatmap + error overlay with gradient contours
+        # Generate combined plot: GT + spatial overlay + frequency domain
         plot_overlay_with_ground_truth(
             problem_name=problem,
             change_ratios=change_ratios_plot,
@@ -2191,7 +2296,10 @@ def generate_overlay_for_model(
             grid_shape=grid_shape,
             layer_transition=layer_transition,
             metric_name=display_name,
-            output_path=output_dir / f"{safe_name}_overlay_layer{layer_idx + 1}.png"
+            output_path=output_dir / f"{safe_name}_overlay_layer{layer_idx + 1}.png",
+            prev_error_grid=prev_error_plot,
+            curr_error_grid=curr_error_plot,
+            sample_spacings=sample_spacings_plot
         )
 
 
@@ -2290,8 +2398,11 @@ def _generate_frequency_correlation_summary(
         n_models = len(violations_by_model)
         total_violations = len(violations)
         
-        # Compute average frequency where metric degraded
-        mean_neg_freqs = []
+        # Compute weighted average frequency by degradation amount
+        # Weight = log(error_ratio) for each frequency bin
+        # Positive weight for degradation, negative for improvement
+        all_freqs = []
+        all_weights = []
         
         for model_name, model_violations in violations_by_model.items():
             freq_metrics = models_data.get(model_name, {}).get('frequency_metrics')
@@ -2300,15 +2411,29 @@ def _generate_frequency_correlation_summary(
             
             for v in model_violations:
                 layer_idx = v.get('layer_idx', v.get('layer_num', 0) - 1)
-                k_bins, error_reduction = get_frequency_reduction_at_layer(freq_metrics, layer_idx)
-                if len(error_reduction) > 0 and len(k_bins) > 0:
-                    # Find frequencies where error increased (negative reduction)
-                    neg_mask = error_reduction < 0
-                    if np.any(neg_mask):
-                        neg_freqs = k_bins[neg_mask]
-                        mean_neg_freqs.append(np.mean(neg_freqs))
+                k_bins, error_ratio = get_frequency_reduction_at_layer(freq_metrics, layer_idx)
+                if len(error_ratio) > 0 and len(k_bins) > 0:
+                    # error_ratio is curr_error / prev_error
+                    # > 1 means degradation, < 1 means improvement
+                    # Weight = log(error_ratio) so degradation is positive, improvement is negative
+                    weights = np.log(error_ratio + 1e-10)  # log(ratio): >0 = degraded, <0 = improved
+                    all_freqs.extend(k_bins)
+                    all_weights.extend(weights)
         
-        avg_decreasing_freq = f"{np.mean(mean_neg_freqs):.2f}" if mean_neg_freqs else "N/A"
+        # Compute weighted average (only consider net degradation)
+        if all_freqs and all_weights:
+            all_freqs = np.array(all_freqs)
+            all_weights = np.array(all_weights)
+            
+            # Only include frequencies with positive weight (degradation)
+            pos_mask = all_weights > 0
+            if np.any(pos_mask):
+                weighted_avg = np.average(all_freqs[pos_mask], weights=all_weights[pos_mask])
+                avg_decreasing_freq = f"{weighted_avg:.2f}"
+            else:
+                avg_decreasing_freq = "N/A (all improved)"
+        else:
+            avg_decreasing_freq = "N/A"
         
         summary_data.append({
             'Metric': METRICS_CONFIG[metric_name]['display_name'],

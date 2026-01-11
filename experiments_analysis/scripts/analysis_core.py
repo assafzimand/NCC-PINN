@@ -17,6 +17,9 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 import re
 
+# Import error computation functions
+from trainer.utils import compute_relative_l2_error, compute_infinity_norm_error
+
 
 # =============================================================================
 # MODEL AND DATA LOADING
@@ -185,11 +188,91 @@ def load_model_from_checkpoint(
         return None
 
 
-def load_datasets(problem: str) -> Tuple[Dict, Dict, Dict, Dict]:
+# Maximum grid points for analysis on CPU (to avoid memory issues)
+# For 3D grids (2D spatial + 1D temporal), 128^3 = 2M points is too heavy
+# Use 64^3 = 262K points instead for 3D, or 128^2 = 16K for 2D
+MAX_ANALYSIS_GRID_POINTS_2D = 128 * 128  # 16,384 points for 2D grids
+MAX_ANALYSIS_GRID_POINTS_3D = 64 * 64 * 64  # 262,144 points for 3D grids
+MAX_ANALYSIS_GRID_PER_DIM_3D = 64  # Maximum points per dimension for 3D grids
+
+
+def downsample_frequency_grid(freq_grid_data: Dict, max_per_dim: int = 64) -> Dict:
+    """Downsample a frequency grid for analysis on CPU.
+    
+    For high-dimensional grids (3D+), computing metrics on the full grid
+    can be too memory-intensive. This function creates a smaller uniform
+    grid by taking every N-th point along each dimension.
+    
+    Args:
+        freq_grid_data: Original frequency grid data dict
+        max_per_dim: Maximum points per dimension for the downsampled grid
+        
+    Returns:
+        Downsampled frequency grid data dict with same structure
+    """
+    grid_shape = freq_grid_data['grid_shape']
+    n_dims = len(grid_shape)
+    
+    # Compute stride for each dimension
+    strides = []
+    new_shape = []
+    for dim_size in grid_shape:
+        stride = max(1, dim_size // max_per_dim)
+        new_size = (dim_size + stride - 1) // stride  # Ceiling division
+        strides.append(stride)
+        new_shape.append(min(dim_size, new_size))
+    
+    # Reshape to grid, subsample, then flatten
+    x_grid = freq_grid_data['x_grid']
+    h_gt_grid = freq_grid_data['h_gt_grid']
+    
+    # Reshape to original grid shape
+    # x_grid: (N, n_coords) -> (d0, d1, ..., n_coords)
+    n_coords = x_grid.shape[1]
+    x_reshaped = x_grid.reshape(*grid_shape, n_coords)
+    
+    # h_gt_grid: (N,) or (N, output_dim) -> (d0, d1, ...) or (d0, d1, ..., output_dim)
+    if h_gt_grid.dim() == 1:
+        h_reshaped = h_gt_grid.reshape(*grid_shape)
+    else:
+        output_dim = h_gt_grid.shape[-1]
+        h_reshaped = h_gt_grid.reshape(*grid_shape, output_dim)
+    
+    # Create slices for subsampling
+    slices = tuple(slice(0, None, stride) for stride in strides)
+    
+    x_subsampled = x_reshaped[slices]
+    h_subsampled = h_reshaped[slices]
+    
+    # Get actual new shape after subsampling
+    actual_new_shape = list(x_subsampled.shape[:-1])  # Exclude coord dim
+    
+    # Flatten back
+    new_n_points = int(np.prod(actual_new_shape))
+    x_flat = x_subsampled.reshape(new_n_points, n_coords)
+    if h_gt_grid.dim() == 1:
+        h_flat = h_subsampled.reshape(new_n_points)
+    else:
+        h_flat = h_subsampled.reshape(new_n_points, output_dim)
+    
+    return {
+        'x_grid': x_flat,
+        'h_gt_grid': h_flat,
+        'grid_shape': actual_new_shape,
+        'n_dims': n_dims,
+        'original_grid_shape': list(grid_shape),  # Keep original for reference
+        'downsampled': True
+    }
+
+
+def load_datasets(problem: str, max_grid_per_dim: int = None) -> Tuple[Dict, Dict, Dict, Dict]:
     """Load train, eval, NCC, and frequency grid datasets for a problem.
     
     Args:
         problem: Problem name
+        max_grid_per_dim: Maximum points per dimension for frequency grid.
+            If None, uses full grid for 2D problems, downsampled for 3D+.
+            Set to a specific value to override.
         
     Returns:
         Tuple of (train_data, eval_data, ncc_data, freq_grid_data) dicts
@@ -217,6 +300,26 @@ def load_datasets(problem: str) -> Tuple[Dict, Dict, Dict, Dict]:
     eval_data = torch.load(eval_path, weights_only=False)
     ncc_data = torch.load(ncc_path, weights_only=False)
     freq_grid_data = torch.load(freq_grid_path, weights_only=False)
+    
+    # Diagnostic: print grid info
+    grid_shape = freq_grid_data.get('grid_shape', [])
+    n_points = freq_grid_data['x_grid'].shape[0]
+    n_dims = len(grid_shape)
+    print(f"      Frequency grid: {grid_shape} = {n_points:,} points ({n_dims}D grid)")
+    
+    # Auto-downsample for 3D+ grids if not already small
+    if n_dims >= 3:
+        # For 3D+ grids, check if we need to downsample
+        if max_grid_per_dim is None:
+            max_grid_per_dim = MAX_ANALYSIS_GRID_PER_DIM_3D
+        
+        needs_downsample = any(dim > max_grid_per_dim for dim in grid_shape)
+        if needs_downsample:
+            print(f"      WARNING: 3D grid too large for CPU analysis, downsampling to max {max_grid_per_dim} per dim...")
+            freq_grid_data = downsample_frequency_grid(freq_grid_data, max_grid_per_dim)
+            new_shape = freq_grid_data['grid_shape']
+            new_points = freq_grid_data['x_grid'].shape[0]
+            print(f"      Downsampled grid: {new_shape} = {new_points:,} points")
     
     return train_data, eval_data, ncc_data, freq_grid_data
 
@@ -651,7 +754,7 @@ def nufft_spectrum_3d(
 def compute_radial_power_spectrum(
     power: np.ndarray,
     freqs: List[np.ndarray],
-    n_bins: int = 32
+    n_bins: int = 100
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Compute radial (isotropic) power spectrum from N-D power.
     
@@ -863,12 +966,54 @@ def compute_frequency_metrics_fft(
         relative_error = leftover_radial / gt_radial_safe
         error_matrix[layer_idx] = relative_error
     
+    # Compute model's direct output frequency error (for cross-PDE comparison)
+    with torch.no_grad():
+        h_pred_grid = model(x_grid_tensor).cpu().numpy()
+    
+    # Handle multi-output
+    if h_pred_grid.ndim > 1 and h_pred_grid.shape[1] > 1:
+        h_pred_scalar = np.sqrt(np.sum(h_pred_grid ** 2, axis=1))
+    else:
+        h_pred_scalar = h_pred_grid.flatten()
+    
+    # Compute model error spectrum using standard FFT
+    model_error = targets_scalar - h_pred_scalar
+    model_error_spectrum = compute_frequency_spectrum(model_error, grid_shape, sample_spacings)
+    
+    # Compute radial model error power using SAME k_bin_edges from GT
+    model_leftover_power = model_error_spectrum['power']
+    model_leftover_freqs = model_error_spectrum['freqs']
+    
+    # Handle multi-output
+    if model_leftover_power.ndim > len(model_leftover_freqs):
+        model_leftover_avg = model_leftover_power.mean(axis=-1)
+    else:
+        model_leftover_avg = model_leftover_power
+    
+    # Create radial frequency grid for model error
+    mesh_freqs_model = np.meshgrid(*model_leftover_freqs, indexing='ij')
+    k_mag_model = np.sqrt(sum(f**2 for f in mesh_freqs_model))
+    
+    # Use SAME bin edges from GT
+    model_error_radial = np.zeros(n_bins)
+    for bin_idx in range(n_bins):
+        if bin_idx == n_bins - 1:
+            mask = (k_mag_model >= k_bin_edges[bin_idx]) & (k_mag_model <= k_bin_edges[bin_idx + 1])
+        else:
+            mask = (k_mag_model >= k_bin_edges[bin_idx]) & (k_mag_model < k_bin_edges[bin_idx + 1])
+        if mask.sum() > 0:
+            model_error_radial[bin_idx] = model_leftover_avg[mask].mean()
+    
+    # Relative error: |FFT(model_error)|² / |FFT(gt)|²
+    model_relative_error = model_error_radial / gt_radial_safe
+    
     # Format to match expected structure
     return {
         'layers_analyzed': layer_names,
         'spectral_efficiency': {
             'k_radial_bins': k_bin_centers.tolist(),  # Use manually computed k_bin_centers
-            'error_matrix': error_matrix.tolist(),
+            'error_matrix': error_matrix.tolist(),  # Probe-based errors per layer
+            'model_error': model_relative_error.tolist(),  # Direct model output error
             'gt_radial_power': gt_radial.tolist()
         },
         'final_layer_leftover_ratio': float(error_matrix[-1].mean()),
@@ -1004,9 +1149,10 @@ def compute_all_metrics_consistently(
     probes = fit_probes(model, train_data, device)
     
     # Step 2: Compute all metrics using same probes
-    # Use freq_grid_compat for probe/derivatives for consistency with frequency analysis
+    # Use freq_grid_compat for probe/derivatives/frequency metrics
+    # NCC uses its own ncc_data
     print(f"    Computing probe metrics (on frequency grid)...")
-    probe_metrics = compute_probe_metrics(probes, model, train_data, freq_grid_compat, device)
+    probe_metrics = compute_probe_metrics(probes, model, freq_grid_compat, freq_grid_compat, device)
     
     print(f"    Computing NCC metrics (on NCC data, bins={bins})...")
     ncc_metrics = compute_ncc_metrics(probes, model, ncc_data, device, bins=bins)
@@ -1021,12 +1167,30 @@ def compute_all_metrics_consistently(
         n_bins=30  # Match training-time default
     )
     
+    # Compute model L2/Linf on freq_grid for consistency
+    print(f"    Computing model L2/Linf on frequency grid...")
+    model.eval()
+    with torch.no_grad():
+        h_pred_grid = model(freq_grid_data['x_grid'].to(device)).cpu()
+    h_gt_grid = freq_grid_data['h_gt_grid']
+    
+    # Handle shape differences
+    if h_gt_grid.ndim == 1:
+        h_gt_grid = h_gt_grid.reshape(-1, 1)
+    if h_pred_grid.ndim == 1:
+        h_pred_grid = h_pred_grid.reshape(-1, 1)
+    
+    freq_grid_rel_l2 = compute_relative_l2_error(h_pred_grid, h_gt_grid).item()
+    freq_grid_linf = compute_infinity_norm_error(h_pred_grid, h_gt_grid).item()
+    
     return {
         'probe_metrics': probe_metrics,
         'ncc_metrics': ncc_metrics,
         'derivatives_metrics': derivatives_metrics,
         'frequency_metrics': frequency_metrics,
         'probes': probes,  # Keep probes for potential further analysis
-        'layers_analyzed': probe_metrics['layers_analyzed']
+        'layers_analyzed': probe_metrics['layers_analyzed'],
+        'freq_grid_rel_l2': freq_grid_rel_l2,
+        'freq_grid_linf': freq_grid_linf
     }
 

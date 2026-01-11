@@ -22,6 +22,8 @@ import sys
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+import torch
+
 # Import from existing analyze_capacity_experiment.py
 from experiments_analysis.scripts.analyze_capacity_experiment import (
     METRICS_CONFIG,
@@ -34,6 +36,9 @@ from experiments_analysis.scripts.analyze_capacity_experiment import (
     get_problem_from_model_name,
     get_active_metrics,
 )
+
+# Import from analysis_core for consistent metric computation
+from experiments_analysis.scripts.analysis_core import compute_all_metrics_consistently
 
 
 # =============================================================================
@@ -252,15 +257,37 @@ def load_experiment_plan(experiment_path: Path) -> Optional[Dict[str, Any]]:
 
 def load_all_model_metrics(
     experiment_path: Path,
-    experiment_plan: Optional[Dict[str, Any]] = None
+    experiment_plan: Optional[Dict[str, Any]] = None,
+    device: torch.device = None
 ) -> Dict[str, Dict[str, Any]]:
-    """Load all metrics from all models in experiment."""
+    """Load experiment structure and compute all metrics consistently.
+    
+    This function mirrors analyze_capacity_experiment.py's approach:
+    1. Scans the experiment folder to find model directories
+    2. For each model, loads the checkpoint and datasets
+    3. Fits probes ONCE per model
+    4. Computes ALL metrics using those same probes (including frequency metrics)
+    
+    Args:
+        experiment_path: Path to experiment folder
+        experiment_plan: Optional experiment plan dict
+        device: Device for computation (auto-detected if None)
+    
+    Returns:
+        Dict mapping model_name -> model data with all computed metrics
+    """
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     models_data = {}
     experiment_path = Path(experiment_path)
     
     arch_to_weight_label = {}
     if experiment_plan and 'arch_to_weight_label' in experiment_plan:
         arch_to_weight_label = experiment_plan['arch_to_weight_label']
+    
+    # First pass: collect all model directories
+    model_dirs_to_process = []
     
     for model_dir in experiment_path.iterdir():
         if not model_dir.is_dir():
@@ -269,6 +296,10 @@ def load_all_model_metrics(
         model_name = model_dir.name
         
         if model_name.startswith('.') or model_name in ['comparison_summary.csv', 'experiments_plan.yaml']:
+            continue
+        
+        # Skip image files and other non-model directories
+        if model_name.endswith('.png') or model_name.endswith('.csv'):
             continue
         
         run_dirs = [d for d in model_dir.iterdir() if d.is_dir() and re.match(r'\d{8}_\d{6}', d.name)]
@@ -281,41 +312,51 @@ def load_all_model_metrics(
         if not metrics_file.exists():
             continue
         
+        model_dirs_to_process.append((model_name, run_dir, metrics_file))
+    
+    print(f"  Found {len(model_dirs_to_process)} models to analyze")
+    
+    # Second pass: compute metrics consistently for each model
+    for idx, (model_name, run_dir, metrics_file) in enumerate(model_dirs_to_process, 1):
+        print(f"\n  [{idx}/{len(model_dirs_to_process)}] Processing {model_name}...")
+        
+        # Load training metrics from JSON
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
         
-        eval_rel_l2 = metrics.get('eval_rel_l2', [])
-        eval_linf = metrics.get('eval_inf_norm', [])
-        
-        final_eval_rel_l2 = eval_rel_l2[-1] if eval_rel_l2 else None
-        final_eval_linf = eval_linf[-1] if eval_linf else None
-        
-        # Load NCC metrics
-        ncc_metrics = None
-        ncc_file = run_dir / "ncc_plots" / "ncc_metrics.json"
-        if ncc_file.exists():
-            with open(ncc_file, 'r') as f:
-                ncc_metrics = json.load(f)
-        
-        # Load probe metrics
-        probe_metrics = None
-        probe_file = run_dir / "probe_plots" / "probe_metrics.json"
-        if probe_file.exists():
-            with open(probe_file, 'r') as f:
-                probe_metrics = json.load(f)
-        
-        # Load derivatives metrics
-        derivatives_metrics = None
-        deriv_file = run_dir / "derivatives_plots" / "derivatives_metrics.json"
-        if deriv_file.exists():
-            with open(deriv_file, 'r') as f:
-                derivatives_metrics = json.load(f)
-        
+        # Parse architecture
         architecture = parse_model_name(model_name)
-        num_layers = len(architecture) - 2
+        num_layers = len(architecture) - 2  # Exclude input and output layers
         num_parameters = calculate_num_parameters(architecture)
         weight_label = arch_to_weight_label.get(tuple(architecture))
         problem_name = get_problem_from_model_name(model_name)
+        
+        # Compute all metrics consistently using analysis_core (on freq_grid)
+        try:
+            computed_metrics = compute_all_metrics_consistently(
+                model_name=model_name,
+                run_dir=run_dir,
+                device=device
+            )
+            
+            ncc_metrics = computed_metrics['ncc_metrics']
+            probe_metrics = computed_metrics['probe_metrics']
+            derivatives_metrics = computed_metrics['derivatives_metrics']
+            frequency_metrics = computed_metrics['frequency_metrics']
+            
+            # Compute L2/Linf on freq_grid for consistency with frequency analysis
+            # This is computed during compute_all_metrics_consistently and stored in computed_metrics
+            final_eval_rel_l2 = computed_metrics.get('freq_grid_rel_l2')
+            final_eval_linf = computed_metrics.get('freq_grid_linf')
+            
+        except FileNotFoundError as e:
+            print(f"    ERROR: {e}")
+            print(f"    Skipping {model_name} - checkpoint or dataset not found")
+            continue
+        except Exception as e:
+            print(f"    ERROR computing metrics: {e}")
+            print(f"    Skipping {model_name}")
+            continue
         
         models_data[model_name] = {
             'model_name': model_name,
@@ -328,6 +369,8 @@ def load_all_model_metrics(
             'ncc_metrics': ncc_metrics,
             'probe_metrics': probe_metrics,
             'derivatives_metrics': derivatives_metrics,
+            'frequency_metrics': frequency_metrics,
+            'probes': computed_metrics.get('probes'),
             'eval_rel_l2': final_eval_rel_l2,
             'eval_linf': final_eval_linf,
             'problem_name': problem_name
@@ -1474,16 +1517,21 @@ def _generate_layerwise_by_group(all_freq_data: Dict, pde_names: List[str],
         
         mean_matrix = np.nanmean(padded, axis=0)
         
-        # Create heatmap
-        fig, ax = plt.subplots(figsize=(12, 4 + max_layers * 0.3))
+        # Transpose matrix to swap axes: now [freq x layers]
+        mean_matrix_T = mean_matrix.T
         
-        matrix_log = np.log10(mean_matrix + 1e-10)
+        # Create heatmap
+        fig, ax = plt.subplots(figsize=(4 + max_layers * 1.2, 8))
+        
+        matrix_log = np.log10(mean_matrix_T + 1e-10)
         im = ax.imshow(matrix_log, aspect='auto', cmap='Reds', interpolation='bilinear')
         
-        ax.set_yticks(range(max_layers))
-        ax.set_yticklabels([f'Layer {i+1}' for i in range(max_layers)], fontsize=10)
-        ax.set_ylabel('Layer', fontsize=11, fontweight='bold')
+        # X-axis: Layers
+        ax.set_xticks(range(max_layers))
+        ax.set_xticklabels([f'Layer {i+1}' for i in range(max_layers)], fontsize=10, rotation=45, ha='right')
+        ax.set_xlabel('Layer', fontsize=11, fontweight='bold')
         
+        # Y-axis: Frequency bins
         n_bins = n_freq
         n_ticks = min(10, n_bins)
         tick_positions = np.linspace(0, n_bins - 1, n_ticks, dtype=int)
@@ -1491,9 +1539,9 @@ def _generate_layerwise_by_group(all_freq_data: Dict, pde_names: List[str],
             tick_labels = [f'{k_bins[i]:.1f}' for i in tick_positions if i < len(k_bins)]
         else:
             tick_labels = [str(i) for i in tick_positions]
-        ax.set_xticks(tick_positions[:len(tick_labels)])
-        ax.set_xticklabels(tick_labels)
-        ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=11, fontweight='bold')
+        ax.set_yticks(tick_positions[:len(tick_labels)])
+        ax.set_yticklabels(tick_labels)
+        ax.set_ylabel('Radial Frequency |k| (Hz)', fontsize=11, fontweight='bold')
         
         cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         cbar.set_label('Log10 Relative Error', fontsize=10)
@@ -1575,6 +1623,534 @@ def generate_learning_progression_comparison(pde_data: Dict[str, Dict], output_d
     plt.close()
     
     print(f"  Learning progression comparison saved")
+
+
+def get_frequency_reduction_at_layer(
+    freq_metrics: Dict,
+    layer_idx: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Get frequency error change ratio E_i / E_{i-1} at a specific layer transition.
+    
+    Args:
+        freq_metrics: frequency_metrics data (computed on frequency grid)
+        layer_idx: 0-based index of the layer (error at layer_idx vs layer_idx-1)
+        
+    Returns:
+        (k_bins, error_ratio) where:
+        - < 1 = improvement (gets greener as it approaches 0)
+        - 1 = no change
+        - > 1 = degradation (gets redder as it increases)
+    """
+    spectral_eff = freq_metrics.get('spectral_efficiency', {})
+    k_bins = np.array(spectral_eff.get('k_radial_bins', []))
+    error_matrix = np.array(spectral_eff.get('error_matrix', []))
+    
+    if len(error_matrix) == 0 or layer_idx <= 0 or layer_idx >= len(error_matrix):
+        return np.array([]), np.array([])
+    
+    # Error ratio: curr_error / prev_error (similar to change_heatmaps)
+    prev_error = error_matrix[layer_idx - 1]
+    curr_error = error_matrix[layer_idx]
+    
+    # Avoid division by zero
+    eps = 1e-10
+    error_ratio = curr_error / (prev_error + eps)
+    
+    return k_bins, error_ratio
+
+
+def generate_per_metric_aggregated_reduction(pde_data: Dict[str, Dict], output_dir: Path):
+    """Generate per-metric aggregated frequency reduction plots across all PDEs.
+    
+    Creates one image per metric. Each image has:
+    - Row 1: GT frequency power spectrum for each PDE (columns)
+    - Row 2: Aggregated frequency error reduction for each PDE (columns)
+    """
+    freq_dir = output_dir / "frequency_analysis"
+    freq_dir.mkdir(parents=True, exist_ok=True)
+    
+    pde_names = sorted(pde_data.keys())
+    n_pdes = len(pde_names)
+    
+    # Define which metrics to generate plots for
+    metrics_to_plot = ['probe_rel_l2', 'probe_linf', 'ncc_accuracy', 'derivatives_l2', 'derivatives_linf']
+    
+    for metric_name in metrics_to_plot:
+        if metric_name not in METRICS_CONFIG:
+            continue
+        
+        # Collect data per PDE
+        pde_gt_data = {}  # {pde_name: (k_bins, gt_radial_power)}
+        pde_aggregated_ratios = {}  # {pde_name: (k_bins, mean_ratio, std_ratio, n_violations)}
+        
+        for pde_name in pde_names:
+            models = pde_data[pde_name]['models']
+            violations = pde_data[pde_name]['violations']
+            
+            # Get violations for this metric
+            metric_violations = violations.get(metric_name, [])
+            if not metric_violations:
+                continue
+            
+            # Group violations by model
+            violations_by_model = defaultdict(list)
+            for v in metric_violations:
+                violations_by_model[v['model_name']].append(v)
+            
+            # Collect all error ratios and GT from this PDE
+            all_ratios = []
+            k_bins_ref = None
+            gt_radial_ref = None
+            
+            for model_name, model_violations in violations_by_model.items():
+                if model_name not in models:
+                    continue
+                    
+                freq_metrics = models[model_name].get('frequency_metrics')
+                if freq_metrics is None:
+                    continue
+                
+                # Get GT spectrum (same for all models in PDE)
+                if gt_radial_ref is None:
+                    spectral_eff = freq_metrics.get('spectral_efficiency', {})
+                    k_bins_ref = np.array(spectral_eff.get('k_radial_bins', []))
+                    gt_radial_ref = np.array(spectral_eff.get('gt_radial_power', []))
+                
+                for v in model_violations:
+                    layer_idx = v.get('layer_idx', v.get('layer_num', 1) - 1)
+                    k_bins, error_ratio = get_frequency_reduction_at_layer(freq_metrics, layer_idx)
+                    
+                    if len(error_ratio) > 0:
+                        all_ratios.append(error_ratio)
+            
+            if all_ratios and k_bins_ref is not None and len(k_bins_ref) > 0:
+                all_ratios = np.array(all_ratios)
+                mean_ratio = np.mean(all_ratios, axis=0)
+                std_ratio = np.std(all_ratios, axis=0)
+                
+                pde_gt_data[pde_name] = (k_bins_ref, gt_radial_ref)
+                pde_aggregated_ratios[pde_name] = (k_bins_ref, mean_ratio, std_ratio, len(all_ratios))
+        
+        # Skip if no data for any PDE
+        if not pde_aggregated_ratios:
+            continue
+        
+        # Create figure: 2 rows x n_pdes columns
+        valid_pdes = [p for p in pde_names if p in pde_aggregated_ratios]
+        n_valid = len(valid_pdes)
+        
+        if n_valid == 0:
+            continue
+        
+        fig, axes = plt.subplots(2, n_valid, figsize=(5 * n_valid, 8), squeeze=False)
+        
+        for col_idx, pde_name in enumerate(valid_pdes):
+            color = PDE_COLORS.get(pde_name, '#333333')
+            
+            # Row 1: GT power spectrum
+            ax_gt = axes[0, col_idx]
+            if pde_name in pde_gt_data:
+                k_bins, gt_power = pde_gt_data[pde_name]
+                ax_gt.fill_between(k_bins, 0, gt_power, alpha=0.4, color=color)
+                ax_gt.plot(k_bins, gt_power, color=color, linewidth=2, label='GT Power')
+                ax_gt.set_xlabel('|k| (Hz)', fontsize=10)
+                if col_idx == 0:
+                    ax_gt.set_ylabel('Power |FFT|²', fontsize=10)
+                if np.all(gt_power > 0):
+                    ax_gt.set_yscale('log')
+                ax_gt.set_title(f'{pde_name.capitalize()}', fontsize=11, fontweight='bold')
+                ax_gt.grid(True, alpha=0.3)
+            
+            # Row 2: Aggregated frequency reduction
+            ax_err = axes[1, col_idx]
+            if pde_name in pde_aggregated_ratios:
+                k_bins, mean_ratio, std_ratio, n_violations = pde_aggregated_ratios[pde_name]
+                
+                # Reference line at y=1
+                ax_err.axhline(y=1, color='gray', linestyle='--', alpha=0.7, linewidth=1.5)
+                
+                # Mean with confidence band
+                ax_err.fill_between(k_bins, mean_ratio - std_ratio, mean_ratio + std_ratio,
+                                   alpha=0.3, color=color)
+                ax_err.plot(k_bins, mean_ratio, color=color, linewidth=2, label='Mean')
+                
+                # Color regions: < 1 = improvement (green), > 1 = degradation (red)
+                ax_err.fill_between(k_bins, 1, mean_ratio,
+                                   where=(mean_ratio < 1), color='#2ecc71', alpha=0.2)
+                ax_err.fill_between(k_bins, 1, mean_ratio,
+                                   where=(mean_ratio > 1), color='#e74c3c', alpha=0.2)
+                
+                ax_err.set_xlabel('|k| (Hz)', fontsize=10)
+                if col_idx == 0:
+                    ax_err.set_ylabel('Error Ratio (E_i / E_{i-1})', fontsize=10)
+                ax_err.set_title(f'n={n_violations} violations', fontsize=10)
+                ax_err.grid(True, alpha=0.3)
+        
+        # Format metric name for title
+        metric_display = metric_name.replace('_', ' ').title()
+        fig.suptitle(f'Aggregated Frequency Reduction - {metric_display}', fontsize=14, fontweight='bold')
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        
+        save_path = freq_dir / f"aggregated_freq_reduction_{metric_name}.png"
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"  Aggregated frequency reduction for {metric_name} saved")
+
+
+def get_weight_label_from_params(num_parameters: int) -> str:
+    """Convert number of parameters to a weight label bucket (5k, 10k, 20k, 30k, 40k).
+    
+    Uses nearest bucket based on actual parameter count.
+    """
+    buckets = [5000, 10000, 20000, 30000, 40000]
+    bucket_labels = ['5k', '10k', '20k', '30k', '40k']
+    
+    # Find closest bucket
+    min_diff = float('inf')
+    closest_label = bucket_labels[-1]
+    
+    for bucket, label in zip(buckets, bucket_labels):
+        diff = abs(num_parameters - bucket)
+        if diff < min_diff:
+            min_diff = diff
+            closest_label = label
+    
+    return closest_label
+
+
+def get_model_identity(model_data: Dict) -> Tuple[int, str]:
+    """Get model identity as (num_layers, weight_label) for cross-PDE comparison.
+    
+    Models with same layers and weights are considered the same model
+    even if they have different input/output dimensions.
+    
+    IMPORTANT: Uses calculated num_parameters to determine weight bucket,
+    not the name-based weight_label, to avoid mismatches.
+    """
+    num_layers = model_data.get('num_layers', 0)
+    num_parameters = model_data.get('num_parameters', 0)
+    
+    # Calculate weight label from actual parameters
+    weight_label = get_weight_label_from_params(num_parameters)
+    
+    return (num_layers, weight_label)
+
+
+def generate_cross_pde_frequency_coverage(pde_data: Dict[str, Dict], output_dir: Path):
+    """Generate frequency coverage comparison across all PDEs with rank table.
+    
+    Creates a figure with:
+    - Top row: Frequency coverage plots for each PDE (side by side, log scale)
+    - Bottom: Rank table showing each model's rank (1-12) in each PDE by L2 and L-inf
+    
+    Same color = same model identity (same layers + weights across PDEs)
+    """
+    freq_dir = output_dir / "frequency_analysis"
+    freq_dir.mkdir(parents=True, exist_ok=True)
+    
+    pde_names = sorted(pde_data.keys())
+    n_pdes = len(pde_names)
+    
+    if n_pdes == 0:
+        return
+    
+    # Collect all unique model identities across all PDEs
+    # Debug: print mapping to verify
+    print("  Model identity mapping (based on calculated params):")
+    all_model_identities = set()
+    for pde_name in pde_names:
+        models = pde_data[pde_name]['models']
+        for model_name, model_data in models.items():
+            identity = get_model_identity(model_data)
+            num_params = model_data.get('num_parameters', 0)
+            old_label = model_data.get('weight_label', 'N/A')
+            if identity[1]:  # Only if weight_label exists
+                all_model_identities.add(identity)
+                print(f"    {model_name}: {num_params:,} params -> {identity[0]}L-{identity[1]} (name had: {old_label})")
+    
+    # Sort identities by layers first, then weight
+    def sort_key_layers_first(identity):
+        layers, weight = identity
+        # Convert weight like "5k" to int 5000
+        weight_num = int(weight.replace('k', '')) * 1000 if weight else 0
+        return (layers, weight_num)
+    
+    # Sort identities by weight first, then layers
+    def sort_key_weights_first(identity):
+        layers, weight = identity
+        # Convert weight like "5k" to int 5000
+        weight_num = int(weight.replace('k', '')) * 1000 if weight else 0
+        return (weight_num, layers)
+    
+    sorted_identities = sorted(all_model_identities, key=sort_key_layers_first)
+    sorted_identities_by_weight = sorted(all_model_identities, key=sort_key_weights_first)
+    n_models = len(sorted_identities)
+    
+    if n_models == 0:
+        print("  No model identities found - skipping frequency coverage")
+        return
+    
+    # Assign colors to each model identity
+    identity_colors = {}
+    colormap = plt.cm.tab20(np.linspace(0, 1, max(n_models, 1)))
+    print("\n=== COLOR ASSIGNMENT DEBUG ===")
+    print(f"Total models: {n_models}")
+    print("Colors assigned by layers→weights sort order:")
+    for idx, identity in enumerate(sorted_identities):
+        identity_colors[identity] = colormap[idx % len(colormap)]
+        color_rgb = identity_colors[identity][:3]
+        print(f"  Index {idx}: {identity[0]}L-{identity[1]} -> RGB({color_rgb[0]:.3f}, {color_rgb[1]:.3f}, {color_rgb[2]:.3f})")
+    
+    # Create identity labels for legend/table
+    identity_labels = {}
+    for identity in sorted_identities:
+        layers, weight = identity
+        identity_labels[identity] = f"{layers}L-{weight}"
+    
+    # Collect frequency data and ranks for each PDE
+    pde_freq_coverage = {}  # {pde_name: {identity: (k_bins, final_error)}}
+    pde_ranks_l2 = {}  # {pde_name: {identity: rank}}
+    pde_ranks_linf = {}  # {pde_name: {identity: rank}}
+    
+    for pde_name in pde_names:
+        print(f"\n=== Processing PDE: {pde_name} ===")
+        models = pde_data[pde_name]['models']
+        freq_coverage = {}
+        model_l2 = []  # [(identity, l2_error)]
+        model_linf = []  # [(identity, linf_error)]
+        
+        for model_name, model_data in models.items():
+            identity = get_model_identity(model_data)
+            if identity not in sorted_identities:
+                continue
+            
+            l2 = model_data.get('eval_rel_l2')
+            linf = model_data.get('eval_linf')
+            
+            # Get frequency metrics
+            freq = model_data.get('frequency_metrics')
+            has_freq = False
+            freq_error_range = "N/A"
+            if freq and 'spectral_efficiency' in freq:
+                spectral = freq['spectral_efficiency']
+                k_bins = np.array(spectral.get('k_radial_bins', []))
+                model_error = np.array(spectral.get('model_error', []))  # Use model's direct output, not probe
+                
+                if len(model_error) > 0 and len(k_bins) > 0:
+                    freq_coverage[identity] = (k_bins, model_error)
+                    has_freq = True
+                    freq_error_range = f"[{model_error.min():.2e}, {model_error.max():.2e}]"
+            
+            l2_str = f"{l2:.6f}" if l2 is not None else 'N/A'
+            color_rgb = identity_colors[identity][:3]
+            print(f"    {model_name}")
+            print(f"      -> Identity: {identity[0]}L-{identity[1]}")
+            print(f"      -> Color: RGB({color_rgb[0]:.3f}, {color_rgb[1]:.3f}, {color_rgb[2]:.3f})")
+            print(f"      -> L2: {l2_str}")
+            print(f"      -> Has freq data: {has_freq}, Error range: {freq_error_range}")
+            
+            # Get L2 and L-inf for ranking
+            if l2 is not None:
+                model_l2.append((identity, l2))
+            if linf is not None:
+                model_linf.append((identity, linf))
+        
+        pde_freq_coverage[pde_name] = freq_coverage
+        
+        # Compute ranks (1 = best, lower error)
+        model_l2.sort(key=lambda x: x[1])
+        model_linf.sort(key=lambda x: x[1])
+        
+        pde_ranks_l2[pde_name] = {identity: rank + 1 for rank, (identity, _) in enumerate(model_l2)}
+        pde_ranks_linf[pde_name] = {identity: rank + 1 for rank, (identity, _) in enumerate(model_linf)}
+        
+        # Print ranking with colors
+        print(f"\n  === L2 Ranking for {pde_name} ===")
+        for rank, (identity, l2_val) in enumerate(model_l2, 1):
+            color_rgb = identity_colors[identity][:3]
+            has_freq = identity in freq_coverage
+            freq_note = "HAS FREQ DATA" if has_freq else "NO FREQ DATA"
+            color_str = f"RGB({color_rgb[0]:.3f}, {color_rgb[1]:.3f}, {color_rgb[2]:.3f})"
+            print(f"    Rank {rank:2d}: {identity[0]}L-{identity[1]:>3s} (L2={l2_val:.6f}) | Color: {color_str} | {freq_note}")
+    
+    # Create figure: frequency plots on top, two tables on bottom
+    # Extra width for legend on right side
+    fig = plt.figure(figsize=(max(5 * n_pdes, 16) + 2, 14))
+    gs = fig.add_gridspec(2, 1, height_ratios=[2, 1.2], hspace=0.25)
+    # Leave space on right for shared legend
+    fig.subplots_adjust(right=0.88)
+    
+    # Top: Frequency coverage subplots
+    gs_top = gs[0].subgridspec(1, n_pdes, wspace=0.15)
+    
+    print("\n=== PLOTTING FREQUENCY COVERAGE ===")
+    for col_idx, pde_name in enumerate(pde_names):
+        ax = fig.add_subplot(gs_top[0, col_idx])
+        
+        freq_coverage = pde_freq_coverage.get(pde_name, {})
+        print(f"\nPlotting {pde_name}:")
+        
+        for identity in sorted_identities:
+            if identity not in freq_coverage:
+                continue
+            
+            k_bins, final_error = freq_coverage[identity]
+            color = identity_colors[identity]
+            label = identity_labels[identity]
+            
+            # Debug: show what's being plotted
+            color_rgb = color[:3]
+            error_stats = f"min={final_error.min():.2e}, max={final_error.max():.2e}, mean={final_error.mean():.2e}"
+            l2_rank = pde_ranks_l2[pde_name].get(identity, 'N/A')
+            print(f"  {label}: Color=RGB({color_rgb[0]:.3f}, {color_rgb[1]:.3f}, {color_rgb[2]:.3f}), L2_Rank={l2_rank}, Freq_errors={error_stats}")
+            
+            ax.plot(k_bins, final_error, color=color, linewidth=2, alpha=0.8, label=label)
+        
+        ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=10)
+        if col_idx == 0:
+            ax.set_ylabel('Relative Error [log]', fontsize=10)
+        ax.set_title(f'{pde_name.capitalize()}', fontsize=12, fontweight='bold')
+        ax.set_yscale('log')
+        ax.grid(True, alpha=0.3)
+    
+    # Create a shared legend for ALL models (not just those in last plot)
+    # Place it to the right of the frequency plots
+    legend_handles = []
+    legend_labels = []
+    for identity in sorted_identities:
+        color = identity_colors[identity]
+        label = identity_labels[identity]
+        handle = plt.Line2D([0], [0], color=color, linewidth=2, alpha=0.8)
+        legend_handles.append(handle)
+        legend_labels.append(label)
+    
+    # Add legend to the right of the last subplot
+    fig.legend(legend_handles, legend_labels, 
+               loc='center right', 
+               bbox_to_anchor=(0.99, 0.72),
+               fontsize=8, 
+               ncol=1,
+               title='Models',
+               title_fontsize=9)
+    
+    # Bottom: Two rank tables side by side (sorted by layers, sorted by weights)
+    gs_bottom = gs[1].subgridspec(1, 2, wspace=0.3)
+    
+    # Build table data: rows = model identities
+    # Columns: all L2 ranks first, then all L-inf ranks
+    col_headers = []
+    for pde_name in pde_names:
+        col_headers.append(f'{pde_name.capitalize()}\nL2')
+    for pde_name in pde_names:
+        col_headers.append(f'{pde_name.capitalize()}\nL-inf')
+    
+    # Helper function to build table data for a given ordering
+    def build_table_data(ordered_identities):
+        table_data = []
+        row_labels = []
+        cell_colors = []
+        
+        for identity in ordered_identities:
+            row_labels.append(identity_labels[identity])
+            row = []
+            row_colors = []
+            
+            # First all L2 columns
+            for pde_name in pde_names:
+                rank_l2 = pde_ranks_l2[pde_name].get(identity, '-')
+                if isinstance(rank_l2, int):
+                    row.append(str(rank_l2))
+                    # Color: green (rank 1) to red (rank 12)
+                    norm_rank = (rank_l2 - 1) / max(n_models - 1, 1)  # 0 = best, 1 = worst
+                    # Green to red gradient
+                    r = min(1, 2 * norm_rank)
+                    g = min(1, 2 * (1 - norm_rank))
+                    row_colors.append((r, g, 0.3, 0.7))
+                else:
+                    row.append('-')
+                    row_colors.append((0.9, 0.9, 0.9, 0.5))
+            
+            # Then all L-inf columns
+            for pde_name in pde_names:
+                rank_linf = pde_ranks_linf[pde_name].get(identity, '-')
+                if isinstance(rank_linf, int):
+                    row.append(str(rank_linf))
+                    norm_rank = (rank_linf - 1) / max(n_models - 1, 1)
+                    r = min(1, 2 * norm_rank)
+                    g = min(1, 2 * (1 - norm_rank))
+                    row_colors.append((r, g, 0.3, 0.7))
+                else:
+                    row.append('-')
+                    row_colors.append((0.9, 0.9, 0.9, 0.5))
+            
+            table_data.append(row)
+            cell_colors.append(row_colors)
+        
+        return table_data, row_labels, cell_colors
+    
+    # Left table: sorted by layers, then weights
+    ax_table_layers = fig.add_subplot(gs_bottom[0, 0])
+    ax_table_layers.axis('off')
+    ax_table_layers.set_title('Sorted by Layers → Weights', fontsize=10, fontweight='bold', pad=10)
+    
+    table_data, row_labels, cell_colors = build_table_data(sorted_identities)
+    
+    if table_data:
+        table1 = ax_table_layers.table(
+            cellText=table_data,
+            rowLabels=row_labels,
+            colLabels=col_headers,
+            cellColours=cell_colors,
+            rowColours=[identity_colors[id] for id in sorted_identities],
+            loc='center',
+            cellLoc='center'
+        )
+        table1.auto_set_font_size(False)
+        table1.set_fontsize(8)
+        table1.scale(0.65, 1.4)
+        table1.auto_set_column_width(col=list(range(len(col_headers))))
+        
+        for (row, col), cell in table1.get_celld().items():
+            if row == 0:
+                cell.set_text_props(fontweight='bold')
+                cell.set_facecolor('#e0e0e0')
+    
+    # Right table: sorted by weights, then layers
+    ax_table_weights = fig.add_subplot(gs_bottom[0, 1])
+    ax_table_weights.axis('off')
+    ax_table_weights.set_title('Sorted by Weights → Layers', fontsize=10, fontweight='bold', pad=10)
+    
+    table_data_w, row_labels_w, cell_colors_w = build_table_data(sorted_identities_by_weight)
+    
+    if table_data_w:
+        table2 = ax_table_weights.table(
+            cellText=table_data_w,
+            rowLabels=row_labels_w,
+            colLabels=col_headers,
+            cellColours=cell_colors_w,
+            rowColours=[identity_colors[id] for id in sorted_identities_by_weight],
+            loc='center',
+            cellLoc='center'
+        )
+        table2.auto_set_font_size(False)
+        table2.set_fontsize(8)
+        table2.scale(0.65, 1.4)
+        table2.auto_set_column_width(col=list(range(len(col_headers))))
+        
+        for (row, col), cell in table2.get_celld().items():
+            if row == 0:
+                cell.set_text_props(fontweight='bold')
+                cell.set_facecolor('#e0e0e0')
+    
+    fig.suptitle('Frequency Coverage Comparison & Model Rankings Across PDEs', 
+                 fontsize=14, fontweight='bold')
+    
+    save_path = freq_dir / "cross_pde_frequency_coverage.png"
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Cross-PDE frequency coverage comparison saved")
 
 
 def generate_complexity_frequency_table(pde_data: Dict[str, Dict], output_dir: Path):
@@ -1668,6 +2244,423 @@ def generate_complexity_frequency_table(pde_data: Dict[str, Dict], output_dir: P
     print(f"  Complexity-frequency table saved")
 
 
+def get_best_model_for_pde(pde_data: Dict, metric: str = 'eval_rel_l2') -> Optional[Dict]:
+    """Get the best model for a PDE by a given metric.
+    
+    Args:
+        pde_data: Dict with 'models' key containing model data
+        metric: 'eval_rel_l2' or 'eval_linf'
+    
+    Returns:
+        Best model data dict, or None if no valid model found
+    """
+    models = pde_data['models']
+    best_model = None
+    best_val = float('inf')
+    
+    for model_name, model_data in models.items():
+        val = model_data.get(metric)
+        if val is not None and val < best_val:
+            best_val = val
+            best_model = model_data
+    
+    return best_model
+
+
+def generate_best_models_frequency_comparison(pde_data: Dict[str, Dict], output_dir: Path):
+    """Generate frequency comparison figure for best models across PDEs.
+    
+    Creates a figure with:
+    - Top left: GT frequency power spectra for all PDEs (overlaid, different colors)
+    - Top right: Same GT spectra (duplicated for side-by-side layout)
+    - Middle left: Error spectrum of best model by Rel-L2 for each PDE
+    - Middle right: Error spectrum of best model by L-inf for each PDE
+    - Bottom: Stats table with model info (layers, weights, PDE derivative/linearity order)
+    """
+    freq_dir = output_dir / "frequency_analysis"
+    freq_dir.mkdir(parents=True, exist_ok=True)
+    
+    pde_names = sorted(pde_data.keys())
+    
+    # Collect data for each PDE
+    pde_freq_data = {}
+    best_models_l2 = {}
+    best_models_linf = {}
+    
+    for pde_name in pde_names:
+        # Get frequency data
+        freq_data = get_frequency_data_for_pde(pde_data[pde_name])
+        if freq_data['gt_radial_power'] is None or len(freq_data['gt_radial_power']) == 0:
+            continue
+        
+        pde_freq_data[pde_name] = freq_data
+        
+        # Get best models
+        best_l2 = get_best_model_for_pde(pde_data[pde_name], 'eval_rel_l2')
+        best_linf = get_best_model_for_pde(pde_data[pde_name], 'eval_linf')
+        
+        if best_l2:
+            best_models_l2[pde_name] = best_l2
+        if best_linf:
+            best_models_linf[pde_name] = best_linf
+    
+    if not pde_freq_data:
+        print("  No frequency data found for best models comparison")
+        return
+    
+    # Create figure with 3 rows: GT spectra, Error spectra (L2 vs Linf), Stats table
+    fig = plt.figure(figsize=(16, 14))
+    
+    # Use GridSpec for flexible layout
+    gs = fig.add_gridspec(3, 2, height_ratios=[1, 1.2, 0.6], hspace=0.3, wspace=0.15)
+    
+    # Top row: GT frequency power spectra (same plot on both sides for symmetry)
+    ax_gt_l2 = fig.add_subplot(gs[0, 0])
+    ax_gt_linf = fig.add_subplot(gs[0, 1])
+    
+    # Middle row: Error spectra for best models
+    ax_err_l2 = fig.add_subplot(gs[1, 0])
+    ax_err_linf = fig.add_subplot(gs[1, 1])
+    
+    # Bottom row: Stats table (spans both columns)
+    ax_table = fig.add_subplot(gs[2, :])
+    ax_table.axis('off')
+    
+    # ----- Plot GT spectra (top row) -----
+    for pde_name in pde_names:
+        if pde_name not in pde_freq_data:
+            continue
+        
+        freq_data = pde_freq_data[pde_name]
+        k_bins = freq_data['k_radial_bins']
+        gt_power = freq_data['gt_radial_power']
+        color = PDE_COLORS.get(pde_name, '#333333')
+        
+        # Normalize for comparison
+        gt_normalized = gt_power / (gt_power.sum() + 1e-10)
+        
+        # Plot on both GT axes
+        ax_gt_l2.plot(k_bins, gt_normalized, color=color, linewidth=2, 
+                     label=pde_name.capitalize(), alpha=0.8)
+        ax_gt_linf.plot(k_bins, gt_normalized, color=color, linewidth=2, 
+                       label=pde_name.capitalize(), alpha=0.8)
+    
+    # Configure GT axes
+    for ax, title in [(ax_gt_l2, 'Ground Truth Frequency Content\n(Best by Rel-L2)'),
+                      (ax_gt_linf, 'Ground Truth Frequency Content\n(Best by L-inf)')]:
+        ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=10)
+        ax.set_ylabel('Normalized Power', fontsize=10)
+        ax.set_title(title, fontsize=11, fontweight='bold')
+        ax.legend(loc='upper right', fontsize=9)
+        ax.grid(True, alpha=0.3)
+        ax.set_yscale('log')
+    
+    # ----- Plot error spectra for best models (middle row) -----
+    for pde_name in pde_names:
+        if pde_name not in pde_freq_data:
+            continue
+        
+        freq_data = pde_freq_data[pde_name]
+        k_bins = freq_data['k_radial_bins']
+        color = PDE_COLORS.get(pde_name, '#333333')
+        
+        # Best by Rel-L2
+        if pde_name in best_models_l2:
+            best_model = best_models_l2[pde_name]
+            model_name = best_model['model_name']
+            if model_name in freq_data['model_errors']:
+                error = freq_data['model_errors'][model_name]
+                ax_err_l2.plot(k_bins, error, color=color, linewidth=2,
+                              label=f"{pde_name.capitalize()}", alpha=0.8)
+        
+        # Best by L-inf
+        if pde_name in best_models_linf:
+            best_model = best_models_linf[pde_name]
+            model_name = best_model['model_name']
+            if model_name in freq_data['model_errors']:
+                error = freq_data['model_errors'][model_name]
+                ax_err_linf.plot(k_bins, error, color=color, linewidth=2,
+                                label=f"{pde_name.capitalize()}", alpha=0.8)
+    
+    # Configure error axes
+    for ax, title in [(ax_err_l2, 'Error Spectrum of Best Model (by Rel-L2)'),
+                      (ax_err_linf, 'Error Spectrum of Best Model (by L-inf)')]:
+        ax.set_xlabel('Radial Frequency |k| (Hz)', fontsize=10)
+        ax.set_ylabel('Relative Error (Error/GT)', fontsize=10)
+        ax.set_title(title, fontsize=11, fontweight='bold')
+        ax.legend(loc='upper right', fontsize=9)
+        ax.grid(True, alpha=0.3)
+        ax.set_yscale('log')
+    
+    # ----- Create stats table (bottom) -----
+    table_data = []
+    
+    for pde_name in pde_names:
+        if pde_name not in pde_freq_data:
+            continue
+        
+        # Get PDE stats
+        stats = extract_pde_stats(pde_name, pde_data[pde_name]['config'])
+        
+        # Get best model by Rel-L2
+        best_l2 = best_models_l2.get(pde_name)
+        if best_l2:
+            l2_layers = best_l2['num_layers']
+            l2_weights = best_l2.get('weight_label') or f"{best_l2['num_parameters']:,}"
+            l2_error = f"{best_l2.get('eval_rel_l2', 0):.6f}"
+            # Get peak error frequency
+            model_name_l2 = best_l2['model_name']
+            freq_data = pde_freq_data.get(pde_name, {})
+            if model_name_l2 in freq_data.get('model_errors', {}):
+                error_spectrum = freq_data['model_errors'][model_name_l2]
+                k_bins = freq_data.get('k_radial_bins')
+                if k_bins is not None and len(error_spectrum) > 0:
+                    peak_idx = np.argmax(error_spectrum)
+                    l2_peak_freq = f"{k_bins[peak_idx]:.1f}"
+                else:
+                    l2_peak_freq = 'N/A'
+            else:
+                l2_peak_freq = 'N/A'
+        else:
+            l2_layers = 'N/A'
+            l2_weights = 'N/A'
+            l2_error = 'N/A'
+            l2_peak_freq = 'N/A'
+        
+        # Get best model by L-inf
+        best_linf = best_models_linf.get(pde_name)
+        if best_linf:
+            linf_layers = best_linf['num_layers']
+            linf_weights = best_linf.get('weight_label') or f"{best_linf['num_parameters']:,}"
+            linf_error = f"{best_linf.get('eval_linf', 0):.6f}"
+            # Get peak error frequency
+            model_name_linf = best_linf['model_name']
+            freq_data = pde_freq_data.get(pde_name, {})
+            if model_name_linf in freq_data.get('model_errors', {}):
+                error_spectrum = freq_data['model_errors'][model_name_linf]
+                k_bins = freq_data.get('k_radial_bins')
+                if k_bins is not None and len(error_spectrum) > 0:
+                    peak_idx = np.argmax(error_spectrum)
+                    linf_peak_freq = f"{k_bins[peak_idx]:.1f}"
+                else:
+                    linf_peak_freq = 'N/A'
+            else:
+                linf_peak_freq = 'N/A'
+        else:
+            linf_layers = 'N/A'
+            linf_weights = 'N/A'
+            linf_error = 'N/A'
+            linf_peak_freq = 'N/A'
+
+        table_data.append([
+            pde_name.capitalize(),
+            stats['deriv_order'],
+            stats['nonlin_rank'],
+            l2_layers, l2_weights, l2_error, l2_peak_freq,
+            linf_layers, linf_weights, linf_error, linf_peak_freq
+        ])
+
+    col_labels = [
+        'PDE', 'Deriv\nOrder', 'Nonlin\nRank',
+        'L2 Best\nLayers', 'L2 Best\nWeights', 'Rel-L2\nError', 'L2 Peak\nFreq',
+        'Linf Best\nLayers', 'Linf Best\nWeights', 'L-inf\nError', 'Linf Peak\nFreq'
+    ]
+
+    if table_data:
+        table = ax_table.table(
+            cellText=table_data,
+            colLabels=col_labels,
+            cellLoc='center',
+            loc='center',
+            bbox=[0.02, 0.1, 0.96, 0.85]
+        )
+        
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1, 1.6)
+        
+        # Style header
+        for i in range(len(col_labels)):
+            cell = table[(0, i)]
+            cell.set_facecolor('#34495e')
+            cell.set_text_props(weight='bold', color='white')
+        
+        # Color PDE cells by their color
+        for row_idx, pde_name in enumerate(pde_names):
+            if pde_name in pde_freq_data:
+                color = PDE_COLORS.get(pde_name, '#333333')
+                cell = table[(row_idx + 1, 0)]
+                cell.set_facecolor(color)
+                cell.set_text_props(color='white', weight='bold')
+    
+    plt.suptitle('Best Models Frequency Analysis Across PDEs', fontsize=14, fontweight='bold', y=0.98)
+    
+    save_path = freq_dir / "best_models_frequency_comparison.png"
+    plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='white')
+    plt.close()
+    
+    print(f"  Best models frequency comparison saved to {save_path}")
+
+
+def generate_best_model_learned_frequencies(pde_data: Dict[str, Dict], output_dir: Path):
+    """Generate learned frequencies plot for best models across PDEs.
+    
+    Creates a 3-row figure (similar to training's learned_frequencies.png):
+    - Row 1: GT frequency power spectrum (one column per PDE)
+    - Row 2: Error at each layer (one column per PDE, log scale)
+    - Row 3: Error ratio Eᵢ / Eᵢ₋₁ (one column per PDE, layer 2+ only, y=1 reference line)
+    """
+    freq_dir = output_dir / "frequency_analysis"
+    freq_dir.mkdir(parents=True, exist_ok=True)
+    
+    pde_names = sorted(pde_data.keys())
+    n_pdes = len(pde_names)
+    
+    if n_pdes == 0:
+        return
+    
+    # Collect best models data
+    best_models_data = {}
+    
+    for pde_name in pde_names:
+        # Get best model by Rel-L2
+        best_model = get_best_model_for_pde(pde_data[pde_name], 'eval_rel_l2')
+        if not best_model:
+            continue
+        
+        model_name = best_model['model_name']
+        freq_metrics = best_model.get('frequency_metrics')
+        
+        if freq_metrics is None:
+            continue
+        
+        spectral = freq_metrics.get('spectral_efficiency', {})
+        k_bins = np.array(spectral.get('k_radial_bins', []))
+        gt_power = np.array(spectral.get('gt_radial_power', []))
+        error_matrix = np.array(spectral.get('error_matrix', []))
+        
+        if len(k_bins) == 0 or len(error_matrix) == 0:
+            continue
+        
+        best_models_data[pde_name] = {
+            'model_name': model_name,
+            'k_bins': k_bins,
+            'gt_power': gt_power,
+            'error_matrix': error_matrix,
+            'n_layers': len(error_matrix)
+        }
+    
+    if not best_models_data:
+        print("  No frequency data found for learned frequencies plot")
+        return
+    
+    valid_pdes = [p for p in pde_names if p in best_models_data]
+    n_valid = len(valid_pdes)
+    
+    # Create figure: 3 rows x n_pdes columns
+    fig, axes = plt.subplots(3, n_valid, figsize=(5 * n_valid, 12), squeeze=False)
+    
+    # Color palette for layers
+    layer_cmap = plt.cm.viridis
+    
+    for col_idx, pde_name in enumerate(valid_pdes):
+        data = best_models_data[pde_name]
+        k_bins = data['k_bins']
+        gt_power = data['gt_power']
+        error_matrix = data['error_matrix']
+        n_layers = data['n_layers']
+        pde_color = PDE_COLORS.get(pde_name, '#333333')
+        
+        # Layer colors
+        layer_colors = [layer_cmap(i / max(n_layers - 1, 1)) for i in range(n_layers)]
+        
+        # ----- Row 1: GT Power Spectrum -----
+        ax_gt = axes[0, col_idx]
+        ax_gt.fill_between(k_bins, 0, gt_power, alpha=0.4, color=pde_color)
+        ax_gt.plot(k_bins, gt_power, color=pde_color, linewidth=2, label='GT Power')
+        ax_gt.set_xlabel('|k| (Hz)', fontsize=10)
+        if col_idx == 0:
+            ax_gt.set_ylabel('Power |FFT|²', fontsize=10)
+        if np.all(gt_power[gt_power > 0] > 0):
+            ax_gt.set_yscale('log')
+        ax_gt.set_title(f'{pde_name.capitalize()}\nGT Frequency Content', 
+                       fontsize=11, fontweight='bold')
+        ax_gt.grid(True, alpha=0.3)
+        ax_gt.legend(loc='upper right', fontsize=8)
+        
+        # ----- Row 2: Error at each layer -----
+        ax_err = axes[1, col_idx]
+        for layer_idx in range(n_layers):
+            layer_error = error_matrix[layer_idx]
+            ax_err.plot(k_bins, layer_error, color=layer_colors[layer_idx],
+                       linewidth=2, alpha=0.8, label=f'Layer {layer_idx + 1}')
+        
+        ax_err.set_xlabel('|k| (Hz)', fontsize=10)
+        if col_idx == 0:
+            ax_err.set_ylabel('Relative Error', fontsize=10)
+        ax_err.set_yscale('log')
+        ax_err.set_title('Error at Layer i\n(Lower = Better) [log]', 
+                        fontsize=10, fontweight='bold')
+        ax_err.grid(True, alpha=0.3)
+        ax_err.legend(loc='upper right', fontsize=7, ncol=1)
+        
+        # ----- Row 3: Error ratio Eᵢ / Eᵢ₋₁ (skip layer 1) -----
+        ax_ratio = axes[2, col_idx]
+        
+        # Reference line at y=1
+        ax_ratio.axhline(y=1, color='gray', linestyle='--', linewidth=1.5, 
+                        alpha=0.7, label='No change (ratio = 1)')
+        
+        all_ratios = []
+        eps = 1e-10
+        
+        # Start from layer 2 (index 1) - skip layer 1 since nothing to compare
+        for layer_idx in range(1, n_layers):
+            prev_error = error_matrix[layer_idx - 1]
+            curr_error = error_matrix[layer_idx]
+            
+            # Error ratio: < 1 = improvement, > 1 = degradation
+            error_ratio = curr_error / (prev_error + eps)
+            all_ratios.append(error_ratio)
+            
+            ax_ratio.plot(k_bins, error_ratio, color=layer_colors[layer_idx],
+                         linewidth=2, alpha=0.8, label=f'Layer {layer_idx + 1}')
+        
+        ax_ratio.set_xlabel('|k| (Hz)', fontsize=10)
+        if col_idx == 0:
+            ax_ratio.set_ylabel('Error Ratio (Eᵢ / Eᵢ₋₁)', fontsize=10)
+        
+        # Set y-limits symmetric around 1
+        if all_ratios:
+            all_flat = np.concatenate([r.flatten() for r in all_ratios])
+            valid_values = all_flat[np.isfinite(all_flat) & (all_flat > 0)]
+            if len(valid_values) > 0:
+                min_val = max(valid_values.min(), 0.01)
+                max_val = min(valid_values.max(), 100)
+                margin = max(1.0 - min_val, max_val - 1.0) * 1.2
+                ax_ratio.set_ylim(max(0.01, 1.0 - margin), 1.0 + margin)
+        
+        # Add shading for improvement (< 1) and degradation (> 1) regions
+        ylim = ax_ratio.get_ylim()
+        ax_ratio.axhspan(ylim[0], 1.0, alpha=0.1, color='green')
+        ax_ratio.axhspan(1.0, ylim[1], alpha=0.1, color='red')
+        
+        ax_ratio.set_title('Error Ratio: Eᵢ / Eᵢ₋₁\n(<1: Improved, >1: Degraded)', 
+                          fontsize=10, fontweight='bold')
+        ax_ratio.grid(True, alpha=0.3)
+        ax_ratio.legend(loc='upper right', fontsize=7, ncol=1)
+    
+    fig.suptitle('Frequency Learning Analysis - Best Models (by Rel-L2)', 
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    
+    save_path = freq_dir / "best_model_learned_frequencies.png"
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Best model learned frequencies saved to {save_path}")
+
+
 def generate_cross_pde_frequency_analysis(pde_data: Dict[str, Dict], output_dir: Path):
     """Generate all cross-PDE frequency analysis plots."""
     print("\nSection 5: Generating frequency domain analysis...")
@@ -1675,20 +2668,20 @@ def generate_cross_pde_frequency_analysis(pde_data: Dict[str, Dict], output_dir:
     freq_dir = output_dir / "frequency_analysis"
     freq_dir.mkdir(parents=True, exist_ok=True)
     
-    # Plot 1: GT frequency heatmap
-    generate_gt_frequency_heatmap(pde_data, output_dir)
+    # Plot 0: Best models frequency comparison
+    generate_best_models_frequency_comparison(pde_data, output_dir)
     
-    # Plot 2: Frequency error heatmaps (overall + grouped)
-    generate_frequency_error_heatmaps(pde_data, output_dir)
+    # Plot 1: Best model learned frequencies (GT, Error per layer, Error ratio)
+    generate_best_model_learned_frequencies(pde_data, output_dir)
     
-    # Plot 3: Layer-wise frequency heatmaps
-    generate_layerwise_frequency_heatmaps(pde_data, output_dir)
-    
-    # Plot 4: Learning progression comparison
+    # Plot 2: Learning progression comparison
     generate_learning_progression_comparison(pde_data, output_dir)
     
-    # Plot 5: Complexity vs frequency table
-    generate_complexity_frequency_table(pde_data, output_dir)
+    # Plot 3: Per-metric aggregated frequency reduction across PDEs
+    generate_per_metric_aggregated_reduction(pde_data, output_dir)
+    
+    # Plot 4: Cross-PDE frequency coverage with rank table
+    generate_cross_pde_frequency_coverage(pde_data, output_dir)
     
     print(f"  Frequency analysis saved to {freq_dir}")
 
@@ -1726,6 +2719,11 @@ def main(experiment_paths: List[str]):
     print(f"Analyzing {len(experiment_paths)} experiment folders")
     print()
     
+    # Setup device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    print()
+    
     # Get output directory
     analysis_base_dir = Path(__file__).parent.parent / "analysis" / "cross_pde_comparison"
     index = get_next_analysis_index(analysis_base_dir)
@@ -1745,11 +2743,13 @@ def main(experiment_paths: List[str]):
             continue
         
         pde_name = extract_pde_from_path(path)
+        print(f"\n{'='*60}")
         print(f"Loading {pde_name} from {path.name}...")
+        print(f"{'='*60}")
         
         config = load_experiment_config(path)
         exp_plan = load_experiment_plan(path)
-        models = load_all_model_metrics(path, exp_plan)
+        models = load_all_model_metrics(path, exp_plan, device)
         violations = detect_non_monotonic_metrics(models)
         
         pde_data[pde_name] = {
@@ -1759,7 +2759,7 @@ def main(experiment_paths: List[str]):
             'path': path
         }
         
-        print(f"  Loaded {len(models)} models, {sum(len(v) for v in violations.values())} violations")
+        print(f"\n  Loaded {len(models)} models, {sum(len(v) for v in violations.values())} violations")
     
     print()
     
