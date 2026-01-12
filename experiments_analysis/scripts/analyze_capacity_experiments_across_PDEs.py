@@ -943,17 +943,12 @@ def generate_cross_pde_violation_plots(pde_data: Dict[str, Dict], output_dir: Pa
     for pde_name in pde_names:
         pde_violations[pde_name] = pde_data[pde_name]['violations']
     
-    # 4a. Violations by metric
+    # 4a. Violations by metric (summary - keep outside metric folders)
     _plot_violations_by_metric(pde_violations, pde_names, violations_dir)
     
-    # 4b. Violations by depth (layer count)
-    _plot_violations_by_depth(pde_data, pde_names, violations_dir)
-    
-    # 4c. Violations by layer position
-    _plot_violations_by_layer_position(pde_violations, pde_names, violations_dir)
-    
-    # 4d. Violations by weights
-    _plot_violations_by_weights(pde_data, pde_names, violations_dir)
+    # 4b-d. Per-metric violation plots (depth, layer position, weights)
+    # Create a folder for each metric and save its specific violation plots
+    _plot_violations_by_metric_folders(pde_data, pde_violations, pde_names, violations_dir)
     
     print(f"  Non-monotonic plots saved to {violations_dir}")
 
@@ -1139,6 +1134,204 @@ def _plot_violations_by_weights(pde_data: Dict, pde_names: List[str], output_dir
     
     plt.tight_layout()
     plt.savefig(output_dir / "violations_by_weights_all_PDEs.png", dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def _plot_violations_by_metric_folders(pde_data: Dict, pde_violations: Dict, pde_names: List[str], violations_dir: Path):
+    """Create per-metric folders and save metric-specific violation plots."""
+    # Get all metrics that have violations
+    all_metrics = set()
+    for violations in pde_violations.values():
+        all_metrics.update(violations.keys())
+    
+    metric_order = [m for m in METRICS_CONFIG.keys() if m in all_metrics]
+    
+    for metric_name in metric_order:
+        # Create folder for this metric
+        metric_dir = violations_dir / metric_name
+        metric_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Filter violations for this specific metric
+        metric_pde_violations = {}
+        metric_pde_data = {}
+        
+        for pde_name in pde_names:
+            pde_metric_violations = pde_violations[pde_name].get(metric_name, [])
+            if pde_metric_violations:
+                metric_pde_violations[pde_name] = {metric_name: pde_metric_violations}
+                
+                # Filter models to only those with violations in this metric
+                violating_model_names = set(v['model_name'] for v in pde_metric_violations)
+                metric_pde_data[pde_name] = {
+                    'models': {k: v for k, v in pde_data[pde_name]['models'].items() if k in violating_model_names},
+                    'violations': {metric_name: pde_metric_violations}
+                }
+        
+        if not metric_pde_violations:
+            continue
+        
+        # Generate the three violation plots for this metric
+        _plot_violations_by_depth_for_metric(metric_pde_data, pde_names, metric_dir, metric_name)
+        _plot_violations_by_layer_position_for_metric(metric_pde_violations, pde_names, metric_dir, metric_name)
+        _plot_violations_by_weights_for_metric(metric_pde_data, pde_names, metric_dir, metric_name)
+
+
+def _plot_violations_by_depth_for_metric(pde_data: Dict, pde_names: List[str], output_dir: Path, metric_name: str):
+    """Plot violations by model depth for a specific metric."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Get all layer counts
+    layer_counts = set()
+    for data in pde_data.values():
+        for model_data in data['models'].values():
+            layer_counts.add(model_data['num_layers'])
+    layer_counts = sorted(layer_counts)
+    
+    if not layer_counts:
+        plt.close()
+        return
+    
+    x = np.arange(len(layer_counts))
+    width = 0.8 / len(pde_names)
+    
+    for i, pde_name in enumerate(pde_names):
+        if pde_name not in pde_data:
+            continue
+        violations = pde_data[pde_name]['violations']
+        models = pde_data[pde_name]['models']
+        
+        # Count violations per layer count
+        counts = []
+        for lc in layer_counts:
+            count = 0
+            for metric_violations in violations.values():
+                for v in metric_violations:
+                    model_name = v['model_name']
+                    if model_name in models and models[model_name]['num_layers'] == lc:
+                        count += 1
+            counts.append(count)
+        
+        offset = (i - len(pde_names)/2 + 0.5) * width
+        color = PDE_COLORS.get(pde_name, f'C{i}')
+        ax.bar(x + offset, counts, width, label=pde_name.capitalize(),
+               color=color, alpha=0.8, edgecolor='black')
+    
+    ax.set_xlabel('Number of Hidden Layers', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels([str(lc) for lc in layer_counts])
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3, axis='y')
+    metric_display = METRICS_CONFIG[metric_name]['display_name']
+    ax.set_title(f'{metric_display} - Violations by Model Depth', fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / "violations_by_depth.png", dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def _plot_violations_by_layer_position_for_metric(pde_violations: Dict, pde_names: List[str], output_dir: Path, metric_name: str):
+    """Plot violations by layer position for a specific metric."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Layer positions start at 2 (layer 2 worse than layer 1)
+    layer_positions = list(range(2, 8))
+    
+    x = np.arange(len(layer_positions))
+    width = 0.8 / len(pde_names)
+    
+    for i, pde_name in enumerate(pde_names):
+        if pde_name not in pde_violations:
+            continue
+        violations = pde_violations[pde_name]
+        
+        counts = []
+        for lp in layer_positions:
+            count = 0
+            for metric_violations in violations.values():
+                for v in metric_violations:
+                    if v['layer_num'] == lp:
+                        count += 1
+            counts.append(count)
+        
+        offset = (i - len(pde_names)/2 + 0.5) * width
+        color = PDE_COLORS.get(pde_name, f'C{i}')
+        ax.bar(x + offset, counts, width, label=pde_name.capitalize(),
+               color=color, alpha=0.8, edgecolor='black')
+    
+    ax.set_xlabel('Layer Number (where violation occurred)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels([str(lp) for lp in layer_positions])
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3, axis='y')
+    metric_display = METRICS_CONFIG[metric_name]['display_name']
+    ax.set_title(f'{metric_display} - Violations by Layer Position\n(Layer N worse than Layer N-1)',
+                 fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / "violations_by_layer_position.png", dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def _plot_violations_by_weights_for_metric(pde_data: Dict, pde_names: List[str], output_dir: Path, metric_name: str):
+    """Plot violations by weight category for a specific metric."""
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Get all weight categories
+    weight_categories = set()
+    for data in pde_data.values():
+        for model_data in data['models'].values():
+            wl = model_data.get('weight_label')
+            if wl:
+                weight_categories.add(wl)
+    
+    def weight_sort_key(w):
+        try:
+            return int(w.replace('k', '')) * 1000
+        except:
+            return 0
+    weight_categories = sorted(weight_categories, key=weight_sort_key)
+    
+    if not weight_categories:
+        plt.close()
+        return
+    
+    x = np.arange(len(weight_categories))
+    width = 0.8 / len(pde_names)
+    
+    for i, pde_name in enumerate(pde_names):
+        if pde_name not in pde_data:
+            continue
+        violations = pde_data[pde_name]['violations']
+        models = pde_data[pde_name]['models']
+        
+        counts = []
+        for wc in weight_categories:
+            count = 0
+            for metric_violations in violations.values():
+                for v in metric_violations:
+                    model_name = v['model_name']
+                    if model_name in models and models[model_name].get('weight_label') == wc:
+                        count += 1
+            counts.append(count)
+        
+        offset = (i - len(pde_names)/2 + 0.5) * width
+        color = PDE_COLORS.get(pde_name, f'C{i}')
+        ax.bar(x + offset, counts, width, label=pde_name.capitalize(),
+               color=color, alpha=0.8, edgecolor='black')
+    
+    ax.set_xlabel('Weight Category', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(weight_categories)
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3, axis='y')
+    metric_display = METRICS_CONFIG[metric_name]['display_name']
+    ax.set_title(f'{metric_display} - Violations by Model Size', fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / "violations_by_weights.png", dpi=150, bbox_inches='tight')
     plt.close()
 
 
@@ -1665,6 +1858,8 @@ def generate_per_metric_aggregated_reduction(pde_data: Dict[str, Dict], output_d
     Creates one image per metric. Each image has:
     - Row 1: GT frequency power spectrum for each PDE (columns)
     - Row 2: Aggregated frequency error reduction for each PDE (columns)
+    
+    Saves each metric's plots in frequency_analysis/{metric_name}/ folder.
     """
     freq_dir = output_dir / "frequency_analysis"
     freq_dir.mkdir(parents=True, exist_ok=True)
@@ -1791,7 +1986,10 @@ def generate_per_metric_aggregated_reduction(pde_data: Dict[str, Dict], output_d
         fig.suptitle(f'Aggregated Frequency Reduction - {metric_display}', fontsize=14, fontweight='bold')
         plt.tight_layout(rect=[0, 0, 1, 0.96])
         
-        save_path = freq_dir / f"aggregated_freq_reduction_{metric_name}.png"
+        # Save in metric-specific folder
+        metric_dir = freq_dir / metric_name
+        metric_dir.mkdir(parents=True, exist_ok=True)
+        save_path = metric_dir / "aggregated_freq_reduction.png"
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         plt.close()
         

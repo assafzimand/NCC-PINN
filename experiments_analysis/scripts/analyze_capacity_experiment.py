@@ -22,6 +22,10 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 import torch
 
+# Add project root to path BEFORE importing from analysis_core
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 # Import analysis core for consistent metric computation
 from analysis_core import (
     compute_all_metrics_consistently,
@@ -66,8 +70,6 @@ def _safe_log_scale(ax, values_list):
     return False
 
 # Import comparison plot functions
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from utils.comparison_plots import (
     generate_ncc_classification_plot,
     generate_ncc_compactness_plot,
@@ -683,19 +685,16 @@ def generate_frequency_summary_table(models_data: Dict[str, Dict[str, Any]], out
         leftover_ratio = freq.get('final_layer_leftover_ratio', 0)
         gt_power = freq.get('ground_truth_total_power', 0)
         
-        # Get peak error frequency from spectral_efficiency
+        # Get peak error frequency from spectral_efficiency (using model's direct output)
         peak_error_freq = 'N/A'
         spectral = freq.get('spectral_efficiency', {})
         if spectral:
-            error_matrix = spectral.get('error_matrix', [])
+            model_error = spectral.get('model_error', [])  # Use model's direct output, not probe
             k_bins = spectral.get('k_radial_bins', [])
-            if error_matrix and k_bins:
-                # Get final layer error (last row)
-                final_error = error_matrix[-1] if error_matrix else []
-                if final_error and k_bins:
-                    peak_idx = np.argmax(final_error)
-                    if peak_idx < len(k_bins):
-                        peak_error_freq = f"{k_bins[peak_idx]:.2f} Hz"
+            if len(model_error) > 0 and len(k_bins) > 0:
+                peak_idx = np.argmax(model_error)
+                if peak_idx < len(k_bins):
+                    peak_error_freq = f"{k_bins[peak_idx]:.2f} Hz"
         
         rows.append({
             'model_name': model_name,
@@ -1309,6 +1308,125 @@ def generate_comparison_plots(
         print(f"  Comparison plots saved to {group_dir}")
 
 
+def _generate_metric_specific_violation_plots(
+    df: pd.DataFrame,
+    models_data: Dict[str, Dict[str, Any]],
+    experiment_plan: Optional[Dict[str, List[int]]],
+    summary_dir: Path
+):
+    """Generate per-metric folders with depth, layer position, and weight violation plots."""
+    # Get all unique metrics from violations
+    metrics_with_violations = df['metric'].unique() if len(df) > 0 else []
+    
+    for metric_name in metrics_with_violations:
+        # Filter dataframe for this metric
+        metric_df = df[df['metric'] == metric_name]
+        
+        if len(metric_df) == 0:
+            continue
+        
+        # Create metric folder
+        metric_dir = summary_dir / metric_name
+        metric_dir.mkdir(parents=True, exist_ok=True)
+        
+        metric_display = METRICS_CONFIG[metric_name]['display_name']
+        
+        # Plot 1: Violations by layer count (depth)
+        fig, ax = plt.subplots(figsize=(10, 6))
+        all_layer_counts = sorted(set(data['num_layers'] for data in models_data.values()))
+        layer_counts_violations = metric_df['num_layers'].value_counts()
+        counts_by_layer = [layer_counts_violations.get(lc, 0) for lc in all_layer_counts]
+        
+        x_positions = list(range(len(all_layer_counts)))
+        ax.bar(x_positions, counts_by_layer, color='#e74c3c', alpha=0.7, edgecolor='black')
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels([str(x) for x in all_layer_counts])
+        ax.set_xlabel('Number of Hidden Layers', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
+        ax.set_title(f'{metric_display} - Violations by Model Depth', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3, axis='y')
+        for i, count in enumerate(counts_by_layer):
+            ax.text(i, count + 0.1, str(int(count)), ha='center', va='bottom', fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(metric_dir / "violations_by_depth.png", dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        # Plot 2: Violations by layer position
+        fig, ax = plt.subplots(figsize=(10, 6))
+        max_layer_num = 7
+        layer_numbers = list(range(2, max_layer_num + 1))
+        layer_num_counts = metric_df['layer_num'].value_counts().to_dict()
+        counts_by_layer = [layer_num_counts.get(layer, 0) for layer in layer_numbers]
+        
+        x_positions = list(range(len(layer_numbers)))
+        ax.bar(x_positions, counts_by_layer, color='#2ecc71', alpha=0.7, edgecolor='black')
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels([str(l) for l in layer_numbers])
+        ax.set_xlabel('Layer Number (where violation occurred)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
+        ax.set_title(f'{metric_display} - Violations by Layer Position\n(Layer N worse than Layer N-1)',
+                     fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3, axis='y')
+        for i, count in enumerate(counts_by_layer):
+            ax.text(i, count + 0.1, str(count), ha='center', va='bottom', fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(metric_dir / "violations_by_layer_position.png", dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        # Plot 3: Violations by weights
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        weight_labels = []
+        arch_to_weight = {}
+        
+        if experiment_plan:
+            for exp_name, arch in experiment_plan.items():
+                weight_str = extract_weight_from_experiment_name(exp_name)
+                if weight_str:
+                    arch_tuple = tuple(arch)
+                    if arch_tuple not in arch_to_weight:
+                        arch_to_weight[arch_tuple] = weight_str
+                    if weight_str not in weight_labels:
+                        weight_labels.append(weight_str)
+        
+        def weight_to_num(w):
+            return int(w.replace('k', '')) * 1000
+        
+        if weight_labels and arch_to_weight:
+            weight_labels = sorted(weight_labels, key=weight_to_num)
+            
+            metric_df_copy = metric_df.copy()
+            
+            def get_weight_for_model(model_name):
+                if model_name in models_data:
+                    arch = models_data[model_name].get('architecture', [])
+                    return arch_to_weight.get(tuple(arch))
+                return None
+            
+            metric_df_copy['weight_label'] = metric_df_copy['model_name'].apply(get_weight_for_model)
+            weight_counts = metric_df_copy['weight_label'].value_counts().reindex(weight_labels, fill_value=0)
+        else:
+            param_bins = [0, 15000, 25000, 35000, 45000, float('inf')]
+            weight_labels = ['10k', '20k', '30k', '40k', '50k+']
+            metric_df_copy = metric_df.copy()
+            metric_df_copy['param_bin'] = pd.cut(metric_df_copy['num_parameters'], bins=param_bins, labels=weight_labels)
+            weight_counts = metric_df_copy['param_bin'].value_counts().reindex(weight_labels, fill_value=0)
+        
+        x_positions = list(range(len(weight_labels)))
+        ax.bar(x_positions, weight_counts.values, color='#9b59b6', alpha=0.7, edgecolor='black')
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(weight_labels)
+        ax.set_xlabel('Parameter Count (approx)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
+        ax.set_title(f'{metric_display} - Violations by Model Size', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3, axis='y')
+        for i, count in enumerate(weight_counts.values):
+            ax.text(i, count + 0.1, str(int(count)), ha='center', va='bottom', fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(metric_dir / "violations_by_weights.png", dpi=150, bbox_inches='tight')
+        plt.close()
+
+
 # =============================================================================
 # SUMMARY STATISTICS
 # =============================================================================
@@ -1340,6 +1458,12 @@ def generate_non_monotonic_summary(
     
     if total_violations == 0:
         print("  No violations found - skipping summary generation")
+        return
+
+    # Check if there are actually violations
+    total_violations = sum(len(v) for v in all_violations.values())
+    if total_violations == 0:
+        print("  No non-monotonic violations detected")
         return
     
     # Output directly to the provided directory (non_monotonic_comparisons)
@@ -1400,110 +1524,8 @@ def generate_non_monotonic_summary(
     plt.savefig(summary_dir / "violations_by_metric.png", dpi=150, bbox_inches='tight')
     plt.close()
     
-    # Plot 2: Violations by layer count (depth)
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # Get ALL unique layer counts from models_data (so we show bars even for 0 violations)
-    all_layer_counts = sorted(set(data['num_layers'] for data in models_data.values()))
-    
-    # Count violations per layer count
-    layer_counts_violations = df['num_layers'].value_counts() if len(df) > 0 else pd.Series()
-    counts_by_layer = [layer_counts_violations.get(lc, 0) for lc in all_layer_counts]
-    
-    x_positions = list(range(len(all_layer_counts)))
-    ax.bar(x_positions, counts_by_layer, color='#e74c3c', alpha=0.7, edgecolor='black')
-    ax.set_xticks(x_positions)
-    ax.set_xticklabels([str(x) for x in all_layer_counts])
-    ax.set_xlabel('Number of Hidden Layers', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
-    ax.set_title('Non-Monotonic Violations by Model Depth', fontsize=14, fontweight='bold')
-    ax.grid(True, alpha=0.3, axis='y')
-    for i, count in enumerate(counts_by_layer):
-        ax.text(i, count + 0.1, str(int(count)), ha='center', va='bottom', fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(summary_dir / "violations_by_depth.png", dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    # Plot 3: Violations by layer position (layers 2-7, layer 1 can NEVER have violations)
-    fig, ax = plt.subplots(figsize=(10, 6))
-    # Layer numbers start at 2 (layer 1 has no previous layer to compare to)
-    max_layer_num = 7
-    layer_numbers = list(range(2, max_layer_num + 1))  # [2, 3, 4, 5, 6, 7]
-    layer_num_counts = df['layer_num'].value_counts().to_dict() if len(df) > 0 else {}
-    counts_by_layer = [layer_num_counts.get(layer, 0) for layer in layer_numbers]
-    
-    x_positions = list(range(len(layer_numbers)))
-    ax.bar(x_positions, counts_by_layer, color='#2ecc71', alpha=0.7, edgecolor='black')
-    ax.set_xticks(x_positions)
-    ax.set_xticklabels([str(l) for l in layer_numbers])
-    ax.set_xlabel('Layer Number (where violation occurred)', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
-    ax.set_title('Non-Monotonic Violations by Layer Position\n(Layer N worse than Layer N-1)',
-                 fontsize=14, fontweight='bold')
-    ax.grid(True, alpha=0.3, axis='y')
-    for i, count in enumerate(counts_by_layer):
-        ax.text(i, count + 0.1, str(count), ha='center', va='bottom', fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(summary_dir / "violations_by_layer_position.png", dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    # Plot 4: Violations by weights (parameter count bins)
-    # Extract weight labels dynamically from experiment plan using architecture mapping
-    fig, ax = plt.subplots(figsize=(12, 6))
-    
-    weight_labels = []
-    arch_to_weight = {}
-    
-    if experiment_plan:
-        # Build mapping: architecture tuple -> weight label (like group_models_by_attribute)
-        for exp_name, arch in experiment_plan.items():
-            weight_str = extract_weight_from_experiment_name(exp_name)
-            if weight_str:
-                arch_tuple = tuple(arch)
-                if arch_tuple not in arch_to_weight:
-                    arch_to_weight[arch_tuple] = weight_str
-                if weight_str not in weight_labels:
-                    weight_labels.append(weight_str)
-    
-    # Sort weight labels numerically (e.g., ['5k', '10k', '20k', '30k'])
-    def weight_to_num(w):
-        return int(w.replace('k', '')) * 1000
-    
-    if weight_labels and arch_to_weight:
-        weight_labels = sorted(weight_labels, key=weight_to_num)
-        
-        # Map each model to its weight category via architecture
-        df_copy = df.copy()
-        
-        def get_weight_for_model(model_name):
-            if model_name in models_data:
-                arch = models_data[model_name].get('architecture', [])
-                return arch_to_weight.get(tuple(arch))
-            return None
-        
-        df_copy['weight_label'] = df_copy['model_name'].apply(get_weight_for_model)
-        weight_counts = df_copy['weight_label'].value_counts().reindex(weight_labels, fill_value=0)
-    else:
-        # Fallback to hardcoded bins if no experiment plan
-        param_bins = [0, 15000, 25000, 35000, 45000, float('inf')]
-        weight_labels = ['10k', '20k', '30k', '40k', '50k+']
-        df_copy = df.copy()
-        df_copy['param_bin'] = pd.cut(df_copy['num_parameters'], bins=param_bins, labels=weight_labels)
-        weight_counts = df_copy['param_bin'].value_counts().reindex(weight_labels, fill_value=0)
-    
-    x_positions = list(range(len(weight_labels)))
-    ax.bar(x_positions, weight_counts.values, color='#9b59b6', alpha=0.7, edgecolor='black')
-    ax.set_xticks(x_positions)
-    ax.set_xticklabels(weight_labels)
-    ax.set_xlabel('Parameter Count (approx)', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Number of Violations', fontsize=12, fontweight='bold')
-    ax.set_title('Non-Monotonic Violations by Model Size (Weights)', fontsize=14, fontweight='bold')
-    ax.grid(True, alpha=0.3, axis='y')
-    for i, count in enumerate(weight_counts.values):
-        ax.text(i, count + 0.1, str(int(count)), ha='center', va='bottom', fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(summary_dir / "violations_by_weights.png", dpi=150, bbox_inches='tight')
-    plt.close()
+    # Generate per-metric folders with depth/layer/weight plots
+    _generate_metric_specific_violation_plots(df, models_data, experiment_plan, summary_dir)
     
     # Write summary text
     summary_text = [
@@ -1659,7 +1681,8 @@ def plot_freq_reduction_per_model(
 def plot_aggregated_freq_reduction(
     models_data: Dict[str, Dict[str, Any]],
     violations: Dict[str, List[Dict]],
-    output_dir: Path
+    output_dir: Path,
+    filename: str = "aggregated_freq_reduction.png"
 ):
     """Plot aggregated frequency reduction across all violating models with GT reference.
     
@@ -1667,6 +1690,7 @@ def plot_aggregated_freq_reduction(
         models_data: All model data
         violations: {model_name: [violation dicts]} for this metric
         output_dir: Directory to save plot
+        filename: Name of the output file (default: aggregated_freq_reduction.png)
     """
     if not violations:
         return
@@ -1750,7 +1774,7 @@ def plot_aggregated_freq_reduction(
     
     output_dir_long = _long_path(output_dir)
     output_dir_long.mkdir(parents=True, exist_ok=True)
-    save_path = _long_path(output_dir / 'aggregated_freq_reduction.png')
+    save_path = _long_path(output_dir / filename)
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
 
@@ -2311,23 +2335,27 @@ def generate_frequency_violation_correlation(
     """Generate frequency-violation correlation analysis.
     
     Creates per-model and aggregated frequency reduction plots for all violations.
+    Saves outputs into non_monotonic_comparisons/{metric_name}/ folders.
     
     Args:
         all_violations: Dict mapping metric_name -> list of violations
         models_data: Dict mapping model_name -> model data
-        output_dir: Directory to save outputs
+        output_dir: Base directory (non_monotonic_comparisons)
     """
-    freq_corr_dir = output_dir / "frequency_violation_correlation"
-    _long_path(freq_corr_dir).mkdir(parents=True, exist_ok=True)
+    # Save summary outside metric folders
+    summary_path = output_dir / "frequency_correlation_summary.png"
     
-    # Process each metric separately
+    # Process each metric separately - save into metric-specific folders
     for metric_name, violations in all_violations.items():
         if not violations:
             continue
         
         display_name = METRICS_CONFIG[metric_name]['display_name']
-        metric_dir = freq_corr_dir / metric_name
+        
+        # Save into metric folder within non_monotonic_comparisons
+        metric_dir = output_dir / metric_name
         per_model_dir = metric_dir / "per_model"
+        overlay_dir = metric_dir / "overlays"
         
         # Group violations by model
         violations_by_model = defaultdict(list)
@@ -2359,7 +2387,6 @@ def generate_frequency_violation_correlation(
                 )
                 
                 # Also generate spatial-frequency overlay plots
-                overlay_dir = metric_dir / "overlays"
                 generate_overlay_for_model(
                     model_name=model_name,
                     model_data=models_data[model_name],
@@ -2368,23 +2395,29 @@ def generate_frequency_violation_correlation(
                     output_dir=overlay_dir
                 )
         
-        # Generate aggregated plot for this metric
+        # Generate aggregated plot for this metric (renamed to avoid conflicts)
         plot_aggregated_freq_reduction(
             models_data=models_data,
             violations=violations_by_model,
-            output_dir=metric_dir
+            output_dir=metric_dir,
+            filename="frequency_reduction_aggregated.png"
         )
     
-    # Generate overall summary table
-    _generate_frequency_correlation_summary(all_violations, models_data, freq_corr_dir)
+    # Generate overall summary table (save outside metric folders)
+    _generate_frequency_correlation_summary(all_violations, models_data, output_dir, summary_path)
 
 
 def _generate_frequency_correlation_summary(
     all_violations: Dict[str, List[Dict[str, Any]]],
     models_data: Dict[str, Dict[str, Any]],
-    output_dir: Path
+    output_dir: Path,
+    save_path: Path
 ):
-    """Generate summary table of frequency-violation correlations."""
+    """Generate summary table of frequency-violation correlations.
+    
+    Args:
+        save_path: Full path to save the summary image
+    """
     summary_data = []
     
     for metric_name in METRICS_CONFIG.keys():
@@ -2468,11 +2501,11 @@ def _generate_frequency_correlation_summary(
     
     ax.set_title('Frequency-Violation Correlation Summary', fontsize=14, fontweight='bold', pad=20)
     
-    save_path = _long_path(output_dir / 'summary.png')
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    save_path_long = _long_path(save_path)
+    plt.savefig(save_path_long, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"    Frequency correlation summary saved to {output_dir / 'summary.png'}")
+    print(f"    Frequency correlation summary saved to {save_path}")
 
 
 # =============================================================================
