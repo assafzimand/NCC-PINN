@@ -7,6 +7,8 @@ metric computations during analysis.
 Key principles:
 - Probes are fitted ONCE per model
 - All metrics use the same probes
+- Probes are NOT fitted on the last hidden layer (model's output weights used instead)
+- Checkpoints loaded: final_model.pt (preferred) or best_model.pt (fallback)
 - Frequency analysis uses NUFFT for mathematically correct spectral analysis on scattered data
 - No fallbacks - if checkpoints don't exist, analysis fails
 """
@@ -42,14 +44,14 @@ def find_model_checkpoint(run_dir: Path, problem: str, model_name: str) -> Optio
     
     possible_paths = [
         # Inside experiment's model folder (AWS experiment structure)
-        model_dir / "checkpoints" / model_name / "best_model.pt",
         model_dir / "checkpoints" / model_name / "final_model.pt",
+        model_dir / "checkpoints" / model_name / "best_model.pt",
         # Global checkpoints folder (local development structure)
-        Path("checkpoints") / problem / model_name / "best_model.pt",
         Path("checkpoints") / problem / model_name / "final_model.pt",
+        Path("checkpoints") / problem / model_name / "best_model.pt",
         # Inside run directory
-        run_dir / "checkpoints" / "best_model.pt",
         run_dir / "checkpoints" / "final_model.pt",
+        run_dir / "checkpoints" / "best_model.pt",
     ]
     
     for path in possible_paths:
@@ -333,10 +335,11 @@ def fit_probes(
     train_data: Dict,
     device: torch.device
 ) -> Dict[str, torch.nn.Linear]:
-    """Fit linear probes for all hidden layers using training data.
+    """Fit linear probes for hidden layers (excluding last hidden layer).
     
     This should be called ONCE per model. The returned probes are then used
-    for all metric computations.
+    for all metric computations. The last hidden layer is excluded because
+    the model's trained output weights provide a better representation.
     
     Args:
         model: Loaded neural network model
@@ -344,7 +347,7 @@ def fit_probes(
         device: Device for computation
         
     Returns:
-        Dict mapping layer_name -> trained Linear probe
+        Dict mapping layer_name -> trained Linear probe (excludes last hidden layer)
     """
     from probes.probe_core import train_linear_probe
     
@@ -353,7 +356,7 @@ def fit_probes(
     
     # Get hidden layer names
     all_layers = model.get_layer_names()
-    hidden_layers = all_layers[:-1]  # Exclude output layer
+    hidden_layers = all_layers[:-2]  # Exclude last hidden layer + output layer
     
     # Extract training data
     train_x = train_data['x'].to(device)

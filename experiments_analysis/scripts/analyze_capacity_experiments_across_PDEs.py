@@ -6,6 +6,11 @@ comparative analysis including:
 - Best model summary per PDE
 - Rank comparisons by layers and weights (for both Rel-L2 and L-inf)
 - Non-monotonic violation plots with per-PDE coloring
+
+IMPORTANT: Uses analysis_core for consistent metric computation:
+- Probes are NOT fitted on the last hidden layer (model output weights used)
+- Loads final_model.pt (preferred) or best_model.pt (fallback)
+- All metrics computed on frequency_grid.pt for consistency
 """
 
 import json
