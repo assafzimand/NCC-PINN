@@ -152,6 +152,36 @@ def train(
     ncc_plots_parent = run_dir / "ncc_plots"
     ncc_plots_parent.mkdir(exist_ok=True)
 
+    # ============================================================
+    # RNC Initialization (if enabled)
+    # ============================================================
+    rnc_config = cfg.get('residual_norm_control', {})
+    rnc_enabled = rnc_config.get('enabled', False)
+    probes = None
+    target_norms = {}
+    
+    if rnc_enabled:
+        print("\n" + "=" * 60)
+        print("Initializing Residual Norm Control (RNC)")
+        print("=" * 60)
+        from losses.rnc_utils import train_probes_for_rnc, compute_target_norms
+        
+        # Train probes once at the start
+        print("Training linear probes for RNC...")
+        probes = train_probes_for_rnc(model, train_data, cfg, device)
+        print(f"  Trained probes for {len(probes)} hidden layers")
+        
+        # Compute initial target norms (using eval_data)
+        print("Computing initial target norms from eval data...")
+        target_norms = compute_target_norms(model, eval_data, probes, cfg)
+        print(f"  Target norms computed for {len(target_norms)} layers")
+        
+        # Add RNC metrics storage
+        metrics['rnc_penalty'] = []
+        metrics['rnc_penalty_epochs'] = []
+        metrics['rnc_layer_terms'] = {}  # Will store per-layer term norms
+        metrics['target_update_epochs'] = [1]  # First update at epoch 1
+
     # Training loop
     print(f"\nTraining for {epochs} epochs...")
     start_time = time.time()
@@ -162,30 +192,51 @@ def train(
         train_loss = 0.0
         n_train_batches = 0
 
+        # Update RNC target norms periodically
+        if rnc_enabled:
+            update_every = rnc_config.get('update_target_norms_every', 100)
+            if epoch > 1 and epoch % update_every == 0:
+                from losses.rnc_utils import compute_target_norms
+                target_norms = compute_target_norms(model, eval_data, probes, cfg)
+                metrics['target_update_epochs'].append(epoch)
+        
+        # Track RNC penalty for this epoch
+        epoch_rnc_penalty = 0.0
+        last_rnc_metrics = {}  # Store last batch metrics for per-layer tracking
+        
         if current_optimizer_name == 'Adam':
             # Adam: Mini-batch training (GPU parallelized)
             for batch in train_loader:
                 optimizer.zero_grad()
-                loss = loss_fn(model, batch)
+                loss, rnc_metrics = loss_fn(model, batch, probes=probes, target_norms=target_norms)
                 loss.backward()
                 optimizer.step()
                 train_loss += loss.item()
+                epoch_rnc_penalty += rnc_metrics.get('rnc_penalty', 0.0)
+                last_rnc_metrics = rnc_metrics  # Keep last batch metrics
                 n_train_batches += 1
 
         else:
             # LBFGS: Full-batch training with memory error handling
             # Process entire dataset in single forward pass (no batching)
+            lbfgs_rnc_penalty = [0.0]  # Use list to capture in closure
+            lbfgs_rnc_metrics = [{}]  # Use list to capture metrics in closure
+            
             def closure():
                 optimizer.zero_grad()
                 # Single forward pass with ALL training data at once
-                loss = loss_fn(model, train_data)
+                loss, rnc_metrics = loss_fn(model, train_data, probes=probes, target_norms=target_norms)
                 loss.backward()
+                lbfgs_rnc_penalty[0] = rnc_metrics.get('rnc_penalty', 0.0)
+                lbfgs_rnc_metrics[0] = rnc_metrics
                 return loss
             
             try:
                 # LBFGS step processes entire dataset via closure
                 loss = optimizer.step(closure)
                 train_loss = loss.item()
+                epoch_rnc_penalty = lbfgs_rnc_penalty[0]
+                last_rnc_metrics = lbfgs_rnc_metrics[0]
                 n_train_batches = 1
             
             except RuntimeError as e:
@@ -219,15 +270,30 @@ def train(
                     # Continue with Adam on first batch
                     optimizer.zero_grad()
                     batch = next(iter(train_loader))
-                    loss = loss_fn(model, batch)
+                    loss, rnc_metrics = loss_fn(model, batch, probes=probes, target_norms=target_norms)
                     loss.backward()
                     optimizer.step()
                     train_loss = loss.item()
+                    epoch_rnc_penalty = rnc_metrics.get('rnc_penalty', 0.0)
+                    last_rnc_metrics = rnc_metrics
                     n_train_batches = 1
                 else:
                     raise  # Re-raise other errors
 
         train_loss /= n_train_batches
+        
+        # Store RNC penalty and per-layer term metrics
+        if rnc_enabled:
+            avg_rnc_penalty = epoch_rnc_penalty / max(n_train_batches, 1)
+            metrics['rnc_penalty'].append(avg_rnc_penalty)
+            metrics['rnc_penalty_epochs'].append(epoch)
+            
+            # Store per-layer term norms (from last batch)
+            for key, value in last_rnc_metrics.items():
+                if '_norm' in key and key != 'rnc_penalty':
+                    if key not in metrics['rnc_layer_terms']:
+                        metrics['rnc_layer_terms'][key] = []
+                    metrics['rnc_layer_terms'][key].append(value)
         
         # Check for optimizer switch
         if epoch == switch_epoch and switch_at_fraction < 1.0 and current_optimizer_name == 'Adam':
@@ -285,7 +351,8 @@ def train(
                 # Note: For physics-informed losses, we need gradients w.r.t. inputs
                 # even during evaluation (for computing derivatives in PDE residuals).
                 # We still use model.eval() to disable dropout/batchnorm training behavior.
-                loss = loss_fn(model, batch)
+                # Note: RNC penalty is not included in eval loss (probes=None)
+                loss, _ = loss_fn(model, batch, probes=None, target_norms=None)
 
                 with torch.no_grad():
                     inputs = torch.cat([batch['x'], batch['t']], dim=1)

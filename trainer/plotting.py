@@ -39,6 +39,7 @@ def plot_training_curves(
         metrics: Dictionary with keys:
                 - 'train_loss_epochs', 'train_loss' (all epochs)
                 - 'epochs', 'eval_loss', 'train_rel_l2', 'eval_rel_l2' (eval epochs only)
+                - Optional RNC keys: 'rnc_penalty', 'rnc_penalty_epochs', 'rnc_layer_terms'
         save_dir: Directory to save plots
         optimizer_switch_epoch: Epoch where optimizer switched (e.g., Adam to LBFGS).
                                If provided, a vertical line is drawn at this epoch.
@@ -48,9 +49,16 @@ def plot_training_curves(
 
     train_loss_epochs = metrics['train_loss_epochs']
     eval_epochs = metrics['epochs']
-
-    # Create figure with 2 subplots
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    
+    # Check if RNC metrics are present
+    has_rnc = 'rnc_penalty' in metrics and len(metrics.get('rnc_penalty', [])) > 0
+    
+    # Create figure with 2x2 subplots if RNC enabled, otherwise 1x2
+    if has_rnc:
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        axes = axes.flatten()
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # Plot 1: Loss curves
     ax = axes[0]
@@ -91,6 +99,63 @@ def plot_training_curves(
     is_log_l2 = _safe_log_scale(ax, [metrics['train_rel_l2'], metrics['eval_rel_l2']])
     scale_str_l2 = "[log]" if is_log_l2 else "[linear]"
     ax.set_title(f'Relative L2 Error {scale_str_l2}', fontsize=14, fontweight='bold')
+
+    # Plot 3 & 4: RNC metrics (if enabled)
+    if has_rnc:
+        rnc_epochs = metrics['rnc_penalty_epochs']
+        rnc_penalty = metrics['rnc_penalty']
+        target_update_epochs = metrics.get('target_update_epochs', [])
+        
+        # Plot 3: Total RNC Penalty
+        ax = axes[2]
+        ax.plot(rnc_epochs, rnc_penalty, 'purple', label='RNC Penalty', linewidth=2, alpha=0.8)
+        
+        # Add target update markers
+        for i, update_epoch in enumerate(target_update_epochs):
+            label = 'Target Updates' if i == 0 else None
+            ax.axvline(x=update_epoch, color='red', linestyle='--', 
+                      linewidth=1, alpha=0.5, label=label)
+        
+        ax.set_xlabel('Epoch', fontsize=12)
+        ax.set_ylabel('RNC Penalty', fontsize=12)
+        ax.legend(fontsize=11)
+        ax.grid(True, alpha=0.3)
+        is_log_rnc = _safe_log_scale(ax, [rnc_penalty])
+        scale_str_rnc = "[log]" if is_log_rnc else "[linear]"
+        ax.set_title(f'RNC Penalty {scale_str_rnc}', fontsize=14, fontweight='bold')
+        
+        # Plot 4: Per-layer term norms
+        ax = axes[3]
+        rnc_layer_terms = metrics.get('rnc_layer_terms', {})
+        
+        # Use different colors for different layers/terms
+        colors = plt.cm.tab10.colors
+        for idx, (term_key, term_values) in enumerate(sorted(rnc_layer_terms.items())):
+            # Clean up label (e.g., "layer_1_h_t_norm" -> "L1 h_t")
+            parts = term_key.replace('_norm', '').split('_')
+            if len(parts) >= 3:
+                layer_num = parts[1]
+                term_name = '_'.join(parts[2:])
+                label = f'L{layer_num} {term_name}'
+            else:
+                label = term_key
+            
+            ax.plot(rnc_epochs, term_values, color=colors[idx % len(colors)], 
+                   label=label, linewidth=1.5, alpha=0.8)
+        
+        # Add target update markers
+        for i, update_epoch in enumerate(target_update_epochs):
+            label = 'Target Updates' if i == 0 else None
+            ax.axvline(x=update_epoch, color='red', linestyle='--', 
+                      linewidth=1, alpha=0.3, label=label if i == 0 and not rnc_layer_terms else None)
+        
+        ax.set_xlabel('Epoch', fontsize=12)
+        ax.set_ylabel('Term Norm', fontsize=12)
+        ax.legend(fontsize=9, loc='upper right', ncol=2)
+        ax.grid(True, alpha=0.3)
+        is_log_terms = _safe_log_scale(ax, list(rnc_layer_terms.values()))
+        scale_str_terms = "[log]" if is_log_terms else "[linear]"
+        ax.set_title(f'Per-Layer Term Norms {scale_str_terms}', fontsize=14, fontweight='bold')
 
     plt.tight_layout()
 

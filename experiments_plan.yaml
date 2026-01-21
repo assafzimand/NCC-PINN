@@ -1,11 +1,11 @@
 # Experiment plan configuration
-experiment_name: "burgers2d_capacity"
+experiment_name: "norm_control_tests"
 
 # Base configuration (will be used for all experiments)
 base_config:
-  problem: burgers2d
+  problem: schrodinger
   activation: tanh
-  epochs: 10000
+  epochs: 10
   batch_size: 512
   lr: 0.0001
   
@@ -30,10 +30,10 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 500
-  print_every: 1000
-  save_every: 5000
-  inner_metrics_eval_every: 2501
+  eval_every: 2
+  print_every: 2
+  save_every: 5
+  inner_metrics_eval_every: 4
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -87,52 +87,60 @@ base_config:
     eval_train_ratio: 0.25       # eval = 25% of train (all types)
     ncc_train_ratio: 0.25        # ncc = 25% of residual_train 
 
+  # Residual Norm Control (RNC) settings
+  # Penalizes hidden layer residual term norms that exceed last layer targets
+  residual_norm_control:
+    enabled: true                     # Set to true to enable RNC
+    update_target_norms_every: 2     # Epochs between target norm updates
+    base_weight: 0.1                   # Weight for layer 1 (smaller than original loss)
+    weight_growth_factor: 1.0          # Multiplier per layer (1.0 = uniform across layers)
+
 # Experiments to run
 experiments:  
   - name: "3lyr_40k_Wn_flat"
-    problem: burgers2d
-    architecture: [3, 140, 140, 140, 1]
+    problem: schrodinger
+    architecture: [2, 14, 14, 14, 2]
 
   - name: "5lyr_40k_Wn_flat"
-    problem: burgers2d  
-    architecture: [3, 100, 100, 100, 100, 100, 1]
+    problem: schrodinger  
+    architecture: [2, 10, 10, 10, 10, 10, 2]
 
-  - name: "7lyr_40k_Wn_flat"
-    problem: burgers2d
-    architecture: [3, 80, 80, 80, 80, 80, 80, 80, 1]
+#  - name: "7lyr_40k_Wn_flat"
+#    problem: burgers2d
+#    architecture: [3, 80, 80, 80, 80, 80, 80, 80, 1]
 
-  - name: "3lyr_30k_Wn_flat"
-    problem: burgers2d
-    architecture: [3, 120, 120, 120, 1]
+#  - name: "3lyr_30k_Wn_flat"
+#    problem: burgers2d
+#    architecture: [3, 120, 120, 120, 1]
 
-  - name: "5lyr_30k_Wn_flat"
-    problem: burgers2d
-    architecture: [3, 85, 85, 85, 85, 85, 1]
+#  - name: "5lyr_30k_Wn_flat"
+#    problem: burgers2d
+#    architecture: [3, 85, 85, 85, 85, 85, 1]
 
-  - name: "7lyr_30k_Wn_flat"
-    problem: burgers2d
-    architecture: [3, 70, 70, 70, 70, 70, 70, 70, 1]
+#  - name: "7lyr_30k_Wn_flat"
+#    problem: burgers2d
+#    architecture: [3, 70, 70, 70, 70, 70, 70, 70, 1]
 
-  - name: "3lyr_20k_Wn_flat"
-    problem: burgers2d
-    architecture: [3, 100, 100, 100, 1]
+#  - name: "3lyr_20k_Wn_flat"
+#    problem: burgers2d
+#    architecture: [3, 100, 100, 100, 1]
 
-  - name: "5lyr_20k_Wn_flat"
-    problem: burgers2d
-    architecture: [3, 70, 70, 70, 70, 70, 1]
+#  - name: "5lyr_20k_Wn_flat"
+#    problem: burgers2d
+#    architecture: [3, 70, 70, 70, 70, 70, 1]
 
-  - name: "7lyr_20k_Wn_flat"
-    problem: burgers2d
-    architecture: [3, 58, 58, 58, 58, 58, 58, 58, 1]
+#  - name: "7lyr_20k_Wn_flat"
+#    problem: burgers2d
+#    architecture: [3, 58, 58, 58, 58, 58, 58, 58, 1]
 
-  - name: "3lyr_10k_Wn_flat"
-    problem: burgers2d
-    architecture: [3, 70, 70, 70, 1]
+#  - name: "3lyr_10k_Wn_flat"
+#    problem: burgers2d
+#    architecture: [3, 70, 70, 70, 1]
 
-  - name: "5lyr_10k_Wn_flat"
-    problem: burgers2d
-    architecture: [3, 50, 50, 50, 50, 50, 1]
+#  - name: "5lyr_10k_Wn_flat"
+#    problem: burgers2d
+#    architecture: [3, 50, 50, 50, 50, 50, 1]
 
-  - name: "7lyr_10k_Wn_flat"
-    problem: burgers2d
-    architecture: [3, 40, 40, 40, 40, 40, 40, 40, 1]
+#  - name: "7lyr_10k_Wn_flat"
+#    problem: burgers2d
+#    architecture: [3, 40, 40, 40, 40, 40, 40, 40, 1]

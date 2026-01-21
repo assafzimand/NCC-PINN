@@ -211,7 +211,8 @@ def compute_layer_derivatives_via_probe(
     probe: torch.nn.Linear,
     x: torch.Tensor,
     t: torch.Tensor,
-    config: Dict
+    config: Dict,
+    detach: bool = True
 ) -> Dict[str, torch.Tensor]:
     """
     Compute derivatives of probe output w.r.t. inputs using autograd.
@@ -227,6 +228,8 @@ def compute_layer_derivatives_via_probe(
         x: Spatial coordinates (N, 1) - MUST have requires_grad=True
         t: Temporal coordinates (N, 1) - MUST have requires_grad=True
         config: Configuration dict (contains problem and output_dim)
+        detach: If True (default), detach results for analysis. 
+                If False, keep gradients for training (RNC penalty).
         
     Returns:
         Dictionary with:
@@ -319,14 +322,14 @@ def compute_layer_derivatives_via_probe(
         h_xx = torch.zeros_like(h)
         for i in range(output_dim):
             grad_outputs = torch.ones_like(h_x[:, i])
-            # Keep graph if not last OR if we need h_tt later
-            should_retain = (i < output_dim - 1) or need_h_tt
+            # Keep graph if not last OR if we need h_tt later OR if not detaching
+            should_retain = (i < output_dim - 1) or need_h_tt or not detach
             h_xx[:, i:i+1] = torch.autograd.grad(
                 outputs=h_x[:, i],
                 inputs=x,
                 grad_outputs=grad_outputs,
                 retain_graph=should_retain,
-                create_graph=False
+                create_graph=not detach  # Keep graph for RNC training
             )[0]
         results['h_xx'] = h_xx
     
@@ -344,7 +347,7 @@ def compute_layer_derivatives_via_probe(
             inputs=x,
             grad_outputs=grad_outputs,
             retain_graph=True,
-            create_graph=False
+            create_graph=not detach  # Keep graph for RNC training
         )[0]  # (N, 2)
         results['h_x0x0'] = h_x0_grad[:, 0:1]  # d(h_x0)/dx0, (N, 1)
         
@@ -354,8 +357,8 @@ def compute_layer_derivatives_via_probe(
             outputs=h_x1.squeeze(),
             inputs=x,
             grad_outputs=grad_outputs,
-            retain_graph=need_h_tt,
-            create_graph=False
+            retain_graph=need_h_tt or not detach,
+            create_graph=not detach  # Keep graph for RNC training
         )[0]  # (N, 2)
         results['h_x1x1'] = h_x1_grad[:, 1:2]  # d(h_x1)/dx1, (N, 1)
     
@@ -369,17 +372,18 @@ def compute_layer_derivatives_via_probe(
                 outputs=h_t[:, i],
                 inputs=t,
                 grad_outputs=grad_outputs,
-                retain_graph=(i < output_dim - 1),
-                create_graph=False
+                retain_graph=(i < output_dim - 1) or not detach,
+                create_graph=not detach  # Keep graph for RNC training
             )[0]
         results['h_tt'] = h_tt
     
-    # Remove hooks and detach all results
+    # Remove hooks
     model.remove_hooks()
     
-    # Detach all tensors in results
-    for key in results:
-        results[key] = results[key].detach()
+    # Detach all tensors in results (only if detach=True)
+    if detach:
+        for key in results:
+            results[key] = results[key].detach()
     
     return results
 

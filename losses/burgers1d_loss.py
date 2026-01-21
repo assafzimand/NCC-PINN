@@ -106,10 +106,11 @@ def build_loss(**cfg) -> Callable:
         **cfg: Configuration dictionary containing:
             - problem: problem name (e.g., 'burgers1d')
             - burgers1d: dict with 'loss_weights' (residual, ic, bc) and 'nu'
+            - residual_norm_control: optional RNC config
             
     Returns:
-        Callable loss function that takes (model, batch) and returns
-        scalar tensor
+        Callable loss function that takes (model, batch, probes, target_norms)
+        and returns (scalar loss tensor, rnc_metrics dict)
     """
     # Extract loss weights and parameters
     problem = cfg.get('problem', 'burgers1d')
@@ -123,7 +124,16 @@ def build_loss(**cfg) -> Callable:
     # Get viscosity parameter
     nu = problem_config.get('nu', 0.01)
     
-    def loss_fn(model: nn.Module, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+    # Extract RNC config
+    rnc_config = cfg.get('residual_norm_control', {})
+    rnc_enabled = rnc_config.get('enabled', False)
+    
+    def loss_fn(
+        model: nn.Module,
+        batch: Dict[str, torch.Tensor],
+        probes: Dict = None,
+        target_norms: Dict = None
+    ) -> Tuple[torch.Tensor, Dict]:
         """
         Compute physics-informed loss for 1D viscous Burgers equation.
         
@@ -134,9 +144,11 @@ def build_loss(**cfg) -> Callable:
                 - 't': (N, 1) temporal coordinates
                 - 'h_gt': (N, 1) ground truth (for IC)
                 - 'mask': dict with 'residual', 'IC', 'BC' boolean masks
+            probes: Optional dict of trained probes for RNC (layer_name -> probe)
+            target_norms: Optional dict of target norms for RNC
                 
         Returns:
-            Scalar loss tensor
+            Tuple of (scalar loss tensor, rnc_metrics dict)
         """
         x = batch['x']  # (N, spatial_dim)
         t = batch['t']  # (N, 1)
@@ -214,13 +226,32 @@ def build_loss(**cfg) -> Callable:
         # ============================================================
         # Total Weighted Loss
         # ============================================================
-        total_loss = (
+        base_loss = (
             weight_residual * mse_residual +
             weight_ic * mse_ic +
             weight_bc * mse_bc
         )
         
-        return total_loss
+        # ============================================================
+        # RNC Penalty (if enabled)
+        # ============================================================
+        rnc_metrics = {}
+        rnc_penalty = torch.tensor(0.0, device=device)
+        
+        if rnc_enabled and probes is not None and target_norms is not None:
+            from losses.rnc_utils import compute_rnc_penalty
+            rnc_penalty, rnc_metrics = compute_rnc_penalty(
+                model=model,
+                batch=batch,
+                probes=probes,
+                target_norms=target_norms,
+                rnc_config=rnc_config,
+                cfg=cfg
+            )
+        
+        total_loss = base_loss + rnc_penalty
+        
+        return total_loss, rnc_metrics
     
     return loss_fn
 
