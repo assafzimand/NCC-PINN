@@ -32,15 +32,54 @@ echo
 echo "=== Cloning or updating NCC-PINN repo ==="
 if [ ! -d "$REPO_DIR" ]; then
   git clone "$REPO_URL" "$REPO_DIR"
-else
-  cd "$REPO_DIR"
-  echo "  Fetching latest changes from GitHub..."
-  git fetch origin
-  echo "  Force updating to match GitHub (discards local changes)..."
-  git reset --hard origin/main
 fi
 
 cd "$REPO_DIR"
+
+echo "  Fetching latest changes from GitHub..."
+git fetch origin --prune
+
+echo
+echo "=== Select branch to use ==="
+# Get list of remote branches (excluding HEAD)
+BRANCHES=($(git branch -r | grep -v HEAD | sed 's/origin\///' | tr -d ' '))
+
+if [ ${#BRANCHES[@]} -eq 0 ]; then
+  echo "ERROR: No branches found!"
+  exit 1
+fi
+
+echo "Available branches:"
+for i in "${!BRANCHES[@]}"; do
+  # Mark main/master as default
+  if [[ "${BRANCHES[$i]}" == "main" ]] || [[ "${BRANCHES[$i]}" == "master" ]]; then
+    echo "  $((i+1))) ${BRANCHES[$i]} (default)"
+  else
+    echo "  $((i+1))) ${BRANCHES[$i]}"
+  fi
+done
+
+echo
+read -p "Enter branch number [1]: " BRANCH_CHOICE
+
+# Default to first branch if no input
+if [ -z "$BRANCH_CHOICE" ]; then
+  BRANCH_CHOICE=1
+fi
+
+# Validate input
+if ! [[ "$BRANCH_CHOICE" =~ ^[0-9]+$ ]] || [ "$BRANCH_CHOICE" -lt 1 ] || [ "$BRANCH_CHOICE" -gt ${#BRANCHES[@]} ]; then
+  echo "Invalid choice. Using branch: ${BRANCHES[0]}"
+  BRANCH_CHOICE=1
+fi
+
+SELECTED_BRANCH="${BRANCHES[$((BRANCH_CHOICE-1))]}"
+echo
+echo "Selected branch: $SELECTED_BRANCH"
+
+echo "  Force updating to match origin/$SELECTED_BRANCH (discards local changes)..."
+git checkout -B "$SELECTED_BRANCH" "origin/$SELECTED_BRANCH"
+git reset --hard "origin/$SELECTED_BRANCH"
 
 echo
 echo "=== Clearing Python cache ==="
