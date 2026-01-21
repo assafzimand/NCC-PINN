@@ -6,7 +6,9 @@ detailed statistics on model performance.
 
 IMPORTANT: This script recomputes all metrics using the SAME probes
 fitted once on training data. This ensures consistency across all metrics.
-Checkpoints MUST be available - there is no fallback to pre-saved JSONs.
+- Probes are NOT fitted on the last hidden layer (model output weights used)
+- Loads final_model.pt (preferred) or best_model.pt (fallback)
+- Checkpoints MUST be available - there is no fallback to pre-saved JSONs.
 """
 
 import json
@@ -82,7 +84,11 @@ from utils.comparison_plots import (
 # CONFIGURATION
 # =============================================================================
 
-DEGRADATION_THRESHOLD = 0.1  # 5% relative degradation threshold
+# The above code is defining a constant variable `DEGRADATION_THRESHOLD` in Python. This variable is
+# likely intended to store a value that represents a threshold for degradation in a system or process.
+# Constants are typically written in uppercase letters with underscores separating words to indicate
+# that their values should not be changed during the program's execution.
+DEGRADATION_THRESHOLD = 0.01
 
 # Metrics configuration: defines all 7 metrics to check for monotonicity
 # Each metric specifies:
@@ -346,13 +352,12 @@ def load_all_model_metrics(experiment_path: Path, device: torch.device = None) -
             'num_layers': int,
             'num_parameters': int,
             'run_dir': Path,
-            'metrics': dict from metrics.json (training metrics only),
             'ncc_metrics': dict (recomputed with consistent probes),
             'probe_metrics': dict (recomputed with consistent probes),
             'derivatives_metrics': dict (recomputed with consistent probes),
             'frequency_metrics': dict (recomputed),
-            'eval_rel_l2': float,
-            'eval_linf': float,
+            'eval_rel_l2': float (model's L2 on frequency grid),
+            'eval_linf': float (model's Linf on frequency grid),
             'problem_name': str
         }
         
@@ -385,28 +390,13 @@ def load_all_model_metrics(experiment_path: Path, device: torch.device = None) -
         
         run_dir = max(run_dirs, key=lambda x: x.stat().st_mtime)
         
-        # Load metrics.json for training metrics
-        metrics_file = run_dir / "metrics.json"
-        if not metrics_file.exists():
-            continue
-        
-        model_dirs_to_process.append((model_name, run_dir, metrics_file))
+        model_dirs_to_process.append((model_name, run_dir))
     
     print(f"  Found {len(model_dirs_to_process)} models to analyze")
     
     # Second pass: compute metrics consistently for each model
-    for idx, (model_name, run_dir, metrics_file) in enumerate(model_dirs_to_process, 1):
+    for idx, (model_name, run_dir) in enumerate(model_dirs_to_process, 1):
         print(f"\n  [{idx}/{len(model_dirs_to_process)}] Processing {model_name}...")
-        
-        # Load training metrics from JSON
-        with open(metrics_file, 'r') as f:
-            metrics = json.load(f)
-        
-        # Extract final eval metrics from training
-        eval_rel_l2 = metrics.get('eval_rel_l2', [])
-        eval_linf = metrics.get('eval_inf_norm', [])
-        final_eval_rel_l2 = eval_rel_l2[-1] if eval_rel_l2 else None
-        final_eval_linf = eval_linf[-1] if eval_linf else None
         
         # Parse architecture
         architecture = parse_model_name(model_name)
@@ -446,14 +436,13 @@ def load_all_model_metrics(experiment_path: Path, device: torch.device = None) -
             'num_layers': num_layers,
             'num_parameters': num_parameters,
             'run_dir': run_dir,
-            'metrics': metrics,
             'ncc_metrics': ncc_metrics,
             'probe_metrics': probe_metrics,
             'derivatives_metrics': derivatives_metrics,
             'frequency_metrics': frequency_metrics,
             'probes': computed_metrics['probes'],  # Store probes for consistent reuse
-            'eval_rel_l2': final_eval_rel_l2,
-            'eval_linf': final_eval_linf,
+            'eval_rel_l2': computed_metrics['freq_grid_rel_l2'],  # From frequency grid
+            'eval_linf': computed_metrics['freq_grid_linf'],  # From frequency grid
             'problem_name': problem_name
         }
     
