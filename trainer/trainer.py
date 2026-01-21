@@ -179,7 +179,7 @@ def train(
         # Add RNC metrics storage
         metrics['rnc_penalty'] = []
         metrics['rnc_penalty_epochs'] = []
-        metrics['rnc_layer_terms'] = {}  # Will store per-layer term norms
+        metrics['rnc_layer_penalties'] = {}  # Will store per-layer total penalties
         metrics['target_update_epochs'] = [1]  # First update at epoch 1
 
     # Training loop
@@ -288,12 +288,12 @@ def train(
             metrics['rnc_penalty'].append(avg_rnc_penalty)
             metrics['rnc_penalty_epochs'].append(epoch)
             
-            # Store per-layer term norms (from last batch)
+            # Store per-layer total penalties (from last batch)
             for key, value in last_rnc_metrics.items():
-                if '_norm' in key and key != 'rnc_penalty':
-                    if key not in metrics['rnc_layer_terms']:
-                        metrics['rnc_layer_terms'][key] = []
-                    metrics['rnc_layer_terms'][key].append(value)
+                if '_penalty' in key and key != 'rnc_penalty':
+                    if key not in metrics['rnc_layer_penalties']:
+                        metrics['rnc_layer_penalties'][key] = []
+                    metrics['rnc_layer_penalties'][key].append(value)
         
         # Check for optimizer switch
         if epoch == switch_epoch and switch_at_fraction < 1.0 and current_optimizer_name == 'Adam':

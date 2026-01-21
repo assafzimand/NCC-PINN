@@ -65,6 +65,9 @@ def compute_rnc_penalty(
         # Compute layer weight (deeper layers can have stronger penalty)
         layer_weight = base_weight * (weight_growth_factor ** i)
         
+        # Track this layer's total penalty
+        layer_penalty = torch.tensor(0.0, device=device)
+        
         # Compute derivatives for this layer (with gradients for backprop)
         derivs = compute_layer_derivatives_via_probe(
             model=model,
@@ -100,11 +103,16 @@ def compute_rnc_penalty(
             
             # One-sided penalty: only penalize if norm > target
             if norm > target:
-                penalty = penalty + layer_weight * (norm - target) ** 2
+                term_penalty = layer_weight * (norm - target) ** 2
+                layer_penalty = layer_penalty + term_penalty
+                penalty = penalty + term_penalty
             
             # Store metrics for logging
             metrics[f'{layer_name}_{term_key}_norm'] = norm.detach().item()
             metrics[f'{layer_name}_{term_key}_target'] = target
+        
+        # Store per-layer total penalty
+        metrics[f'{layer_name}_penalty'] = layer_penalty.detach().item()
     
     metrics['rnc_penalty'] = penalty.detach().item()
     

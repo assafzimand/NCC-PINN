@@ -106,8 +106,9 @@ def plot_training_curves(
         rnc_penalty = metrics['rnc_penalty']
         target_update_epochs = metrics.get('target_update_epochs', [])
         
-        # Plot 3: Total RNC Penalty
+        # Plot 3: RNC Penalty + Total Loss (to show relative contribution)
         ax = axes[2]
+        ax.plot(train_loss_epochs, metrics['train_loss'], 'b-', label='Total Loss', linewidth=2, alpha=0.8)
         ax.plot(rnc_epochs, rnc_penalty, 'purple', label='RNC Penalty', linewidth=2, alpha=0.8)
         
         # Add target update markers
@@ -117,45 +118,44 @@ def plot_training_curves(
                       linewidth=1, alpha=0.5, label=label)
         
         ax.set_xlabel('Epoch', fontsize=12)
-        ax.set_ylabel('RNC Penalty', fontsize=12)
+        ax.set_ylabel('Loss / Penalty', fontsize=12)
         ax.legend(fontsize=11)
         ax.grid(True, alpha=0.3)
-        is_log_rnc = _safe_log_scale(ax, [rnc_penalty])
+        is_log_rnc = _safe_log_scale(ax, [metrics['train_loss'], rnc_penalty])
         scale_str_rnc = "[log]" if is_log_rnc else "[linear]"
-        ax.set_title(f'RNC Penalty {scale_str_rnc}', fontsize=14, fontweight='bold')
+        ax.set_title(f'RNC Penalty vs Total Loss {scale_str_rnc}', fontsize=14, fontweight='bold')
         
-        # Plot 4: Per-layer term norms
+        # Plot 4: Per-layer total penalties
         ax = axes[3]
-        rnc_layer_terms = metrics.get('rnc_layer_terms', {})
+        rnc_layer_penalties = metrics.get('rnc_layer_penalties', {})
         
-        # Use different colors for different layers/terms
+        # Use different colors for different layers
         colors = plt.cm.tab10.colors
-        for idx, (term_key, term_values) in enumerate(sorted(rnc_layer_terms.items())):
-            # Clean up label (e.g., "layer_1_h_t_norm" -> "L1 h_t")
-            parts = term_key.replace('_norm', '').split('_')
-            if len(parts) >= 3:
+        for idx, (layer_key, penalty_values) in enumerate(sorted(rnc_layer_penalties.items())):
+            # Clean up label (e.g., "layer_1_penalty" -> "Layer 1")
+            parts = layer_key.replace('_penalty', '').split('_')
+            if len(parts) >= 2:
                 layer_num = parts[1]
-                term_name = '_'.join(parts[2:])
-                label = f'L{layer_num} {term_name}'
+                label = f'Layer {layer_num}'
             else:
-                label = term_key
+                label = layer_key
             
-            ax.plot(rnc_epochs, term_values, color=colors[idx % len(colors)], 
-                   label=label, linewidth=1.5, alpha=0.8)
+            ax.plot(rnc_epochs, penalty_values, color=colors[idx % len(colors)], 
+                   label=label, linewidth=2, alpha=0.8)
         
         # Add target update markers
         for i, update_epoch in enumerate(target_update_epochs):
             label = 'Target Updates' if i == 0 else None
             ax.axvline(x=update_epoch, color='red', linestyle='--', 
-                      linewidth=1, alpha=0.3, label=label if i == 0 and not rnc_layer_terms else None)
+                      linewidth=1, alpha=0.3, label=label if i == 0 and not rnc_layer_penalties else None)
         
         ax.set_xlabel('Epoch', fontsize=12)
-        ax.set_ylabel('Term Norm', fontsize=12)
-        ax.legend(fontsize=9, loc='upper right', ncol=2)
+        ax.set_ylabel('Layer Penalty', fontsize=12)
+        ax.legend(fontsize=11, loc='upper right')
         ax.grid(True, alpha=0.3)
-        is_log_terms = _safe_log_scale(ax, list(rnc_layer_terms.values()))
-        scale_str_terms = "[log]" if is_log_terms else "[linear]"
-        ax.set_title(f'Per-Layer Term Norms {scale_str_terms}', fontsize=14, fontweight='bold')
+        is_log_layers = _safe_log_scale(ax, list(rnc_layer_penalties.values()))
+        scale_str_layers = "[log]" if is_log_layers else "[linear]"
+        ax.set_title(f'Per-Layer RNC Penalty {scale_str_layers}', fontsize=14, fontweight='bold')
 
     plt.tight_layout()
 
