@@ -5,6 +5,51 @@ from typing import Dict, Tuple
 import numpy as np
 
 
+def _train_probe_gradient_descent(
+    embeddings: torch.Tensor,
+    targets: torch.Tensor,
+    lr: float = 0.01,
+    steps: int = 500
+) -> torch.nn.Linear:
+    """
+    Train linear probe using gradient descent - fallback for ill-conditioned matrices.
+    
+    Args:
+        embeddings: Layer activations (N, hidden_dim)
+        targets: Ground truth outputs (N, output_dim)
+        lr: Learning rate for Adam optimizer
+        steps: Number of optimization steps
+        
+    Returns:
+        Linear layer with trained weights
+    """
+    N, hidden_dim = embeddings.shape
+    _, output_dim = targets.shape
+    device = embeddings.device
+    
+    # Create linear layer
+    probe = torch.nn.Linear(hidden_dim, output_dim, device=device)
+    
+    # Use Adam optimizer
+    optimizer = torch.optim.Adam(probe.parameters(), lr=lr)
+    
+    # Detach inputs to avoid gradient issues
+    embeddings = embeddings.detach()
+    targets = targets.detach()
+    
+    # Quick training loop
+    probe.train()
+    for _ in range(steps):
+        optimizer.zero_grad()
+        pred = probe(embeddings)
+        loss = torch.nn.functional.mse_loss(pred, targets)
+        loss.backward()
+        optimizer.step()
+    
+    probe.eval()
+    return probe
+
+
 def train_linear_probe(
     embeddings: torch.Tensor,
     targets: torch.Tensor,
@@ -15,7 +60,7 @@ def train_linear_probe(
     
     This computes: weights = (X^T X + λI)^-1 X^T y
     
-    Optimized for GPU with chunked operations for large matrices.
+    Falls back to gradient descent if closed-form solution fails.
     
     Args:
         embeddings: Layer activations (N, hidden_dim)
@@ -39,41 +84,47 @@ def train_linear_probe(
     
     # Use more numerically stable formulation with Cholesky decomposition
     # This is faster on GPU than linalg.solve
-    with torch.cuda.amp.autocast(enabled=False):  # Disable autocast for numerical stability
-        # Compute X^T X (use matmul for better GPU utilization)
-        XtX = torch.matmul(X.t(), X)  # (hidden_dim+1, hidden_dim+1)
-        
-        # Add ridge regularization
-        ridge_term = ridge_lambda * torch.eye(XtX.shape[0], device=device, dtype=XtX.dtype)
-        XtX_reg = XtX + ridge_term
-        
-        # Compute X^T y
-        Xty = torch.matmul(X.t(), y)  # (hidden_dim+1, output_dim)
-        
-        # Solve using Cholesky decomposition (faster and more stable on GPU)
-        try:
-            # Try Cholesky first (fastest for positive definite matrices)
-            L = torch.linalg.cholesky(XtX_reg)
-            weights_with_bias = torch.cholesky_solve(Xty, L)
-        except RuntimeError:
-            # Fallback to standard solve if Cholesky fails
+    try:
+        with torch.cuda.amp.autocast(enabled=False):  # Disable autocast for numerical stability
+            # Compute X^T X (use matmul for better GPU utilization)
+            XtX = torch.matmul(X.t(), X)  # (hidden_dim+1, hidden_dim+1)
+            
+            # Add ridge regularization
+            ridge_term = ridge_lambda * torch.eye(XtX.shape[0], device=device, dtype=XtX.dtype)
+            XtX_reg = XtX + ridge_term
+            
+            # Compute X^T y
+            Xty = torch.matmul(X.t(), y)  # (hidden_dim+1, output_dim)
+            
+            # Solve using Cholesky decomposition (faster and more stable on GPU)
             try:
-                weights_with_bias = torch.linalg.solve(XtX_reg, Xty)
+                # Try Cholesky first (fastest for positive definite matrices)
+                L = torch.linalg.cholesky(XtX_reg)
+                weights_with_bias = torch.cholesky_solve(Xty, L)
             except RuntimeError:
-                # Last resort: pseudo-inverse (slowest but most robust)
-                XtX_inv = torch.linalg.pinv(XtX_reg)
-                weights_with_bias = torch.matmul(XtX_inv, Xty)
-    
-    # Extract weights and bias
-    weights = weights_with_bias[:-1, :]  # (hidden_dim, output_dim)
-    bias = weights_with_bias[-1, :]  # (output_dim,)
-    
-    # Create Linear layer and set weights
-    linear_probe = torch.nn.Linear(hidden_dim, output_dim, device=device)
-    linear_probe.weight.data = weights.t()  # PyTorch expects (output_dim, hidden_dim)
-    linear_probe.bias.data = bias
-    
-    return linear_probe
+                # Fallback to standard solve if Cholesky fails
+                try:
+                    weights_with_bias = torch.linalg.solve(XtX_reg, Xty)
+                except RuntimeError:
+                    # Try lstsq (handles rank-deficient matrices)
+                    result = torch.linalg.lstsq(X, y)
+                    weights_with_bias = result.solution
+        
+        # Extract weights and bias
+        weights = weights_with_bias[:-1, :]  # (hidden_dim, output_dim)
+        bias = weights_with_bias[-1, :]  # (output_dim,)
+        
+        # Create Linear layer and set weights
+        linear_probe = torch.nn.Linear(hidden_dim, output_dim, device=device)
+        linear_probe.weight.data = weights.t()  # PyTorch expects (output_dim, hidden_dim)
+        linear_probe.bias.data = bias
+        
+        return linear_probe
+        
+    except Exception as e:
+        # Final fallback: use gradient descent (always works)
+        print(f"    (closed-form failed: {type(e).__name__}, using gradient descent fallback)")
+        return _train_probe_gradient_descent(embeddings, targets)
 
 
 def compute_probe_predictions(
