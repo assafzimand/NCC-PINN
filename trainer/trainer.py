@@ -159,6 +159,7 @@ def train(
     rnc_enabled = rnc_config.get('enabled', False)
     probes = None
     target_norms = {}
+    rnc_penalty_active = False  # Will become True after first target update during training
     
     if rnc_enabled:
         print("\n" + "=" * 60)
@@ -172,15 +173,15 @@ def train(
         print(f"  Trained probes for {len(probes)} hidden layers")
         
         # Compute initial target norms (using eval_data)
-        print("Computing initial target norms from eval data...")
-        target_norms = compute_target_norms(model, eval_data, probes, cfg)
-        print(f"  Target norms computed for {len(target_norms)} layers")
+        # Note: We DON'T apply penalty until first real target update during training
+        # The untrained model's targets would be meaningless
+        # target_norms stays empty, rnc_penalty_active stays False until first update
         
         # Add RNC metrics storage
         metrics['rnc_penalty'] = []
         metrics['rnc_penalty_epochs'] = []
         metrics['rnc_layer_penalties'] = {}  # Will store per-layer total penalties
-        metrics['target_update_epochs'] = [1]  # First update at epoch 1
+        metrics['target_update_epochs'] = []  # Will be populated when targets are first computed
 
     # Training loop
     print(f"\nTraining for {epochs} epochs...")
@@ -192,13 +193,16 @@ def train(
         train_loss = 0.0
         n_train_batches = 0
 
-        # Update RNC target norms periodically
+        # Update RNC target norms periodically (and activate penalty on first update)
         if rnc_enabled:
             update_every = rnc_config.get('update_target_norms_every', 100)
-            if epoch > 1 and epoch % update_every == 0:
+            if epoch % update_every == 0:
                 from losses.rnc_utils import compute_target_norms
                 target_norms = compute_target_norms(model, eval_data, probes, cfg)
                 metrics['target_update_epochs'].append(epoch)
+                if not rnc_penalty_active:
+                    print(f"\n  RNC penalty activated at epoch {epoch} (first target computation)")
+                    rnc_penalty_active = True
         
         # Track RNC penalty for this epoch
         epoch_rnc_penalty = 0.0
@@ -208,7 +212,10 @@ def train(
             # Adam: Mini-batch training (GPU parallelized)
             for batch in train_loader:
                 optimizer.zero_grad()
-                loss, rnc_metrics = loss_fn(model, batch, probes=probes, target_norms=target_norms)
+                # Only pass RNC params when penalty is active
+                active_probes = probes if rnc_penalty_active else None
+                active_targets = target_norms if rnc_penalty_active else None
+                loss, rnc_metrics = loss_fn(model, batch, probes=active_probes, target_norms=active_targets)
                 loss.backward()
                 optimizer.step()
                 train_loss += loss.item()
@@ -222,10 +229,14 @@ def train(
             lbfgs_rnc_penalty = [0.0]  # Use list to capture in closure
             lbfgs_rnc_metrics = [{}]  # Use list to capture metrics in closure
             
+            # Only pass RNC params when penalty is active
+            active_probes = probes if rnc_penalty_active else None
+            active_targets = target_norms if rnc_penalty_active else None
+            
             def closure():
                 optimizer.zero_grad()
                 # Single forward pass with ALL training data at once
-                loss, rnc_metrics = loss_fn(model, train_data, probes=probes, target_norms=target_norms)
+                loss, rnc_metrics = loss_fn(model, train_data, probes=active_probes, target_norms=active_targets)
                 loss.backward()
                 lbfgs_rnc_penalty[0] = rnc_metrics.get('rnc_penalty', 0.0)
                 lbfgs_rnc_metrics[0] = rnc_metrics
@@ -270,7 +281,7 @@ def train(
                     # Continue with Adam on first batch
                     optimizer.zero_grad()
                     batch = next(iter(train_loader))
-                    loss, rnc_metrics = loss_fn(model, batch, probes=probes, target_norms=target_norms)
+                    loss, rnc_metrics = loss_fn(model, batch, probes=active_probes, target_norms=active_targets)
                     loss.backward()
                     optimizer.step()
                     train_loss = loss.item()
