@@ -92,18 +92,52 @@ base_config:
   residual_norm_control:
     enabled: true                     # Set to true to enable RNC
     update_target_norms_every: 500     # Epochs between target norm updates
-    base_weight: 0.1                   # Weight for layer 1 (smaller than original loss)
+    base_weight: 0.01                   # Weight for layer 1 (smaller than original loss)
     weight_growth_factor: 1.0          # Multiplier per layer (1.0 = uniform across layers)
 
 # Experiments to run
 experiments:  
-#  - name: "3lyr_40k_Wn_flat"
-#    problem: schrodinger
-#    architecture: [2, 140, 140, 140, 2]
-
-  - name: "5lyr_40k_Wn_flat"
+  # 1. Very small weight with less frequent updates
+  - name: "bw0.00001_upd1000"
     problem: schrodinger  
     architecture: [2, 100, 100, 100, 100, 100, 2]
+    residual_norm_control:
+      base_weight: 0.00001
+      update_target_norms_every: 1000
+
+  # 2-4. Vary base_weight (with default update_every=500)
+  - name: "bw0.001_upd500"
+    problem: schrodinger  
+    architecture: [2, 100, 100, 100, 100, 100, 2]
+    residual_norm_control:
+      base_weight: 0.001
+
+  - name: "bw0.0001_upd500"
+    problem: schrodinger  
+    architecture: [2, 100, 100, 100, 100, 100, 2]
+    residual_norm_control:
+      base_weight: 0.0001
+
+  - name: "bw0.00001_upd500"
+    problem: schrodinger  
+    architecture: [2, 100, 100, 100, 100, 100, 2]
+    residual_norm_control:
+      base_weight: 0.00001
+
+  # 5-6. Vary update frequency (with small base_weight)
+  - name: "bw0.0001_upd1000"
+    problem: schrodinger  
+    architecture: [2, 100, 100, 100, 100, 100, 2]
+    residual_norm_control:
+      base_weight: 0.0001
+      update_target_norms_every: 1000
+
+  - name: "bw0.0001_upd2000"
+    problem: schrodinger  
+    architecture: [2, 100, 100, 100, 100, 100, 2]
+    residual_norm_control:
+      base_weight: 0.0001
+      update_target_norms_every: 2000
 
 #  - name: "7lyr_40k_Wn_flat"
 #    problem: burgers2d
