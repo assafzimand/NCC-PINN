@@ -174,6 +174,7 @@ def train(
         from adaptive.visualization import (
             plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid
         )
+        from adaptive.residual_utils import compute_pde_residuals
         
         # Get domain bounds
         domain_bounds = model.get_domain_bounds()
@@ -418,14 +419,27 @@ def train(
                 eval_inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
                 u_pred = model(eval_inputs)
             
+            # Compute PDE residuals for residual-weighted wavelet norms
+            # This prioritizes regions that are both non-smooth AND have high error
+            problem = cfg.get('problem', 'schrodinger')
+            pde_residuals = compute_pde_residuals(
+                model=model,
+                x=eval_data['x'],
+                t=eval_data['t'],
+                problem=problem,
+                config=cfg
+            )
+            
             # Convert to numpy for RF
             X_eval = eval_inputs.cpu().numpy()
             y_eval = u_pred.cpu().numpy()
+            residuals_np = pde_residuals.detach().cpu().numpy()
             
-            # Detect refinement region
+            # Detect refinement region (residual-weighted)
             region = region_detector.detect(
                 X=X_eval,
                 y=y_eval,
+                residuals=residuals_np,
                 existing_regions=model.regions,
                 wavelet_threshold=wavelet_threshold,
                 spawn_epoch=epoch

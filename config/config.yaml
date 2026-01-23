@@ -11,18 +11,18 @@ adaptive_pinn:
   expert_architectures: null
   freeze_mode: none
   inner_metrics_calculation: false
-  max_experts: 3
-  rf_max_depth: 8
-  rf_min_samples_leaf: 30
-  rf_n_estimators: 50
+  max_experts: 10
+  rf_max_depth: 12
+  rf_min_samples_leaf: 10
+  rf_n_estimators: 100
   rf_regression_type: constant
-  spawn_every_epochs: 3
+  spawn_every_epochs: 1000
   wavelet_threshold: null
 architecture:
 - 2
-- 14
-- 14
-- 14
+- 70
+- 70
+- 70
 - 2
 batch_size: 512
 bins: 5
@@ -57,10 +57,10 @@ burgers2d:
   - 0.0
   - 2.0
 cuda: true
-epochs: 20
-eval_every: 2
+epochs: 10000
+eval_every: 200
 eval_only: false
-inner_metrics_eval_every: 4
+inner_metrics_eval_every: 2501
 lbfgs_history_size: 20
 lbfgs_line_search: strong_wolfe
 lbfgs_lr: 1.0
@@ -70,9 +70,9 @@ lbfgs_tolerance_grad: 0.0
 lr: 0.0001
 n_bin_visualize_ncc: 100
 n_freq_grid: 128
-name: adaptive_test
+name: adaptive_convergence_test
 optimizer_switch_at: 0.9
-print_every: 1
+print_every: 100
 problem: schrodinger
 resume_from: null
 sampling:
@@ -81,7 +81,7 @@ sampling:
   initial_train_ratio: 0.005
   ncc_train_ratio: 0.25
   sample_volume_ratio: 35
-save_every: 5
+save_every: 5000
 schrodinger:
   loss_weights:
     bc: 1.0
