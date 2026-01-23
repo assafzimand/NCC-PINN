@@ -1,0 +1,501 @@
+"""Visualization for adaptive expert PINN regions.
+
+Provides plotting functions for:
+1. Per-run expert region visualization
+2. Cross-experiment comparison of subdomain partitioning
+"""
+
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import numpy as np
+from scipy.interpolate import griddata
+from pathlib import Path
+from typing import List, Dict, Optional, Union, Tuple
+import torch
+
+from adaptive.indicators import RegionDescriptor
+
+
+def prepare_ground_truth_grid(
+    eval_data: Dict[str, torch.Tensor],
+    domain_bounds: Dict[str, List[float]],
+    resolution: int = 100
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Prepare ground truth data on a regular grid for visualization.
+    
+    Args:
+        eval_data: Dictionary with 'x', 't', 'h' tensors
+        domain_bounds: {'lower': [x_min, t_min], 'upper': [x_max, t_max]}
+        resolution: Grid resolution for each dimension
+        
+    Returns:
+        (ground_truth, grid_x, grid_t) or (None, None, None) if preparation fails
+    """
+    try:
+        # Extract data (ground truth key can be 'h', 'h_gt', or 'u')
+        x = eval_data['x'].cpu().numpy()
+        t = eval_data['t'].cpu().numpy()
+        
+        # Try different keys for ground truth
+        if 'h_gt' in eval_data:
+            h = eval_data['h_gt'].cpu().numpy()
+        elif 'h' in eval_data:
+            h = eval_data['h'].cpu().numpy()
+        elif 'u' in eval_data:
+            h = eval_data['u'].cpu().numpy()
+        else:
+            print(f"  Warning: No ground truth key found. Available: {list(eval_data.keys())}")
+            return None, None, None
+        
+        # Only support 2D domains (x, t) for now
+        if len(domain_bounds['lower']) != 2:
+            return None, None, None
+        
+        # Flatten x if multi-dimensional spatial
+        if x.ndim > 1:
+            x = x[:, 0]  # Take first spatial dimension for 1D problems
+        
+        x = x.ravel()
+        t = t.ravel()
+        
+        # Create regular grid
+        x_min, t_min = domain_bounds['lower']
+        x_max, t_max = domain_bounds['upper']
+        
+        grid_x = np.linspace(x_min, x_max, resolution)
+        grid_t = np.linspace(t_min, t_max, resolution)
+        X_grid, T_grid = np.meshgrid(grid_x, grid_t, indexing='ij')
+        
+        # Interpolate ground truth onto grid
+        points = np.column_stack([x, t])
+        
+        # Handle multi-dimensional output
+        if h.ndim > 1 and h.shape[1] > 1:
+            # Multi-output: compute norm
+            h_display = np.linalg.norm(h, axis=1)
+        else:
+            h_display = h.ravel()
+        
+        # Interpolate using linear method
+        ground_truth = griddata(points, h_display, (X_grid, T_grid), method='linear')
+        
+        # Fill NaN values with nearest neighbor
+        mask = np.isnan(ground_truth)
+        if mask.any():
+            ground_truth_nn = griddata(points, h_display, (X_grid, T_grid), method='nearest')
+            ground_truth[mask] = ground_truth_nn[mask]
+        
+        return ground_truth, grid_x, grid_t
+        
+    except Exception as e:
+        print(f"  Warning: Could not prepare ground truth grid: {e}")
+        return None, None, None
+
+
+# Color palette for expert regions
+EXPERT_COLORS = [
+    '#e74c3c',  # Red
+    '#3498db',  # Blue
+    '#2ecc71',  # Green
+    '#f39c12',  # Orange
+    '#9b59b6',  # Purple
+    '#1abc9c',  # Teal
+    '#e91e63',  # Pink
+    '#00bcd4',  # Cyan
+    '#ff5722',  # Deep Orange
+    '#607d8b',  # Blue Grey
+]
+
+
+def plot_expert_regions(
+    regions: List[RegionDescriptor],
+    domain_bounds: Dict[str, List[float]],
+    output_path: Union[str, Path],
+    problem_type: str = '2d',
+    title: Optional[str] = None,
+    ground_truth: Optional[np.ndarray] = None,
+    grid_x: Optional[np.ndarray] = None,
+    grid_t: Optional[np.ndarray] = None
+) -> None:
+    """
+    Plot domain with expert region outlines.
+    
+    Args:
+        regions: List of RegionDescriptor for each expert
+        domain_bounds: {'lower': [x_min, t_min], 'upper': [x_max, t_max]}
+        output_path: Path to save the plot
+        problem_type: '2d' (x,t) or '3d' (x,y,t)
+        title: Optional plot title
+        ground_truth: Optional (Nx, Nt) or (Nx, Nt, output_dim) array of ground truth
+        grid_x: Optional 1D array of x coordinates for ground truth
+        grid_t: Optional 1D array of t coordinates for ground truth
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    if problem_type == '2d':
+        _plot_expert_regions_2d(regions, domain_bounds, output_path, title,
+                                ground_truth, grid_x, grid_t)
+    elif problem_type == '3d':
+        _plot_expert_regions_3d(regions, domain_bounds, output_path, title)
+    else:
+        raise ValueError(f"Unknown problem_type: {problem_type}. Use '2d' or '3d'.")
+
+
+def _plot_expert_regions_2d(
+    regions: List[RegionDescriptor],
+    domain_bounds: Dict[str, List[float]],
+    output_path: Path,
+    title: Optional[str] = None,
+    ground_truth: Optional[np.ndarray] = None,
+    grid_x: Optional[np.ndarray] = None,
+    grid_t: Optional[np.ndarray] = None
+) -> None:
+    """Plot 2D domain (x vs t) with expert regions and optional ground truth background."""
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Domain bounds
+    x_min, t_min = domain_bounds['lower']
+    x_max, t_max = domain_bounds['upper']
+    
+    # Plot ground truth as background if provided
+    if ground_truth is not None and grid_x is not None and grid_t is not None:
+        # Handle multi-dimensional output (use norm)
+        if ground_truth.ndim == 3:
+            # (Nx, Nt, output_dim) -> compute norm
+            gt_display = np.linalg.norm(ground_truth, axis=2)
+        else:
+            gt_display = ground_truth
+        
+        # Create meshgrid and plot
+        T, X = np.meshgrid(grid_t, grid_x)
+        im = ax.pcolormesh(X, T, gt_display, shading='auto', cmap='viridis', 
+                          alpha=0.7, zorder=0)
+        cbar = plt.colorbar(im, ax=ax, label='Ground Truth (amplitude)', shrink=0.8)
+    else:
+        # Draw domain rectangle as fallback
+        domain_rect = patches.Rectangle(
+            (x_min, t_min), x_max - x_min, t_max - t_min,
+            linewidth=2, edgecolor='black', facecolor='#f0f0f0',
+            label='Domain', zorder=1
+        )
+        ax.add_patch(domain_rect)
+    
+    # Draw expert regions (without center labels - only in legend)
+    for i, region in enumerate(regions):
+        color = EXPERT_COLORS[i % len(EXPERT_COLORS)]
+        
+        rx_min, rt_min = region.bounds_lower
+        rx_max, rt_max = region.bounds_upper
+        
+        # Filled rectangle with transparency
+        expert_rect = patches.Rectangle(
+            (rx_min, rt_min), rx_max - rx_min, rt_max - rt_min,
+            linewidth=2, edgecolor=color, facecolor=color,
+            alpha=0.25, zorder=2
+        )
+        ax.add_patch(expert_rect)
+        
+        # Bold outline with label (only this goes in legend)
+        outline_rect = patches.Rectangle(
+            (rx_min, rt_min), rx_max - rx_min, rt_max - rt_min,
+            linewidth=3, edgecolor=color, facecolor='none',
+            label=f'Expert {i+1} (epoch {region.spawn_epoch})', zorder=3
+        )
+        ax.add_patch(outline_rect)
+    
+    # Set axis limits with padding
+    padding = 0.05
+    x_range = x_max - x_min
+    t_range = t_max - t_min
+    ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
+    ax.set_ylim(t_min - padding * t_range, t_max + padding * t_range)
+    
+    ax.set_xlabel('x', fontsize=12)
+    ax.set_ylabel('t', fontsize=12)
+    ax.set_title(title or f'Expert Regions ({len(regions)} experts)', fontsize=14)
+    ax.legend(loc='upper right', fontsize=10)
+    ax.set_aspect('auto')
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Expert regions plot saved to {output_path}")
+
+
+def _plot_expert_regions_3d(
+    regions: List[RegionDescriptor],
+    domain_bounds: Dict[str, List[float]],
+    output_path: Path,
+    title: Optional[str] = None
+) -> None:
+    """Plot 3D domain (x, y, t) with expert regions as wireframe boxes."""
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Domain bounds
+    x_min, y_min, t_min = domain_bounds['lower']
+    x_max, y_max, t_max = domain_bounds['upper']
+    
+    # Draw domain wireframe
+    _draw_box_3d(ax, [x_min, y_min, t_min], [x_max, y_max, t_max],
+                 color='black', alpha=0.3, linewidth=1, label='Domain')
+    
+    # Draw expert regions
+    for i, region in enumerate(regions):
+        color = EXPERT_COLORS[i % len(EXPERT_COLORS)]
+        
+        _draw_box_3d(ax, region.bounds_lower, region.bounds_upper,
+                     color=color, alpha=0.2, linewidth=2,
+                     label=f'Expert {i+1} (epoch {region.spawn_epoch})')
+    
+    ax.set_xlabel('x', fontsize=12)
+    ax.set_ylabel('y', fontsize=12)
+    ax.set_zlabel('t', fontsize=12)
+    ax.set_title(title or f'Expert Regions ({len(regions)} experts)', fontsize=14)
+    ax.legend(loc='upper left', fontsize=10)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Expert regions 3D plot saved to {output_path}")
+
+
+def _draw_box_3d(ax, lower, upper, color='blue', alpha=0.3, linewidth=1, label=None):
+    """Draw a 3D wireframe box."""
+    x_min, y_min, z_min = lower
+    x_max, y_max, z_max = upper
+    
+    # Define the vertices of the box
+    vertices = [
+        [x_min, y_min, z_min],
+        [x_max, y_min, z_min],
+        [x_max, y_max, z_min],
+        [x_min, y_max, z_min],
+        [x_min, y_min, z_max],
+        [x_max, y_min, z_max],
+        [x_max, y_max, z_max],
+        [x_min, y_max, z_max],
+    ]
+    
+    # Define the 6 faces
+    faces = [
+        [vertices[0], vertices[1], vertices[2], vertices[3]],  # Bottom
+        [vertices[4], vertices[5], vertices[6], vertices[7]],  # Top
+        [vertices[0], vertices[1], vertices[5], vertices[4]],  # Front
+        [vertices[2], vertices[3], vertices[7], vertices[6]],  # Back
+        [vertices[0], vertices[3], vertices[7], vertices[4]],  # Left
+        [vertices[1], vertices[2], vertices[6], vertices[5]],  # Right
+    ]
+    
+    # Add faces with transparency
+    face_collection = Poly3DCollection(faces, alpha=alpha, facecolor=color,
+                                        edgecolor=color, linewidth=linewidth)
+    ax.add_collection3d(face_collection)
+    
+    # Add a dummy line for the legend
+    if label:
+        ax.plot([], [], [], color=color, linewidth=2, label=label)
+
+
+def plot_expert_regions_comparison(
+    experiment_regions: Dict[str, List[RegionDescriptor]],
+    domain_bounds: Dict[str, List[float]],
+    output_path: Union[str, Path],
+    problem_type: str = '2d',
+    ground_truth: Optional[np.ndarray] = None,
+    grid_x: Optional[np.ndarray] = None,
+    grid_t: Optional[np.ndarray] = None
+) -> None:
+    """
+    Side-by-side comparison of expert regions across experiments.
+    
+    Args:
+        experiment_regions: Dict mapping experiment name to list of RegionDescriptors
+        domain_bounds: {'lower': [x_min, t_min], 'upper': [x_max, t_max]}
+        output_path: Path to save the comparison plot
+        problem_type: '2d' or '3d'
+        ground_truth: Optional (Nx, Nt) or (Nx, Nt, output_dim) array of ground truth
+        grid_x: Optional 1D array of x coordinates for ground truth
+        grid_t: Optional 1D array of t coordinates for ground truth
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    n_experiments = len(experiment_regions)
+    if n_experiments == 0:
+        print("  No experiments with expert regions to compare.")
+        return
+    
+    # Calculate grid dimensions
+    n_cols = min(3, n_experiments)
+    n_rows = (n_experiments + n_cols - 1) // n_cols
+    
+    if problem_type == '2d':
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 6 * n_rows))
+        if n_experiments == 1:
+            axes = np.array([[axes]])
+        elif n_rows == 1:
+            axes = axes.reshape(1, -1)
+        elif n_cols == 1:
+            axes = axes.reshape(-1, 1)
+        
+        # Domain bounds
+        x_min, t_min = domain_bounds['lower']
+        x_max, t_max = domain_bounds['upper']
+        
+        # Prepare ground truth display
+        gt_display = None
+        if ground_truth is not None and grid_x is not None and grid_t is not None:
+            if ground_truth.ndim == 3:
+                gt_display = np.linalg.norm(ground_truth, axis=2)
+            else:
+                gt_display = ground_truth
+            T, X = np.meshgrid(grid_t, grid_x)
+        
+        for idx, (exp_name, regions) in enumerate(experiment_regions.items()):
+            row = idx // n_cols
+            col = idx % n_cols
+            ax = axes[row, col]
+            
+            # Draw ground truth background if available
+            if gt_display is not None:
+                im = ax.pcolormesh(X, T, gt_display, shading='auto', cmap='viridis',
+                                  alpha=0.7, zorder=0)
+            else:
+                # Draw domain rectangle as fallback
+                domain_rect = patches.Rectangle(
+                    (x_min, t_min), x_max - x_min, t_max - t_min,
+                    linewidth=2, edgecolor='black', facecolor='#f0f0f0', zorder=1
+                )
+                ax.add_patch(domain_rect)
+            
+            # Draw expert regions (no center labels)
+            for i, region in enumerate(regions):
+                color = EXPERT_COLORS[i % len(EXPERT_COLORS)]
+                
+                rx_min, rt_min = region.bounds_lower
+                rx_max, rt_max = region.bounds_upper
+                
+                expert_rect = patches.Rectangle(
+                    (rx_min, rt_min), rx_max - rx_min, rt_max - rt_min,
+                    linewidth=2, edgecolor=color, facecolor=color,
+                    alpha=0.25, zorder=2
+                )
+                ax.add_patch(expert_rect)
+                
+                outline_rect = patches.Rectangle(
+                    (rx_min, rt_min), rx_max - rx_min, rt_max - rt_min,
+                    linewidth=2, edgecolor=color, facecolor='none',
+                    label=f'E{i+1} (ep{region.spawn_epoch})', zorder=3
+                )
+                ax.add_patch(outline_rect)
+            
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(t_min, t_max)
+            ax.set_xlabel('x', fontsize=10)
+            ax.set_ylabel('t', fontsize=10)
+            ax.set_title(f'{exp_name}\n({len(regions)} experts)', fontsize=11)
+            ax.set_aspect('auto')
+            ax.grid(True, alpha=0.3)
+            
+            # Add legend to each subplot
+            if len(regions) > 0:
+                ax.legend(loc='upper right', fontsize=8, framealpha=0.9)
+        
+        # Hide unused subplots
+        for idx in range(n_experiments, n_rows * n_cols):
+            row = idx // n_cols
+            col = idx % n_cols
+            axes[row, col].axis('off')
+        
+        fig.suptitle('Expert Regions Comparison', fontsize=14, fontweight='bold', y=1.02)
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+    elif problem_type == '3d':
+        # For 3D, create separate subplots
+        fig = plt.figure(figsize=(6 * n_cols, 5 * n_rows))
+        
+        x_min, y_min, t_min = domain_bounds['lower']
+        x_max, y_max, t_max = domain_bounds['upper']
+        
+        for idx, (exp_name, regions) in enumerate(experiment_regions.items()):
+            ax = fig.add_subplot(n_rows, n_cols, idx + 1, projection='3d')
+            
+            # Draw domain wireframe
+            _draw_box_3d(ax, domain_bounds['lower'], domain_bounds['upper'],
+                         color='black', alpha=0.1, linewidth=1)
+            
+            # Draw expert regions with labels for legend
+            for i, region in enumerate(regions):
+                color = EXPERT_COLORS[i % len(EXPERT_COLORS)]
+                _draw_box_3d(ax, region.bounds_lower, region.bounds_upper,
+                             color=color, alpha=0.3, linewidth=2,
+                             label=f'E{i+1} (ep{region.spawn_epoch})')
+            
+            ax.set_xlabel('x', fontsize=9)
+            ax.set_ylabel('y', fontsize=9)
+            ax.set_zlabel('t', fontsize=9)
+            ax.set_title(f'{exp_name}\n({len(regions)} experts)', fontsize=10)
+            
+            # Add legend to each 3D subplot
+            if len(regions) > 0:
+                ax.legend(loc='upper left', fontsize=8)
+        
+        fig.suptitle('Expert Regions Comparison', fontsize=14, fontweight='bold', y=1.02)
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    print(f"  Expert regions comparison saved to {output_path}")
+
+
+def save_regions_metadata(
+    regions: List[RegionDescriptor],
+    output_path: Union[str, Path]
+) -> None:
+    """
+    Save expert regions metadata to JSON file.
+    
+    Args:
+        regions: List of RegionDescriptor
+        output_path: Path to save JSON file
+    """
+    import json
+    
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    data = {
+        'n_experts': len(regions),
+        'regions': [r.to_dict() for r in regions]
+    }
+    
+    with open(output_path, 'w') as f:
+        json.dump(data, f, indent=2)
+    
+    print(f"  Expert regions metadata saved to {output_path}")
+
+
+def load_regions_metadata(input_path: Union[str, Path]) -> List[RegionDescriptor]:
+    """
+    Load expert regions metadata from JSON file.
+    
+    Args:
+        input_path: Path to JSON file
+        
+    Returns:
+        List of RegionDescriptor
+    """
+    import json
+    
+    with open(input_path, 'r') as f:
+        data = json.load(f)
+    
+    return [RegionDescriptor.from_dict(r) for r in data['regions']]
