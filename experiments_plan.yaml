@@ -33,7 +33,7 @@ base_config:
   eval_every: 200
   print_every: 100
   save_every: 5000
-  inner_metrics_eval_every: 2501
+  inner_metrics_eval_every: 4000
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -90,8 +90,8 @@ base_config:
   # Adaptive Expert PINN configuration
   adaptive_pinn:
     enabled: true                    # Toggle feature on/off (override per experiment)
-    max_experts: 10                   # Maximum number of expert networks
-    spawn_every_epochs: 1000           # Check for spawning every N epochs (quick test value)
+    max_experts: 99                   # Maximum number of expert networks
+    spawn_every_epochs: 100           # Check for spawning every N epochs (quick test value)
     expert_architectures: null        # null = same as base, or list of architectures
     freeze_mode: none                 # "none" | "previous" | "base_only"
     blending_mode: hard               # "hard" | "soft"
@@ -108,7 +108,7 @@ base_config:
 experiments:  
   - name: "adaptive_convergence_test"
     problem: schrodinger
-    architecture: [2, 70, 70, 70, 2]
+    architecture: [2, 10, 10, 10, 10, 10, 2]
 
   # - name: "5lyr_40k_Wn_flat"
   #   problem: burgers2d  

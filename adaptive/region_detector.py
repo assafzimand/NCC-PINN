@@ -3,7 +3,8 @@
 Implements the algorithm to detect high-error regions for spawning expert PINNs:
 1. Fit a Random Forest regressor to the current solution
 2. Compute geometric wavelets at each tree node
-3. Select the region with highest wavelet norm for refinement
+3. Compute residual-weighted L2 norm of wavelet (prioritizes high-error regions)
+4. Select the region with highest weighted norm for refinement
 """
 
 import numpy as np
@@ -27,6 +28,7 @@ class TreeNodeInfo:
     prediction: float  # Q_Ω(x) - local regression value
     parent_prediction: Optional[float]  # Q_Ω_parent(x)
     wavelet_norm: float = 0.0
+    sum_residuals: float = 0.0  # Sum of residuals in this node (for diagnostics)
 
 
 class RegionDetector:
@@ -64,14 +66,22 @@ class RegionDetector:
         self.rf: Optional[RandomForestRegressor] = None
         self._X: Optional[np.ndarray] = None
         self._y: Optional[np.ndarray] = None
+        self._residuals: Optional[np.ndarray] = None  # PDE residuals for weighting
     
-    def fit(self, X: np.ndarray, y: np.ndarray) -> 'RegionDetector':
+    def fit(
+        self, 
+        X: np.ndarray, 
+        y: np.ndarray,
+        residuals: Optional[np.ndarray] = None
+    ) -> 'RegionDetector':
         """
         Fit Random Forest to the data.
         
         Args:
             X: (N, n_dims) array of coordinates [x, t] or [x, y, t]
             y: (N,) or (N, output_dim) array of solution values
+            residuals: (N,) array of PDE residuals |L[u] - f| for weighting
+                       If None, uses uniform weighting (n_samples)
             
         Returns:
             self for chaining
@@ -85,6 +95,15 @@ class RegionDetector:
         
         self._X = X
         self._y = y
+        
+        # Store residuals (use uniform weighting if not provided)
+        if residuals is not None:
+            if residuals.ndim > 1:
+                residuals = residuals.ravel()
+            self._residuals = np.abs(residuals)  # Ensure positive
+        else:
+            # Fallback: uniform weighting (equivalent to n_samples)
+            self._residuals = np.ones(len(y))
         
         # Set domain bounds from data if not provided
         if self.domain_bounds is None:
@@ -231,12 +250,16 @@ class RegionDetector:
                         parent_prediction = self._compute_local_regression(parent_samples)
                         node_predictions[parent_id] = parent_prediction
                 
-                # Compute wavelet norm: ||ψ_Ω'||² = Σ (Q_Ω' - Q_Ω)² for samples in Ω'
+                # Compute wavelet norm: ||ψ_Ω'||²_r = (Q_Ω' - Q_Ω)² × Σ residuals
+                # This weights by PDE residual - regions with high error get higher priority
                 wavelet_norm = 0.0
+                sum_residuals = 0.0
                 if parent_prediction is not None:
                     diff = prediction - parent_prediction
-                    # L2 norm weighted by number of samples
-                    wavelet_norm = (diff ** 2) * n_samples
+                    # Sum of residuals in this node (residual-weighted norm)
+                    sum_residuals = float(self._residuals[sample_indices].sum())
+                    # Residual-weighted L2 norm: prioritizes non-smooth regions with high error
+                    wavelet_norm = (diff ** 2) * sum_residuals
                 
                 all_nodes.append(TreeNodeInfo(
                     node_id=node_id,
@@ -247,7 +270,8 @@ class RegionDetector:
                     bounds_upper=bounds_upper,
                     prediction=prediction,
                     parent_prediction=parent_prediction,
-                    wavelet_norm=wavelet_norm
+                    wavelet_norm=wavelet_norm,
+                    sum_residuals=sum_residuals
                 ))
         
         return all_nodes
@@ -335,6 +359,7 @@ class RegionDetector:
         self,
         X: np.ndarray,
         y: np.ndarray,
+        residuals: Optional[np.ndarray] = None,
         existing_regions: Optional[List[RegionDescriptor]] = None,
         wavelet_threshold: Optional[float] = None,
         spawn_epoch: int = 0
@@ -345,6 +370,7 @@ class RegionDetector:
         Args:
             X: (N, n_dims) array of coordinates
             y: (N,) or (N, output_dim) array of solution values
+            residuals: (N,) array of PDE residuals for weighting (higher = more priority)
             existing_regions: List of already-assigned expert regions
             wavelet_threshold: Minimum wavelet norm to spawn
             spawn_epoch: Current epoch for tracking
@@ -352,7 +378,7 @@ class RegionDetector:
         Returns:
             RegionDescriptor for the selected region, or None
         """
-        self.fit(X, y)
+        self.fit(X, y, residuals=residuals)
         return self.select_refinement_region(
             existing_regions=existing_regions,
             wavelet_threshold=wavelet_threshold,

@@ -128,7 +128,7 @@ class AdaptiveExpertPINN(nn.Module):
         print(f"  Spawned Expert {expert_idx + 1}:")
         print(f"    Architecture: {architecture}")
         print(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
-        print(f"    Wavelet norm: {region.wavelet_norm:.4f}")
+        print(f"    Residual-weighted wavelet norm: {region.wavelet_norm:.6f}")
         print(f"    Spawn epoch: {region.spawn_epoch}")
         
         return expert_idx
