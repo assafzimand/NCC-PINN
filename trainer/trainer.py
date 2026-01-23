@@ -4,9 +4,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from pathlib import Path
-from typing import Dict, Callable
+from typing import Dict, Callable, Optional
 import json
 import time
+import numpy as np
 
 from trainer.plotting import plot_training_curves, plot_final_comparison
 from trainer.utils import compute_relative_l2_error, compute_infinity_norm_error
@@ -151,6 +152,46 @@ def train(
     # Create ncc_plots directory for periodic NCC analysis
     ncc_plots_parent = run_dir / "ncc_plots"
     ncc_plots_parent.mkdir(exist_ok=True)
+
+    # Adaptive PINN setup
+    adaptive_cfg = cfg.get('adaptive_pinn', {})
+    is_adaptive = adaptive_cfg.get('enabled', False)
+    region_detector = None
+    spawn_every = adaptive_cfg.get('spawn_every_epochs', 2000)
+    max_experts = adaptive_cfg.get('max_experts', 5)
+    wavelet_threshold = adaptive_cfg.get('wavelet_threshold', None)
+    adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
+    
+    if is_adaptive:
+        print(f"\nAdaptive PINN enabled:")
+        print(f"  Max experts: {max_experts}")
+        print(f"  Spawn every: {spawn_every} epochs")
+        print(f"  Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
+        print(f"  Freeze mode: {adaptive_cfg.get('freeze_mode', 'none')}")
+        
+        # Import and create region detector
+        from adaptive.region_detector import RegionDetector
+        from adaptive.visualization import (
+            plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid
+        )
+        
+        # Get domain bounds
+        domain_bounds = model.get_domain_bounds()
+        
+        # Prepare ground truth grid for visualization
+        gt_grid, gt_x, gt_t = prepare_ground_truth_grid(eval_data, domain_bounds)
+        
+        region_detector = RegionDetector(
+            n_estimators=adaptive_cfg.get('rf_n_estimators', 100),
+            max_depth=adaptive_cfg.get('rf_max_depth', 10),
+            min_samples_leaf=adaptive_cfg.get('rf_min_samples_leaf', 50),
+            regression_type=adaptive_cfg.get('rf_regression_type', 'constant'),
+            domain_bounds=domain_bounds
+        )
+        
+        # Create directory for adaptive outputs
+        adaptive_plots_dir = run_dir / "adaptive_plots"
+        adaptive_plots_dir.mkdir(exist_ok=True)
 
     # Training loop
     print(f"\nTraining for {epochs} epochs...")
@@ -337,7 +378,12 @@ def train(
                            train_loss, eval_loss, cfg, metrics)
 
         # Periodic inner metrics (NCC + probes + derivatives + frequency)
-        if inner_metrics_every > 0 and epoch % inner_metrics_every == 0:
+        # Skip if adaptive PINN and inner_metrics_calculation is disabled
+        should_run_inner_metrics = inner_metrics_every > 0 and epoch % inner_metrics_every == 0
+        if is_adaptive and not adaptive_inner_metrics:
+            should_run_inner_metrics = False
+            
+        if should_run_inner_metrics:
             print(f"\n  Running inner metrics at epoch {epoch} (NCC/Probes/Derivatives/Frequency)...")
             ncc_metrics = _run_intermediate_ncc(model, cfg, run_dir, epoch)
             probe_metrics = _run_intermediate_probes(model, cfg, run_dir, epoch)
@@ -359,6 +405,72 @@ def train(
                 metrics['freq_history'] = []
             if freq_metrics is not None:
                 metrics['freq_history'].append((epoch, freq_metrics))
+
+        # Adaptive PINN: Check for expert spawning
+        if is_adaptive and epoch % spawn_every == 0 and model.num_experts < max_experts:
+            print(f"\n{'='*60}")
+            print(f"Adaptive PINN: Checking for refinement region at epoch {epoch}")
+            print(f"{'='*60}")
+            
+            # Get predictions on eval data for region detection
+            model.eval()
+            with torch.no_grad():
+                eval_inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
+                u_pred = model(eval_inputs)
+            
+            # Convert to numpy for RF
+            X_eval = eval_inputs.cpu().numpy()
+            y_eval = u_pred.cpu().numpy()
+            
+            # Detect refinement region
+            region = region_detector.detect(
+                X=X_eval,
+                y=y_eval,
+                existing_regions=model.regions,
+                wavelet_threshold=wavelet_threshold,
+                spawn_epoch=epoch
+            )
+            
+            if region is not None:
+                # Spawn new expert
+                expert_idx = model.spawn_expert(region)
+                
+                if expert_idx >= 0:
+                    # Recreate optimizer to include new expert parameters
+                    if current_optimizer_name == 'Adam':
+                        optimizer = _create_adam_optimizer(model, cfg)
+                    else:
+                        optimizer = _create_lbfgs_optimizer(model, cfg)
+                    
+                    # Apply freezing strategy
+                    model.freeze_models()
+                    
+                    # Plot expert regions
+                    problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
+                    plot_expert_regions(
+                        regions=model.regions,
+                        domain_bounds=domain_bounds,
+                        output_path=adaptive_plots_dir / f"expert_regions_epoch_{epoch}.png",
+                        problem_type=problem_type,
+                        title=f"Expert Regions at Epoch {epoch}",
+                        ground_truth=gt_grid,
+                        grid_x=gt_x,
+                        grid_t=gt_t
+                    )
+                    
+                    # Store expert spawn history
+                    if 'expert_spawns' not in metrics:
+                        metrics['expert_spawns'] = []
+                    metrics['expert_spawns'].append({
+                        'epoch': epoch,
+                        'expert_idx': expert_idx,
+                        'region': region.to_dict(),
+                        'num_experts': model.num_experts
+                    })
+            else:
+                print(f"  No suitable refinement region found")
+            
+            model.train()
 
     # Save final model
     final_checkpoint_path = checkpoint_dir / "final_model.pt"
@@ -453,6 +565,39 @@ def train(
     _maybe_plot_ncc_history(metrics, run_dir)
     _maybe_plot_probe_history(metrics, run_dir)
     _maybe_plot_deriv_history(metrics, run_dir)
+
+    # Final adaptive PINN outputs
+    if is_adaptive and model.num_experts > 0:
+        print("\n" + "=" * 60)
+        print("Adaptive PINN Final Summary")
+        print("=" * 60)
+        print(f"  Total experts spawned: {model.num_experts}")
+        
+        # Final expert regions plot
+        problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
+        plot_expert_regions(
+            regions=model.regions,
+            domain_bounds=domain_bounds,
+            output_path=adaptive_plots_dir / "expert_regions_final.png",
+            problem_type=problem_type,
+            title=f"Final Expert Regions ({model.num_experts} experts)",
+            ground_truth=gt_grid,
+            grid_x=gt_x,
+            grid_t=gt_t
+        )
+        
+        # Save regions metadata
+        save_regions_metadata(
+            regions=model.regions,
+            output_path=adaptive_plots_dir / "expert_regions.json"
+        )
+        
+        # Store final regions in metrics
+        metrics['adaptive_pinn'] = {
+            'num_experts': model.num_experts,
+            'max_experts': max_experts,
+            'regions': [r.to_dict() for r in model.regions]
+        }
 
     # Save metrics to JSON
     metrics_path = run_dir / "metrics.json"
@@ -600,6 +745,12 @@ def _save_checkpoint(
         'config': cfg,
         'metrics': metrics
     }
+    
+    # For AdaptiveExpertPINN, also save extended state
+    if hasattr(model, 'state_dict_extended'):
+        checkpoint['adaptive_state'] = model.state_dict_extended()
+        checkpoint['is_adaptive'] = True
+    
     torch.save(checkpoint, path)
 
 

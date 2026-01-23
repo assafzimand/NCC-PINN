@@ -62,8 +62,20 @@ def main():
     print("\n4. Building model...")
     device = torch.device('cuda' if config['cuda'] and
                           torch.cuda.is_available() else 'cpu')
-    model = FCNet(architecture, activation, config)
-    print(f"  ✓ Model created: {len(model.get_layer_names())} layers")
+    
+    # Check if adaptive PINN is enabled
+    adaptive_cfg = config.get('adaptive_pinn', {})
+    is_adaptive = adaptive_cfg.get('enabled', False)
+    
+    if is_adaptive:
+        from models.adaptive_expert_pinn import AdaptiveExpertPINN
+        model = AdaptiveExpertPINN(architecture, activation, config, adaptive_cfg)
+        print(f"  ✓ Adaptive Expert PINN created: {len(model.get_layer_names())} base layers")
+        print(f"    Max experts: {adaptive_cfg.get('max_experts', 5)}")
+        print(f"    Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
+    else:
+        model = FCNet(architecture, activation, config)
+        print(f"  ✓ Model created: {len(model.get_layer_names())} layers")
     print(f"  Device: {device}")
 
     # Build loss function
@@ -85,9 +97,14 @@ def main():
 
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
 
-        # Load model state
-        model.load_state_dict(checkpoint['model_state_dict'])
-        print(f"  ✓ Model weights loaded")
+        # Load model state (handle adaptive vs regular)
+        if is_adaptive and checkpoint.get('is_adaptive', False):
+            # Load adaptive state including experts and regions
+            model.load_state_dict_extended(checkpoint['adaptive_state'])
+            print(f"  ✓ Adaptive model weights loaded ({model.num_experts} experts)")
+        else:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            print(f"  ✓ Model weights loaded")
 
         # Load optimizer state for fine-tuning
         if not eval_only:

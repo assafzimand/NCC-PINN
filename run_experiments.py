@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import subprocess
 import sys
+import torch
 
 
 def load_experiment_plan(plan_path="experiments_plan.yaml"):
@@ -83,49 +84,68 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             print(f"\nERROR: best_model.pt not found in {checkpoint_dir}")
             return None
         
-        # Step 2: Run probes analysis in eval-only mode on the trained checkpoint
-        print(f"\n{'='*70}")
-        print(f"Running Probe Analysis for: {exp_name} (eval-only mode)")
-        print(f"{'='*70}\n")
+        # Check if we should skip inner metrics analysis for adaptive PINN
+        adaptive_cfg = config.get('adaptive_pinn', {})
+        skip_inner_metrics = (
+            adaptive_cfg.get('enabled', False) and 
+            not adaptive_cfg.get('inner_metrics_calculation', False)
+        )
         
-        # Update config to eval_only mode with resume_from
-        eval_config = config.copy()
-        eval_config['eval_only'] = True
-        eval_config['resume_from'] = str(best_checkpoint)
+        # Track how many analysis steps we ran (for directory handling)
+        num_analysis_steps = 1  # NCC always runs
         
-        with open('config/config.yaml', 'w') as f:
-            yaml.dump(eval_config, f, default_flow_style=False)
-        
-        result_probes = subprocess.run([sys.executable, 'run_probes.py'])
-        
-        if result_probes.returncode != 0:
-            print(f"\nWARNING in {exp_name} Probes: Process exited with code {result_probes.returncode}")
-        
-        # Step 3: Run derivatives tracker analysis in eval-only mode on the trained checkpoint
-        print(f"\n{'='*70}")
-        print(f"Running Derivatives Tracker for: {exp_name} (eval-only mode)")
-        print(f"{'='*70}\n")
-        
-        with open('config/config.yaml', 'w') as f:
-            yaml.dump(eval_config, f, default_flow_style=False)
-        
-        result_derivatives = subprocess.run([sys.executable, 'run_derivatives_tracker.py'])
-        
-        if result_derivatives.returncode != 0:
-            print(f"\nWARNING in {exp_name} Derivatives: Process exited with code {result_derivatives.returncode}")
-        
-        # Step 4: Run frequency tracker analysis in eval-only mode on the trained checkpoint
-        print(f"\n{'='*70}")
-        print(f"Running Frequency Tracker for: {exp_name} (eval-only mode)")
-        print(f"{'='*70}\n")
-        
-        with open('config/config.yaml', 'w') as f:
-            yaml.dump(eval_config, f, default_flow_style=False)
-        
-        result_frequency = subprocess.run([sys.executable, 'run_frequency_tracker.py'])
-        
-        if result_frequency.returncode != 0:
-            print(f"\nWARNING in {exp_name} Frequency: Process exited with code {result_frequency.returncode}")
+        if skip_inner_metrics:
+            print(f"\n{'='*70}")
+            print(f"Skipping Probes/Derivatives/Frequency for: {exp_name}")
+            print(f"(adaptive_pinn.inner_metrics_calculation is False)")
+            print(f"{'='*70}\n")
+        else:
+            # Step 2: Run probes analysis in eval-only mode on the trained checkpoint
+            print(f"\n{'='*70}")
+            print(f"Running Probe Analysis for: {exp_name} (eval-only mode)")
+            print(f"{'='*70}\n")
+            
+            # Update config to eval_only mode with resume_from
+            eval_config = config.copy()
+            eval_config['eval_only'] = True
+            eval_config['resume_from'] = str(best_checkpoint)
+            
+            with open('config/config.yaml', 'w') as f:
+                yaml.dump(eval_config, f, default_flow_style=False)
+            
+            result_probes = subprocess.run([sys.executable, 'run_probes.py'])
+            
+            if result_probes.returncode != 0:
+                print(f"\nWARNING in {exp_name} Probes: Process exited with code {result_probes.returncode}")
+            num_analysis_steps += 1
+            
+            # Step 3: Run derivatives tracker analysis in eval-only mode on the trained checkpoint
+            print(f"\n{'='*70}")
+            print(f"Running Derivatives Tracker for: {exp_name} (eval-only mode)")
+            print(f"{'='*70}\n")
+            
+            with open('config/config.yaml', 'w') as f:
+                yaml.dump(eval_config, f, default_flow_style=False)
+            
+            result_derivatives = subprocess.run([sys.executable, 'run_derivatives_tracker.py'])
+            
+            if result_derivatives.returncode != 0:
+                print(f"\nWARNING in {exp_name} Derivatives: Process exited with code {result_derivatives.returncode}")
+            num_analysis_steps += 1
+            
+            # Step 4: Run frequency tracker analysis in eval-only mode on the trained checkpoint
+            print(f"\n{'='*70}")
+            print(f"Running Frequency Tracker for: {exp_name} (eval-only mode)")
+            print(f"{'='*70}\n")
+            
+            with open('config/config.yaml', 'w') as f:
+                yaml.dump(eval_config, f, default_flow_style=False)
+            
+            result_frequency = subprocess.run([sys.executable, 'run_frequency_tracker.py'])
+            
+            if result_frequency.returncode != 0:
+                print(f"\nWARNING in {exp_name} Frequency: Process exited with code {result_frequency.returncode}")
+            num_analysis_steps += 1
         
         # Move outputs to experiment directory
         # Find latest architecture directory matching this experiment
@@ -137,79 +157,89 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             arch_dir = outputs_root / arch_folder_name
             
             if arch_dir.exists():
-                # Find the FOUR LATEST timestamp directories (NCC, probes, derivatives, frequency)
+                # Find the latest timestamp directories based on how many analysis steps ran
                 timestamp_dirs = sorted(
                     [d for d in arch_dir.glob("*/") if d.is_dir()], 
                     key=lambda x: x.stat().st_mtime
                 )
                 
-                if len(timestamp_dirs) >= 4:
-                    # Get the four most recent directories
-                    ncc_dir = timestamp_dirs[-4]    # Fourth to last (NCC ran first)
-                    probe_dir = timestamp_dirs[-3]  # Third to last (Probes ran second)
-                    deriv_dir = timestamp_dirs[-2]  # Second to last (Derivatives ran third)
-                    freq_dir = timestamp_dirs[-1]   # Last (Frequency ran fourth)
-                    
+                if len(timestamp_dirs) >= num_analysis_steps:
                     # Create experiment output directory
                     exp_output_dir.mkdir(parents=True, exist_ok=True)
-                    dest_dir = exp_output_dir / ncc_dir.name
                     
-                    # Move NCC results
-                    if dest_dir.exists():
-                        shutil.rmtree(dest_dir)
-                    shutil.move(str(ncc_dir), str(dest_dir))
-                    
-                    # Merge probe results into the same directory (preserving epoch subdirs)
-                    probe_plots_src = probe_dir / "probe_plots"
-                    if probe_plots_src.exists():
-                        probe_plots_dest = dest_dir / "probe_plots"
-                        probe_plots_dest.mkdir(parents=True, exist_ok=True)
+                    if skip_inner_metrics:
+                        # Only NCC ran - just move that directory
+                        ncc_dir = timestamp_dirs[-1]  # Most recent (only one)
+                        dest_dir = exp_output_dir / ncc_dir.name
                         
-                        # Copy files (not subdirs) from source to dest
-                        # Only copy metrics.json, preserve plot files from training (shaded versions)
-                        for item in probe_plots_src.iterdir():
-                            if item.is_file():
-                                # Only copy JSON files, skip plot images to preserve shaded versions
-                                if item.suffix == '.json':
-                                    shutil.copy2(item, probe_plots_dest / item.name)
-                    
-                    # Clean up the probe directory (we've copied what we need)
-                    if probe_dir.exists():
-                        shutil.rmtree(probe_dir)
-                    
-                    # Merge derivatives results into the same directory (preserving epoch subdirs)
-                    deriv_plots_src = deriv_dir / "derivatives_plots"
-                    if deriv_plots_src.exists():
-                        deriv_plots_dest = dest_dir / "derivatives_plots"
-                        deriv_plots_dest.mkdir(parents=True, exist_ok=True)
+                        if dest_dir.exists():
+                            shutil.rmtree(dest_dir)
+                        shutil.move(str(ncc_dir), str(dest_dir))
+                    else:
+                        # All four analysis steps ran
+                        ncc_dir = timestamp_dirs[-4]    # Fourth to last (NCC ran first)
+                        probe_dir = timestamp_dirs[-3]  # Third to last (Probes ran second)
+                        deriv_dir = timestamp_dirs[-2]  # Second to last (Derivatives ran third)
+                        freq_dir = timestamp_dirs[-1]   # Last (Frequency ran fourth)
                         
-                        # Copy files (not subdirs) from source to dest
-                        # Only copy metrics.json, preserve plot files from training (shaded versions)
-                        for item in deriv_plots_src.iterdir():
-                            if item.is_file():
-                                # Only copy JSON files, skip plot images to preserve shaded versions
-                                if item.suffix == '.json':
-                                    shutil.copy2(item, deriv_plots_dest / item.name)
-                    
-                    # Clean up the derivatives directory
-                    if deriv_dir.exists():
-                        shutil.rmtree(deriv_dir)
-                    
-                    # Merge frequency results into the same directory
-                    freq_plots_src = freq_dir / "frequency_plots"
-                    if freq_plots_src.exists():
-                        freq_plots_dest = dest_dir / "frequency_plots"
-                        freq_plots_dest.mkdir(parents=True, exist_ok=True)
+                        dest_dir = exp_output_dir / ncc_dir.name
                         
-                        # Copy files (not subdirs) from source to dest
-                        for item in freq_plots_src.iterdir():
-                            if item.is_file():
-                                if item.suffix == '.json':
-                                    shutil.copy2(item, freq_plots_dest / item.name)
-                    
-                    # Clean up the frequency directory
-                    if freq_dir.exists():
-                        shutil.rmtree(freq_dir)
+                        # Move NCC results
+                        if dest_dir.exists():
+                            shutil.rmtree(dest_dir)
+                        shutil.move(str(ncc_dir), str(dest_dir))
+                        
+                        # Merge probe results into the same directory (preserving epoch subdirs)
+                        probe_plots_src = probe_dir / "probe_plots"
+                        if probe_plots_src.exists():
+                            probe_plots_dest = dest_dir / "probe_plots"
+                            probe_plots_dest.mkdir(parents=True, exist_ok=True)
+                            
+                            # Copy files (not subdirs) from source to dest
+                            # Only copy metrics.json, preserve plot files from training (shaded versions)
+                            for item in probe_plots_src.iterdir():
+                                if item.is_file():
+                                    # Only copy JSON files, skip plot images to preserve shaded versions
+                                    if item.suffix == '.json':
+                                        shutil.copy2(item, probe_plots_dest / item.name)
+                        
+                        # Clean up the probe directory (we've copied what we need)
+                        if probe_dir.exists():
+                            shutil.rmtree(probe_dir)
+                        
+                        # Merge derivatives results into the same directory (preserving epoch subdirs)
+                        deriv_plots_src = deriv_dir / "derivatives_plots"
+                        if deriv_plots_src.exists():
+                            deriv_plots_dest = dest_dir / "derivatives_plots"
+                            deriv_plots_dest.mkdir(parents=True, exist_ok=True)
+                            
+                            # Copy files (not subdirs) from source to dest
+                            # Only copy metrics.json, preserve plot files from training (shaded versions)
+                            for item in deriv_plots_src.iterdir():
+                                if item.is_file():
+                                    # Only copy JSON files, skip plot images to preserve shaded versions
+                                    if item.suffix == '.json':
+                                        shutil.copy2(item, deriv_plots_dest / item.name)
+                        
+                        # Clean up the derivatives directory
+                        if deriv_dir.exists():
+                            shutil.rmtree(deriv_dir)
+                        
+                        # Merge frequency results into the same directory
+                        freq_plots_src = freq_dir / "frequency_plots"
+                        if freq_plots_src.exists():
+                            freq_plots_dest = dest_dir / "frequency_plots"
+                            freq_plots_dest.mkdir(parents=True, exist_ok=True)
+                            
+                            # Copy files (not subdirs) from source to dest
+                            for item in freq_plots_src.iterdir():
+                                if item.is_file():
+                                    if item.suffix == '.json':
+                                        shutil.copy2(item, freq_plots_dest / item.name)
+                        
+                        # Clean up the frequency directory
+                        if freq_dir.exists():
+                            shutil.rmtree(freq_dir)
                     
                     # Also move corresponding checkpoints to experiment folder
                     checkpoints_root = Path("checkpoints") / config['problem']
@@ -272,6 +302,7 @@ def generate_comparison_report(parent_dir, results):
     probe_data = {}  # Store all probe data for comparison plots
     derivatives_data = {}  # Store all derivatives data for comparison plots
     frequency_data = {}  # Store all frequency data for comparison plots
+    expert_regions_data = {}  # Store expert regions for adaptive PINN comparison
     
     for exp_name, result_path in results.items():
         if result_path is None:
@@ -334,6 +365,15 @@ def generate_comparison_report(parent_dir, results):
             with open(freq_file) as f:
                 freq_metrics = json.load(f)
                 frequency_data[exp_name] = freq_metrics
+        
+        # Load expert regions for adaptive PINN
+        expert_regions_file = result_path / "adaptive_plots" / "expert_regions.json"
+        if expert_regions_file.exists():
+            from adaptive.indicators import RegionDescriptor
+            from adaptive.visualization import load_regions_metadata
+            regions = load_regions_metadata(expert_regions_file)
+            if regions:
+                expert_regions_data[exp_name] = regions
         
         # Extract margin SNR for final layer
         final_layer = list(final_ncc['layer_accuracies'].keys())[-1]
@@ -402,6 +442,64 @@ def generate_comparison_report(parent_dir, results):
         
         generate_frequency_coverage_comparison(parent_dir, frequency_data)
         plot_spectral_learning_efficiency_comparison(frequency_data, parent_dir)
+    
+    # Generate expert regions comparison if adaptive PINN data available
+    if expert_regions_data:
+        print(f"  Generating expert regions comparison ({len(expert_regions_data)} experiments)...")
+        from adaptive.visualization import (
+            plot_expert_regions_comparison, prepare_ground_truth_grid
+        )
+        
+        # Get domain bounds from the first experiment's config
+        # (assuming all experiments use the same problem/domain)
+        first_result_path = list(results.values())[0]
+        if first_result_path is not None:
+            config_file = first_result_path / "config_used.yaml"
+            if config_file.exists():
+                import yaml
+                with open(config_file) as f:
+                    exp_config = yaml.safe_load(f)
+                problem = exp_config.get('problem', 'burgers1d')
+                problem_config = exp_config.get(problem, {})
+                spatial_domain = problem_config.get('spatial_domain', [[-1, 1]])
+                temporal_domain = problem_config.get('temporal_domain', [0, 1])
+                
+                # Build domain bounds
+                if len(spatial_domain) == 1:
+                    domain_bounds = {
+                        'lower': [spatial_domain[0][0], temporal_domain[0]],
+                        'upper': [spatial_domain[0][1], temporal_domain[1]]
+                    }
+                    problem_type = '2d'
+                else:
+                    domain_bounds = {
+                        'lower': [spatial_domain[0][0], spatial_domain[1][0], temporal_domain[0]],
+                        'upper': [spatial_domain[0][1], spatial_domain[1][1], temporal_domain[1]]
+                    }
+                    problem_type = '3d'
+                
+                # Load eval data for ground truth background
+                gt_grid, gt_x, gt_t = None, None, None
+                if problem_type == '2d':
+                    eval_data_path = Path("datasets") / problem / "eval_data.pt"
+                    if eval_data_path.exists():
+                        try:
+                            eval_data = torch.load(eval_data_path, map_location='cpu')
+                            gt_grid, gt_x, gt_t = prepare_ground_truth_grid(
+                                eval_data, domain_bounds
+                            )
+                        except Exception as e:
+                            print(f"  Warning: Could not load ground truth: {e}")
+                
+                plot_expert_regions_comparison(
+                    experiment_regions=expert_regions_data,
+                    domain_bounds=domain_bounds,
+                    output_path=parent_dir / "expert_regions_comparison.png",
+                    problem_type=problem_type,
+                    ground_truth=gt_grid,
+                    grid_x=gt_x,
+                    grid_t=gt_t
+                )
     
     print(f"\nComparison report saved to {parent_dir}")
 

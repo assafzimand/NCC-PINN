@@ -276,8 +276,18 @@ def main():
 
         # Build model
         print("\n5. Building model...")
-        model = FCNet(architecture, activation, config)
-        print(f"  Model created: {len(model.get_layer_names())} layers")
+        
+        # Check if adaptive PINN is enabled
+        adaptive_cfg = config.get('adaptive_pinn', {})
+        is_adaptive = adaptive_cfg.get('enabled', False)
+        
+        if is_adaptive:
+            from models.adaptive_expert_pinn import AdaptiveExpertPINN
+            model = AdaptiveExpertPINN(architecture, activation, config, adaptive_cfg)
+            print(f"  Adaptive Expert PINN created: {len(model.get_layer_names())} base layers")
+        else:
+            model = FCNet(architecture, activation, config)
+            print(f"  Model created: {len(model.get_layer_names())} layers")
 
         # Load checkpoint if resume_from is specified
         if resume_from is not None:
@@ -306,27 +316,33 @@ def main():
             else:
                 state_dict = checkpoint
 
-            # Remap keys for legacy checkpoints
-            remapped_state_dict = {}
-            for key, value in state_dict.items():
-                if key.startswith('layer_') or key.startswith('output.'):
-                    if key.startswith('output.'):
-                        layer_num = len(architecture) - 1
-                        new_key = key.replace('output.',
-                                              f'network.layer_{layer_num}.')
+            # Check if this is an adaptive checkpoint
+            if is_adaptive and checkpoint.get('is_adaptive', False):
+                # Load adaptive state including experts and regions
+                model.load_state_dict_extended(checkpoint['adaptive_state'])
+                print(f"  Adaptive model weights loaded ({model.num_experts} experts)")
+            else:
+                # Remap keys for legacy checkpoints
+                remapped_state_dict = {}
+                for key, value in state_dict.items():
+                    if key.startswith('layer_') or key.startswith('output.'):
+                        if key.startswith('output.'):
+                            layer_num = len(architecture) - 1
+                            new_key = key.replace('output.',
+                                                  f'network.layer_{layer_num}.')
+                        else:
+                            new_key = f'network.{key}'
+                        remapped_state_dict[new_key] = value
                     else:
-                        new_key = f'network.{key}'
-                    remapped_state_dict[new_key] = value
-                else:
-                    remapped_state_dict[key] = value
+                        remapped_state_dict[key] = value
 
-            # Load weights
-            try:
-                model.load_state_dict(remapped_state_dict)
-                print("  Model weights loaded - continuing from checkpoint")
-            except RuntimeError:
-                print("  Warning: Remapped keys didn't match, trying original...")
-                model.load_state_dict(state_dict)
+                # Load weights
+                try:
+                    model.load_state_dict(remapped_state_dict)
+                    print("  Model weights loaded - continuing from checkpoint")
+                except RuntimeError:
+                    print("  Warning: Remapped keys didn't match, trying original...")
+                    model.load_state_dict(state_dict)
                 print("  Model weights loaded - continuing from checkpoint")
 
         # Build loss
@@ -394,46 +410,58 @@ def main():
                                 weights_only=False)
         print("  Legacy checkpoint loaded")
 
-    # Build model
-    model = FCNet(architecture, activation, config)
+    # Build model - check for adaptive PINN
+    adaptive_cfg = config.get('adaptive_pinn', {})
+    is_adaptive = adaptive_cfg.get('enabled', False) or checkpoint.get('is_adaptive', False)
+    
+    if is_adaptive:
+        from models.adaptive_expert_pinn import AdaptiveExpertPINN
+        model = AdaptiveExpertPINN(architecture, activation, config, adaptive_cfg)
+    else:
+        model = FCNet(architecture, activation, config)
 
     # Load model weights - handle different checkpoint formats
-    if 'model_state_dict' in checkpoint:
-        state_dict = checkpoint['model_state_dict']
-    elif 'model' in checkpoint:
-        state_dict = checkpoint['model']
+    if is_adaptive and checkpoint.get('is_adaptive', False):
+        # Load adaptive state including experts and regions
+        model.load_state_dict_extended(checkpoint['adaptive_state'])
+        print(f"  Adaptive model weights loaded ({model.num_experts} experts)")
     else:
-        # Checkpoint might be just the state dict itself
-        state_dict = checkpoint
-
-    # Remap keys for legacy checkpoints with different layer naming
-    # Old: layer_1.weight, layer_2.weight, ..., output.weight
-    # New: network.layer_1.weight, ..., network.layer_6.weight
-    remapped_state_dict = {}
-    for key, value in state_dict.items():
-        if key.startswith('layer_') or key.startswith('output.'):
-            # Remap layer_N or output to network.layer_N or network.layer_M
-            if key.startswith('output.'):
-                # Output layer is the last layer in the new architecture
-                layer_num = len(architecture) - 1
-                new_key = key.replace('output.', f'network.layer_{layer_num}.')
-            else:
-                # Regular hidden layer - add network. prefix
-                new_key = f'network.{key}'
-            remapped_state_dict[new_key] = value
+        if 'model_state_dict' in checkpoint:
+            state_dict = checkpoint['model_state_dict']
+        elif 'model' in checkpoint:
+            state_dict = checkpoint['model']
         else:
-            # Already in correct format or doesn't need remapping
-            remapped_state_dict[key] = value
+            # Checkpoint might be just the state dict itself
+            state_dict = checkpoint
 
-    # Try loading with remapped keys
-    try:
-        model.load_state_dict(remapped_state_dict)
-        print("  Model weights loaded")
-    except RuntimeError:
-        # If remapping didn't work, try original state dict
-        print("  Warning: Remapped keys didn't match, trying original...")
-        model.load_state_dict(state_dict)
-        print("  Model weights loaded")
+        # Remap keys for legacy checkpoints with different layer naming
+        # Old: layer_1.weight, layer_2.weight, ..., output.weight
+        # New: network.layer_1.weight, ..., network.layer_6.weight
+        remapped_state_dict = {}
+        for key, value in state_dict.items():
+            if key.startswith('layer_') or key.startswith('output.'):
+                # Remap layer_N or output to network.layer_N or network.layer_M
+                if key.startswith('output.'):
+                    # Output layer is the last layer in the new architecture
+                    layer_num = len(architecture) - 1
+                    new_key = key.replace('output.', f'network.layer_{layer_num}.')
+                else:
+                    # Regular hidden layer - add network. prefix
+                    new_key = f'network.{key}'
+                remapped_state_dict[new_key] = value
+            else:
+                # Already in correct format or doesn't need remapping
+                remapped_state_dict[key] = value
+
+        # Try loading with remapped keys
+        try:
+            model.load_state_dict(remapped_state_dict)
+            print("  Model weights loaded")
+        except RuntimeError:
+            # If remapping didn't work, try original state dict
+            print("  Warning: Remapped keys didn't match, trying original...")
+            model.load_state_dict(state_dict)
+            print("  Model weights loaded")
 
     # Get NCC data path
     ncc_data_path = Path("datasets") / problem / "ncc_data.pt"
