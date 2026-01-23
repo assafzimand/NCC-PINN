@@ -165,17 +165,10 @@ def train(
         print("\n" + "=" * 60)
         print("Initializing Residual Norm Control (RNC)")
         print("=" * 60)
-        from losses.rnc_utils import train_probes_for_rnc, compute_target_norms
-        
-        # Train probes once at the start
-        print("Training linear probes for RNC...")
-        probes = train_probes_for_rnc(model, train_data, cfg, device)
-        print(f"  Trained probes for {len(probes)} hidden layers")
-        
-        # Compute initial target norms (using eval_data)
-        # Note: We DON'T apply penalty until first real target update during training
-        # The untrained model's targets would be meaningless
-        # target_norms stays empty, rnc_penalty_active stays False until first update
+        print("  Probes and targets will be computed at first update epoch")
+        print(f"  Update frequency: every {rnc_config.get('update_target_norms_every', 100)} epochs")
+        # Note: probes and target_norms stay None/empty until first update
+        # rnc_penalty_active stays False until first update when probes are trained
         
         # Add RNC metrics storage
         metrics['rnc_penalty'] = []
@@ -193,11 +186,16 @@ def train(
         train_loss = 0.0
         n_train_batches = 0
 
-        # Update RNC target norms periodically (and activate penalty on first update)
+        # RNC: Retrain probes every epoch, update target norms periodically
         if rnc_enabled:
+            from losses.rnc_utils import train_probes_for_rnc, compute_target_norms
+            
+            # Always retrain probes to match current model weights (needed for meaningful penalty)
+            probes = train_probes_for_rnc(model, train_data, cfg, device)
+            
+            # Update target norms periodically (and activate penalty on first update)
             update_every = rnc_config.get('update_target_norms_every', 100)
             if epoch % update_every == 0:
-                from losses.rnc_utils import compute_target_norms
                 target_norms = compute_target_norms(model, eval_data, probes, cfg)
                 metrics['target_update_epochs'].append(epoch)
                 if not rnc_penalty_active:

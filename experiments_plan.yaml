@@ -33,7 +33,7 @@ base_config:
   eval_every: 500
   print_every: 200
   save_every: 5000
-  inner_metrics_eval_every: 2501
+  inner_metrics_eval_every: 5001
   seed: 42
   
   # Problem-specific domains and loss weights
