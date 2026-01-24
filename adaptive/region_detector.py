@@ -2,14 +2,13 @@
 
 Implements the algorithm to detect high-error regions for spawning expert PINNs:
 1. Fit a Random Forest regressor to the current solution
-2. Compute geometric wavelets at each tree node
+2. Compute geometric wavelets at each tree node (Q_child - Q_parent for d-dim output)
 3. Compute residual-weighted L2 norm of wavelet (prioritizes high-error regions)
 4. Select the region with highest weighted norm for refinement
 """
 
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LinearRegression
 from typing import List, Optional, Dict, Tuple
 from dataclasses import dataclass
 
@@ -25,9 +24,9 @@ class TreeNodeInfo:
     n_samples: int
     bounds_lower: List[float]
     bounds_upper: List[float]
-    prediction: float  # Q_Ω(x) - local regression value
-    parent_prediction: Optional[float]  # Q_Ω_parent(x)
-    wavelet_norm: float = 0.0
+    prediction: np.ndarray  # Q_Ω(x) - local mean value, shape (d,) for d-dim output
+    parent_prediction: Optional[np.ndarray]  # Q_Ω_parent(x), shape (d,) or None
+    wavelet_norm: float = 0.0  # ||Q_child - Q_parent||² × Σ residuals
     sum_residuals: float = 0.0  # Sum of residuals in this node (for diagnostics)
 
 
@@ -36,9 +35,11 @@ class RegionDetector:
     
     Algorithm:
     1. Fit RF to current PINN solution: f_RF(x,t) ≈ u(x,t)
-    2. For each tree node, compute geometric wavelet
-    3. Compute L2 norm of wavelet
-    4. Return region with highest norm (excluding existing expert regions)
+    2. For each tree node, compute geometric wavelet: ψ = Q_child - Q_parent
+    3. Compute residual-weighted L2 norm: ||ψ||² × Σ residuals
+    4. Return region with highest norm for refinement
+    
+    Supports multi-dimensional output (e.g., Schrödinger's [u, v]).
     """
     
     def __init__(
@@ -46,7 +47,6 @@ class RegionDetector:
         n_estimators: int = 100,
         max_depth: int = 10,
         min_samples_leaf: int = 50,
-        regression_type: str = 'constant',
         domain_bounds: Optional[Dict[str, List[float]]] = None
     ):
         """
@@ -54,13 +54,11 @@ class RegionDetector:
             n_estimators: Number of trees in the forest
             max_depth: Maximum depth of each tree
             min_samples_leaf: Minimum samples required in a leaf node
-            regression_type: 'constant' (mean) or 'linear' (local linear fit)
             domain_bounds: {'lower': [x_min, t_min], 'upper': [x_max, t_max]}
         """
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.min_samples_leaf = min_samples_leaf
-        self.regression_type = regression_type
         self.domain_bounds = domain_bounds
         
         self.rf: Optional[RandomForestRegressor] = None
@@ -80,17 +78,18 @@ class RegionDetector:
         Args:
             X: (N, n_dims) array of coordinates [x, t] or [x, y, t]
             y: (N,) or (N, output_dim) array of solution values
+               Multi-output is supported - RF fits on d-dimensional y,
+               and wavelet norm is computed as ||Q_child - Q_parent||²
             residuals: (N,) array of PDE residuals |L[u] - f| for weighting
                        If None, uses uniform weighting (n_samples)
             
         Returns:
             self for chaining
         """
-        # Flatten y if multi-dimensional (take first component or norm)
-        if y.ndim > 1 and y.shape[1] > 1:
-            # For multi-output (e.g., Schrödinger with u,v), use norm
-            y = np.linalg.norm(y, axis=1)
-        elif y.ndim > 1:
+        # Keep y in original dimension (d-dim for multi-output like Schrödinger)
+        # RF supports multi-output regression: y can be (N,) or (N, d)
+        # Only flatten if it's (N, 1) -> (N,)
+        if y.ndim > 1 and y.shape[1] == 1:
             y = y.ravel()
         
         self._X = X
@@ -103,19 +102,21 @@ class RegionDetector:
             self._residuals = np.abs(residuals)  # Ensure positive
         else:
             # Fallback: uniform weighting (equivalent to n_samples)
-            self._residuals = np.ones(len(y))
+            self._residuals = np.ones(len(y) if y.ndim == 1 else y.shape[0])
         
-        # Set domain bounds from data if not provided
-        if self.domain_bounds is None:
-            self.domain_bounds = {
-                'lower': X.min(axis=0).tolist(),
-                'upper': X.max(axis=0).tolist()
-            }
+        # ALWAYS update domain bounds from the data being fitted
+        # This is critical when fitting on filtered subdomains - the bounds
+        # must match the actual search domain, not the global domain
+        self.domain_bounds = {
+            'lower': X.min(axis=0).tolist(),
+            'upper': X.max(axis=0).tolist()
+        }
         
         self.rf = RandomForestRegressor(
             n_estimators=self.n_estimators,
             max_depth=self.max_depth,
             min_samples_leaf=self.min_samples_leaf,
+            bootstrap=False,  # Use ALL data for each tree (no bootstrap sampling)
             random_state=42,
             n_jobs=-1
         )
@@ -181,29 +182,13 @@ class RegionDetector:
         node_mask = np.array(decision_paths[:, node_id].todense()).ravel() > 0
         return np.where(node_mask)[0]
     
-    def _compute_local_regression(self, sample_indices: np.ndarray) -> float:
-        """Compute local regression value Q_Ω for samples in a region."""
-        if len(sample_indices) == 0:
-            return 0.0
-        
-        y_local = self._y[sample_indices]
-        
-        if self.regression_type == 'constant':
-            return float(np.mean(y_local))
-        elif self.regression_type == 'linear':
-            X_local = self._X[sample_indices]
-            if len(sample_indices) < X_local.shape[1] + 1:
-                # Not enough samples for linear fit, fall back to constant
-                return float(np.mean(y_local))
-            lr = LinearRegression()
-            lr.fit(X_local, y_local)
-            return float(np.mean(lr.predict(X_local)))
-        else:
-            return float(np.mean(y_local))
-    
     def compute_wavelet_norms(self) -> List[TreeNodeInfo]:
         """
         Compute geometric wavelet norms for all tree nodes.
+        
+        Uses RF's internal node values (tree.value) as Q_Ω for each node.
+        Supports multi-dimensional output (d > 1): Q is d-dimensional vector.
+        Wavelet norm = ||Q_child - Q_parent||² × Σ residuals
         
         Returns:
             List of TreeNodeInfo with wavelet norms
@@ -216,13 +201,10 @@ class RegionDetector:
         for tree_idx, estimator in enumerate(self.rf.estimators_):
             tree = estimator.tree_
             
-            # Cache parent predictions for efficiency
-            node_predictions = {}
-            
             for node_id in range(tree.node_count):
                 is_leaf = tree.children_left[node_id] == -1
                 
-                # Get samples in this node
+                # Get samples in this node (for residual weighting)
                 sample_indices = self._get_samples_in_node(tree, node_id)
                 n_samples = len(sample_indices)
                 
@@ -232,34 +214,29 @@ class RegionDetector:
                 # Get bounds
                 bounds_lower, bounds_upper = self._get_node_bounds(tree, node_id)
                 
-                # Compute local regression Q_Ω
-                if node_id in node_predictions:
-                    prediction = node_predictions[node_id]
-                else:
-                    prediction = self._compute_local_regression(sample_indices)
-                    node_predictions[node_id] = prediction
+                # Get Q_Ω from RF's internal node value
+                # tree.value has shape (n_nodes, n_outputs, 1) for regressors
+                # tree.value[node_id, :, 0] gives shape (n_outputs,) = (d,)
+                prediction = tree.value[node_id, :, 0].copy()  # Shape (d,)
                 
                 # Get parent prediction Q_Ω_parent
                 parent_id = self._get_parent_id(tree, node_id)
                 parent_prediction = None
                 if parent_id is not None:
-                    if parent_id in node_predictions:
-                        parent_prediction = node_predictions[parent_id]
-                    else:
-                        parent_samples = self._get_samples_in_node(tree, parent_id)
-                        parent_prediction = self._compute_local_regression(parent_samples)
-                        node_predictions[parent_id] = parent_prediction
+                    parent_prediction = tree.value[parent_id, :, 0].copy()  # Shape (d,)
                 
-                # Compute wavelet norm: ||ψ_Ω'||²_r = (Q_Ω' - Q_Ω)² × Σ residuals
+                # Compute wavelet norm: ||ψ||²_r = ||Q_child - Q_parent||² × Σ residuals
                 # This weights by PDE residual - regions with high error get higher priority
                 wavelet_norm = 0.0
                 sum_residuals = 0.0
                 if parent_prediction is not None:
-                    diff = prediction - parent_prediction
+                    diff = prediction - parent_prediction  # Shape (d,)
+                    # L2 norm squared of the difference
+                    l2_norm_squared = float(np.sum(diff ** 2))
                     # Sum of residuals in this node (residual-weighted norm)
                     sum_residuals = float(self._residuals[sample_indices].sum())
                     # Residual-weighted L2 norm: prioritizes non-smooth regions with high error
-                    wavelet_norm = (diff ** 2) * sum_residuals
+                    wavelet_norm = l2_norm_squared * sum_residuals
                 
                 all_nodes.append(TreeNodeInfo(
                     node_id=node_id,
@@ -278,17 +255,24 @@ class RegionDetector:
     
     def select_refinement_region(
         self,
-        existing_regions: Optional[List[RegionDescriptor]] = None,
+        sibling_regions: Optional[List[RegionDescriptor]] = None,
+        overlap_threshold: float = 0.5,
         wavelet_threshold: Optional[float] = None,
-        spawn_epoch: int = 0
+        spawn_epoch: int = 0,
+        depth: int = 1,
+        parent_idx: int = -1
     ) -> Optional[RegionDescriptor]:
         """
-        Select the best region for refinement.
+        Select the best region for refinement with sibling overlap check.
         
         Args:
-            existing_regions: List of already-assigned expert regions
+            sibling_regions: List of same-parent regions to check overlap against
+            overlap_threshold: Accept region if more than this fraction is outside siblings
+                               (e.g., 0.5 means accept if >50% outside siblings)
             wavelet_threshold: Minimum wavelet norm to spawn (None = always spawn)
             spawn_epoch: Current epoch for tracking
+            depth: Depth level for the new expert (1 = child of base)
+            parent_idx: Index of the parent expert (-1 for depth-1 experts)
             
         Returns:
             RegionDescriptor for the selected region, or None if no suitable region
@@ -307,24 +291,99 @@ class RegionDetector:
         # Sort by wavelet norm (highest first)
         candidate_nodes.sort(key=lambda n: n.wavelet_norm, reverse=True)
         
-        # Find best region (overlapping regions are allowed - they get more neural capacity)
+        # Find best region that passes sibling overlap check
         for node in candidate_nodes:
             # Check wavelet threshold
             if wavelet_threshold is not None and node.wavelet_norm < wavelet_threshold:
                 continue
             
-            # Found a valid region (overlapping is allowed for hierarchical refinement)
+            # Check sibling overlap (if siblings exist)
+            if sibling_regions:
+                outside_fraction = self._compute_outside_fraction(node, sibling_regions)
+                if outside_fraction <= overlap_threshold:
+                    # Too much overlap with siblings, skip
+                    continue
+            
+            # Found a valid region
             return RegionDescriptor(
                 bounds_lower=node.bounds_lower,
                 bounds_upper=node.bounds_upper,
                 wavelet_norm=node.wavelet_norm,
-                spawn_epoch=spawn_epoch
+                spawn_epoch=spawn_epoch,
+                depth=depth,
+                parent_idx=parent_idx
             )
         
         return None
     
+    def _compute_outside_fraction(
+        self, 
+        node: TreeNodeInfo, 
+        sibling_regions: List[RegionDescriptor]
+    ) -> float:
+        """
+        Compute what fraction of a node's volume is OUTSIDE all sibling regions.
+        
+        Uses a simple approximation: compute total overlap with union of siblings.
+        For non-overlapping siblings, this is exact. For overlapping siblings,
+        this is a lower bound on the actual outside fraction.
+        
+        Args:
+            node: The candidate node
+            sibling_regions: List of same-depth regions (siblings)
+            
+        Returns:
+            Fraction of node volume outside all siblings (0.0 to 1.0)
+        """
+        if not sibling_regions:
+            return 1.0  # No siblings = 100% outside
+        
+        node_vol = 1.0
+        for lo, hi in zip(node.bounds_lower, node.bounds_upper):
+            node_vol *= (hi - lo)
+        
+        if node_vol <= 0:
+            return 0.0
+        
+        # Compute total overlap volume with all siblings
+        # Note: This may double-count if siblings overlap each other,
+        # giving a conservative (lower) estimate of outside_fraction
+        total_overlap = 0.0
+        
+        for region in sibling_regions:
+            # Check if boxes overlap (any dimension must be disjoint for no overlap)
+            overlaps = True
+            for i in range(len(node.bounds_lower)):
+                if (node.bounds_upper[i] <= region.bounds_lower[i] or
+                    node.bounds_lower[i] >= region.bounds_upper[i]):
+                    overlaps = False
+                    break
+            
+            if overlaps:
+                # Compute overlap volume
+                overlap_lower = [max(node.bounds_lower[i], region.bounds_lower[i]) 
+                                for i in range(len(node.bounds_lower))]
+                overlap_upper = [min(node.bounds_upper[i], region.bounds_upper[i])
+                                for i in range(len(node.bounds_upper))]
+                
+                overlap_vol = 1.0
+                for lo, hi in zip(overlap_lower, overlap_upper):
+                    overlap_vol *= max(0, hi - lo)
+                
+                total_overlap += overlap_vol
+        
+        # Cap overlap at node volume (in case of double-counting)
+        total_overlap = min(total_overlap, node_vol)
+        
+        # Return fraction outside
+        outside_fraction = (node_vol - total_overlap) / node_vol
+        return outside_fraction
+    
     def _check_overlap(self, node: TreeNodeInfo, existing_regions: List[RegionDescriptor]) -> bool:
-        """Check if a node significantly overlaps with existing regions."""
+        """Check if a node significantly overlaps with existing regions.
+        
+        DEPRECATED: Use _compute_outside_fraction for more precise control.
+        """
         for region in existing_regions:
             # Check if boxes overlap (any dimension must be disjoint for no overlap)
             overlaps = True
@@ -360,9 +419,12 @@ class RegionDetector:
         X: np.ndarray,
         y: np.ndarray,
         residuals: Optional[np.ndarray] = None,
-        existing_regions: Optional[List[RegionDescriptor]] = None,
+        sibling_regions: Optional[List[RegionDescriptor]] = None,
+        overlap_threshold: float = 0.5,
         wavelet_threshold: Optional[float] = None,
-        spawn_epoch: int = 0
+        spawn_epoch: int = 0,
+        depth: int = 1,
+        parent_idx: int = -1
     ) -> Optional[RegionDescriptor]:
         """
         Convenience method to fit RF and detect refinement region in one call.
@@ -371,16 +433,22 @@ class RegionDetector:
             X: (N, n_dims) array of coordinates
             y: (N,) or (N, output_dim) array of solution values
             residuals: (N,) array of PDE residuals for weighting (higher = more priority)
-            existing_regions: List of already-assigned expert regions
+            sibling_regions: List of same-parent regions to check overlap against
+            overlap_threshold: Accept region if more than this fraction is outside siblings
             wavelet_threshold: Minimum wavelet norm to spawn
             spawn_epoch: Current epoch for tracking
+            depth: Depth level for the new expert (1 = child of base)
+            parent_idx: Index of the parent expert (-1 for depth-1 experts)
             
         Returns:
             RegionDescriptor for the selected region, or None
         """
         self.fit(X, y, residuals=residuals)
         return self.select_refinement_region(
-            existing_regions=existing_regions,
+            sibling_regions=sibling_regions,
+            overlap_threshold=overlap_threshold,
             wavelet_threshold=wavelet_threshold,
-            spawn_epoch=spawn_epoch
+            spawn_epoch=spawn_epoch,
+            depth=depth,
+            parent_idx=parent_idx
         )

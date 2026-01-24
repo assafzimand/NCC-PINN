@@ -3,6 +3,7 @@
 Used by the adaptive region detector to weight wavelet norms by error.
 """
 
+import numpy as np
 import torch
 import torch.nn as nn
 from typing import Dict
@@ -90,7 +91,7 @@ def _schrodinger_residual(output: torch.Tensor, x: torch.Tensor, t: torch.Tensor
 
 
 def _burgers1d_residual(output: torch.Tensor, x: torch.Tensor, t: torch.Tensor, nu: float) -> torch.Tensor:
-    """Burgers 1D: u_t + u*u_x - nu*u_xx = 0"""
+    """Burgers 1D: u_t + u*u_x - (nu/π)*u_xx = 0"""
     u = output
     
     # First derivatives
@@ -103,8 +104,9 @@ def _burgers1d_residual(output: torch.Tensor, x: torch.Tensor, t: torch.Tensor, 
     u_xx = torch.autograd.grad(u_x, x, grad_outputs=torch.ones_like(u_x),
                                create_graph=False, retain_graph=False)[0]
     
-    # PDE: u_t + u*u_x - nu*u_xx = 0
-    residual = u_t + u * u_x - nu * u_xx
+    # PDE: u_t + u*u_x - (nu/π)*u_xx = 0 (matches loss function)
+    visc = nu / np.pi
+    residual = u_t + u * u_x - visc * u_xx
     
     return torch.abs(residual).squeeze()
 
