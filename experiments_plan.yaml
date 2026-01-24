@@ -95,7 +95,7 @@ base_config:
     overlap_threshold: 0.5            # Accept region if >50% outside siblings (NEW)
     min_samples_per_region: 20       # Min points to search in a subdomain (NEW)
     max_children_coverage: 0.9       # Skip parent if children cover >90% of it (NEW)
-    spawn_every_epochs: 100           # Check for spawning every N epochs (quick test value)
+    spawn_every_epochs: 500           # Check for spawning every N epochs (quick test value)
     expert_architectures: null        # null = same as base, or list of architectures
     freeze_mode: none                 # "none" | "previous" | "base_only"
     blending_mode: hard               # "hard" | "soft"
