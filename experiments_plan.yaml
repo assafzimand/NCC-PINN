@@ -1,9 +1,9 @@
 # Experiment plan configuration
-experiment_name: "burgers1s_tests"
+experiment_name: "schrodinger_tests"
 
 # Base configuration (will be used for all experiments)
 base_config:
-  problem: burgers1d
+  problem: schrodinger
   activation: tanh
   epochs: 10000
   batch_size: 512
@@ -110,8 +110,8 @@ base_config:
 # Experiments to run
 experiments:  
   - name: "adaptive_convergence_test"
-    problem: burgers1d
-    architecture: [2, 10, 10, 10, 10, 10, 1]
+    problem: schrodinger
+    architecture: [2, 10, 10, 10, 10, 10, 2]
 
   # - name: "5lyr_40k_Wn_flat"
   #   problem: burgers2d  
