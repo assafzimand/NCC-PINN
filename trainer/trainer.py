@@ -163,9 +163,19 @@ def train(
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
     
     if is_adaptive:
-        print(f"\nAdaptive PINN enabled:")
+        # Extract hierarchical tree parameters
+        max_tree_depth = adaptive_cfg.get('max_depth', 5)
+        overlap_threshold = adaptive_cfg.get('overlap_threshold', 0.5)
+        min_samples_per_region = adaptive_cfg.get('min_samples_per_region', 50)
+        max_children_coverage = adaptive_cfg.get('max_children_coverage', 0.9)
+        
+        print(f"\nAdaptive PINN enabled (Hierarchical Expert Tree):")
         print(f"  Max experts: {max_experts}")
+        print(f"  Max depth: {max_tree_depth}")
         print(f"  Spawn every: {spawn_every} epochs")
+        print(f"  Overlap threshold: {overlap_threshold}")
+        print(f"  Min samples per region: {min_samples_per_region}")
+        print(f"  Max children coverage: {max_children_coverage}")
         print(f"  Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
         print(f"  Freeze mode: {adaptive_cfg.get('freeze_mode', 'none')}")
         
@@ -186,7 +196,6 @@ def train(
             n_estimators=adaptive_cfg.get('rf_n_estimators', 100),
             max_depth=adaptive_cfg.get('rf_max_depth', 10),
             min_samples_leaf=adaptive_cfg.get('rf_min_samples_leaf', 50),
-            regression_type=adaptive_cfg.get('rf_regression_type', 'constant'),
             domain_bounds=domain_bounds
         )
         
@@ -407,10 +416,12 @@ def train(
             if freq_metrics is not None:
                 metrics['freq_history'].append((epoch, freq_metrics))
 
-        # Adaptive PINN: Check for expert spawning
+        # Adaptive PINN: Hierarchical expert spawning
         if is_adaptive and epoch % spawn_every == 0 and model.num_experts < max_experts:
             print(f"\n{'='*60}")
-            print(f"Adaptive PINN: Checking for refinement region at epoch {epoch}")
+            print(f"Adaptive PINN: Hierarchical search at epoch {epoch}")
+            print(f"  Current experts: {model.num_experts}/{max_experts}")
+            print(f"  Highest depth populated: {model.get_highest_depth()}")
             print(f"{'='*60}")
             
             # Get predictions on eval data for region detection
@@ -420,7 +431,6 @@ def train(
                 u_pred = model(eval_inputs)
             
             # Compute PDE residuals for residual-weighted wavelet norms
-            # This prioritizes regions that are both non-smooth AND have high error
             problem = cfg.get('problem', 'schrodinger')
             pde_residuals = compute_pde_residuals(
                 model=model,
@@ -431,58 +441,206 @@ def train(
             )
             
             # Convert to numpy for RF
-            X_eval = eval_inputs.cpu().numpy()
-            y_eval = u_pred.cpu().numpy()
-            residuals_np = pde_residuals.detach().cpu().numpy()
+            X_eval_full = eval_inputs.cpu().numpy()
+            y_eval_full = u_pred.cpu().numpy()
+            residuals_full = pde_residuals.detach().cpu().numpy()
             
-            # Detect refinement region (residual-weighted)
-            region = region_detector.detect(
-                X=X_eval,
-                y=y_eval,
-                residuals=residuals_np,
-                existing_regions=model.regions,
-                wavelet_threshold=wavelet_threshold,
-                spawn_epoch=epoch
-            )
+            # Determine current max depth to search
+            # Search up to: highest populated depth + 1, but not beyond max_tree_depth
+            highest_depth = model.get_highest_depth()
+            current_max_search_depth = min(max_tree_depth, highest_depth + 1)
+            # If no experts yet, search depth 1
+            if highest_depth == 0:
+                current_max_search_depth = 1
             
-            if region is not None:
-                # Spawn new expert
-                expert_idx = model.spawn_expert(region)
+            experts_spawned_this_step = 0
+            
+            # Search all depths (one expert per depth per step max, but search each parent individually)
+            for depth in range(1, current_max_search_depth + 1):
+                if model.num_experts >= max_experts:
+                    print(f"  Max experts reached, stopping search")
+                    break
                 
-                if expert_idx >= 0:
-                    # Recreate optimizer to include new expert parameters
-                    if current_optimizer_name == 'Adam':
-                        optimizer = _create_adam_optimizer(model, cfg)
-                    else:
-                        optimizer = _create_lbfgs_optimizer(model, cfg)
+                print(f"\n  Searching depth {depth}...")
+                found_at_depth = False
+                
+                if depth == 1:
+                    # ====== DEPTH 1: Search entire domain ======
+                    # Children of base model (parent_idx = -1)
+                    parent_idx = -1
                     
-                    # Apply freezing strategy
-                    model.freeze_models()
+                    # Check if base model is already mostly covered by depth-1 children
+                    coverage = model.compute_children_coverage(eval_inputs, parent_idx=-1, before_epoch=epoch)
+                    if coverage > max_children_coverage:
+                        print(f"    Base model already {coverage*100:.1f}% covered by depth-1 children, skipping")
+                        continue
                     
-                    # Plot expert regions
-                    problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
-                    plot_expert_regions(
-                        regions=model.regions,
-                        domain_bounds=domain_bounds,
-                        output_path=adaptive_plots_dir / f"expert_regions_epoch_{epoch}.png",
-                        problem_type=problem_type,
-                        title=f"Expert Regions at Epoch {epoch}",
-                        ground_truth=gt_grid,
-                        grid_x=gt_x,
-                        grid_t=gt_t
+                    X_search = X_eval_full
+                    y_search = y_eval_full
+                    res_search = residuals_full
+                    
+                    print(f"    Search domain: entire domain ({len(X_search)} points, {coverage*100:.1f}% covered)")
+                    
+                    # Check if enough samples
+                    if len(X_search) < min_samples_per_region:
+                        print(f"    Too few points ({len(X_search)} < {min_samples_per_region}), skipping")
+                        continue
+                    
+                    # Sibling check: other children of base model (same parent_idx=-1)
+                    sibling_regions = model.get_children_of_parent(parent_idx=-1, before_epoch=epoch)
+                    print(f"    Siblings (children of base): {len(sibling_regions)}")
+                    
+                    # Detect refinement region
+                    region = region_detector.detect(
+                        X=X_search,
+                        y=y_search,
+                        residuals=res_search,
+                        sibling_regions=sibling_regions,
+                        overlap_threshold=overlap_threshold,
+                        wavelet_threshold=wavelet_threshold,
+                        spawn_epoch=epoch,
+                        depth=depth,
+                        parent_idx=parent_idx
                     )
                     
-                    # Store expert spawn history
-                    if 'expert_spawns' not in metrics:
-                        metrics['expert_spawns'] = []
-                    metrics['expert_spawns'].append({
-                        'epoch': epoch,
-                        'expert_idx': expert_idx,
-                        'region': region.to_dict(),
-                        'num_experts': model.num_experts
-                    })
+                    if region is not None:
+                        # Spawn new expert
+                        expert_idx = model.spawn_expert(region)
+                        
+                        if expert_idx >= 0:
+                            experts_spawned_this_step += 1
+                            found_at_depth = True
+                            
+                            # Store expert spawn history
+                            if 'expert_spawns' not in metrics:
+                                metrics['expert_spawns'] = []
+                            metrics['expert_spawns'].append({
+                                'epoch': epoch,
+                                'expert_idx': expert_idx,
+                                'region': region.to_dict(),
+                                'num_experts': model.num_experts,
+                                'depth': depth,
+                                'parent_idx': parent_idx
+                            })
+                    else:
+                        print(f"    No suitable region found at depth {depth}")
+                
+                else:
+                    # ====== DEPTH > 1: Search inside each parent region individually ======
+                    # Get all trained parent regions (depth - 1) that existed before this epoch
+                    parent_regions = model.get_regions_at_depth(depth - 1, before_epoch=epoch)
+                    
+                    if not parent_regions:
+                        print(f"    No trained depth-{depth-1} regions yet (spawned before epoch {epoch}), skipping")
+                        continue
+                    
+                    print(f"    Searching inside {len(parent_regions)} parent region(s) from depth {depth-1}...")
+                    
+                    # Try each parent region as a separate search domain
+                    for parent_region in parent_regions:
+                        if model.num_experts >= max_experts:
+                            break
+                        if found_at_depth:
+                            # Only one expert per depth per step
+                            break
+                        
+                        # Find the index of this parent region
+                        parent_idx = model.regions.index(parent_region)
+                        
+                        # Check if parent is already mostly covered by children
+                        # If so, skip - no room for new children
+                        coverage = model.compute_children_coverage(eval_inputs, parent_idx, before_epoch=epoch)
+                        if coverage > max_children_coverage:
+                            print(f"      Parent E{parent_idx+1} already {coverage*100:.1f}% covered by children, skipping")
+                            continue
+                        
+                        # Filter data to points inside this parent region
+                        parent_mask = model.get_mask_for_expert(eval_inputs, parent_idx)
+                        parent_mask_np = parent_mask.cpu().numpy()
+                        
+                        if not parent_mask_np.any():
+                            continue
+                        
+                        X_search = X_eval_full[parent_mask_np]
+                        y_search = y_eval_full[parent_mask_np]
+                        res_search = residuals_full[parent_mask_np]
+                        
+                        print(f"      Parent E{parent_idx+1} (depth {depth-1}): {len(X_search)} points, {coverage*100:.1f}% covered")
+                        
+                        # Check if enough samples
+                        if len(X_search) < min_samples_per_region:
+                            print(f"        Too few points, skipping")
+                            continue
+                        
+                        # Sibling check: only children of THIS SAME PARENT
+                        sibling_regions = model.get_children_of_parent(parent_idx=parent_idx, before_epoch=epoch)
+                        print(f"        Siblings (children of E{parent_idx+1}): {len(sibling_regions)}")
+                        
+                        # Detect refinement region within this parent
+                        region = region_detector.detect(
+                            X=X_search,
+                            y=y_search,
+                            residuals=res_search,
+                            sibling_regions=sibling_regions,
+                            overlap_threshold=overlap_threshold,
+                            wavelet_threshold=wavelet_threshold,
+                            spawn_epoch=epoch,
+                            depth=depth,
+                            parent_idx=parent_idx
+                        )
+                        
+                        if region is not None:
+                            # Spawn new expert
+                            expert_idx = model.spawn_expert(region)
+                            
+                            if expert_idx >= 0:
+                                experts_spawned_this_step += 1
+                                found_at_depth = True
+                                
+                                # Store expert spawn history
+                                if 'expert_spawns' not in metrics:
+                                    metrics['expert_spawns'] = []
+                                metrics['expert_spawns'].append({
+                                    'epoch': epoch,
+                                    'expert_idx': expert_idx,
+                                    'region': region.to_dict(),
+                                    'num_experts': model.num_experts,
+                                    'depth': depth,
+                                    'parent_idx': parent_idx
+                                })
+                        else:
+                            print(f"        No suitable region found in parent E{parent_idx+1}")
+                    
+                    if not found_at_depth:
+                        print(f"    No suitable region found at depth {depth}")
+            
+            # If any experts were spawned, update optimizer and plot
+            if experts_spawned_this_step > 0:
+                print(f"\n  Spawned {experts_spawned_this_step} expert(s) this step")
+                
+                # Recreate optimizer to include new expert parameters
+                if current_optimizer_name == 'Adam':
+                    optimizer = _create_adam_optimizer(model, cfg)
+                else:
+                    optimizer = _create_lbfgs_optimizer(model, cfg)
+                
+                # Apply freezing strategy
+                model.freeze_models()
+                
+                # Plot expert regions with depth info
+                problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
+                plot_expert_regions(
+                    regions=model.regions,
+                    domain_bounds=domain_bounds,
+                    output_path=adaptive_plots_dir / f"expert_regions_epoch_{epoch}.png",
+                    problem_type=problem_type,
+                    title=f"Expert Regions at Epoch {epoch} ({model.num_experts} experts)",
+                    ground_truth=gt_grid,
+                    grid_x=gt_x,
+                    grid_t=gt_t
+                )
             else:
-                print(f"  No suitable refinement region found")
+                print(f"\n  No experts spawned this step")
             
             model.train()
 

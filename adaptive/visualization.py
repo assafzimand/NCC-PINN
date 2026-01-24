@@ -95,7 +95,24 @@ def prepare_ground_truth_grid(
         return None, None, None
 
 
-# Color palette for expert regions
+# Color palette for expert regions by depth
+# Depth 1: Warm colors (reds/oranges)
+# Depth 2: Cool colors (blues/greens)
+# Depth 3+: Mixed colors (purples/teals)
+DEPTH_COLOR_PALETTES = {
+    1: ['#e74c3c', '#c0392b', '#ff6b6b', '#ff8c8c', '#f39c12', '#e67e22'],  # Warm reds/oranges
+    2: ['#3498db', '#2980b9', '#5dade2', '#85c1e9', '#2ecc71', '#27ae60'],  # Cool blues/greens
+    3: ['#9b59b6', '#8e44ad', '#a569bd', '#bb8fce', '#1abc9c', '#16a085'],  # Purples/teals
+    4: ['#e91e63', '#c2185b', '#f06292', '#f48fb1', '#00bcd4', '#0097a7'],  # Pinks/cyans
+    5: ['#ff5722', '#e64a19', '#ff7043', '#ff8a65', '#607d8b', '#455a64'],  # Deep orange/grey
+}
+
+def _get_color_for_depth(depth: int, index_at_depth: int) -> str:
+    """Get color for an expert based on its depth and index within that depth."""
+    palette = DEPTH_COLOR_PALETTES.get(depth, DEPTH_COLOR_PALETTES[5])
+    return palette[index_at_depth % len(palette)]
+
+# Legacy color palette (for backwards compatibility)
 EXPERT_COLORS = [
     '#e74c3c',  # Red
     '#3498db',  # Blue
@@ -154,7 +171,7 @@ def _plot_expert_regions_2d(
     grid_x: Optional[np.ndarray] = None,
     grid_t: Optional[np.ndarray] = None
 ) -> None:
-    """Plot 2D domain (x vs t) with expert regions and optional ground truth background."""
+    """Plot 2D domain (x vs t) with expert regions colored by depth."""
     fig, ax = plt.subplots(figsize=(10, 8))
     
     # Domain bounds
@@ -184,26 +201,16 @@ def _plot_expert_regions_2d(
         )
         ax.add_patch(domain_rect)
     
-    # Draw expert regions (without center labels - only in legend)
-    for i, region in enumerate(regions):
-        color = EXPERT_COLORS[i % len(EXPERT_COLORS)]
-        
+    # Draw expert regions as simple black outlines (no fill, no legend)
+    for region in regions:
         rx_min, rt_min = region.bounds_lower
         rx_max, rt_max = region.bounds_upper
         
-        # Filled rectangle with transparency
-        expert_rect = patches.Rectangle(
-            (rx_min, rt_min), rx_max - rx_min, rt_max - rt_min,
-            linewidth=2, edgecolor=color, facecolor=color,
-            alpha=0.25, zorder=2
-        )
-        ax.add_patch(expert_rect)
-        
-        # Bold outline with label (only this goes in legend)
+        # Simple black outline, no fill
         outline_rect = patches.Rectangle(
             (rx_min, rt_min), rx_max - rx_min, rt_max - rt_min,
-            linewidth=3, edgecolor=color, facecolor='none',
-            label=f'Expert {i+1} (epoch {region.spawn_epoch})', zorder=3
+            linewidth=1.5, edgecolor='black', facecolor='none',
+            zorder=10
         )
         ax.add_patch(outline_rect)
     
@@ -214,10 +221,13 @@ def _plot_expert_regions_2d(
     ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
     ax.set_ylim(t_min - padding * t_range, t_max + padding * t_range)
     
+    # Add depth summary to title
+    max_depth = max((getattr(r, 'depth', 1) for r in regions), default=0) if regions else 0
+    depth_info = f", max depth={max_depth}" if max_depth > 0 else ""
+    
     ax.set_xlabel('x', fontsize=12)
     ax.set_ylabel('t', fontsize=12)
-    ax.set_title(title or f'Expert Regions ({len(regions)} experts)', fontsize=14)
-    ax.legend(loc='upper right', fontsize=10)
+    ax.set_title(title or f'Expert Regions ({len(regions)} experts{depth_info})', fontsize=14)
     ax.set_aspect('auto')
     ax.grid(True, alpha=0.3)
     
@@ -233,7 +243,7 @@ def _plot_expert_regions_3d(
     output_path: Path,
     title: Optional[str] = None
 ) -> None:
-    """Plot 3D domain (x, y, t) with expert regions as wireframe boxes."""
+    """Plot 3D domain (x, y, t) with expert regions colored by depth."""
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')
     
@@ -245,19 +255,19 @@ def _plot_expert_regions_3d(
     _draw_box_3d(ax, [x_min, y_min, t_min], [x_max, y_max, t_max],
                  color='black', alpha=0.3, linewidth=1, label='Domain')
     
-    # Draw expert regions
-    for i, region in enumerate(regions):
-        color = EXPERT_COLORS[i % len(EXPERT_COLORS)]
-        
+    # Draw expert regions as simple black wireframes (no color, no legend)
+    for region in regions:
         _draw_box_3d(ax, region.bounds_lower, region.bounds_upper,
-                     color=color, alpha=0.2, linewidth=2,
-                     label=f'Expert {i+1} (epoch {region.spawn_epoch})')
+                     color='black', alpha=1.0, linewidth=1.5, label=None)
+    
+    # Add depth summary to title
+    max_depth = max((getattr(r, 'depth', 1) for r in regions), default=0) if regions else 0
+    depth_info = f", max depth={max_depth}" if max_depth > 0 else ""
     
     ax.set_xlabel('x', fontsize=12)
     ax.set_ylabel('y', fontsize=12)
     ax.set_zlabel('t', fontsize=12)
-    ax.set_title(title or f'Expert Regions ({len(regions)} experts)', fontsize=14)
-    ax.legend(loc='upper left', fontsize=10)
+    ax.set_title(title or f'Expert Regions ({len(regions)} experts{depth_info})', fontsize=14)
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
@@ -374,24 +384,48 @@ def plot_expert_regions_comparison(
                 )
                 ax.add_patch(domain_rect)
             
-            # Draw expert regions (no center labels)
+            # Draw expert regions colored by depth, with recency-based transparency
+            depth_counts = {}
+            
+            # Compute recency for this experiment's regions
+            if regions:
+                spawn_epochs = [r.spawn_epoch for r in regions]
+                min_epoch = min(spawn_epochs)
+                max_epoch = max(spawn_epochs)
+                epoch_range = max_epoch - min_epoch if max_epoch > min_epoch else 1
+            
             for i, region in enumerate(regions):
-                color = EXPERT_COLORS[i % len(EXPERT_COLORS)]
+                depth = getattr(region, 'depth', 1)
+                
+                # Get index within this depth
+                if depth not in depth_counts:
+                    depth_counts[depth] = 0
+                index_at_depth = depth_counts[depth]
+                depth_counts[depth] += 1
+                
+                color = _get_color_for_depth(depth, index_at_depth)
                 
                 rx_min, rt_min = region.bounds_lower
                 rx_max, rt_max = region.bounds_upper
                 
+                # Recency factor: older = more transparent
+                recency = (region.spawn_epoch - min_epoch) / epoch_range if epoch_range > 0 else 1.0
+                fill_alpha = 0.1 + 0.2 * recency
+                outline_alpha = 0.4 + 0.6 * recency
+                outline_linewidth = 1.0 + 2.0 * recency
+                
                 expert_rect = patches.Rectangle(
                     (rx_min, rt_min), rx_max - rx_min, rt_max - rt_min,
                     linewidth=2, edgecolor=color, facecolor=color,
-                    alpha=0.25, zorder=2
+                    alpha=fill_alpha, zorder=2 + depth
                 )
                 ax.add_patch(expert_rect)
                 
                 outline_rect = patches.Rectangle(
                     (rx_min, rt_min), rx_max - rx_min, rt_max - rt_min,
-                    linewidth=2, edgecolor=color, facecolor='none',
-                    label=f'E{i+1} (ep{region.spawn_epoch})', zorder=3
+                    linewidth=outline_linewidth, edgecolor=color, facecolor='none',
+                    alpha=outline_alpha,
+                    label=f'E{i+1} (d={depth})', zorder=10 + depth
                 )
                 ax.add_patch(outline_rect)
             
@@ -432,12 +466,34 @@ def plot_expert_regions_comparison(
             _draw_box_3d(ax, domain_bounds['lower'], domain_bounds['upper'],
                          color='black', alpha=0.1, linewidth=1)
             
-            # Draw expert regions with labels for legend
+            # Draw expert regions colored by depth, with recency-based transparency
+            depth_counts = {}
+            
+            # Compute recency for this experiment's regions
+            if regions:
+                spawn_epochs = [r.spawn_epoch for r in regions]
+                min_epoch = min(spawn_epochs)
+                max_epoch = max(spawn_epochs)
+                epoch_range = max_epoch - min_epoch if max_epoch > min_epoch else 1
+            
             for i, region in enumerate(regions):
-                color = EXPERT_COLORS[i % len(EXPERT_COLORS)]
+                depth = getattr(region, 'depth', 1)
+                
+                if depth not in depth_counts:
+                    depth_counts[depth] = 0
+                index_at_depth = depth_counts[depth]
+                depth_counts[depth] += 1
+                
+                color = _get_color_for_depth(depth, index_at_depth)
+                
+                # Recency factor: older = more transparent
+                recency = (region.spawn_epoch - min_epoch) / epoch_range if epoch_range > 0 else 1.0
+                alpha = 0.1 + 0.2 * recency
+                linewidth = 1.0 + 2.0 * recency
+                
                 _draw_box_3d(ax, region.bounds_lower, region.bounds_upper,
-                             color=color, alpha=0.3, linewidth=2,
-                             label=f'E{i+1} (ep{region.spawn_epoch})')
+                             color=color, alpha=alpha, linewidth=linewidth,
+                             label=f'E{i+1} (d={depth})')
             
             ax.set_xlabel('x', fontsize=9)
             ax.set_ylabel('y', fontsize=9)

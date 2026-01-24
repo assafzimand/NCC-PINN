@@ -10,7 +10,7 @@ The composed solution is:
 
 import torch
 import torch.nn as nn
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union, Tuple
 from torch.utils.hooks import RemovableHandle
 from pathlib import Path
 
@@ -56,6 +56,7 @@ class AdaptiveExpertPINN(nn.Module):
         
         # Extract adaptive parameters
         self.max_experts = adaptive_config.get('max_experts', 5)
+        self.max_depth = adaptive_config.get('max_depth', 5)  # Maximum depth in expert tree
         self.blending_mode = adaptive_config.get('blending_mode', 'hard')
         self.blending_sigma = adaptive_config.get('blending_sigma', 0.1)
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
@@ -79,6 +80,172 @@ class AdaptiveExpertPINN(nn.Module):
         """Number of spawned experts (not counting base model)."""
         return len(self.experts)
     
+    def get_regions_at_depth(self, depth: int, before_epoch: int = None) -> List[RegionDescriptor]:
+        """
+        Get all regions at a specific depth level.
+        
+        Args:
+            depth: Depth level (1 = children of base model)
+            before_epoch: If provided, only include regions spawned before this epoch
+                         (useful for excluding regions just spawned in current step)
+            
+        Returns:
+            List of RegionDescriptors at that depth
+        """
+        result = []
+        for r in self.regions:
+            if r.depth == depth:
+                # Filter by spawn epoch if specified
+                if before_epoch is not None and r.spawn_epoch >= before_epoch:
+                    continue
+                result.append(r)
+        return result
+    
+    def get_experts_at_depth(self, depth: int) -> List[tuple]:
+        """
+        Get all (expert, region) pairs at a specific depth level.
+        
+        Args:
+            depth: Depth level (1 = children of base model)
+            
+        Returns:
+            List of (expert, region) tuples at that depth
+        """
+        result = []
+        for expert, region in zip(self.experts, self.regions):
+            if region.depth == depth:
+                result.append((expert, region))
+        return result
+    
+    def get_highest_depth(self) -> int:
+        """
+        Get the highest depth level with at least one expert.
+        
+        Returns:
+            Maximum depth (0 if no experts spawned yet)
+        """
+        if not self.regions:
+            return 0
+        return max(r.depth for r in self.regions)
+    
+    def get_union_mask_at_depth(self, inputs: torch.Tensor, depth: int, before_epoch: int = None) -> torch.Tensor:
+        """
+        Get a boolean mask for points inside ANY region at the given depth.
+        
+        Args:
+            inputs: (N, n_dims) tensor of coordinates
+            depth: Depth level to check
+            before_epoch: If provided, only include regions spawned before this epoch
+                         (useful for excluding regions just spawned in current step)
+            
+        Returns:
+            (N,) boolean tensor - True if point is inside any depth-d region
+        """
+        N = inputs.shape[0]
+        union_mask = torch.zeros(N, dtype=torch.bool, device=inputs.device)
+        
+        for region, indicator in zip(self.regions, self.indicators):
+            if region.depth == depth:
+                # Filter by spawn epoch if specified
+                if before_epoch is not None and region.spawn_epoch >= before_epoch:
+                    continue
+                # Get indicator mask (0.0 or 1.0 for hard indicators)
+                mask = indicator(inputs)  # (N, 1)
+                inside = mask.squeeze().bool()  # (N,)
+                union_mask = union_mask | inside
+        
+        return union_mask
+    
+    def count_experts_at_depth(self, depth: int) -> int:
+        """Count number of experts at a specific depth."""
+        return sum(1 for r in self.regions if r.depth == depth)
+    
+    def get_children_of_parent(self, parent_idx: int, before_epoch: int = None) -> List[RegionDescriptor]:
+        """
+        Get all child regions of a specific parent.
+        
+        Args:
+            parent_idx: Index of the parent expert (-1 for base model)
+            before_epoch: If provided, only include regions spawned before this epoch
+            
+        Returns:
+            List of RegionDescriptors that are children of the specified parent
+        """
+        result = []
+        for r in self.regions:
+            if r.parent_idx == parent_idx:
+                if before_epoch is not None and r.spawn_epoch >= before_epoch:
+                    continue
+                result.append(r)
+        return result
+    
+    def get_mask_for_expert(self, inputs: torch.Tensor, expert_idx: int) -> torch.Tensor:
+        """
+        Get boolean mask for points inside a specific expert's region.
+        
+        Args:
+            inputs: (N, n_dims) tensor of coordinates
+            expert_idx: Index of the expert
+            
+        Returns:
+            (N,) boolean tensor - True if point is inside the expert's region
+        """
+        if expert_idx < 0 or expert_idx >= len(self.indicators):
+            # Return all True for base model (idx=-1) or invalid index
+            return torch.ones(inputs.shape[0], dtype=torch.bool, device=inputs.device)
+        
+        indicator = self.indicators[expert_idx]
+        mask = indicator(inputs)  # (N, 1)
+        return mask.squeeze().bool()  # (N,)
+    
+    def compute_children_coverage(
+        self, 
+        inputs: torch.Tensor, 
+        parent_idx: int, 
+        before_epoch: int = None
+    ) -> float:
+        """
+        Compute what fraction of a parent's domain is covered by its children.
+        
+        Uses point sampling to estimate coverage.
+        
+        Args:
+            inputs: (N, n_dims) tensor of coordinates (eval points)
+            parent_idx: Index of the parent expert (-1 for base model)
+            before_epoch: If provided, only include children spawned before this epoch
+            
+        Returns:
+            Coverage fraction (0.0 to 1.0)
+        """
+        # Get parent mask
+        if parent_idx == -1:
+            # Base model: entire domain
+            parent_mask = torch.ones(inputs.shape[0], dtype=torch.bool, device=inputs.device)
+        else:
+            parent_mask = self.get_mask_for_expert(inputs, parent_idx)
+        
+        parent_count = parent_mask.sum().item()
+        if parent_count == 0:
+            return 0.0
+        
+        # Get union of children masks
+        children = self.get_children_of_parent(parent_idx, before_epoch=before_epoch)
+        if not children:
+            return 0.0
+        
+        # Find which points in parent are covered by children
+        children_union = torch.zeros_like(parent_mask)
+        for child_region in children:
+            # Find child index
+            child_idx = self.regions.index(child_region)
+            child_mask = self.get_mask_for_expert(inputs, child_idx)
+            children_union = children_union | child_mask
+        
+        # Count points that are both in parent AND covered by children
+        covered = (parent_mask & children_union).sum().item()
+        
+        return covered / parent_count
+    
     def get_expert_architecture(self, expert_idx: int) -> List[int]:
         """Get architecture for a new expert."""
         if self.expert_architectures is None:
@@ -98,7 +265,7 @@ class AdaptiveExpertPINN(nn.Module):
         Spawn a new expert PINN for the given region.
         
         Args:
-            region: RegionDescriptor defining the expert's domain
+            region: RegionDescriptor defining the expert's domain (includes depth)
             
         Returns:
             Index of the new expert
@@ -125,7 +292,8 @@ class AdaptiveExpertPINN(nn.Module):
         indicator = create_indicator(region, self.blending_mode, self.blending_sigma)
         self.indicators.append(indicator)
         
-        print(f"  Spawned Expert {expert_idx + 1}:")
+        parent_info = f"Base Model" if region.parent_idx == -1 else f"E{region.parent_idx + 1}"
+        print(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
         print(f"    Architecture: {architecture}")
         print(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
         print(f"    Residual-weighted wavelet norm: {region.wavelet_norm:.6f}")
