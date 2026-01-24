@@ -41,8 +41,9 @@ def calculate_dataset_sizes(config: Dict) -> Dict[str, int]:
     # Calculate n_residual_train from: ratio = S^(1/d) / V^(1/d)
     # Solving: S = (ratio * V^(1/d))^d
     ratio = sampling['sample_volume_ratio']
-    n_residual_train = int(round((ratio * (V ** (1/d))) ** d))
-    
+    # NOTE: We set the number of residual training samples to 20000 for faster testing
+    # n_residual_train = int(round((ratio * (V ** (1/d))) ** d))
+    n_residual_train = 20000
     # Calculate other sizes from ratios
     sizes = {
         'n_residual_train': n_residual_train,
