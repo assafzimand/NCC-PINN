@@ -58,9 +58,93 @@ if (-not $lastFolder) {
 
 $remotePath = "$ExperimentsRoot/$lastFolder"
 
-Write-Host "Latest folder detected:" -ForegroundColor Cyan
+Write-Host "Latest experiment folder detected:" -ForegroundColor Cyan
 Write-Host "  $lastFolder"
 Write-Host ""
+
+# Check if the folder only contains experiments_plan.yaml (failed experiment)
+Write-Host "Checking folder contents..." -ForegroundColor Cyan
+try {
+    $folderContents = (& ssh -i $PemPath ubuntu@$Ec2Ip "ls -1 $remotePath").Trim()
+    $fileCount = ($folderContents -split "`n").Count
+    $onlyPlanFile = ($fileCount -eq 1) -and ($folderContents -match "experiments_plan.yaml")
+} catch {
+    $onlyPlanFile = $false
+}
+
+if ($onlyPlanFile) {
+    Write-Host "  ⚠ Experiment folder only contains experiments_plan.yaml!" -ForegroundColor Yellow
+    Write-Host "  This usually means training failed before completion." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Individual model outputs are saved directly in outputs/ folder." -ForegroundColor Cyan
+    Write-Host ""
+    
+    # Ask how many models to download
+    $numModels = Read-Host "How many models were in this experiment? (Enter number to download from outputs/)"
+    
+    if ($numModels -match "^\d+$" -and [int]$numModels -gt 0) {
+        $numModels = [int]$numModels
+        
+        # Get the last N folders from outputs/ (excluding 'experiments' folder)
+        Write-Host ""
+        Write-Host "Finding last $numModels model folders from outputs/..." -ForegroundColor Cyan
+        try {
+            $modelFolders = (& ssh -i $PemPath ubuntu@$Ec2Ip "cd $RemoteRoot && ls -1td */ | grep -v 'experiments/' | head -$numModels").Trim()
+            $modelFolderList = $modelFolders -split "`n" | Where-Object { $_ }
+            
+            if ($modelFolderList.Count -eq 0) {
+                Write-Error "No model folders found in outputs/"
+                exit 1
+            }
+            
+            Write-Host "  Found folders:" -ForegroundColor Cyan
+            foreach ($folder in $modelFolderList) {
+                Write-Host "    - $folder" -ForegroundColor Gray
+            }
+            Write-Host ""
+            
+            # Ensure destination directory exists locally
+            New-Item -ItemType Directory -Force -Path $LocalTarget | Out-Null
+            
+            # Download each model folder
+            foreach ($folder in $modelFolderList) {
+                $folder = $folder.TrimEnd('/')
+                $modelRemotePath = "$RemoteRoot/$folder"
+                $scpCmd = "scp -i `"$PemPath`" -r ubuntu@${Ec2Ip}:`"$modelRemotePath`" `"$LocalTarget`""
+                
+                Write-Host "Downloading: $folder" -ForegroundColor Yellow
+                try {
+                    Invoke-Expression $scpCmd
+                    Write-Host "  Done." -ForegroundColor Green
+                } catch {
+                    Write-Host "  Failed: $_" -ForegroundColor Red
+                }
+            }
+            
+            # Also download the experiments_plan.yaml for reference
+            Write-Host ""
+            Write-Host "Downloading experiments_plan.yaml..." -ForegroundColor Yellow
+            $planScpCmd = "scp -i `"$PemPath`" ubuntu@${Ec2Ip}:`"$remotePath/experiments_plan.yaml`" `"$LocalTarget`""
+            try {
+                Invoke-Expression $planScpCmd
+                Write-Host "  Done." -ForegroundColor Green
+            } catch {
+                Write-Host "  Failed (non-critical): $_" -ForegroundColor Gray
+            }
+            
+            Write-Host ""
+            Write-Host "Download complete." -ForegroundColor Green
+            exit 0
+            
+        } catch {
+            Write-Error "Failed to list model folders: $_"
+            exit 1
+        }
+    } else {
+        Write-Host "Invalid input. Proceeding with normal download..." -ForegroundColor Gray
+    }
+}
+
 Write-Host "Remote path:" -ForegroundColor Cyan
 Write-Host "  ubuntu@${Ec2Ip}:${remotePath}"
 Write-Host "Local destination:" -ForegroundColor Cyan
