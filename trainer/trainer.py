@@ -298,11 +298,18 @@ def train(
             metrics['rnc_penalty_epochs'].append(epoch)
             
             # Store per-layer total penalties (from last batch)
-            for key, value in last_rnc_metrics.items():
-                if '_penalty' in key and key != 'rnc_penalty':
-                    if key not in metrics['rnc_layer_penalties']:
-                        metrics['rnc_layer_penalties'][key] = []
-                    metrics['rnc_layer_penalties'][key].append(value)
+            # When penalty becomes active, backfill zeros for previous epochs
+            if rnc_penalty_active and last_rnc_metrics:
+                for key, value in last_rnc_metrics.items():
+                    if '_penalty' in key and key != 'rnc_penalty':
+                        if key not in metrics['rnc_layer_penalties']:
+                            # Backfill zeros for all previous epochs
+                            metrics['rnc_layer_penalties'][key] = [0.0] * (epoch - 1)
+                        metrics['rnc_layer_penalties'][key].append(value)
+            else:
+                # Store zeros for existing layer keys (before penalty is active)
+                for key in metrics['rnc_layer_penalties']:
+                    metrics['rnc_layer_penalties'][key].append(0.0)
         
         # Check for optimizer switch
         if epoch == switch_epoch and switch_at_fraction < 1.0 and current_optimizer_name == 'Adam':
