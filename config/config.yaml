@@ -20,7 +20,7 @@ adaptive_pinn:
   rf_min_samples_leaf: 10
   rf_n_estimators: 100
   spawn_every_epochs: 1000
-  wavelet_threshold: null
+  wavelet_threshold: 0.1
 architecture:
 - 2
 - 70

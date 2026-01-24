@@ -455,14 +455,13 @@ def train(
             
             experts_spawned_this_step = 0
             
-            # Search all depths (one expert per depth per step max, but search each parent individually)
+            # Search all depths (one expert per parent per step)
             for depth in range(1, current_max_search_depth + 1):
                 if model.num_experts >= max_experts:
                     print(f"  Max experts reached, stopping search")
                     break
                 
                 print(f"\n  Searching depth {depth}...")
-                found_at_depth = False
                 
                 if depth == 1:
                     # ====== DEPTH 1: Search entire domain ======
@@ -509,7 +508,6 @@ def train(
                         
                         if expert_idx >= 0:
                             experts_spawned_this_step += 1
-                            found_at_depth = True
                             
                             # Store expert spawn history
                             if 'expert_spawns' not in metrics:
@@ -537,11 +535,9 @@ def train(
                     print(f"    Searching inside {len(parent_regions)} parent region(s) from depth {depth-1}...")
                     
                     # Try each parent region as a separate search domain
+                    # Can spawn 1 expert per parent (not limited to 1 per depth)
                     for parent_region in parent_regions:
                         if model.num_experts >= max_experts:
-                            break
-                        if found_at_depth:
-                            # Only one expert per depth per step
                             break
                         
                         # Find the index of this parent region
@@ -595,7 +591,6 @@ def train(
                             
                             if expert_idx >= 0:
                                 experts_spawned_this_step += 1
-                                found_at_depth = True
                                 
                                 # Store expert spawn history
                                 if 'expert_spawns' not in metrics:
@@ -610,9 +605,6 @@ def train(
                                 })
                         else:
                             print(f"        No suitable region found in parent E{parent_idx+1}")
-                    
-                    if not found_at_depth:
-                        print(f"    No suitable region found at depth {depth}")
             
             # If any experts were spawned, update optimizer and plot
             if experts_spawned_this_step > 0:
