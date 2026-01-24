@@ -171,9 +171,12 @@ class AdaptiveExpertPINN(nn.Module):
     
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """
-        Composed forward pass.
+        Composed forward pass with efficient filtering.
         
         u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
+        
+        Only forwards points through each expert if they lie within
+        that expert's domain, saving computation.
         
         Args:
             inputs: (N, n_dims) tensor of coordinates [x, t] or [x, y, t]
@@ -181,19 +184,21 @@ class AdaptiveExpertPINN(nn.Module):
         Returns:
             u: (N, output_dim) composed solution
         """
-        # Base model prediction
+        # Base model prediction (all points)
         u_total = self.base_model(inputs)  # (N, output_dim)
         
-        # Add expert contributions
+        # Add expert contributions (only inside points)
         for expert, indicator in zip(self.experts, self.indicators):
-            # Get indicator mask
+            # Get indicator mask (0.0 or 1.0 for hard indicators)
             mask = indicator(inputs)  # (N, 1)
+            inside = mask.squeeze().bool()  # (N,) boolean
             
-            # Expert prediction
-            u_expert = expert(inputs)  # (N, output_dim)
-            
-            # Masked contribution
-            u_total = u_total + mask * u_expert
+            if inside.any():
+                # Only forward points inside this expert's domain
+                u_expert_inside = expert(inputs[inside])  # (M, output_dim)
+                
+                # Add contribution at inside indices
+                u_total[inside] = u_total[inside] + u_expert_inside
         
         return u_total
     
@@ -201,7 +206,8 @@ class AdaptiveExpertPINN(nn.Module):
         """
         Forward pass returning individual model contributions.
         
-        Useful for analysis and debugging.
+        Useful for analysis and debugging. Uses efficient filtering
+        like the main forward method.
         
         Args:
             inputs: (N, n_dims) tensor of coordinates
@@ -210,19 +216,30 @@ class AdaptiveExpertPINN(nn.Module):
             Dict with 'base', 'expert_0', 'expert_1', ..., 'composed', 'masks'
         """
         result = {}
+        N = inputs.shape[0]
+        output_dim = self.base_architecture[-1]
         
         # Base model
         result['base'] = self.base_model(inputs)
         result['masks'] = {}
         
-        # Experts
+        # Experts (with efficient filtering)
         u_total = result['base'].clone()
         for i, (expert, indicator) in enumerate(zip(self.experts, self.indicators)):
-            mask = indicator(inputs)
-            u_expert = expert(inputs)
-            result[f'expert_{i}'] = u_expert
+            mask = indicator(inputs)  # (N, 1)
+            inside = mask.squeeze().bool()  # (N,) boolean
+            
+            # Initialize full tensor with zeros for this expert
+            u_expert_full = torch.zeros(N, output_dim, device=inputs.device, dtype=inputs.dtype)
+            
+            if inside.any():
+                # Only compute for inside points
+                u_expert_inside = expert(inputs[inside])  # (M, output_dim)
+                u_expert_full[inside] = u_expert_inside
+                u_total[inside] = u_total[inside] + u_expert_inside
+            
+            result[f'expert_{i}'] = u_expert_full
             result['masks'][f'expert_{i}'] = mask
-            u_total = u_total + mask * u_expert
         
         result['composed'] = u_total
         return result
