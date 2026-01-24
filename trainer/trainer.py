@@ -293,23 +293,24 @@ def train(
         
         # Store RNC penalty and per-layer term metrics
         if rnc_enabled:
+            RNC_EPSILON = 1e-10  # Small value to enable log scale plotting
             avg_rnc_penalty = epoch_rnc_penalty / max(n_train_batches, 1)
-            metrics['rnc_penalty'].append(avg_rnc_penalty)
+            metrics['rnc_penalty'].append(max(avg_rnc_penalty, RNC_EPSILON))
             metrics['rnc_penalty_epochs'].append(epoch)
             
             # Store per-layer total penalties (from last batch)
-            # When penalty becomes active, backfill zeros for previous epochs
+            # When penalty becomes active, backfill epsilon for previous epochs (enables log scale)
             if rnc_penalty_active and last_rnc_metrics:
                 for key, value in last_rnc_metrics.items():
                     if '_penalty' in key and key != 'rnc_penalty':
                         if key not in metrics['rnc_layer_penalties']:
-                            # Backfill zeros for all previous epochs
-                            metrics['rnc_layer_penalties'][key] = [0.0] * (epoch - 1)
-                        metrics['rnc_layer_penalties'][key].append(value)
+                            # Backfill epsilon for all previous epochs
+                            metrics['rnc_layer_penalties'][key] = [RNC_EPSILON] * (epoch - 1)
+                        metrics['rnc_layer_penalties'][key].append(max(value, RNC_EPSILON))
             else:
-                # Store zeros for existing layer keys (before penalty is active)
+                # Store epsilon for existing layer keys (before penalty is active)
                 for key in metrics['rnc_layer_penalties']:
-                    metrics['rnc_layer_penalties'][key].append(0.0)
+                    metrics['rnc_layer_penalties'][key].append(RNC_EPSILON)
         
         # Check for optimizer switch
         if epoch == switch_epoch and switch_at_fraction < 1.0 and current_optimizer_name == 'Adam':

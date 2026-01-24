@@ -117,42 +117,42 @@ experiments:
       update_target_norms_every: 4
       weight_growth_factor: 1.0
 
-  - name: "bw0.0001_upd500"
-    problem: schrodinger  
-    architecture: [2, 100, 100, 100, 100, 100, 2]
-    residual_norm_control:
-      enabled: true
-      base_weight: 0.0001
-      update_target_norms_every: 4
-      weight_growth_factor: 1.0
+  # - name: "bw0.0001_upd500"
+  #   problem: schrodinger  
+  #   architecture: [2, 100, 100, 100, 100, 100, 2]
+  #   residual_norm_control:
+  #     enabled: true
+  #     base_weight: 0.0001
+  #     update_target_norms_every: 4
+  #     weight_growth_factor: 1.0
 
-  - name: "bw0.00001_upd500"
-    problem: schrodinger  
-    architecture: [2, 100, 100, 100, 100, 100, 2]
-    residual_norm_control:
-      enabled: true
-      base_weight: 0.00001
-      update_target_norms_every: 4
-      weight_growth_factor: 1.0
+  # - name: "bw0.00001_upd500"
+  #   problem: schrodinger  
+  #   architecture: [2, 100, 100, 100, 100, 100, 2]
+  #   residual_norm_control:
+  #     enabled: true
+  #     base_weight: 0.00001
+  #     update_target_norms_every: 4
+  #     weight_growth_factor: 1.0
 
-  # 5-6. Vary update frequency (with small base_weight)
-  - name: "bw0.0001_upd1000"
-    problem: schrodinger  
-    architecture: [2, 100, 100, 100, 100, 100, 2]
-    residual_norm_control:
-      enabled: true
-      base_weight: 0.0001
-      update_target_norms_every: 4
-      weight_growth_factor: 1.0
+  # # 5-6. Vary update frequency (with small base_weight)
+  # - name: "bw0.0001_upd1000"
+  #   problem: schrodinger  
+  #   architecture: [2, 100, 100, 100, 100, 100, 2]
+  #   residual_norm_control:
+  #     enabled: true
+  #     base_weight: 0.0001
+  #     update_target_norms_every: 4
+  #     weight_growth_factor: 1.0
 
-  - name: "bw0.0001_upd2000"
-    problem: schrodinger  
-    architecture: [2, 100, 100, 100, 100, 100, 2]
-    residual_norm_control:
-      enabled: true
-      base_weight: 0.0001
-      update_target_norms_every: 4
-      weight_growth_factor: 1.0
+  # - name: "bw0.0001_upd2000"
+  #   problem: schrodinger  
+  #   architecture: [2, 100, 100, 100, 100, 100, 2]
+  #   residual_norm_control:
+  #     enabled: true
+  #     base_weight: 0.0001
+  #     update_target_norms_every: 4
+  #     weight_growth_factor: 1.0
 
 #  - name: "7lyr_40k_Wn_flat"
 #    problem: burgers2d
