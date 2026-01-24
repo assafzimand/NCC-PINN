@@ -153,3 +153,4 @@ experiments:
   # - name: "7lyr_10k_Wn_flat"
   #   problem: burgers2d
   #   architecture: [3, 40, 40, 40, 40, 40, 40, 40, 1]
+  
