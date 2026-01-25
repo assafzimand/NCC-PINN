@@ -202,6 +202,10 @@ def train(
         # Create directory for adaptive outputs
         adaptive_plots_dir = run_dir / "adaptive_plots"
         adaptive_plots_dir.mkdir(exist_ok=True)
+    
+    # Adaptive spawn cooldown: skip N spawn attempts after finding 0 experts
+    spawn_skip_counter = 0  # When > 0, skip spawn attempts and decrement
+    spawn_cooldown_steps = 3  # How many steps to skip after finding 0 experts
 
     # Training loop
     print(f"\nTraining for {epochs} epochs...")
@@ -416,8 +420,16 @@ def train(
             if freq_metrics is not None:
                 metrics['freq_history'].append((epoch, freq_metrics))
 
-        # Adaptive PINN: Hierarchical expert spawning
-        if is_adaptive and epoch % spawn_every == 0 and model.num_experts < max_experts:
+        # Adaptive PINN: Hierarchical expert spawning (with cooldown after 0-spawn steps)
+        spawn_check_triggered = is_adaptive and epoch % spawn_every == 0 and model.num_experts < max_experts
+        
+        if spawn_check_triggered and spawn_skip_counter > 0:
+            # In cooldown period - skip this spawn attempt
+            spawn_skip_counter -= 1
+            print(f"\n  [Adaptive] Skipping spawn attempt (cooldown: {spawn_skip_counter} steps remaining)")
+            spawn_check_triggered = False  # Don't proceed with spawn
+        
+        if spawn_check_triggered:
             print(f"\n{'='*60}")
             print(f"Adaptive PINN: Hierarchical search at epoch {epoch}")
             print(f"  Current experts: {model.num_experts}/{max_experts}")
@@ -633,6 +645,9 @@ def train(
                 )
             else:
                 print(f"\n  No experts spawned this step")
+                # Enter cooldown: skip next N spawn attempts
+                spawn_skip_counter = spawn_cooldown_steps
+                print(f"  Entering spawn cooldown for {spawn_cooldown_steps} steps")
             
             model.train()
 
