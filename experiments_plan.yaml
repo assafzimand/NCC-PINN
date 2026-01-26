@@ -5,7 +5,7 @@ experiment_name: "schrodinger_tests"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 100
+  epochs: 10000
   batch_size: 512
   lr: 0.0001
   
@@ -30,10 +30,10 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 10
-  print_every: 10
-  save_every: 50
-  inner_metrics_eval_every: 40
+  eval_every: 200
+  print_every: 100
+  save_every: 5000
+  inner_metrics_eval_every: 3334
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -90,15 +90,15 @@ base_config:
   # Adaptive Expert PINN configuration (Hierarchical Expert Tree)
   adaptive_pinn:
     enabled: true                    # Toggle feature on/off (override per experiment)
-    max_experts: 100                   # Maximum number of expert networks
-    max_depth: 10                      # Maximum depth in expert tree (NEW)
+    max_experts: 20                   # Maximum number of expert networks
+    max_depth: 5                      # Maximum depth in expert tree (NEW)
     overlap_threshold: 0.5            # Accept region if >50% outside siblings (NEW)
     min_samples_per_region: 20       # Min points to search in a subdomain (NEW)
     max_children_coverage: 0.9       # Skip parent if children cover >90% of it (NEW)
     spawn_every_epochs: 10           # Check for spawning every N epochs (quick test value)
     expert_architectures: null        # null = same as base, or list of architectures
     freeze_mode: none                 # "none" | "previous" | "base_only"
-    blending_mode: soft               # "hard" | "soft"
+    blending_mode: hard               # "hard" | "soft"
     blending_sigma: 0.1               # Legacy: absolute sigma value (deprecated)
     sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
     base_weight: 1.0                  # Uniform weight for base model (soft blending only)
@@ -111,9 +111,13 @@ base_config:
 
 # Experiments to run
 experiments:  
-  - name: "adaptive_convergence_test"
+  - name: "5k"
     problem: schrodinger
-    architecture: [2, 10, 10, 10, 10, 10, 2]
+    architecture: [2, 30, 30, 30, 30, 30, 2]
+
+  - name: "10k"
+    problem: schrodinger
+    architecture: [2, 50, 50, 50, 50, 50, 2]
 
   # - name: "5lyr_40k_Wn_flat"
   #   problem: burgers2d  
