@@ -182,7 +182,8 @@ def train(
         # Import and create region detector
         from adaptive.region_detector import RegionDetector
         from adaptive.visualization import (
-            plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid
+            plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
+            plot_expert_soft_weights
         )
         from adaptive.residual_utils import compute_pde_residuals
         
@@ -643,6 +644,15 @@ def train(
                     grid_x=gt_x,
                     grid_t=gt_t
                 )
+                
+                # Plot soft blending weights if using soft blending mode
+                if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
+                    plot_expert_soft_weights(
+                        model=model,
+                        domain_bounds=domain_bounds,
+                        output_path=adaptive_plots_dir / f"soft_weights_epoch_{epoch}.png",
+                        title_prefix=f"Epoch {epoch}: "
+                    )
             else:
                 print(f"\n  No experts spawned this step")
                 # Enter cooldown: skip next N spawn attempts
@@ -764,6 +774,15 @@ def train(
             grid_x=gt_x,
             grid_t=gt_t
         )
+        
+        # Final soft blending weights plot if using soft blending mode
+        if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
+            plot_expert_soft_weights(
+                model=model,
+                domain_bounds=domain_bounds,
+                output_path=adaptive_plots_dir / "soft_weights_final.png",
+                title_prefix="Final: "
+            )
         
         # Save regions metadata
         save_regions_metadata(

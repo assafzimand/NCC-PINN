@@ -126,20 +126,26 @@ class HardIndicator:
 class SoftIndicator:
     """Soft (smooth sigmoid) indicator for axis-aligned box regions.
     
-    Uses smooth sigmoid transitions at boundaries, forming a partition of unity
-    when combined with other soft indicators.
+    Uses smooth sigmoid transitions at boundaries. The sigma parameter is
+    computed as a fraction of each dimension's region size, providing
+    scale-invariant smoothness.
+    
+    The mask value is highest at the center of the region and smoothly
+    decays towards the boundaries.
     """
     
-    def __init__(self, region: RegionDescriptor, sigma: float = 0.1):
+    def __init__(self, region: RegionDescriptor, sigma_fraction: float = 0.2):
         """
         Args:
             region: RegionDescriptor defining the bounding box
-            sigma: Smoothness parameter (smaller = sharper transition)
+            sigma_fraction: Fraction of region size to use as sigma per dimension.
+                           Larger values = smoother transitions.
         """
         self.region = region
-        self.sigma = sigma
+        self.sigma_fraction = sigma_fraction
         self._lower: Optional[torch.Tensor] = None
         self._upper: Optional[torch.Tensor] = None
+        self._sigma: Optional[torch.Tensor] = None  # Per-dimension sigma
         self._device: Optional[torch.device] = None
     
     def _ensure_tensors(self, device: torch.device):
@@ -147,6 +153,11 @@ class SoftIndicator:
         if self._device != device:
             self._lower = torch.tensor(self.region.bounds_lower, dtype=torch.float32, device=device)
             self._upper = torch.tensor(self.region.bounds_upper, dtype=torch.float32, device=device)
+            # Compute sigma per dimension as fraction of region size
+            region_sizes = self._upper - self._lower
+            self._sigma = self.sigma_fraction * region_sizes  # (n_dims,)
+            # Ensure minimum sigma to avoid numerical issues
+            self._sigma = torch.clamp(self._sigma, min=1e-6)
             self._device = device
     
     def __call__(self, inputs: torch.Tensor) -> torch.Tensor:
@@ -158,13 +169,14 @@ class SoftIndicator:
             
         Returns:
             mask: (N, 1) float tensor - smooth value in [0, 1]
+                  Highest at region center, smoothly decaying to boundaries.
         """
         self._ensure_tensors(inputs.device)
         
-        # Distance from lower bound (positive = inside)
-        dist_lower = (inputs - self._lower) / self.sigma
-        # Distance from upper bound (positive = inside)
-        dist_upper = (self._upper - inputs) / self.sigma
+        # Distance from lower bound (positive = inside), scaled by per-dim sigma
+        dist_lower = (inputs - self._lower) / self._sigma  # Broadcasting (N, n_dims)
+        # Distance from upper bound (positive = inside), scaled by per-dim sigma
+        dist_upper = (self._upper - inputs) / self._sigma  # Broadcasting (N, n_dims)
         
         # Sigmoid gives smooth 0→1 transition
         weight_lower = torch.sigmoid(dist_lower)  # (N, n_dims)
@@ -180,13 +192,49 @@ class SoftIndicator:
         return (self.region.bounds_lower, self.region.bounds_upper)
 
 
-def create_indicator(region: RegionDescriptor, mode: str = 'hard', sigma: float = 0.1):
+class UniformIndicator:
+    """Uniform weight indicator for the base model in soft blending.
+    
+    Returns a constant weight for all points in the domain.
+    Used for partition-of-unity normalization where the base model
+    contributes everywhere with uniform weight.
+    """
+    
+    def __init__(self, base_weight: float = 1.0):
+        """
+        Args:
+            base_weight: Constant weight to return for all points.
+                        This is the unnormalized weight; actual contribution
+                        depends on normalization with expert weights.
+        """
+        self.base_weight = base_weight
+    
+    def __call__(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Compute uniform weight for batch of points.
+        
+        Args:
+            inputs: (N, n_dims) tensor of coordinates
+            
+        Returns:
+            weights: (N, 1) float tensor - constant value for all points
+        """
+        return torch.full(
+            (inputs.shape[0], 1), 
+            self.base_weight,
+            device=inputs.device, 
+            dtype=inputs.dtype
+        )
+
+
+def create_indicator(region: RegionDescriptor, mode: str = 'hard', sigma_fraction: float = 0.2):
     """Factory function to create an indicator of the specified type.
     
     Args:
         region: RegionDescriptor defining the bounding box
         mode: 'hard' or 'soft'
-        sigma: Smoothness parameter for soft indicator
+        sigma_fraction: For soft indicator, fraction of region size to use as sigma.
+                       Larger values = smoother transitions.
         
     Returns:
         HardIndicator or SoftIndicator instance
@@ -194,6 +242,6 @@ def create_indicator(region: RegionDescriptor, mode: str = 'hard', sigma: float 
     if mode == 'hard':
         return HardIndicator(region)
     elif mode == 'soft':
-        return SoftIndicator(region, sigma=sigma)
+        return SoftIndicator(region, sigma_fraction=sigma_fraction)
     else:
         raise ValueError(f"Unknown indicator mode: {mode}. Use 'hard' or 'soft'.")

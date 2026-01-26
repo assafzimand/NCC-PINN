@@ -19,6 +19,7 @@ from adaptive.indicators import (
     RegionDescriptor, 
     HardIndicator, 
     SoftIndicator,
+    UniformIndicator,
     create_indicator
 )
 
@@ -58,13 +59,20 @@ class AdaptiveExpertPINN(nn.Module):
         self.max_experts = adaptive_config.get('max_experts', 5)
         self.max_depth = adaptive_config.get('max_depth', 5)  # Maximum depth in expert tree
         self.blending_mode = adaptive_config.get('blending_mode', 'hard')
-        self.blending_sigma = adaptive_config.get('blending_sigma', 0.1)
+        self.blending_sigma = adaptive_config.get('blending_sigma', 0.1)  # Legacy parameter
+        self.sigma_fraction = adaptive_config.get('sigma_fraction', 0.2)  # New: fraction of region size
+        self.base_weight = adaptive_config.get('base_weight', 1.0)  # Uniform weight for base model
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
         self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
         self.expert_architectures = adaptive_config.get('expert_architectures', None)
         
         # Create base model
         self.base_model = FCNet(base_architecture, activation, config)
+        
+        # Create uniform indicator for base model (used in soft blending for partition of unity)
+        self.base_indicator: Optional[UniformIndicator] = None
+        if self.blending_mode == 'soft':
+            self.base_indicator = UniformIndicator(self.base_weight)
         
         # Expert storage
         self.experts = nn.ModuleList()
@@ -288,8 +296,8 @@ class AdaptiveExpertPINN(nn.Module):
         self.experts.append(expert)
         self.regions.append(region)
         
-        # Create indicator function
-        indicator = create_indicator(region, self.blending_mode, self.blending_sigma)
+        # Create indicator function (use sigma_fraction for soft blending)
+        indicator = create_indicator(region, self.blending_mode, self.sigma_fraction)
         self.indicators.append(indicator)
         
         parent_info = f"Base Model" if region.parent_idx == -1 else f"E{region.parent_idx + 1}"
@@ -339,18 +347,34 @@ class AdaptiveExpertPINN(nn.Module):
     
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """
-        Composed forward pass with efficient filtering.
+        Composed forward pass.
         
-        u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
+        For hard blending:
+            u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
         
-        Only forwards points through each expert if they lie within
-        that expert's domain, saving computation.
+        For soft blending (partition of unity):
+            u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t)
+            where ψ̃_k = ψ_k / Σ_j ψ_j (normalized weights)
         
         Args:
             inputs: (N, n_dims) tensor of coordinates [x, t] or [x, y, t]
             
         Returns:
             u: (N, output_dim) composed solution
+        """
+        if self.blending_mode == 'hard':
+            return self._forward_hard(inputs)
+        else:
+            return self._forward_soft(inputs)
+    
+    def _forward_hard(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Hard blending forward pass with efficient filtering.
+        
+        u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
+        
+        Only forwards points through each expert if they lie within
+        that expert's domain, saving computation.
         """
         # Base model prediction (all points)
         u_total = self.base_model(inputs)  # (N, output_dim)
@@ -370,19 +394,82 @@ class AdaptiveExpertPINN(nn.Module):
         
         return u_total
     
+    def _forward_soft(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Soft blending forward pass with partition-of-unity normalization.
+        
+        u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t)
+        
+        where:
+            - ψ_0 = uniform constant (base_weight) for base model
+            - ψ_k = sigmoid-based bump function for expert k
+            - ψ̃_k = ψ_k / Σ_j ψ_j (partition of unity: Σ ψ̃_k = 1)
+        
+        All models contribute everywhere, weighted by their normalized soft indicators.
+        """
+        N = inputs.shape[0]
+        
+        # Step 1: Compute all unnormalized weights
+        # Base model weight (uniform)
+        psi_base = self.base_indicator(inputs)  # (N, 1)
+        
+        # Expert weights
+        psi_experts = []
+        for indicator in self.indicators:
+            psi_k = indicator(inputs)  # (N, 1)
+            psi_experts.append(psi_k)
+        
+        # Step 2: Compute normalization (sum of all weights)
+        psi_sum = psi_base.clone()
+        for psi_k in psi_experts:
+            psi_sum = psi_sum + psi_k
+        
+        # Avoid division by zero (shouldn't happen with uniform base > 0)
+        psi_sum = psi_sum.clamp(min=1e-8)
+        
+        # Step 3: Normalized weights (partition of unity: sum = 1)
+        psi_base_norm = psi_base / psi_sum  # (N, 1)
+        psi_experts_norm = [psi_k / psi_sum for psi_k in psi_experts]
+        
+        # Step 4: Compute weighted outputs
+        # Base model contribution
+        u_base = self.base_model(inputs)  # (N, output_dim)
+        u_total = psi_base_norm * u_base  # (N, output_dim) - broadcasting
+        
+        # Expert contributions (all points, weighted by soft mask)
+        for expert, psi_k_norm in zip(self.experts, psi_experts_norm):
+            u_expert = expert(inputs)  # (N, output_dim)
+            u_total = u_total + psi_k_norm * u_expert
+        
+        return u_total
+    
     def forward_decomposed(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Forward pass returning individual model contributions.
         
-        Useful for analysis and debugging. Uses efficient filtering
-        like the main forward method.
+        Useful for analysis and debugging.
+        
+        For hard blending: Uses efficient filtering (only compute for inside points)
+        For soft blending: Returns unnormalized masks and normalized weights
         
         Args:
             inputs: (N, n_dims) tensor of coordinates
             
         Returns:
-            Dict with 'base', 'expert_0', 'expert_1', ..., 'composed', 'masks'
+            Dict with:
+                - 'base': base model output (N, output_dim)
+                - 'expert_0', 'expert_1', ...: expert outputs (N, output_dim)
+                - 'composed': final composed output (N, output_dim)
+                - 'masks': dict of unnormalized masks per expert
+                - 'weights_normalized': (soft only) dict of normalized weights per model
         """
+        if self.blending_mode == 'hard':
+            return self._forward_decomposed_hard(inputs)
+        else:
+            return self._forward_decomposed_soft(inputs)
+    
+    def _forward_decomposed_hard(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Hard blending decomposed forward pass."""
         result = {}
         N = inputs.shape[0]
         output_dim = self.base_architecture[-1]
@@ -408,6 +495,51 @@ class AdaptiveExpertPINN(nn.Module):
             
             result[f'expert_{i}'] = u_expert_full
             result['masks'][f'expert_{i}'] = mask
+        
+        result['composed'] = u_total
+        return result
+    
+    def _forward_decomposed_soft(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Soft blending decomposed forward pass with partition-of-unity weights."""
+        result = {}
+        N = inputs.shape[0]
+        output_dim = self.base_architecture[-1]
+        
+        # Compute all unnormalized weights
+        psi_base = self.base_indicator(inputs)  # (N, 1)
+        psi_experts = [indicator(inputs) for indicator in self.indicators]  # list of (N, 1)
+        
+        # Compute normalization
+        psi_sum = psi_base.clone()
+        for psi_k in psi_experts:
+            psi_sum = psi_sum + psi_k
+        psi_sum = psi_sum.clamp(min=1e-8)
+        
+        # Normalized weights (partition of unity)
+        psi_base_norm = psi_base / psi_sum
+        psi_experts_norm = [psi_k / psi_sum for psi_k in psi_experts]
+        
+        # Store masks (unnormalized)
+        result['masks'] = {'base': psi_base}
+        for i, psi_k in enumerate(psi_experts):
+            result['masks'][f'expert_{i}'] = psi_k
+        
+        # Store normalized weights
+        result['weights_normalized'] = {'base': psi_base_norm}
+        for i, psi_k_norm in enumerate(psi_experts_norm):
+            result['weights_normalized'][f'expert_{i}'] = psi_k_norm
+        
+        # Compute outputs
+        u_base = self.base_model(inputs)
+        result['base'] = u_base
+        
+        # Composed output with normalized weights
+        u_total = psi_base_norm * u_base
+        
+        for i, (expert, psi_k_norm) in enumerate(zip(self.experts, psi_experts_norm)):
+            u_expert = expert(inputs)
+            result[f'expert_{i}'] = u_expert
+            u_total = u_total + psi_k_norm * u_expert
         
         result['composed'] = u_total
         return result
@@ -530,7 +662,7 @@ class AdaptiveExpertPINN(nn.Module):
             self.experts.append(expert)
             self.regions.append(region)
             
-            indicator = create_indicator(region, self.blending_mode, self.blending_sigma)
+            indicator = create_indicator(region, self.blending_mode, self.sigma_fraction)
             self.indicators.append(indicator)
     
     def __repr__(self) -> str:
