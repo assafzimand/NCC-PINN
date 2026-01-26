@@ -260,7 +260,8 @@ class RegionDetector:
         wavelet_threshold: Optional[float] = None,
         spawn_epoch: int = 0,
         depth: int = 1,
-        parent_idx: int = -1
+        parent_idx: int = -1,
+        verbose: bool = True
     ) -> Optional[RegionDescriptor]:
         """
         Select the best region for refinement with sibling overlap check.
@@ -273,6 +274,7 @@ class RegionDetector:
             spawn_epoch: Current epoch for tracking
             depth: Depth level for the new expert (1 = child of base)
             parent_idx: Index of the parent expert (-1 for depth-1 experts)
+            verbose: Print diagnostic information about why regions were rejected
             
         Returns:
             RegionDescriptor for the selected region, or None if no suitable region
@@ -280,21 +282,34 @@ class RegionDetector:
         nodes = self.compute_wavelet_norms()
         
         if not nodes:
+            if verbose:
+                print(f"    [RegionDetector] No nodes computed from RF (RF may have no nodes)")
             return None
         
         # Filter out root nodes (no parent = no wavelet)
         candidate_nodes = [n for n in nodes if n.parent_prediction is not None]
         
         if not candidate_nodes:
+            if verbose:
+                print(f"    [RegionDetector] All {len(nodes)} nodes are root nodes (no parent = no wavelet)")
             return None
         
         # Sort by wavelet norm (highest first)
         candidate_nodes.sort(key=lambda n: n.wavelet_norm, reverse=True)
         
+        if verbose:
+            top_norm = candidate_nodes[0].wavelet_norm
+            print(f"    [RegionDetector] {len(candidate_nodes)} candidate nodes (top wavelet_norm={top_norm:.6f})")
+        
+        # Track rejection reasons for diagnostics
+        rejected_by_threshold = 0
+        rejected_by_overlap = 0
+        
         # Find best region that passes sibling overlap check
         for node in candidate_nodes:
             # Check wavelet threshold
             if wavelet_threshold is not None and node.wavelet_norm < wavelet_threshold:
+                rejected_by_threshold += 1
                 continue
             
             # Check sibling overlap (if siblings exist)
@@ -302,9 +317,13 @@ class RegionDetector:
                 outside_fraction = self._compute_outside_fraction(node, sibling_regions)
                 if outside_fraction <= overlap_threshold:
                     # Too much overlap with siblings, skip
+                    rejected_by_overlap += 1
                     continue
             
             # Found a valid region
+            if verbose:
+                print(f"    [RegionDetector] Selected region: wavelet_norm={node.wavelet_norm:.6f}, "
+                      f"samples={node.n_samples}")
             return RegionDescriptor(
                 bounds_lower=node.bounds_lower,
                 bounds_upper=node.bounds_upper,
@@ -313,6 +332,18 @@ class RegionDetector:
                 depth=depth,
                 parent_idx=parent_idx
             )
+        
+        # No valid region found - print diagnostics
+        if verbose:
+            print(f"    [RegionDetector] No suitable region found:")
+            if wavelet_threshold is not None:
+                print(f"      - {rejected_by_threshold}/{len(candidate_nodes)} rejected: "
+                      f"wavelet_norm < threshold ({wavelet_threshold})")
+                if rejected_by_threshold == len(candidate_nodes):
+                    print(f"      - Top 3 wavelet norms: {[f'{n.wavelet_norm:.6f}' for n in candidate_nodes[:3]]}")
+            if sibling_regions:
+                print(f"      - {rejected_by_overlap}/{len(candidate_nodes)} rejected: "
+                      f"overlap with siblings > {1-overlap_threshold:.0%}")
         
         return None
     
@@ -424,7 +455,8 @@ class RegionDetector:
         wavelet_threshold: Optional[float] = None,
         spawn_epoch: int = 0,
         depth: int = 1,
-        parent_idx: int = -1
+        parent_idx: int = -1,
+        verbose: bool = True
     ) -> Optional[RegionDescriptor]:
         """
         Convenience method to fit RF and detect refinement region in one call.
@@ -439,6 +471,7 @@ class RegionDetector:
             spawn_epoch: Current epoch for tracking
             depth: Depth level for the new expert (1 = child of base)
             parent_idx: Index of the parent expert (-1 for depth-1 experts)
+            verbose: Print diagnostic information about why regions were rejected
             
         Returns:
             RegionDescriptor for the selected region, or None
@@ -450,5 +483,6 @@ class RegionDetector:
             wavelet_threshold=wavelet_threshold,
             spawn_epoch=spawn_epoch,
             depth=depth,
-            parent_idx=parent_idx
+            parent_idx=parent_idx,
+            verbose=verbose
         )
