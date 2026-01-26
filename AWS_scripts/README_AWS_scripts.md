@@ -4,6 +4,87 @@ This folder contains helper scripts to make it easier to run NCC-PINN on an AWS 
 
 ---
 
+## Quick Start
+
+1. **First time?** Create an EC2 instance (see [Creating a New EC2 Instance](#creating-a-new-ec2-instance) below)
+2. **Set up S3 auto-shutdown** (recommended): Follow [AWS_S3_SETUP.md](AWS_S3_SETUP.md)
+3. **SSH into your instance** and run experiments
+
+---
+
+## Scripts Overview
+
+| Script | Purpose | Run On |
+|--------|---------|--------|
+| `prepare_AWS_run.sh` | Setup EC2 environment | EC2 |
+| `run_and_terminate.sh` | Run experiments + upload to S3 + auto-shutdown | EC2 |
+| `download_AWS_results.ps1` | Download from EC2 via SSH (legacy) | Windows |
+| `sync_from_s3.ps1` | Download from S3 (recommended) | Windows |
+
+---
+
+## Creating a New EC2 Instance
+
+If your instance was terminated or you need a new one, follow these steps to recreate an identical setup:
+
+### Step 1: Launch Instance
+
+1. Go to [EC2 Console](https://console.aws.amazon.com/ec2/) → **"Launch instance"**
+
+2. **Name**: `NCC-PINN-GPU` (or any name you prefer)
+
+3. **Application and OS Images (AMI)**:
+   - Search for: `Deep Learning AMI GPU PyTorch` 
+   - Select: **Deep Learning AMI GPU PyTorch 2.x (Ubuntu 20.04)** or similar
+   - This comes with CUDA and PyTorch pre-installed
+
+4. **Instance type**:
+   - For GPU training: `g4dn.xlarge` (cheapest GPU option, ~$0.526/hour)
+   - For testing without GPU: `t3.medium` (~$0.042/hour)
+
+5. **Key pair**:
+   - Select your existing key: `NCC-PINN-ASSAF`
+   - Or create a new one and save the `.pem` file
+
+6. **Network settings**:
+   - Allow SSH traffic from: **My IP** (more secure) or **Anywhere** (if IP changes often)
+
+7. **Configure storage**:
+   - Root volume: **50 GB** gp3 (enough for datasets and checkpoints)
+
+8. Click **"Launch instance"**
+
+### Step 2: Note the Public IP
+
+1. Select your instance in EC2 Console
+2. Copy the **Public IPv4 address** (e.g., `13.60.229.209`)
+3. Update your scripts if the IP changed
+
+### Step 3: Connect and Setup
+
+```powershell
+# From your Windows PC (in the Master directory)
+cd C:\Users\assaf\Desktop\Coding\Msc\Master
+ssh -i .\NCC-PINN-ASSAF.pem ubuntu@<NEW-IP-ADDRESS>
+
+# On EC2: Run setup script
+bash ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh
+
+# Configure AWS CLI for S3 uploads (enter your AWS credentials)
+aws configure
+```
+
+### Quick Reference: Instance Types
+
+| Type | GPU | vCPU | RAM | Cost/hour | Best For |
+|------|-----|------|-----|-----------|----------|
+| `t3.medium` | None | 2 | 4GB | ~$0.04 | Testing, debugging |
+| `g4dn.xlarge` | T4 (16GB) | 4 | 16GB | ~$0.53 | Training (recommended) |
+| `g4dn.2xlarge` | T4 (16GB) | 8 | 32GB | ~$0.75 | Larger batch sizes |
+| `p3.2xlarge` | V100 (16GB) | 8 | 61GB | ~$3.06 | Faster training |
+
+---
+
 ### 1. `prepare_AWS_run.sh` – Setup on EC2
 
 **Purpose**: Prepare an EC2 GPU machine for NCC-PINN (Python, venv, repo clone/pull, dependencies).
@@ -143,5 +224,120 @@ You can then view plots and metrics locally as usual.
 - Your experiment continues running even if your PC goes to sleep or loses connection
 - You can check progress anytime by reattaching
 - Perfect for long-running neural network training jobs
+
+---
+
+### 3. `run_and_terminate.sh` – Auto-Shutdown After Experiments (Recommended!)
+
+**Purpose**: Run experiments, upload results to S3, and automatically shut down the instance to save money.
+
+#### Prerequisites
+
+Before using this script, you must:
+1. Create an S3 bucket (see [AWS_S3_SETUP.md](AWS_S3_SETUP.md))
+2. Configure AWS CLI on EC2 with `aws configure`
+
+#### Usage
+
+```bash
+# SSH into EC2
+ssh -i .\NCC-PINN-ASSAF.pem ubuntu@<EC2-IP>
+
+# (Optional) Run prepare script if needed
+bash ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh
+
+# Start experiments with auto-terminate
+screen -S ncc_experiment
+bash ~/NCC-PINN/AWS_scripts/run_and_terminate.sh
+
+# Detach: Ctrl+A, then D
+# You can now safely disconnect!
+```
+
+The script will:
+1. Run `python run_experiments.py`
+2. Upload `outputs/` and `checkpoints/` to S3
+3. Wait 60 seconds (giving you time to cancel with Ctrl+C if needed)
+4. Stop the EC2 instance
+
+#### Configuration
+
+Edit `run_and_terminate.sh` line 24 to set your S3 bucket:
+```bash
+S3_BUCKET="ncc-pinn-results"
+```
+
+---
+
+### 4. `sync_from_s3.ps1` – Download Results from S3
+
+**Purpose**: Download experiment results from S3 to your Windows PC.
+
+#### Prerequisites
+
+- AWS CLI installed on Windows
+- AWS credentials configured (`aws configure`)
+- See [AWS_S3_SETUP.md](AWS_S3_SETUP.md) for setup instructions
+
+#### Usage
+
+```powershell
+cd C:\Users\assaf\Desktop\Coding\Msc\Master\NCC-PINN
+.\AWS_scripts\sync_from_s3.ps1
+```
+
+The script will:
+1. List all available experiments in S3
+2. Show which ones are complete vs in-progress
+3. Let you choose which experiment to download
+4. Download to `AWS_scripts\aws_outputs\`
+
+#### Configuration
+
+Edit `sync_from_s3.ps1` lines 2-6 to set your S3 bucket and region:
+```powershell
+[string]$S3Bucket = "ncc-pinn-results",
+[string]$Region = "eu-north-1"
+```
+
+---
+
+## Recommended Workflow (Auto-Shutdown)
+
+This workflow ensures you **never forget to stop your instance**:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. SSH into EC2                                                  │
+│    ssh -i .\NCC-PINN-ASSAF.pem ubuntu@<IP>                      │
+├─────────────────────────────────────────────────────────────────┤
+│ 2. (If needed) Run setup                                         │
+│    bash ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh               │
+├─────────────────────────────────────────────────────────────────┤
+│ 3. Start experiments with auto-shutdown                          │
+│    screen -S ncc_experiment                                      │
+│    bash ~/NCC-PINN/AWS_scripts/run_and_terminate.sh             │
+│    (Ctrl+A, D to detach)                                        │
+├─────────────────────────────────────────────────────────────────┤
+│ 4. Disconnect and go do other things!                           │
+│    Instance will auto-stop when experiments complete            │
+├─────────────────────────────────────────────────────────────────┤
+│ 5. Later: Download results from S3                              │
+│    .\AWS_scripts\sync_from_s3.ps1                               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Legacy Workflow (Manual Download via SSH)
+
+If you prefer not to use S3, you can still use the original `download_AWS_results.ps1`:
+
+```powershell
+cd C:\Users\assaf\Desktop\Coding\Msc\Master\NCC-PINN
+.\AWS_scripts\download_AWS_results.ps1
+```
+
+**Note**: This requires the EC2 instance to still be running. You must manually stop it afterward!
 
 

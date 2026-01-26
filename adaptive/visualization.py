@@ -555,3 +555,145 @@ def load_regions_metadata(input_path: Union[str, Path]) -> List[RegionDescriptor
         data = json.load(f)
     
     return [RegionDescriptor.from_dict(r) for r in data['regions']]
+
+
+def plot_expert_soft_weights(
+    model,  # AdaptiveExpertPINN with soft blending
+    domain_bounds: Dict[str, List[float]],
+    output_path: Union[str, Path],
+    resolution: int = 100,
+    ground_truth: Optional[np.ndarray] = None,
+    grid_x: Optional[np.ndarray] = None,
+    grid_t: Optional[np.ndarray] = None,
+    title_prefix: str = ""
+) -> None:
+    """
+    Plot heatmaps of soft blending weights (partition of unity) for each expert.
+    
+    Uses a red colormap where:
+    - Darker red = higher weight (more influence)
+    - Lighter/white = lower weight (less influence)
+    
+    Args:
+        model: AdaptiveExpertPINN instance with soft blending enabled
+        domain_bounds: {'lower': [x_min, t_min], 'upper': [x_max, t_max]}
+        output_path: Path to save the plot
+        resolution: Grid resolution for each dimension
+        ground_truth: Optional ground truth array for reference
+        grid_x: Optional x grid for ground truth
+        grid_t: Optional t grid for ground truth
+        title_prefix: Optional prefix for plot title
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Only support 2D domains (x, t) for now
+    if len(domain_bounds['lower']) != 2:
+        print(f"  Warning: Soft weight visualization only supports 2D domains")
+        return
+    
+    # Check if model has soft blending
+    if not hasattr(model, 'base_indicator') or model.base_indicator is None:
+        print(f"  Warning: Model does not have soft blending enabled")
+        return
+    
+    # Create evaluation grid
+    x_min, t_min = domain_bounds['lower']
+    x_max, t_max = domain_bounds['upper']
+    
+    eval_grid_x = np.linspace(x_min, x_max, resolution)
+    eval_grid_t = np.linspace(t_min, t_max, resolution)
+    X, T = np.meshgrid(eval_grid_x, eval_grid_t, indexing='ij')
+    
+    # Flatten for model input
+    device = next(model.parameters()).device
+    inputs = torch.tensor(
+        np.column_stack([X.ravel(), T.ravel()]),
+        dtype=torch.float32, 
+        device=device
+    )
+    
+    # Compute normalized weights
+    with torch.no_grad():
+        # Get decomposed output with weights
+        decomposed = model.forward_decomposed(inputs)
+        weights_norm = decomposed.get('weights_normalized', {})
+        
+        if not weights_norm:
+            print(f"  Warning: No normalized weights available (model may use hard blending)")
+            return
+        
+        # Extract weights and reshape to grid
+        psi_base_norm = weights_norm['base'].cpu().numpy().reshape(X.shape)
+        psi_experts_norm = []
+        for i in range(model.num_experts):
+            key = f'expert_{i}'
+            if key in weights_norm:
+                psi_k_norm = weights_norm[key].cpu().numpy().reshape(X.shape)
+                psi_experts_norm.append(psi_k_norm)
+    
+    # Create subplots: base + each expert
+    n_plots = 1 + len(psi_experts_norm)
+    n_cols = min(3, n_plots)
+    n_rows = (n_plots + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+    if n_plots == 1:
+        axes = np.array([[axes]])
+    elif n_rows == 1:
+        axes = axes.reshape(1, -1)
+    elif n_cols == 1:
+        axes = axes.reshape(-1, 1)
+    axes = axes.flatten()
+    
+    # Red colormap (darker = higher weight)
+    cmap = plt.cm.Reds
+    
+    # Plot base model weight
+    im = axes[0].pcolormesh(eval_grid_x, eval_grid_t, psi_base_norm.T,
+                            cmap=cmap, vmin=0, vmax=1, shading='auto')
+    axes[0].set_title('Base Model Weight (ψ̃₀)', fontsize=11)
+    axes[0].set_xlabel('x', fontsize=10)
+    axes[0].set_ylabel('t', fontsize=10)
+    plt.colorbar(im, ax=axes[0], label='Normalized Weight')
+    axes[0].grid(True, alpha=0.3)
+    
+    # Plot expert weights
+    for i, psi_norm in enumerate(psi_experts_norm):
+        ax = axes[i + 1]
+        im = ax.pcolormesh(eval_grid_x, eval_grid_t, psi_norm.T,
+                          cmap=cmap, vmin=0, vmax=1, shading='auto')
+        
+        # Get region info for title
+        if i < len(model.regions):
+            region = model.regions[i]
+            depth = region.depth
+            ax.set_title(f'Expert {i+1} Weight (ψ̃_{i+1}, depth={depth})', fontsize=11)
+            
+            # Draw region boundary as dashed black line
+            lo, hi = region.bounds_lower, region.bounds_upper
+            rect = patches.Rectangle(
+                (lo[0], lo[1]), hi[0] - lo[0], hi[1] - lo[1],
+                linewidth=2, edgecolor='black', facecolor='none', linestyle='--'
+            )
+            ax.add_patch(rect)
+        else:
+            ax.set_title(f'Expert {i+1} Weight (ψ̃_{i+1})', fontsize=11)
+        
+        ax.set_xlabel('x', fontsize=10)
+        ax.set_ylabel('t', fontsize=10)
+        plt.colorbar(im, ax=ax, label='Normalized Weight')
+        ax.grid(True, alpha=0.3)
+    
+    # Hide unused axes
+    for j in range(n_plots, len(axes)):
+        axes[j].set_visible(False)
+    
+    # Overall title
+    title = f'{title_prefix}Soft Blending Weights (Partition of Unity)' if title_prefix else 'Soft Blending Weights (Partition of Unity)'
+    fig.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Soft blending weights plot saved to {output_path}")
