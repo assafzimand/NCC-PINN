@@ -169,6 +169,7 @@ ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
 # On EC2 - Run experiments
 bash ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh  # Only if needed
 screen -S ncc_experiment
+source ~/.venv_ncc_pinn/bin/activate
 bash ~/NCC-PINN/AWS_scripts/run_and_terminate.sh
 # Press Ctrl+A, then D to detach
 exit  # Disconnect from SSH - experiments continue!

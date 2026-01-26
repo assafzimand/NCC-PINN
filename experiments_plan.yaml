@@ -5,7 +5,7 @@ experiment_name: "schrodinger_tests"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 10000
+  epochs: 100
   batch_size: 512
   lr: 0.0001
   
@@ -30,10 +30,10 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 200
-  print_every: 100
-  save_every: 5000
-  inner_metrics_eval_every: 3334
+  eval_every: 20
+  print_every: 10
+  save_every: 50
+  inner_metrics_eval_every: 40
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -94,8 +94,9 @@ base_config:
     max_depth: 5                      # Maximum depth in expert tree (NEW)
     overlap_threshold: 0.5            # Accept region if >50% outside siblings (NEW)
     min_samples_per_region: 20       # Min points to search in a subdomain (NEW)
-    max_children_coverage: 0.9       # Skip parent if children cover >90% of it (NEW)
-    spawn_every_epochs: 1000           # Check for spawning every N epochs (quick test value)
+    max_children_coverage: 0.95       # Skip parent if children cover >95% of it (NEW)
+    spawn_by_depth: true             # false: search all depths, true: complete depth d before d+1
+    spawn_every_epochs: 10           # Check for spawning every N epochs (quick test value)
     expert_architectures: null        # null = same as base, or list of architectures
     freeze_mode: none                 # "none" | "previous" | "base_only"
     blending_mode: soft               # "hard" | "soft"
@@ -103,6 +104,8 @@ base_config:
     sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
     base_weight: 1.0                  # Uniform weight for base model (soft blending only)
     base_everywhere: true             # If false, u_0 has indicator = domain \ experts
+    pretrained_base_model: true      # If true, load base from path and freeze, build tree then train experts
+    pretrained_base_path: 'outputs\experiments\Capacity\20k_samples\Schrodinger_Capacity_20251213_175504\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'        # Path to pretrained base model checkpoint (required if pretrained_base_model: true)
     rf_n_estimators: 100               # Number of trees in Random Forest
     rf_max_depth: 12                   # Max depth of each tree
     rf_min_samples_leaf: 10           # Min samples required in a leaf node
@@ -115,9 +118,9 @@ experiments:
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
 
-  - name: "10k"
-    problem: schrodinger
-    architecture: [2, 50, 50, 50, 50, 50, 2]
+  # - name: "10k"
+  #   problem: schrodinger
+  #   architecture: [2, 50, 50, 50, 50, 50, 2]
 
   # - name: "5lyr_40k_Wn_flat"
   #   problem: burgers2d  

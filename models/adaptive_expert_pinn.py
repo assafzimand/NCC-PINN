@@ -359,6 +359,136 @@ class AdaptiveExpertPINN(nn.Module):
         else:
             raise ValueError(f"Unknown freeze_mode: {mode}")
     
+    def load_pretrained_base(self, checkpoint_path: str) -> None:
+        """
+        Load a pretrained base model from checkpoint and freeze its weights.
+        
+        This is used for the pretrained_base_model workflow where:
+        1. Base model is loaded from a previously trained checkpoint
+        2. Base weights are frozen (never updated)
+        3. Expert tree is built based on base model predictions only
+        4. All experts are trained after tree building
+        
+        The base model architecture is determined FROM THE CHECKPOINT, not from
+        the current config. This allows loading any pretrained model regardless
+        of the expert architecture specified in config.
+        
+        Args:
+            checkpoint_path: Path to checkpoint file (expects either standard 
+                           checkpoint format with 'model_state_dict' or
+                           adaptive format with 'adaptive_state')
+        """
+        import os
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Pretrained base checkpoint not found: {checkpoint_path}")
+        
+        print(f"\n{'='*60}")
+        print(f"Loading pretrained base model from: {checkpoint_path}")
+        print(f"{'='*60}")
+        
+        # Use weights_only=False to support checkpoints with numpy arrays (PyTorch 2.6+)
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        
+        # Handle different checkpoint formats and extract architecture
+        pretrained_architecture = None
+        pretrained_activation = None
+        
+        if 'adaptive_state' in checkpoint:
+            # Adaptive PINN checkpoint - extract base model state and architecture
+            adaptive_state = checkpoint['adaptive_state']
+            base_state_dict = adaptive_state['base_model']
+            pretrained_architecture = adaptive_state.get('base_architecture')
+            pretrained_activation = adaptive_state.get('activation')
+            print("  Loaded from adaptive PINN checkpoint (using base model only)")
+        elif 'model_state_dict' in checkpoint:
+            # Standard PINN checkpoint
+            base_state_dict = checkpoint['model_state_dict']
+            # Try to get architecture from config stored in checkpoint
+            if 'config' in checkpoint:
+                pretrained_architecture = checkpoint['config'].get('architecture')
+                pretrained_activation = checkpoint['config'].get('activation')
+            print("  Loaded from standard PINN checkpoint")
+        else:
+            # Try to load directly (raw state dict)
+            base_state_dict = checkpoint
+            print("  Loaded raw state dict")
+        
+        # If we couldn't find architecture in checkpoint, infer from state dict
+        if pretrained_architecture is None:
+            pretrained_architecture = self._infer_architecture_from_state_dict(base_state_dict)
+            print(f"  Inferred architecture from weights: {pretrained_architecture}")
+        
+        if pretrained_activation is None:
+            pretrained_activation = self.activation  # Fall back to current config
+        
+        # Check if we need to recreate the base model with different architecture
+        if pretrained_architecture != self.base_architecture:
+            print(f"  Pretrained architecture: {pretrained_architecture}")
+            print(f"  Config architecture: {self.base_architecture}")
+            print(f"  Recreating base model to match pretrained architecture...")
+            
+            # Recreate base model with pretrained architecture
+            self.base_model = FCNet(pretrained_architecture, pretrained_activation, self.config)
+            
+            # Move to same device as before (if already on device)
+            device = next(iter(self.parameters())).device if len(list(self.parameters())) > 0 else 'cpu'
+            self.base_model = self.base_model.to(device)
+            
+            # Update stored architecture
+            self.base_architecture = pretrained_architecture
+        
+        # Load weights into base model
+        self.base_model.load_state_dict(base_state_dict)
+        
+        # Freeze base model weights
+        for param in self.base_model.parameters():
+            param.requires_grad = False
+        
+        # Count parameters
+        total_params = sum(p.numel() for p in self.base_model.parameters())
+        print(f"  Base model architecture: {pretrained_architecture}")
+        print(f"  Base model parameters: {total_params:,}")
+        print(f"  Base model frozen: True (requires_grad=False)")
+        print(f"{'='*60}\n")
+    
+    def _infer_architecture_from_state_dict(self, state_dict: Dict) -> List[int]:
+        """
+        Infer the network architecture from a state dict by examining layer shapes.
+        
+        Args:
+            state_dict: Model state dictionary
+            
+        Returns:
+            List of layer sizes [input_dim, hidden1, hidden2, ..., output_dim]
+        """
+        architecture = []
+        layer_idx = 1
+        
+        while f'network.layer_{layer_idx}.weight' in state_dict:
+            weight = state_dict[f'network.layer_{layer_idx}.weight']
+            if layer_idx == 1:
+                # First layer: input_dim is weight.shape[1]
+                architecture.append(weight.shape[1])
+            # Hidden/output size is weight.shape[0]
+            architecture.append(weight.shape[0])
+            layer_idx += 1
+        
+        if not architecture:
+            raise ValueError("Could not infer architecture from state dict")
+        
+        return architecture
+    
+    def freeze_base_model(self) -> None:
+        """Freeze base model weights (convenience method)."""
+        for param in self.base_model.parameters():
+            param.requires_grad = False
+    
+    def unfreeze_experts(self) -> None:
+        """Unfreeze all expert weights (for training after tree building)."""
+        for expert in self.experts:
+            for param in expert.parameters():
+                param.requires_grad = True
+    
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Composed forward pass.

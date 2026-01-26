@@ -5,31 +5,29 @@ adam_betas:
 adam_eps: 1.0e-08
 adaptive_pinn:
   base_everywhere: true
-  base_weight: 1.0
-  blending_mode: soft
-  blending_sigma: 0.1
+  blending_mode: hard              # "hard" | "soft"
+  blending_sigma: 0.1              # Legacy: absolute sigma value (deprecated)
+  sigma_fraction: 0.2              # For soft: sigma = fraction * region_size (per-dimension)
+  base_weight: 1.0                 # Uniform weight for base model (soft blending only)
   enabled: true
   expert_architectures: null
   freeze_mode: none
   inner_metrics_calculation: false
-  max_children_coverage: 0.9
+  max_experts: 10
   max_depth: 5
-  max_experts: 20
-  min_samples_per_region: 20
   overlap_threshold: 0.5
+  min_samples_per_region: 50
+  max_children_coverage: 0.9
   rf_max_depth: 12
   rf_min_samples_leaf: 10
   rf_n_estimators: 100
-  sigma_fraction: 0.2
-  spawn_every_epochs: 20
-  wavelet_threshold: 0.01
+  spawn_every_epochs: 1000
+  wavelet_threshold: 0.1
 architecture:
 - 2
-- 10
-- 10
-- 10
-- 10
-- 10
+- 70
+- 70
+- 70
 - 2
 batch_size: 512
 bins: 5
@@ -64,10 +62,10 @@ burgers2d:
   - 0.0
   - 2.0
 cuda: true
-epochs: 100
-eval_every: 20
+epochs: 10000
+eval_every: 200
 eval_only: false
-inner_metrics_eval_every: 40
+inner_metrics_eval_every: 2501
 lbfgs_history_size: 20
 lbfgs_line_search: strong_wolfe
 lbfgs_lr: 1.0
@@ -77,9 +75,9 @@ lbfgs_tolerance_grad: 0.0
 lr: 0.0001
 n_bin_visualize_ncc: 100
 n_freq_grid: 128
-name: 5k
+name: adaptive_convergence_test
 optimizer_switch_at: 0.9
-print_every: 10
+print_every: 100
 problem: schrodinger
 resume_from: null
 sampling:
@@ -88,7 +86,7 @@ sampling:
   initial_train_ratio: 0.005
   ncc_train_ratio: 0.25
   sample_volume_ratio: 35
-save_every: 50
+save_every: 5000
 schrodinger:
   loss_weights:
     bc: 1.0
