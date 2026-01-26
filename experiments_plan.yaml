@@ -95,7 +95,7 @@ base_config:
     overlap_threshold: 0.5            # Accept region if >50% outside siblings (NEW)
     min_samples_per_region: 20       # Min points to search in a subdomain (NEW)
     max_children_coverage: 0.9       # Skip parent if children cover >90% of it (NEW)
-    spawn_every_epochs: 10           # Check for spawning every N epochs (quick test value)
+    spawn_every_epochs: 1000           # Check for spawning every N epochs (quick test value)
     expert_architectures: null        # null = same as base, or list of architectures
     freeze_mode: none                 # "none" | "previous" | "base_only"
     blending_mode: soft               # "hard" | "soft"
@@ -106,7 +106,7 @@ base_config:
     rf_n_estimators: 100               # Number of trees in Random Forest
     rf_max_depth: 12                   # Max depth of each tree
     rf_min_samples_leaf: 10           # Min samples required in a leaf node
-    wavelet_threshold: 0.1            # Minimum wavelet norm to spawn (filters low-priority regions)
+    wavelet_threshold: 0.0001            # Minimum wavelet norm to spawn (filters low-priority regions)
     inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
 
 # Experiments to run

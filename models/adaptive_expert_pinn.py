@@ -10,7 +10,7 @@ The composed solution is:
 
 import torch
 import torch.nn as nn
-from typing import List, Dict, Optional, Union, Tuple
+from typing import List, Dict, Optional, Tuple
 from torch.utils.hooks import RemovableHandle
 from pathlib import Path
 
@@ -19,8 +19,7 @@ from adaptive.indicators import (
     RegionDescriptor, 
     HardIndicator, 
     SoftIndicator,
-    UniformIndicator,
-    create_indicator
+    UniformIndicator
 )
 
 
@@ -77,7 +76,12 @@ class AdaptiveExpertPINN(nn.Module):
         # Expert storage
         self.experts = nn.ModuleList()
         self.regions: List[RegionDescriptor] = []
-        self.indicators: List[Union[HardIndicator, SoftIndicator]] = []
+        
+        # Indicator storage - always have both for clarity
+        # hard_indicators: used for coverage/overlap checks (always created)
+        # soft_indicators: used for forward pass blending (only created when blending_mode == 'soft')
+        self.hard_indicators: List[HardIndicator] = []
+        self.soft_indicators: List[SoftIndicator] = []
         
         # Hook management
         self.activations: Dict[str, torch.Tensor] = {}
@@ -140,6 +144,8 @@ class AdaptiveExpertPINN(nn.Module):
         """
         Get a boolean mask for points inside ANY region at the given depth.
         
+        Uses hard indicators for accurate boolean coverage checks.
+        
         Args:
             inputs: (N, n_dims) tensor of coordinates
             depth: Depth level to check
@@ -152,13 +158,13 @@ class AdaptiveExpertPINN(nn.Module):
         N = inputs.shape[0]
         union_mask = torch.zeros(N, dtype=torch.bool, device=inputs.device)
         
-        for region, indicator in zip(self.regions, self.indicators):
+        for region, hard_indicator in zip(self.regions, self.hard_indicators):
             if region.depth == depth:
                 # Filter by spawn epoch if specified
                 if before_epoch is not None and region.spawn_epoch >= before_epoch:
                     continue
-                # Get indicator mask (0.0 or 1.0 for hard indicators)
-                mask = indicator(inputs)  # (N, 1)
+                # Use hard indicator for accurate boolean mask
+                mask = hard_indicator(inputs)  # (N, 1) - 0.0 or 1.0
                 inside = mask.squeeze().bool()  # (N,)
                 union_mask = union_mask | inside
         
@@ -191,6 +197,8 @@ class AdaptiveExpertPINN(nn.Module):
         """
         Get boolean mask for points inside a specific expert's region.
         
+        Uses hard indicator for accurate boolean coverage checks.
+        
         Args:
             inputs: (N, n_dims) tensor of coordinates
             expert_idx: Index of the expert
@@ -198,12 +206,13 @@ class AdaptiveExpertPINN(nn.Module):
         Returns:
             (N,) boolean tensor - True if point is inside the expert's region
         """
-        if expert_idx < 0 or expert_idx >= len(self.indicators):
+        if expert_idx < 0 or expert_idx >= len(self.hard_indicators):
             # Return all True for base model (idx=-1) or invalid index
             return torch.ones(inputs.shape[0], dtype=torch.bool, device=inputs.device)
         
-        indicator = self.indicators[expert_idx]
-        mask = indicator(inputs)  # (N, 1)
+        # Always use hard indicator for boolean masks
+        hard_indicator = self.hard_indicators[expert_idx]
+        mask = hard_indicator(inputs)  # (N, 1) - 0.0 or 1.0
         return mask.squeeze().bool()  # (N,)
     
     def compute_children_coverage(
@@ -296,9 +305,14 @@ class AdaptiveExpertPINN(nn.Module):
         self.experts.append(expert)
         self.regions.append(region)
         
-        # Create indicator function (use sigma_fraction for soft blending)
-        indicator = create_indicator(region, self.blending_mode, self.sigma_fraction)
-        self.indicators.append(indicator)
+        # Always create hard indicator (used for coverage/overlap checks)
+        hard_indicator = HardIndicator(region)
+        self.hard_indicators.append(hard_indicator)
+        
+        # Create soft indicator only if blending_mode is 'soft' (used for forward pass)
+        if self.blending_mode == 'soft':
+            soft_indicator = SoftIndicator(region, sigma_fraction=self.sigma_fraction)
+            self.soft_indicators.append(soft_indicator)
         
         parent_info = f"Base Model" if region.parent_idx == -1 else f"E{region.parent_idx + 1}"
         print(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
@@ -380,9 +394,9 @@ class AdaptiveExpertPINN(nn.Module):
         u_total = self.base_model(inputs)  # (N, output_dim)
         
         # Add expert contributions (only inside points)
-        for expert, indicator in zip(self.experts, self.indicators):
-            # Get indicator mask (0.0 or 1.0 for hard indicators)
-            mask = indicator(inputs)  # (N, 1)
+        for expert, hard_indicator in zip(self.experts, self.hard_indicators):
+            # Get hard indicator mask (0.0 or 1.0)
+            mask = hard_indicator(inputs)  # (N, 1)
             inside = mask.squeeze().bool()  # (N,) boolean
             
             if inside.any():
@@ -409,14 +423,14 @@ class AdaptiveExpertPINN(nn.Module):
         """
         N = inputs.shape[0]
         
-        # Step 1: Compute all unnormalized weights
+        # Step 1: Compute all unnormalized weights using soft indicators
         # Base model weight (uniform)
         psi_base = self.base_indicator(inputs)  # (N, 1)
         
-        # Expert weights
+        # Expert weights from soft indicators
         psi_experts = []
-        for indicator in self.indicators:
-            psi_k = indicator(inputs)  # (N, 1)
+        for soft_indicator in self.soft_indicators:
+            psi_k = soft_indicator(inputs)  # (N, 1)
             psi_experts.append(psi_k)
         
         # Step 2: Compute normalization (sum of all weights)
@@ -478,10 +492,10 @@ class AdaptiveExpertPINN(nn.Module):
         result['base'] = self.base_model(inputs)
         result['masks'] = {}
         
-        # Experts (with efficient filtering)
+        # Experts (with efficient filtering using hard indicators)
         u_total = result['base'].clone()
-        for i, (expert, indicator) in enumerate(zip(self.experts, self.indicators)):
-            mask = indicator(inputs)  # (N, 1)
+        for i, (expert, hard_indicator) in enumerate(zip(self.experts, self.hard_indicators)):
+            mask = hard_indicator(inputs)  # (N, 1)
             inside = mask.squeeze().bool()  # (N,) boolean
             
             # Initialize full tensor with zeros for this expert
@@ -505,9 +519,9 @@ class AdaptiveExpertPINN(nn.Module):
         N = inputs.shape[0]
         output_dim = self.base_architecture[-1]
         
-        # Compute all unnormalized weights
+        # Compute all unnormalized weights using soft indicators
         psi_base = self.base_indicator(inputs)  # (N, 1)
-        psi_experts = [indicator(inputs) for indicator in self.indicators]  # list of (N, 1)
+        psi_experts = [soft_indicator(inputs) for soft_indicator in self.soft_indicators]  # list of (N, 1)
         
         # Compute normalization
         psi_sum = psi_base.clone()
@@ -519,7 +533,7 @@ class AdaptiveExpertPINN(nn.Module):
         psi_base_norm = psi_base / psi_sum
         psi_experts_norm = [psi_k / psi_sum for psi_k in psi_experts]
         
-        # Store masks (unnormalized)
+        # Store masks (unnormalized soft weights)
         result['masks'] = {'base': psi_base}
         for i, psi_k in enumerate(psi_experts):
             result['masks'][f'expert_{i}'] = psi_k
@@ -644,7 +658,8 @@ class AdaptiveExpertPINN(nn.Module):
         # Recreate experts and regions
         self.experts = nn.ModuleList()
         self.regions = []
-        self.indicators = []
+        self.hard_indicators = []
+        self.soft_indicators = []
         
         for i, (expert_state, region_dict) in enumerate(zip(
             state_dict['experts'], state_dict['regions']
@@ -662,8 +677,14 @@ class AdaptiveExpertPINN(nn.Module):
             self.experts.append(expert)
             self.regions.append(region)
             
-            indicator = create_indicator(region, self.blending_mode, self.sigma_fraction)
-            self.indicators.append(indicator)
+            # Always create hard indicator (for coverage checks)
+            hard_indicator = HardIndicator(region)
+            self.hard_indicators.append(hard_indicator)
+            
+            # Create soft indicator only if blending_mode is 'soft'
+            if self.blending_mode == 'soft':
+                soft_indicator = SoftIndicator(region, sigma_fraction=self.sigma_fraction)
+                self.soft_indicators.append(soft_indicator)
     
     def __repr__(self) -> str:
         """String representation."""
