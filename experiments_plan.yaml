@@ -98,7 +98,7 @@ base_config:
     spawn_every_epochs: 2           # Check for spawning every N epochs (quick test value)
     expert_architectures: null        # null = same as base, or list of architectures
     freeze_mode: none                 # "none" | "previous" | "base_only"
-    blending_mode: hard               # "hard" | "soft"
+    blending_mode: soft               # "hard" | "soft"
     blending_sigma: 0.1               # Legacy: absolute sigma value (deprecated)
     sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
     base_weight: 1.0                  # Uniform weight for base model (soft blending only)
