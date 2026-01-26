@@ -2,26 +2,25 @@
 set -e
 
 # =============================================================================
-# run_and_terminate.sh - Run experiments and auto-shutdown EC2 instance
+# run_and_shutdown.sh - Run experiments and auto-shutdown EC2 instance
 # =============================================================================
 # This script:
 #   1. Runs python run_experiments.py
-#   2. Uploads outputs/ to S3
-#   3. Shuts down the EC2 instance (stops billing!)
+#   2. Shuts down the EC2 instance (STOPS it to save money!)
+#
+# Your results are SAFE - they stay on the disk (EBS volume) and will be
+# there when you restart the instance.
 #
 # Usage:
 #   screen -S ncc_experiment
 #   bash ~/NCC-PINN/AWS_scripts/run_and_terminate.sh
 #   # Detach with Ctrl+A, D - safe to disconnect!
 #
-# Prerequisites:
-#   - S3 bucket created (see AWS_S3_SETUP.md)
-#   - AWS CLI configured on EC2: run 'aws configure' with your credentials
+# After experiments complete:
+#   1. Restart instance from AWS Console
+#   2. SSH in and download results with download_AWS_results.ps1
 # =============================================================================
 
-# === Configuration ===
-# CHANGE THIS TO MATCH YOUR S3 BUCKET:
-S3_BUCKET="ncc-pinn-results"
 REPO_DIR="$HOME/NCC-PINN"
 VENV_DIR="$HOME/.venv_ncc_pinn"
 
@@ -55,39 +54,6 @@ echo "  NCC-PINN: Run Experiments and Auto-Shutdown"
 echo "============================================================================="
 echo ""
 
-log_info "S3 Bucket: $S3_BUCKET"
-echo ""
-
-# Check if AWS CLI is configured
-log_info "Checking AWS CLI configuration..."
-if ! aws sts get-caller-identity &>/dev/null; then
-    log_error "AWS CLI is not configured!"
-    log_error "Please run 'aws configure' and enter your AWS credentials."
-    log_error ""
-    log_error "You need:"
-    log_error "  - AWS Access Key ID"
-    log_error "  - AWS Secret Access Key"
-    log_error "  - Default region (e.g., eu-north-1)"
-    exit 1
-fi
-
-AWS_USER=$(aws sts get-caller-identity --query 'Arn' --output text 2>/dev/null || echo "unknown")
-log_success "AWS CLI configured as: $AWS_USER"
-echo ""
-
-# Check S3 bucket access
-log_info "Checking S3 bucket access..."
-if ! aws s3 ls "s3://$S3_BUCKET" &>/dev/null; then
-    log_error "Cannot access S3 bucket: $S3_BUCKET"
-    log_error "Make sure:"
-    log_error "  1. The bucket exists"
-    log_error "  2. Your AWS user has S3 permissions"
-    log_error "  3. The bucket name is correct in this script (line 24)"
-    exit 1
-fi
-log_success "S3 bucket accessible"
-echo ""
-
 # Activate virtual environment
 log_info "Activating virtual environment..."
 if [ ! -d "$VENV_DIR" ]; then
@@ -100,13 +66,6 @@ source "$VENV_DIR/bin/activate"
 # Change to repo directory
 cd "$REPO_DIR"
 log_info "Working directory: $(pwd)"
-echo ""
-
-# Create timestamp for this experiment run
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-S3_PATH="s3://$S3_BUCKET/experiments_$TIMESTAMP"
-
-log_info "Results will be uploaded to: $S3_PATH"
 echo ""
 
 # === Run experiments ===
@@ -126,43 +85,16 @@ else
 fi
 echo ""
 
-# === Upload to S3 ===
+# === Show where results are saved ===
 echo "============================================================================="
-log_info "Uploading results to S3..."
+log_success "Results saved to:"
 echo "============================================================================="
 echo ""
-
-# Upload outputs directory
-log_info "Uploading outputs/ directory..."
-if aws s3 sync "$REPO_DIR/outputs/" "$S3_PATH/outputs/" --quiet; then
-    log_success "Outputs uploaded."
-else
-    log_warn "Some outputs may have failed to upload"
-fi
-
-# Upload checkpoints directory
-log_info "Uploading checkpoints/ directory..."
-if aws s3 sync "$REPO_DIR/checkpoints/" "$S3_PATH/checkpoints/" --quiet; then
-    log_success "Checkpoints uploaded."
-else
-    log_warn "Some checkpoints may have failed to upload"
-fi
-
-# Upload experiment plan
-if [ -f "$REPO_DIR/experiments_plan.yaml" ]; then
-    log_info "Uploading experiments_plan.yaml..."
-    aws s3 cp "$REPO_DIR/experiments_plan.yaml" "$S3_PATH/experiments_plan.yaml" --quiet
-fi
-
+log_info "  $REPO_DIR/outputs/"
+log_info "  $REPO_DIR/checkpoints/"
 echo ""
-log_success "All results uploaded to: $S3_PATH"
-echo ""
-
-# === Create completion marker ===
-echo "Experiment completed at $(date)" > /tmp/experiment_complete.txt
-echo "S3 Path: $S3_PATH" >> /tmp/experiment_complete.txt
-aws s3 cp /tmp/experiment_complete.txt "$S3_PATH/_EXPERIMENT_COMPLETE.txt" --quiet
-log_success "Completion marker uploaded"
+log_info "These files will be preserved when the instance stops."
+log_info "To download: restart instance, SSH in, run download_AWS_results.ps1"
 echo ""
 
 # === Shutdown ===
@@ -173,9 +105,9 @@ echo "==========================================================================
 echo ""
 log_info "After shutdown:"
 log_info "  - Instance will be STOPPED (not terminated)"
-log_info "  - No more compute charges"
-log_info "  - You can restart the instance later if needed"
-log_info "  - Results are safe in S3: $S3_PATH"
+log_info "  - No more compute charges (~\$0.53/hour saved)"
+log_info "  - All results preserved on disk"
+log_info "  - Restart anytime from AWS Console to download results"
 echo ""
 
 # Give user a chance to cancel
