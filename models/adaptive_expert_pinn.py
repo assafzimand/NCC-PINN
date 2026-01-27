@@ -577,56 +577,72 @@ class AdaptiveExpertPINN(nn.Module):
         
         u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
         
-        Optimized: All masks computed in one batched GPU operation,
-        all expert outputs stacked, masked sum computed vectorized.
+        Optimized with CUDA streams: All model forwards execute in parallel on GPU.
         """
         self._fwd_count += 1
         should_log = DEBUG_TIMING and (self._fwd_count <= 5 or self._fwd_count % DEBUG_TIMING_EVERY_N == 0)
+        use_streams = torch.cuda.is_available() and len(self.experts) > 0
         
         if should_log:
             torch.cuda.synchronize() if torch.cuda.is_available() else None
             t0 = time.perf_counter()
         
-        # Base model prediction (all points)
-        u_total = self.base_model(inputs)  # (N, output_dim)
+        if use_streams:
+            # Create streams for base + all experts + masks
+            num_models = 1 + len(self.experts)
+            streams = [torch.cuda.Stream() for _ in range(num_models + 1)]  # +1 for masks
+            outputs = [None] * num_models
+            masks = None
+            
+            # Launch base model on stream 0
+            with torch.cuda.stream(streams[0]):
+                outputs[0] = self.base_model(inputs)
+            
+            # Launch all experts on separate streams (parallel execution)
+            for i, expert in enumerate(self.experts):
+                with torch.cuda.stream(streams[i + 1]):
+                    outputs[i + 1] = expert(inputs)
+            
+            # Launch mask computation on its own stream (parallel with models)
+            with torch.cuda.stream(streams[num_models]):
+                masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
+            
+            # Synchronize all streams
+            torch.cuda.synchronize()
+            
+            u_base = outputs[0]
+            expert_outputs = outputs[1:]
+        else:
+            # CPU fallback or no experts
+            u_base = self.base_model(inputs)
+            masks = self.batched_indicators.compute_hard_masks_only(inputs) if self.experts else None
+            expert_outputs = [expert(inputs) for expert in self.experts] if self.experts else []
         
         if should_log:
             torch.cuda.synchronize() if torch.cuda.is_available() else None
             t1 = time.perf_counter()
         
         if len(self.experts) > 0:
-            # Compute all hard masks at once using batched indicators
-            masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
+            # Stack expert outputs
+            u_experts = torch.stack(expert_outputs, dim=1)  # (N, K, out_dim)
+            
+            # Apply masks and sum - fully vectorized
+            weighted_experts = masks.unsqueeze(-1) * u_experts  # (N, K, out_dim)
+            u_total = u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
             
             if should_log:
                 torch.cuda.synchronize() if torch.cuda.is_available() else None
                 t2 = time.perf_counter()
-            
-            # Forward all experts and stack outputs
-            expert_outputs = [expert(inputs) for expert in self.experts]  # List of (N, out_dim)
-            u_experts = torch.stack(expert_outputs, dim=1)  # (N, K, out_dim)
-            
-            if should_log:
-                torch.cuda.synchronize() if torch.cuda.is_available() else None
-                t3 = time.perf_counter()
-            
-            # Apply masks and sum - fully vectorized
-            weighted_experts = masks.unsqueeze(-1) * u_experts  # (N, K, out_dim)
-            u_total = u_total + weighted_experts.sum(dim=1)  # (N, out_dim)
-            
-            if should_log:
-                torch.cuda.synchronize() if torch.cuda.is_available() else None
-                t4 = time.perf_counter()
                 print(f"    [FWD-HARD #{self._fwd_count}] N={inputs.shape[0]}, K={len(self.experts)} | "
-                      f"base={1000*(t1-t0):.1f}ms, masks={1000*(t2-t1):.1f}ms, "
-                      f"experts={1000*(t3-t2):.1f}ms, sum={1000*(t4-t3):.1f}ms | "
-                      f"TOTAL={1000*(t4-t0):.1f}ms")
+                      f"models+masks={1000*(t1-t0):.1f}ms, sum={1000*(t2-t1):.1f}ms | "
+                      f"TOTAL={1000*(t2-t0):.1f}ms [STREAMS]")
         else:
+            u_total = u_base
             if should_log:
                 torch.cuda.synchronize() if torch.cuda.is_available() else None
-                t4 = time.perf_counter()
+                t2 = time.perf_counter()
                 print(f"    [FWD-HARD #{self._fwd_count}] N={inputs.shape[0]}, K=0 | "
-                      f"base={1000*(t1-t0):.1f}ms | TOTAL={1000*(t4-t0):.1f}ms")
+                      f"base={1000*(t1-t0):.1f}ms | TOTAL={1000*(t2-t0):.1f}ms")
         
         return u_total
     
@@ -641,17 +657,17 @@ class AdaptiveExpertPINN(nn.Module):
             - ψ_k = sigmoid-based bump function for expert k
             - ψ̃_k = ψ_k / Σ_j ψ_j (partition of unity: Σ ψ̃_k = 1)
         
-        Optimized: All masks computed in one batched GPU operation,
-        all expert outputs stacked, weighted sum computed vectorized.
+        Optimized with CUDA streams: All model forwards execute in parallel on GPU.
         """
         self._fwd_count += 1
         should_log = DEBUG_TIMING and (self._fwd_count <= 5 or self._fwd_count % DEBUG_TIMING_EVERY_N == 0)
+        use_streams = torch.cuda.is_available() and len(self.experts) > 0
         
         if should_log:
             torch.cuda.synchronize() if torch.cuda.is_available() else None
             t0 = time.perf_counter()
         
-        # Step 1: Compute ALL masks at once using batched indicators
+        # Step 1: Compute ALL masks at once using batched indicators (already vectorized)
         # psi_base: (N, 1), psi_experts: (N, K)
         psi_base, psi_experts = self.batched_indicators(inputs)
         
@@ -669,42 +685,59 @@ class AdaptiveExpertPINN(nn.Module):
             torch.cuda.synchronize() if torch.cuda.is_available() else None
             t2 = time.perf_counter()
         
-        # Step 3: Forward all models and compute weighted sum
-        u_base = self.base_model(inputs)  # (N, output_dim)
+        # Step 3: Forward ALL models in parallel using CUDA streams
+        if use_streams:
+            # Create streams for base + all experts
+            num_models = 1 + len(self.experts)
+            streams = [torch.cuda.Stream() for _ in range(num_models)]
+            outputs = [None] * num_models
+            
+            # Launch base model on stream 0
+            with torch.cuda.stream(streams[0]):
+                outputs[0] = self.base_model(inputs)
+            
+            # Launch all experts on separate streams (parallel execution)
+            for i, expert in enumerate(self.experts):
+                with torch.cuda.stream(streams[i + 1]):
+                    outputs[i + 1] = expert(inputs)
+            
+            # Synchronize all streams before aggregation
+            torch.cuda.synchronize()
+            
+            u_base = outputs[0]
+            expert_outputs = outputs[1:]
+        else:
+            # CPU fallback or no experts
+            u_base = self.base_model(inputs)
+            expert_outputs = [expert(inputs) for expert in self.experts] if self.experts else []
         
         if should_log:
             torch.cuda.synchronize() if torch.cuda.is_available() else None
             t3 = time.perf_counter()
         
         if len(self.experts) > 0:
-            # Forward all experts and stack outputs
-            expert_outputs = [expert(inputs) for expert in self.experts]  # List of (N, out_dim)
+            # Stack expert outputs
             u_experts = torch.stack(expert_outputs, dim=1)  # (N, K, out_dim)
             
-            if should_log:
-                torch.cuda.synchronize() if torch.cuda.is_available() else None
-                t4 = time.perf_counter()
-            
             # Step 4: Weighted sum - fully vectorized
-            # psi_experts_norm: (N, K) -> (N, K, 1) for broadcasting with (N, K, out_dim)
             weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts  # (N, K, out_dim)
             u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
             
             if should_log:
                 torch.cuda.synchronize() if torch.cuda.is_available() else None
-                t5 = time.perf_counter()
+                t4 = time.perf_counter()
                 print(f"    [FWD-SOFT #{self._fwd_count}] N={inputs.shape[0]}, K={len(self.experts)} | "
                       f"masks={1000*(t1-t0):.1f}ms, norm={1000*(t2-t1):.1f}ms, "
-                      f"base={1000*(t3-t2):.1f}ms, experts={1000*(t4-t3):.1f}ms, "
-                      f"sum={1000*(t5-t4):.1f}ms | TOTAL={1000*(t5-t0):.1f}ms")
+                      f"models={1000*(t3-t2):.1f}ms, sum={1000*(t4-t3):.1f}ms | "
+                      f"TOTAL={1000*(t4-t0):.1f}ms [STREAMS]")
         else:
             u_total = psi_base_norm * u_base
             if should_log:
                 torch.cuda.synchronize() if torch.cuda.is_available() else None
-                t5 = time.perf_counter()
+                t4 = time.perf_counter()
                 print(f"    [FWD-SOFT #{self._fwd_count}] N={inputs.shape[0]}, K=0 | "
                       f"masks={1000*(t1-t0):.1f}ms, norm={1000*(t2-t1):.1f}ms, "
-                      f"base={1000*(t3-t2):.1f}ms | TOTAL={1000*(t5-t0):.1f}ms")
+                      f"base={1000*(t3-t2):.1f}ms | TOTAL={1000*(t4-t0):.1f}ms")
         
         return u_total
     
@@ -734,21 +767,41 @@ class AdaptiveExpertPINN(nn.Module):
             return self._forward_decomposed_soft(inputs)
     
     def _forward_decomposed_hard(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Vectorized hard blending decomposed forward pass."""
+        """Vectorized hard blending decomposed forward pass with CUDA streams."""
         result = {}
-        N = inputs.shape[0]
-        output_dim = self.base_architecture[-1]
+        use_streams = torch.cuda.is_available() and len(self.experts) > 0
         
-        # Base model
-        result['base'] = self.base_model(inputs)
+        if use_streams:
+            # Create streams for base + all experts + masks
+            num_models = 1 + len(self.experts)
+            streams = [torch.cuda.Stream() for _ in range(num_models + 1)]
+            outputs = [None] * num_models
+            
+            # Launch base model
+            with torch.cuda.stream(streams[0]):
+                outputs[0] = self.base_model(inputs)
+            
+            # Launch all experts in parallel
+            for i, expert in enumerate(self.experts):
+                with torch.cuda.stream(streams[i + 1]):
+                    outputs[i + 1] = expert(inputs)
+            
+            # Launch masks computation
+            with torch.cuda.stream(streams[num_models]):
+                all_masks = self.batched_indicators.compute_hard_masks_only(inputs)
+            
+            torch.cuda.synchronize()
+            
+            result['base'] = outputs[0]
+            expert_outputs = outputs[1:]
+        else:
+            result['base'] = self.base_model(inputs)
+            all_masks = self.batched_indicators.compute_hard_masks_only(inputs)
+            expert_outputs = [expert(inputs) for expert in self.experts] if self.experts else []
+        
         result['masks'] = {}
         
-        # Compute all hard masks at once using batched indicators
-        all_masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
-        
         if len(self.experts) > 0:
-            # Forward all experts and stack outputs
-            expert_outputs = [expert(inputs) for expert in self.experts]  # List of (N, out_dim)
             u_experts = torch.stack(expert_outputs, dim=1)  # (N, K, out_dim)
             
             # Store individual expert outputs and masks
@@ -766,12 +819,11 @@ class AdaptiveExpertPINN(nn.Module):
         return result
     
     def _forward_decomposed_soft(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Vectorized soft blending decomposed forward pass with partition-of-unity weights."""
+        """Vectorized soft blending decomposed forward pass with CUDA streams."""
         result = {}
-        N = inputs.shape[0]
-        output_dim = self.base_architecture[-1]
+        use_streams = torch.cuda.is_available() and len(self.experts) > 0
         
-        # Compute all masks at once using batched indicators
+        # Compute all masks at once using batched indicators (already vectorized)
         psi_base, psi_experts = self.batched_indicators(inputs)  # (N, 1), (N, K)
         
         # Compute normalization - vectorized
@@ -792,13 +844,32 @@ class AdaptiveExpertPINN(nn.Module):
         for i in range(psi_experts_norm.shape[1]):
             result['weights_normalized'][f'expert_{i}'] = psi_experts_norm[:, i:i+1]  # (N, 1)
         
-        # Compute base output
-        u_base = self.base_model(inputs)
+        if use_streams:
+            # Create streams for base + all experts
+            num_models = 1 + len(self.experts)
+            streams = [torch.cuda.Stream() for _ in range(num_models)]
+            outputs = [None] * num_models
+            
+            # Launch base model
+            with torch.cuda.stream(streams[0]):
+                outputs[0] = self.base_model(inputs)
+            
+            # Launch all experts in parallel
+            for i, expert in enumerate(self.experts):
+                with torch.cuda.stream(streams[i + 1]):
+                    outputs[i + 1] = expert(inputs)
+            
+            torch.cuda.synchronize()
+            
+            u_base = outputs[0]
+            expert_outputs = outputs[1:]
+        else:
+            u_base = self.base_model(inputs)
+            expert_outputs = [expert(inputs) for expert in self.experts] if self.experts else []
+        
         result['base'] = u_base
         
         if len(self.experts) > 0:
-            # Forward all experts and stack outputs
-            expert_outputs = [expert(inputs) for expert in self.experts]  # List of (N, out_dim)
             u_experts = torch.stack(expert_outputs, dim=1)  # (N, K, out_dim)
             
             # Store individual expert outputs
