@@ -13,6 +13,7 @@ import torch.nn as nn
 from typing import List, Dict, Optional, Tuple
 from torch.utils.hooks import RemovableHandle
 from pathlib import Path
+import time
 
 from models.fc_model import FCNet
 from adaptive.indicators import (
@@ -22,6 +23,10 @@ from adaptive.indicators import (
     UniformIndicator,
     BatchedIndicators
 )
+
+# Debug flag - set to True to see timing info
+DEBUG_TIMING = True
+DEBUG_TIMING_EVERY_N = 50  # Only print timing every N forward passes (reduce spam)
 
 
 class AdaptiveExpertPINN(nn.Module):
@@ -87,6 +92,9 @@ class AdaptiveExpertPINN(nn.Module):
         # Batched indicators for vectorized computation (GPU optimization)
         # Computes all K expert masks in a single GPU operation
         self.batched_indicators = BatchedIndicators(base_weight=self.base_weight)
+        
+        # Debug timing counter
+        self._fwd_count = 0
         
         # Hook management
         self.activations: Dict[str, torch.Tensor] = {}
@@ -572,22 +580,53 @@ class AdaptiveExpertPINN(nn.Module):
         Optimized: All masks computed in one batched GPU operation,
         all expert outputs stacked, masked sum computed vectorized.
         """
+        self._fwd_count += 1
+        should_log = DEBUG_TIMING and (self._fwd_count <= 5 or self._fwd_count % DEBUG_TIMING_EVERY_N == 0)
+        
+        if should_log:
+            torch.cuda.synchronize() if torch.cuda.is_available() else None
+            t0 = time.perf_counter()
+        
         # Base model prediction (all points)
         u_total = self.base_model(inputs)  # (N, output_dim)
         
+        if should_log:
+            torch.cuda.synchronize() if torch.cuda.is_available() else None
+            t1 = time.perf_counter()
+        
         if len(self.experts) > 0:
             # Compute all hard masks at once using batched indicators
-            # Returns hard masks regardless of self.blending_mode setting
             masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
+            
+            if should_log:
+                torch.cuda.synchronize() if torch.cuda.is_available() else None
+                t2 = time.perf_counter()
             
             # Forward all experts and stack outputs
             expert_outputs = [expert(inputs) for expert in self.experts]  # List of (N, out_dim)
             u_experts = torch.stack(expert_outputs, dim=1)  # (N, K, out_dim)
             
+            if should_log:
+                torch.cuda.synchronize() if torch.cuda.is_available() else None
+                t3 = time.perf_counter()
+            
             # Apply masks and sum - fully vectorized
-            # masks: (N, K) -> (N, K, 1) for broadcasting
             weighted_experts = masks.unsqueeze(-1) * u_experts  # (N, K, out_dim)
             u_total = u_total + weighted_experts.sum(dim=1)  # (N, out_dim)
+            
+            if should_log:
+                torch.cuda.synchronize() if torch.cuda.is_available() else None
+                t4 = time.perf_counter()
+                print(f"    [FWD-HARD #{self._fwd_count}] N={inputs.shape[0]}, K={len(self.experts)} | "
+                      f"base={1000*(t1-t0):.1f}ms, masks={1000*(t2-t1):.1f}ms, "
+                      f"experts={1000*(t3-t2):.1f}ms, sum={1000*(t4-t3):.1f}ms | "
+                      f"TOTAL={1000*(t4-t0):.1f}ms")
+        else:
+            if should_log:
+                torch.cuda.synchronize() if torch.cuda.is_available() else None
+                t4 = time.perf_counter()
+                print(f"    [FWD-HARD #{self._fwd_count}] N={inputs.shape[0]}, K=0 | "
+                      f"base={1000*(t1-t0):.1f}ms | TOTAL={1000*(t4-t0):.1f}ms")
         
         return u_total
     
@@ -605,9 +644,20 @@ class AdaptiveExpertPINN(nn.Module):
         Optimized: All masks computed in one batched GPU operation,
         all expert outputs stacked, weighted sum computed vectorized.
         """
+        self._fwd_count += 1
+        should_log = DEBUG_TIMING and (self._fwd_count <= 5 or self._fwd_count % DEBUG_TIMING_EVERY_N == 0)
+        
+        if should_log:
+            torch.cuda.synchronize() if torch.cuda.is_available() else None
+            t0 = time.perf_counter()
+        
         # Step 1: Compute ALL masks at once using batched indicators
         # psi_base: (N, 1), psi_experts: (N, K)
         psi_base, psi_experts = self.batched_indicators(inputs)
+        
+        if should_log:
+            torch.cuda.synchronize() if torch.cuda.is_available() else None
+            t1 = time.perf_counter()
         
         # Step 2: Normalize (partition of unity) - fully vectorized
         psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
@@ -615,20 +665,46 @@ class AdaptiveExpertPINN(nn.Module):
         psi_base_norm = psi_base / psi_sum  # (N, 1)
         psi_experts_norm = psi_experts / psi_sum  # (N, K)
         
+        if should_log:
+            torch.cuda.synchronize() if torch.cuda.is_available() else None
+            t2 = time.perf_counter()
+        
         # Step 3: Forward all models and compute weighted sum
         u_base = self.base_model(inputs)  # (N, output_dim)
+        
+        if should_log:
+            torch.cuda.synchronize() if torch.cuda.is_available() else None
+            t3 = time.perf_counter()
         
         if len(self.experts) > 0:
             # Forward all experts and stack outputs
             expert_outputs = [expert(inputs) for expert in self.experts]  # List of (N, out_dim)
             u_experts = torch.stack(expert_outputs, dim=1)  # (N, K, out_dim)
             
+            if should_log:
+                torch.cuda.synchronize() if torch.cuda.is_available() else None
+                t4 = time.perf_counter()
+            
             # Step 4: Weighted sum - fully vectorized
             # psi_experts_norm: (N, K) -> (N, K, 1) for broadcasting with (N, K, out_dim)
             weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts  # (N, K, out_dim)
             u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+            
+            if should_log:
+                torch.cuda.synchronize() if torch.cuda.is_available() else None
+                t5 = time.perf_counter()
+                print(f"    [FWD-SOFT #{self._fwd_count}] N={inputs.shape[0]}, K={len(self.experts)} | "
+                      f"masks={1000*(t1-t0):.1f}ms, norm={1000*(t2-t1):.1f}ms, "
+                      f"base={1000*(t3-t2):.1f}ms, experts={1000*(t4-t3):.1f}ms, "
+                      f"sum={1000*(t5-t4):.1f}ms | TOTAL={1000*(t5-t0):.1f}ms")
         else:
             u_total = psi_base_norm * u_base
+            if should_log:
+                torch.cuda.synchronize() if torch.cuda.is_available() else None
+                t5 = time.perf_counter()
+                print(f"    [FWD-SOFT #{self._fwd_count}] N={inputs.shape[0]}, K=0 | "
+                      f"masks={1000*(t1-t0):.1f}ms, norm={1000*(t2-t1):.1f}ms, "
+                      f"base={1000*(t3-t2):.1f}ms | TOTAL={1000*(t5-t0):.1f}ms")
         
         return u_total
     
