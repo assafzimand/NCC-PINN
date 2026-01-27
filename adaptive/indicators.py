@@ -2,11 +2,14 @@
 
 Provides hard (step function) and soft (smooth sigmoid) indicator functions
 for defining expert regions as axis-aligned bounding boxes.
+
+Also provides BatchedIndicators for computing all indicator masks (base + K experts)
+in a single vectorized GPU operation for maximum efficiency.
 """
 
 import torch
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 @dataclass
@@ -245,3 +248,189 @@ def create_indicator(region: RegionDescriptor, mode: str = 'hard', sigma_fractio
         return SoftIndicator(region, sigma_fraction=sigma_fraction)
     else:
         raise ValueError(f"Unknown indicator mode: {mode}. Use 'hard' or 'soft'.")
+
+
+class BatchedIndicators:
+    """Compute all indicator masks (base + K experts) in one vectorized GPU operation.
+    
+    This class provides significant speedup over calling individual indicators
+    in a loop by batching all computations into single tensor operations.
+    
+    Supports both hard (step function) and soft (sigmoid) modes.
+    """
+    
+    def __init__(self, base_weight: float = 1.0):
+        """
+        Args:
+            base_weight: Constant weight for the base model (used in soft blending).
+        """
+        self.base_weight = base_weight
+        self.all_lower: Optional[torch.Tensor] = None  # (K, D)
+        self.all_upper: Optional[torch.Tensor] = None  # (K, D)
+        self.all_sigma: Optional[torch.Tensor] = None  # (K, D) for soft mode
+        self.mode: str = 'hard'
+        self.sigma_fraction: float = 0.2
+        self._num_experts: int = 0
+    
+    @property
+    def num_experts(self) -> int:
+        """Number of expert regions currently tracked."""
+        return self._num_experts
+    
+    def update(
+        self, 
+        regions: List[RegionDescriptor], 
+        device: torch.device, 
+        mode: str = 'hard',
+        sigma_fraction: float = 0.2
+    ) -> None:
+        """
+        Update batched tensors from list of regions.
+        
+        Call this after spawning new experts to sync the batched state.
+        
+        Args:
+            regions: List of RegionDescriptors for all experts
+            device: Target device (cuda or cpu)
+            mode: 'hard' or 'soft' blending mode
+            sigma_fraction: For soft mode, fraction of region size to use as sigma
+        """
+        self.mode = mode
+        self.sigma_fraction = sigma_fraction
+        self._num_experts = len(regions)
+        
+        if len(regions) == 0:
+            self.all_lower = None
+            self.all_upper = None
+            self.all_sigma = None
+            return
+        
+        # Stack all bounds into (K, D) tensors
+        self.all_lower = torch.stack([
+            torch.tensor(r.bounds_lower, dtype=torch.float32, device=device)
+            for r in regions
+        ])  # (K, D)
+        
+        self.all_upper = torch.stack([
+            torch.tensor(r.bounds_upper, dtype=torch.float32, device=device)
+            for r in regions
+        ])  # (K, D)
+        
+        # For soft mode, precompute sigma per region per dimension
+        if mode == 'soft':
+            region_sizes = self.all_upper - self.all_lower
+            self.all_sigma = (sigma_fraction * region_sizes).clamp(min=1e-6)  # (K, D)
+        else:
+            self.all_sigma = None
+    
+    def __call__(self, inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute base weight + all K expert masks in one vectorized operation.
+        
+        Args:
+            inputs: (N, D) tensor of coordinates [x, t] or [x, y, t]
+            
+        Returns:
+            Tuple of:
+                - psi_base: (N, 1) base model weights (uniform)
+                - psi_experts: (N, K) expert indicator masks
+        """
+        N = inputs.shape[0]
+        device = inputs.device
+        dtype = inputs.dtype
+        
+        # Base weight is uniform across all points
+        psi_base = torch.full((N, 1), self.base_weight, device=device, dtype=dtype)
+        
+        # Handle case with no experts
+        if self.all_lower is None or self._num_experts == 0:
+            return psi_base, torch.empty((N, 0), device=device, dtype=dtype)
+        
+        # Ensure bounds are on correct device
+        if self.all_lower.device != device:
+            self.all_lower = self.all_lower.to(device)
+            self.all_upper = self.all_upper.to(device)
+            if self.all_sigma is not None:
+                self.all_sigma = self.all_sigma.to(device)
+        
+        if self.mode == 'hard':
+            psi_experts = self._compute_hard_masks(inputs)
+        else:
+            psi_experts = self._compute_soft_masks(inputs)
+        
+        return psi_base, psi_experts
+    
+    def _compute_hard_masks(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Compute all hard indicator masks in one vectorized operation.
+        
+        Args:
+            inputs: (N, D) tensor of coordinates
+            
+        Returns:
+            masks: (N, K) float tensor - 1.0 if inside, 0.0 if outside
+        """
+        # Expand for broadcasting: (N, 1, D) vs (1, K, D) -> (N, K, D)
+        x = inputs.unsqueeze(1)  # (N, 1, D)
+        lower = self.all_lower.unsqueeze(0)  # (1, K, D)
+        upper = self.all_upper.unsqueeze(0)  # (1, K, D)
+        
+        # Check all dimensions at once
+        inside = (x >= lower) & (x <= upper)  # (N, K, D)
+        
+        # Point is inside region if ALL dimensions are inside
+        masks = inside.all(dim=2).float()  # (N, K)
+        
+        return masks
+    
+    def _compute_soft_masks(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Compute all soft indicator masks in one vectorized operation.
+        
+        Args:
+            inputs: (N, D) tensor of coordinates
+            
+        Returns:
+            masks: (N, K) float tensor - smooth values in [0, 1]
+        """
+        # Expand for broadcasting: (N, 1, D) vs (1, K, D) -> (N, K, D)
+        x = inputs.unsqueeze(1)  # (N, 1, D)
+        lower = self.all_lower.unsqueeze(0)  # (1, K, D)
+        upper = self.all_upper.unsqueeze(0)  # (1, K, D)
+        sigma = self.all_sigma.unsqueeze(0)  # (1, K, D)
+        
+        # Distance from bounds, scaled by sigma
+        dist_lower = (x - lower) / sigma  # (N, K, D)
+        dist_upper = (upper - x) / sigma  # (N, K, D)
+        
+        # Sigmoid transitions at boundaries, then product over dimensions
+        weight_lower = torch.sigmoid(dist_lower)  # (N, K, D)
+        weight_upper = torch.sigmoid(dist_upper)  # (N, K, D)
+        
+        # Product over dimensions gives soft box indicator
+        masks = (weight_lower * weight_upper).prod(dim=2)  # (N, K)
+        
+        return masks
+    
+    def compute_hard_masks_only(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Compute ONLY hard masks (no base), useful for coverage checks.
+        
+        Always uses hard indicator logic regardless of self.mode.
+        
+        Args:
+            inputs: (N, D) tensor of coordinates
+            
+        Returns:
+            masks: (N, K) float tensor - 1.0 if inside, 0.0 if outside
+        """
+        if self.all_lower is None or self._num_experts == 0:
+            return torch.empty((inputs.shape[0], 0), device=inputs.device, dtype=inputs.dtype)
+        
+        # Ensure bounds are on correct device
+        device = inputs.device
+        if self.all_lower.device != device:
+            self.all_lower = self.all_lower.to(device)
+            self.all_upper = self.all_upper.to(device)
+        
+        return self._compute_hard_masks(inputs)

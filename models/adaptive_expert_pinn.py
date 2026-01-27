@@ -19,7 +19,8 @@ from adaptive.indicators import (
     RegionDescriptor, 
     HardIndicator, 
     SoftIndicator,
-    UniformIndicator
+    UniformIndicator,
+    BatchedIndicators
 )
 
 
@@ -83,6 +84,10 @@ class AdaptiveExpertPINN(nn.Module):
         self.hard_indicators: List[HardIndicator] = []
         self.soft_indicators: List[SoftIndicator] = []
         
+        # Batched indicators for vectorized computation (GPU optimization)
+        # Computes all K expert masks in a single GPU operation
+        self.batched_indicators = BatchedIndicators(base_weight=self.base_weight)
+        
         # Hook management
         self.activations: Dict[str, torch.Tensor] = {}
         self.hook_handles: List[RemovableHandle] = []
@@ -144,7 +149,7 @@ class AdaptiveExpertPINN(nn.Module):
         """
         Get a boolean mask for points inside ANY region at the given depth.
         
-        Uses hard indicators for accurate boolean coverage checks.
+        Uses vectorized batched indicators for efficient GPU computation.
         
         Args:
             inputs: (N, n_dims) tensor of coordinates
@@ -156,19 +161,27 @@ class AdaptiveExpertPINN(nn.Module):
             (N,) boolean tensor - True if point is inside any depth-d region
         """
         N = inputs.shape[0]
-        union_mask = torch.zeros(N, dtype=torch.bool, device=inputs.device)
         
-        for region, hard_indicator in zip(self.regions, self.hard_indicators):
-            if region.depth == depth:
-                # Filter by spawn epoch if specified
-                if before_epoch is not None and region.spawn_epoch >= before_epoch:
+        # Get indices at this depth
+        depth_indices = []
+        for i, r in enumerate(self.regions):
+            if r.depth == depth:
+                if before_epoch is not None and r.spawn_epoch >= before_epoch:
                     continue
-                # Use hard indicator for accurate boolean mask
-                mask = hard_indicator(inputs)  # (N, 1) - 0.0 or 1.0
-                inside = mask.squeeze().bool()  # (N,)
-                union_mask = union_mask | inside
+                depth_indices.append(i)
         
-        return union_mask
+        if not depth_indices:
+            return torch.zeros(N, dtype=torch.bool, device=inputs.device)
+        
+        # Compute all hard masks at once using batched indicators
+        all_masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
+        
+        if all_masks.shape[1] == 0:
+            return torch.zeros(N, dtype=torch.bool, device=inputs.device)
+        
+        # Union (any) of masks at this depth - vectorized
+        depth_masks = all_masks[:, depth_indices]  # (N, num_at_depth)
+        return depth_masks.any(dim=1)  # (N,)
     
     def count_experts_at_depth(self, depth: int) -> int:
         """Count number of experts at a specific depth."""
@@ -197,7 +210,7 @@ class AdaptiveExpertPINN(nn.Module):
         """
         Get boolean mask for points inside a specific expert's region.
         
-        Uses hard indicator for accurate boolean coverage checks.
+        Uses batched indicators for efficient GPU computation.
         
         Args:
             inputs: (N, n_dims) tensor of coordinates
@@ -206,14 +219,17 @@ class AdaptiveExpertPINN(nn.Module):
         Returns:
             (N,) boolean tensor - True if point is inside the expert's region
         """
-        if expert_idx < 0 or expert_idx >= len(self.hard_indicators):
+        if expert_idx < 0 or expert_idx >= len(self.regions):
             # Return all True for base model (idx=-1) or invalid index
             return torch.ones(inputs.shape[0], dtype=torch.bool, device=inputs.device)
         
-        # Always use hard indicator for boolean masks
-        hard_indicator = self.hard_indicators[expert_idx]
-        mask = hard_indicator(inputs)  # (N, 1) - 0.0 or 1.0
-        return mask.squeeze().bool()  # (N,)
+        # Use batched indicators for efficiency
+        all_masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
+        
+        if all_masks.shape[1] == 0 or expert_idx >= all_masks.shape[1]:
+            return torch.ones(inputs.shape[0], dtype=torch.bool, device=inputs.device)
+        
+        return all_masks[:, expert_idx].bool()  # (N,)
     
     def compute_children_coverage(
         self, 
@@ -224,7 +240,7 @@ class AdaptiveExpertPINN(nn.Module):
         """
         Compute what fraction of a parent's domain is covered by its children.
         
-        Uses point sampling to estimate coverage.
+        Uses vectorized batched indicators for efficient GPU computation.
         
         Args:
             inputs: (N, n_dims) tensor of coordinates (eval points)
@@ -234,29 +250,36 @@ class AdaptiveExpertPINN(nn.Module):
         Returns:
             Coverage fraction (0.0 to 1.0)
         """
+        # Compute all hard masks at once using batched indicators
+        all_masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
+        
         # Get parent mask
         if parent_idx == -1:
             # Base model: entire domain
             parent_mask = torch.ones(inputs.shape[0], dtype=torch.bool, device=inputs.device)
         else:
-            parent_mask = self.get_mask_for_expert(inputs, parent_idx)
+            if parent_idx >= all_masks.shape[1]:
+                return 0.0
+            parent_mask = all_masks[:, parent_idx].bool()
         
         parent_count = parent_mask.sum().item()
         if parent_count == 0:
             return 0.0
         
-        # Get union of children masks
-        children = self.get_children_of_parent(parent_idx, before_epoch=before_epoch)
-        if not children:
+        # Get children indices
+        children_indices = []
+        for i, r in enumerate(self.regions):
+            if r.parent_idx == parent_idx:
+                if before_epoch is not None and r.spawn_epoch >= before_epoch:
+                    continue
+                children_indices.append(i)
+        
+        if not children_indices:
             return 0.0
         
-        # Find which points in parent are covered by children
-        children_union = torch.zeros_like(parent_mask)
-        for child_region in children:
-            # Find child index
-            child_idx = self.regions.index(child_region)
-            child_mask = self.get_mask_for_expert(inputs, child_idx)
-            children_union = children_union | child_mask
+        # Union of all children masks - vectorized
+        children_masks = all_masks[:, children_indices]  # (N, num_children)
+        children_union = children_masks.any(dim=1)  # (N,)
         
         # Count points that are both in parent AND covered by children
         covered = (parent_mask & children_union).sum().item()
@@ -276,6 +299,24 @@ class AdaptiveExpertPINN(nn.Module):
                 return self.base_architecture
         else:
             return self.base_architecture
+    
+    def sync_batched_indicators(self) -> None:
+        """
+        Synchronize batched indicators with current regions.
+        
+        Call this after spawning experts to update the batched tensors
+        used for vectorized indicator computation.
+        """
+        if not self.regions:
+            return
+        
+        device = next(self.base_model.parameters()).device
+        self.batched_indicators.update(
+            regions=self.regions,
+            device=device,
+            mode=self.blending_mode,
+            sigma_fraction=self.sigma_fraction
+        )
     
     def spawn_expert(self, region: RegionDescriptor) -> int:
         """
@@ -324,6 +365,9 @@ class AdaptiveExpertPINN(nn.Module):
         print(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
         print(f"    Residual-weighted wavelet norm: {region.wavelet_norm:.6f}")
         print(f"    Spawn epoch: {region.spawn_epoch}")
+        
+        # Sync batched indicators for vectorized forward pass
+        self.sync_batched_indicators()
         
         return expert_idx
     
@@ -521,34 +565,35 @@ class AdaptiveExpertPINN(nn.Module):
     
     def _forward_hard(self, inputs: torch.Tensor) -> torch.Tensor:
         """
-        Hard blending forward pass with efficient filtering.
+        Vectorized hard blending forward pass.
         
         u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
         
-        Only forwards points through each expert if they lie within
-        that expert's domain, saving computation.
+        Optimized: All masks computed in one batched GPU operation,
+        all expert outputs stacked, masked sum computed vectorized.
         """
         # Base model prediction (all points)
         u_total = self.base_model(inputs)  # (N, output_dim)
         
-        # Add expert contributions (only inside points)
-        for expert, hard_indicator in zip(self.experts, self.hard_indicators):
-            # Get hard indicator mask (0.0 or 1.0)
-            mask = hard_indicator(inputs)  # (N, 1)
-            inside = mask.squeeze().bool()  # (N,) boolean
+        if len(self.experts) > 0:
+            # Compute all hard masks at once using batched indicators
+            # Returns hard masks regardless of self.blending_mode setting
+            masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
             
-            if inside.any():
-                # Only forward points inside this expert's domain
-                u_expert_inside = expert(inputs[inside])  # (M, output_dim)
-                
-                # Add contribution at inside indices
-                u_total[inside] = u_total[inside] + u_expert_inside
+            # Forward all experts and stack outputs
+            expert_outputs = [expert(inputs) for expert in self.experts]  # List of (N, out_dim)
+            u_experts = torch.stack(expert_outputs, dim=1)  # (N, K, out_dim)
+            
+            # Apply masks and sum - fully vectorized
+            # masks: (N, K) -> (N, K, 1) for broadcasting
+            weighted_experts = masks.unsqueeze(-1) * u_experts  # (N, K, out_dim)
+            u_total = u_total + weighted_experts.sum(dim=1)  # (N, out_dim)
         
         return u_total
     
     def _forward_soft(self, inputs: torch.Tensor) -> torch.Tensor:
         """
-        Soft blending forward pass with partition-of-unity normalization.
+        Vectorized soft blending forward pass with partition-of-unity normalization.
         
         u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t)
         
@@ -557,41 +602,33 @@ class AdaptiveExpertPINN(nn.Module):
             - ψ_k = sigmoid-based bump function for expert k
             - ψ̃_k = ψ_k / Σ_j ψ_j (partition of unity: Σ ψ̃_k = 1)
         
-        All models contribute everywhere, weighted by their normalized soft indicators.
+        Optimized: All masks computed in one batched GPU operation,
+        all expert outputs stacked, weighted sum computed vectorized.
         """
-        N = inputs.shape[0]
+        # Step 1: Compute ALL masks at once using batched indicators
+        # psi_base: (N, 1), psi_experts: (N, K)
+        psi_base, psi_experts = self.batched_indicators(inputs)
         
-        # Step 1: Compute all unnormalized weights using soft indicators
-        # Base model weight (uniform)
-        psi_base = self.base_indicator(inputs)  # (N, 1)
-        
-        # Expert weights from soft indicators
-        psi_experts = []
-        for soft_indicator in self.soft_indicators:
-            psi_k = soft_indicator(inputs)  # (N, 1)
-            psi_experts.append(psi_k)
-        
-        # Step 2: Compute normalization (sum of all weights)
-        psi_sum = psi_base.clone()
-        for psi_k in psi_experts:
-            psi_sum = psi_sum + psi_k
-        
-        # Avoid division by zero (shouldn't happen with uniform base > 0)
+        # Step 2: Normalize (partition of unity) - fully vectorized
+        psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
         psi_sum = psi_sum.clamp(min=1e-8)
-        
-        # Step 3: Normalized weights (partition of unity: sum = 1)
         psi_base_norm = psi_base / psi_sum  # (N, 1)
-        psi_experts_norm = [psi_k / psi_sum for psi_k in psi_experts]
+        psi_experts_norm = psi_experts / psi_sum  # (N, K)
         
-        # Step 4: Compute weighted outputs
-        # Base model contribution
+        # Step 3: Forward all models and compute weighted sum
         u_base = self.base_model(inputs)  # (N, output_dim)
-        u_total = psi_base_norm * u_base  # (N, output_dim) - broadcasting
         
-        # Expert contributions (all points, weighted by soft mask)
-        for expert, psi_k_norm in zip(self.experts, psi_experts_norm):
-            u_expert = expert(inputs)  # (N, output_dim)
-            u_total = u_total + psi_k_norm * u_expert
+        if len(self.experts) > 0:
+            # Forward all experts and stack outputs
+            expert_outputs = [expert(inputs) for expert in self.experts]  # List of (N, out_dim)
+            u_experts = torch.stack(expert_outputs, dim=1)  # (N, K, out_dim)
+            
+            # Step 4: Weighted sum - fully vectorized
+            # psi_experts_norm: (N, K) -> (N, K, 1) for broadcasting with (N, K, out_dim)
+            weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts  # (N, K, out_dim)
+            u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+        else:
+            u_total = psi_base_norm * u_base
         
         return u_total
     
@@ -621,7 +658,7 @@ class AdaptiveExpertPINN(nn.Module):
             return self._forward_decomposed_soft(inputs)
     
     def _forward_decomposed_hard(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Hard blending decomposed forward pass."""
+        """Vectorized hard blending decomposed forward pass."""
         result = {}
         N = inputs.shape[0]
         output_dim = self.base_architecture[-1]
@@ -630,68 +667,73 @@ class AdaptiveExpertPINN(nn.Module):
         result['base'] = self.base_model(inputs)
         result['masks'] = {}
         
-        # Experts (with efficient filtering using hard indicators)
-        u_total = result['base'].clone()
-        for i, (expert, hard_indicator) in enumerate(zip(self.experts, self.hard_indicators)):
-            mask = hard_indicator(inputs)  # (N, 1)
-            inside = mask.squeeze().bool()  # (N,) boolean
+        # Compute all hard masks at once using batched indicators
+        all_masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
+        
+        if len(self.experts) > 0:
+            # Forward all experts and stack outputs
+            expert_outputs = [expert(inputs) for expert in self.experts]  # List of (N, out_dim)
+            u_experts = torch.stack(expert_outputs, dim=1)  # (N, K, out_dim)
             
-            # Initialize full tensor with zeros for this expert
-            u_expert_full = torch.zeros(N, output_dim, device=inputs.device, dtype=inputs.dtype)
+            # Store individual expert outputs and masks
+            for i in range(len(self.experts)):
+                result[f'expert_{i}'] = expert_outputs[i]
+                result['masks'][f'expert_{i}'] = all_masks[:, i:i+1]  # (N, 1)
             
-            if inside.any():
-                # Only compute for inside points
-                u_expert_inside = expert(inputs[inside])  # (M, output_dim)
-                u_expert_full[inside] = u_expert_inside
-                u_total[inside] = u_total[inside] + u_expert_inside
-            
-            result[f'expert_{i}'] = u_expert_full
-            result['masks'][f'expert_{i}'] = mask
+            # Compute composed output - vectorized
+            weighted_experts = all_masks.unsqueeze(-1) * u_experts  # (N, K, out_dim)
+            u_total = result['base'] + weighted_experts.sum(dim=1)  # (N, out_dim)
+        else:
+            u_total = result['base'].clone()
         
         result['composed'] = u_total
         return result
     
     def _forward_decomposed_soft(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Soft blending decomposed forward pass with partition-of-unity weights."""
+        """Vectorized soft blending decomposed forward pass with partition-of-unity weights."""
         result = {}
         N = inputs.shape[0]
         output_dim = self.base_architecture[-1]
         
-        # Compute all unnormalized weights using soft indicators
-        psi_base = self.base_indicator(inputs)  # (N, 1)
-        psi_experts = [soft_indicator(inputs) for soft_indicator in self.soft_indicators]  # list of (N, 1)
+        # Compute all masks at once using batched indicators
+        psi_base, psi_experts = self.batched_indicators(inputs)  # (N, 1), (N, K)
         
-        # Compute normalization
-        psi_sum = psi_base.clone()
-        for psi_k in psi_experts:
-            psi_sum = psi_sum + psi_k
+        # Compute normalization - vectorized
+        psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
         psi_sum = psi_sum.clamp(min=1e-8)
         
         # Normalized weights (partition of unity)
-        psi_base_norm = psi_base / psi_sum
-        psi_experts_norm = [psi_k / psi_sum for psi_k in psi_experts]
+        psi_base_norm = psi_base / psi_sum  # (N, 1)
+        psi_experts_norm = psi_experts / psi_sum  # (N, K)
         
         # Store masks (unnormalized soft weights)
         result['masks'] = {'base': psi_base}
-        for i, psi_k in enumerate(psi_experts):
-            result['masks'][f'expert_{i}'] = psi_k
+        for i in range(psi_experts.shape[1]):
+            result['masks'][f'expert_{i}'] = psi_experts[:, i:i+1]  # (N, 1)
         
         # Store normalized weights
         result['weights_normalized'] = {'base': psi_base_norm}
-        for i, psi_k_norm in enumerate(psi_experts_norm):
-            result['weights_normalized'][f'expert_{i}'] = psi_k_norm
+        for i in range(psi_experts_norm.shape[1]):
+            result['weights_normalized'][f'expert_{i}'] = psi_experts_norm[:, i:i+1]  # (N, 1)
         
-        # Compute outputs
+        # Compute base output
         u_base = self.base_model(inputs)
         result['base'] = u_base
         
-        # Composed output with normalized weights
-        u_total = psi_base_norm * u_base
-        
-        for i, (expert, psi_k_norm) in enumerate(zip(self.experts, psi_experts_norm)):
-            u_expert = expert(inputs)
-            result[f'expert_{i}'] = u_expert
-            u_total = u_total + psi_k_norm * u_expert
+        if len(self.experts) > 0:
+            # Forward all experts and stack outputs
+            expert_outputs = [expert(inputs) for expert in self.experts]  # List of (N, out_dim)
+            u_experts = torch.stack(expert_outputs, dim=1)  # (N, K, out_dim)
+            
+            # Store individual expert outputs
+            for i, u_expert in enumerate(expert_outputs):
+                result[f'expert_{i}'] = u_expert
+            
+            # Composed output with normalized weights - vectorized
+            weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts  # (N, K, out_dim)
+            u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+        else:
+            u_total = psi_base_norm * u_base
         
         result['composed'] = u_total
         return result
@@ -823,6 +865,9 @@ class AdaptiveExpertPINN(nn.Module):
             if self.blending_mode == 'soft':
                 soft_indicator = SoftIndicator(region, sigma_fraction=self.sigma_fraction)
                 self.soft_indicators.append(soft_indicator)
+        
+        # Sync batched indicators
+        self.sync_batched_indicators()
     
     def __repr__(self) -> str:
         """String representation."""
