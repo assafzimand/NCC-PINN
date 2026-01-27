@@ -79,36 +79,11 @@ if ($onlyPlanFile) {
     Write-Host "  Individual model outputs are saved directly in outputs/ folder." -ForegroundColor Cyan
     Write-Host ""
     
-    # Ask how many models to download with 30-second timeout (default: 12)
-    $defaultModels = 12
-    $timeoutSeconds = 30
-    
+    # Ask how many models to download
     Write-Host "How many models were in this experiment? (Enter number to download from outputs/)" -ForegroundColor Cyan
-    Write-Host "  [Default: $defaultModels models if no response in $timeoutSeconds seconds]" -ForegroundColor Gray
     Write-Host ""
     
-    # Read input with timeout
-    $numModels = $null
-    $startTime = Get-Date
-    
-    Write-Host -NoNewline "Number of models: "
-    
-    # Use a background job to read input with timeout
-    $inputJob = Start-Job -ScriptBlock { Read-Host }
-    
-    # Wait for input or timeout
-    $waited = Wait-Job $inputJob -Timeout $timeoutSeconds
-    
-    if ($waited) {
-        $numModels = Receive-Job $inputJob
-    } else {
-        # Timeout occurred
-        Stop-Job $inputJob -ErrorAction SilentlyContinue
-        Write-Host ""
-        Write-Host "  (No response - using default: $defaultModels models)" -ForegroundColor Yellow
-        $numModels = $defaultModels.ToString()
-    }
-    Remove-Job $inputJob -Force -ErrorAction SilentlyContinue
+    $numModels = Read-Host "Number of models"
     
     # If empty input, use default
     if ([string]::IsNullOrWhiteSpace($numModels)) {
