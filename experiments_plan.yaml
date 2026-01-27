@@ -5,7 +5,7 @@ experiment_name: "schrodinger_tests"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 100
+  epochs: 10000
   batch_size: 512
   lr: 0.0001
   
@@ -30,10 +30,10 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 1
-  print_every: 1
-  save_every: 5
-  inner_metrics_eval_every: 4
+  eval_every: 200
+  print_every: 100
+  save_every: 5000
+  inner_metrics_eval_every: 3334
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -96,7 +96,7 @@ base_config:
     min_samples_per_region: 20       # Min points to search in a subdomain (NEW)
     max_children_coverage: 0.95       # Skip parent if children cover >95% of it (NEW)
     spawn_by_depth: false             # false: search all depths, true: complete depth d before d+1
-    spawn_every_epochs: 10           # Check for spawning every N epochs (quick test value)
+    spawn_every_epochs: 1000           # Check for spawning every N epochs (quick test value)
     expert_architectures: null        # null = same as base, or list of architectures
     freeze_mode: none                 # "none" | "previous" | "base_only"
     blending_mode: soft               # "hard" | "soft"
