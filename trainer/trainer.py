@@ -379,6 +379,15 @@ def train(
     # Move model to device
     model = model.to(device)
 
+    # DIAGNOSTIC: Verify model is on correct device
+    print(f"\n{'='*40} GPU DIAGNOSTIC {'='*40}")
+    print(f"Target device: {device}")
+    if hasattr(model, 'base_model'):
+        print(f"Base model device: {next(model.base_model.parameters()).device}")
+    else:
+        print(f"Model device: {next(model.parameters()).device}")
+    print(f"{'='*80}\n")
+
     # Load datasets
     print(f"\nLoading datasets...")
     train_data = torch.load(train_data_path)
@@ -390,6 +399,8 @@ def train(
 
     print(f"  Train size: {train_data['x'].shape[0]}")
     print(f"  Eval size: {eval_data['x'].shape[0]}")
+    print(f"  Train data device: {train_data['x'].device}")
+    print(f"  Eval data device: {eval_data['x'].device}")
 
     # Create DataLoaders
     train_loader = _create_dataloader(train_data, cfg['batch_size'],
@@ -509,6 +520,13 @@ def train(
             # Ensure base stays frozen and experts are trainable
             model.freeze_base_model()
             model.unfreeze_experts()
+            
+            # DIAGNOSTIC: Verify all models on correct device after tree building
+            print(f"\n{'='*40} POST-TREE GPU CHECK {'='*40}")
+            print(f"Base model device: {next(model.base_model.parameters()).device}")
+            for i, expert in enumerate(model.experts):
+                print(f"Expert {i} device: {next(expert.parameters()).device}")
+            print(f"{'='*80}\n")
             
             # Recreate optimizer to include all expert parameters
             if switch_at_fraction == 0.0:

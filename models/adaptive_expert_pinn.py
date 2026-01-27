@@ -301,6 +301,10 @@ class AdaptiveExpertPINN(nn.Module):
         device = next(self.base_model.parameters()).device
         expert = expert.to(device)
         
+        # DIAGNOSTIC: Verify expert is on correct device
+        actual_device = next(expert.parameters()).device
+        print(f"    Expert created on device: {actual_device}")
+        
         # Store expert and region
         self.experts.append(expert)
         self.regions.append(region)
@@ -386,6 +390,10 @@ class AdaptiveExpertPINN(nn.Module):
         print(f"Loading pretrained base model from: {checkpoint_path}")
         print(f"{'='*60}")
         
+        # CRITICAL: Save device BEFORE any model recreation
+        device = next(iter(self.base_model.parameters())).device
+        print(f"  Current device: {device}")
+        
         # Use weights_only=False to support checkpoints with numpy arrays (PyTorch 2.6+)
         checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
@@ -430,15 +438,15 @@ class AdaptiveExpertPINN(nn.Module):
             # Recreate base model with pretrained architecture
             self.base_model = FCNet(pretrained_architecture, pretrained_activation, self.config)
             
-            # Move to same device as before (if already on device)
-            device = next(iter(self.parameters())).device if len(list(self.parameters())) > 0 else 'cpu'
-            self.base_model = self.base_model.to(device)
-            
             # Update stored architecture
             self.base_architecture = pretrained_architecture
         
         # Load weights into base model
         self.base_model.load_state_dict(base_state_dict)
+        
+        # Move to correct device AFTER loading (device was saved at start)
+        self.base_model = self.base_model.to(device)
+        print(f"  Moved base model to device: {device}")
         
         # Freeze base model weights
         for param in self.base_model.parameters():
