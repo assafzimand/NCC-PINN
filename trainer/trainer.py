@@ -589,13 +589,49 @@ def train(
 
         if current_optimizer_name == 'Adam':
             # Adam: Mini-batch training (GPU parallelized)
+            epoch_t0 = time.time()
+            total_fwd_time = 0.0
+            total_bwd_time = 0.0
+            total_step_time = 0.0
+            
             for batch in train_loader:
+                # Zero grad
                 optimizer.zero_grad()
+                
+                # Forward pass (includes loss computation)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                t_fwd_start = time.perf_counter()
                 loss = loss_fn(model, batch)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                t_fwd_end = time.perf_counter()
+                total_fwd_time += (t_fwd_end - t_fwd_start)
+                
+                # Backward pass
+                t_bwd_start = time.perf_counter()
                 loss.backward()
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                t_bwd_end = time.perf_counter()
+                total_bwd_time += (t_bwd_end - t_bwd_start)
+                
+                # Optimizer step
+                t_step_start = time.perf_counter()
                 optimizer.step()
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                t_step_end = time.perf_counter()
+                total_step_time += (t_step_end - t_step_start)
+                
                 train_loss += loss.item()
                 n_train_batches += 1
+            
+            epoch_t1 = time.time()
+            if is_adaptive and epoch % 10 == 0:
+                print(f"  [TRAIN-TIMING] Epoch {epoch}: {n_train_batches} batches | "
+                      f"fwd={1000*total_fwd_time:.0f}ms, bwd={1000*total_bwd_time:.0f}ms, "
+                      f"step={1000*total_step_time:.0f}ms | epoch_total={epoch_t1-epoch_t0:.2f}s")
 
         else:
             # LBFGS: Full-batch training with memory error handling
@@ -804,6 +840,7 @@ def train(
             spawn_check_triggered = False  # Don't proceed with spawn
         
         if spawn_check_triggered:
+            spawn_start_time = time.time()
             print(f"\n{'='*60}")
             print(f"Adaptive PINN: Hierarchical search at epoch {epoch}")
             print(f"  Current experts: {model.num_experts}/{max_experts}")
@@ -813,12 +850,20 @@ def train(
             print(f"{'='*60}")
             
             # Get predictions on eval data for region detection
+            t_pred_start = time.time()
             model.eval()
             with torch.no_grad():
                 eval_inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
                 u_pred = model(eval_inputs)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+            t_pred_end = time.time()
+            print(f"  [SPAWN-TIMING] Prediction: {t_pred_end - t_pred_start:.2f}s")
             
             # Compute PDE residuals for residual-weighted wavelet norms
+            t_resid_start = time.time()
             problem = cfg.get('problem', 'schrodinger')
             pde_residuals = compute_pde_residuals(
                 model=model,
@@ -827,11 +872,18 @@ def train(
                 problem=problem,
                 config=cfg
             )
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_resid_end = time.time()
+            print(f"  [SPAWN-TIMING] PDE residuals: {t_resid_end - t_resid_start:.2f}s")
             
             # Convert to numpy for RF
+            t_tonp_start = time.time()
             X_eval_full = eval_inputs.cpu().numpy()
             y_eval_full = u_pred.cpu().numpy()
             residuals_full = pde_residuals.detach().cpu().numpy()
+            t_tonp_end = time.time()
+            print(f"  [SPAWN-TIMING] To numpy: {t_tonp_end - t_tonp_start:.2f}s")
             
             experts_spawned_this_step = 0
             
@@ -905,6 +957,7 @@ def train(
                     print(f"    Siblings (children of base): {len(sibling_regions)}")
                     
                     # Detect refinement region
+                    t_detect_start = time.time()
                     region = region_detector.detect(
                         X=X_search,
                         y=y_search,
@@ -916,10 +969,15 @@ def train(
                         depth=depth,
                         parent_idx=parent_idx
                     )
+                    t_detect_end = time.time()
+                    print(f"    [SPAWN-TIMING] Region detect (depth={depth}): {t_detect_end - t_detect_start:.2f}s")
                     
                     if region is not None:
                         # Spawn new expert
+                        t_spawn_start = time.time()
                         expert_idx = model.spawn_expert(region)
+                        t_spawn_end = time.time()
+                        print(f"    [SPAWN-TIMING] Expert spawn: {t_spawn_end - t_spawn_start:.2f}s")
                         
                         if expert_idx >= 0:
                             experts_spawned_this_step += 1
@@ -988,6 +1046,7 @@ def train(
                         print(f"        Siblings (children of E{parent_idx+1}): {len(sibling_regions)}")
                         
                         # Detect refinement region within this parent
+                        t_detect_start = time.time()
                         region = region_detector.detect(
                             X=X_search,
                             y=y_search,
@@ -999,10 +1058,15 @@ def train(
                             depth=depth,
                             parent_idx=parent_idx
                         )
+                        t_detect_end = time.time()
+                        print(f"        [SPAWN-TIMING] Region detect (parent=E{parent_idx+1}): {t_detect_end - t_detect_start:.2f}s")
                         
                         if region is not None:
                             # Spawn new expert
+                            t_spawn_start = time.time()
                             expert_idx = model.spawn_expert(region)
+                            t_spawn_end = time.time()
+                            print(f"        [SPAWN-TIMING] Expert spawn: {t_spawn_end - t_spawn_start:.2f}s")
                             
                             if expert_idx >= 0:
                                 experts_spawned_this_step += 1
@@ -1020,6 +1084,9 @@ def train(
                                 })
                         else:
                             print(f"        No suitable region found in parent E{parent_idx+1}")
+            
+            spawn_end_time = time.time()
+            print(f"\n  [SPAWN-TIMING] TOTAL spawn step: {spawn_end_time - spawn_start_time:.2f}s")
             
             # If any experts were spawned, update optimizer and plot
             if experts_spawned_this_step > 0:
