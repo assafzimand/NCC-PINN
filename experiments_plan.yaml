@@ -90,8 +90,8 @@ base_config:
   # Adaptive Expert PINN configuration (Hierarchical Expert Tree)
   adaptive_pinn:
     enabled: true                    # Toggle feature on/off (override per experiment)
-    max_experts: 10                   # Maximum number of expert networks
-    max_depth: 3                      # Maximum depth in expert tree (NEW)
+    max_experts: 20                   # Maximum number of expert networks
+    max_depth: 5                      # Maximum depth in expert tree (NEW)
     overlap_threshold: 0.5            # Accept region if >50% outside siblings (NEW)
     min_samples_per_region: 20       # Min points to search in a subdomain (NEW)
     max_children_coverage: 0.95       # Skip parent if children cover >95% of it (NEW)
@@ -114,13 +114,13 @@ base_config:
 
 # Experiments to run
 experiments:  
-  - name: "5k"
+  - name: "500"
     problem: schrodinger
-    architecture: [2, 30, 30, 30, 30, 30, 2]
+    architecture: [2, 10, 10, 10, 10, 10, 2]
 
-  # - name: "10k"
-  #   problem: schrodinger
-  #   architecture: [2, 50, 50, 50, 50, 50, 2]
+  - name: "2000"
+    problem: schrodinger
+    architecture: [2, 20, 20, 20, 20, 20, 2]
 
   # - name: "5lyr_40k_Wn_flat"
   #   problem: burgers2d  
