@@ -5,7 +5,6 @@ cursor/
 outputs/
 IMPROVEMENT_PLAN.md
 .cursor/
-checkpoints/
 experiments_analysis/analysis/
 __pycache__/
 *.pyc
