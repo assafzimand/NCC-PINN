@@ -990,18 +990,46 @@ class AdaptiveExpertPINN(nn.Module):
             'regions': [r.to_dict() for r in self.regions],
             'num_experts': len(self.experts),
             'base_architecture': self.base_architecture,
+            'config_base_architecture': self.config_base_architecture,
             'activation': self.activation,
-            'adaptive_config': self.adaptive_config
+            'adaptive_config': self.adaptive_config,
+            'base_frozen': self._base_frozen
         }
     
     def load_state_dict_extended(self, state_dict: Dict):
         """
         Load extended state dict including regions and indicators.
         
+        Handles architecture mismatches by recreating models with the correct
+        architecture from the checkpoint.
+        
         Args:
             state_dict: Dict from state_dict_extended()
         """
-        # Load base model
+        # Check if base model architecture needs to be recreated
+        saved_base_arch = state_dict.get('base_architecture')
+        saved_activation = state_dict.get('activation', self.activation)
+        
+        if saved_base_arch is None:
+            # Infer from state dict if not explicitly saved
+            saved_base_arch = self._infer_architecture_from_state_dict(state_dict['base_model'])
+        
+        # Recreate base model if architecture differs
+        if saved_base_arch != self.base_architecture:
+            print(f"  Recreating base model: {self.base_architecture} -> {saved_base_arch}")
+            device = next(self.base_model.parameters()).device
+            self.base_model = FCNet(saved_base_arch, saved_activation, self.config)
+            self.base_model = self.base_model.to(device)
+            self.base_architecture = saved_base_arch
+            
+            # If this was a pretrained base (different from config), mark as frozen
+            if saved_base_arch != self.config_base_architecture:
+                self._base_frozen = True
+                for param in self.base_model.parameters():
+                    param.requires_grad = False
+                print(f"  Base model marked as frozen (pretrained architecture)")
+        
+        # Load base model weights
         self.base_model.load_state_dict(state_dict['base_model'])
         
         # Recreate experts and regions
@@ -1014,9 +1042,11 @@ class AdaptiveExpertPINN(nn.Module):
             state_dict['experts'], state_dict['regions']
         )):
             region = RegionDescriptor.from_dict(region_dict)
-            architecture = self.get_expert_architecture(i)
             
-            expert = FCNet(architecture, self.activation, self.config)
+            # Infer expert architecture from its state dict (more reliable than config)
+            expert_arch = self._infer_architecture_from_state_dict(expert_state)
+            
+            expert = FCNet(expert_arch, self.activation, self.config)
             expert.load_state_dict(expert_state)
             
             # Move to same device as base
@@ -1034,6 +1064,22 @@ class AdaptiveExpertPINN(nn.Module):
             if self.blending_mode == 'soft':
                 soft_indicator = SoftIndicator(region, sigma_fraction=self.sigma_fraction)
                 self.soft_indicators.append(soft_indicator)
+        
+        # Recreate batched experts with correct architecture (from loaded experts)
+        if len(self.experts) > 0:
+            # Infer architecture from first expert
+            first_expert_arch = self._infer_architecture_from_state_dict(state_dict['experts'][0])
+            self.batched_experts = BatchedExperts(
+                architecture=first_expert_arch,
+                activation_fn=self.base_model.activation
+            )
+        
+        # Restore base frozen state if saved
+        if 'base_frozen' in state_dict:
+            self._base_frozen = state_dict['base_frozen']
+            if self._base_frozen:
+                for param in self.base_model.parameters():
+                    param.requires_grad = False
         
         # Sync batched structures
         self.sync_batched_indicators()
