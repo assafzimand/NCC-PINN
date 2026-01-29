@@ -528,8 +528,15 @@ class AdaptiveExpertPINN(nn.Module):
             checkpoint_path: Path to checkpoint file (expects either standard 
                            checkpoint format with 'model_state_dict' or
                            adaptive format with 'adaptive_state')
+                           Path separators are automatically normalized for cross-platform compatibility.
         """
         import os
+        # Normalize path for cross-platform compatibility
+        # Replace backslashes with forward slashes (forward slashes work on both Windows and Linux)
+        # Then use normpath to clean up any double slashes, etc.
+        checkpoint_path = checkpoint_path.replace('\\', '/')
+        checkpoint_path = os.path.normpath(checkpoint_path)
+        
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Pretrained base checkpoint not found: {checkpoint_path}")
         
