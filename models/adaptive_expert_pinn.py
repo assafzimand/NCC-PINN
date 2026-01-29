@@ -151,6 +151,10 @@ class AdaptiveExpertPINN(nn.Module):
         self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
         self.expert_architectures = adaptive_config.get('expert_architectures', None)
         
+        # Store config architectures (before any pretrained loading)
+        # This is used to determine expert architecture when pretrained base is loaded
+        self.config_base_architecture = base_architecture
+        
         # Create base model
         self.base_model = FCNet(base_architecture, activation, config)
         
@@ -175,7 +179,8 @@ class AdaptiveExpertPINN(nn.Module):
         
         # Batched experts for O(1) forward pass (GPU optimization)
         # Stacks all expert weights for single einsum operation
-        expert_arch = self.expert_architectures or base_architecture
+        # Always use config_base_architecture for experts (not pretrained base architecture)
+        expert_arch = self.expert_architectures or self.config_base_architecture
         self.batched_experts = BatchedExperts(
             architecture=expert_arch,
             activation_fn=self.base_model.activation
@@ -380,18 +385,23 @@ class AdaptiveExpertPINN(nn.Module):
         return covered / parent_count
     
     def get_expert_architecture(self, expert_idx: int) -> List[int]:
-        """Get architecture for a new expert."""
+        """
+        Get architecture for a new expert.
+        
+        When pretrained_base_model is used, experts use the config architecture,
+        not the pretrained base architecture.
+        """
         if self.expert_architectures is None:
-            # Use base architecture
-            return self.base_architecture
+            # Use config base architecture (not pretrained base if loaded)
+            return self.config_base_architecture
         elif isinstance(self.expert_architectures, list):
             if expert_idx < len(self.expert_architectures):
                 return self.expert_architectures[expert_idx]
             else:
-                # Fall back to base architecture if list exhausted
-                return self.base_architecture
+                # Fall back to config base architecture if list exhausted
+                return self.config_base_architecture
         else:
-            return self.base_architecture
+            return self.config_base_architecture
     
     def sync_batched_indicators(self) -> None:
         """
@@ -611,6 +621,14 @@ class AdaptiveExpertPINN(nn.Module):
         print(f"  Base model architecture: {pretrained_architecture}")
         print(f"  Base model parameters: {total_params:,}")
         print(f"  Base model frozen: True (requires_grad=False)")
+        
+        # Note: Experts always use config architecture (via get_expert_architecture)
+        # which returns config_base_architecture. BatchedExperts was initialized with
+        # this architecture, so batched einsum works regardless of pretrained base arch.
+        expert_arch = self.expert_architectures or self.config_base_architecture
+        print(f"  Expert architecture: {expert_arch}")
+        print(f"  (All experts use batched einsum - same architecture)")
+        
         print(f"{'='*60}\n")
     
     def _infer_architecture_from_state_dict(self, state_dict: Dict) -> List[int]:
@@ -684,19 +702,19 @@ class AdaptiveExpertPINN(nn.Module):
         # Forward base model
         u_base = self.base_model(inputs)  # (N, output_dim)
         
+        if len(self.experts) == 0:
+            return u_base
+        
         # Compute masks (already vectorized)
         masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
         
-        # Batched forward: single einsum operation for all K experts
-        # u_experts: (N, K, output_dim)
-        u_experts = self.batched_experts.forward(inputs)
+        # Batched einsum: single operation for all K experts (O(1))
+        # All experts have same architecture (config_base_architecture), so einsum always works
+        u_experts = self.batched_experts.forward(inputs)  # (N, K, output_dim)
         
-        if len(self.experts) > 0:
-            # Apply masks and sum - fully vectorized
-            weighted_experts = masks.unsqueeze(-1) * u_experts  # (N, K, out_dim)
-            u_total = u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
-        else:
-            u_total = u_base
+        # Apply masks and sum - fully vectorized
+        weighted_experts = masks.unsqueeze(-1) * u_experts  # (N, K, out_dim)
+        u_total = u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
         
         return u_total
     
@@ -723,20 +741,19 @@ class AdaptiveExpertPINN(nn.Module):
         psi_base_norm = psi_base / psi_sum  # (N, 1)
         psi_experts_norm = psi_experts / psi_sum  # (N, K)
         
-        # Step 3: Forward base model + ALL experts using batched einsum (O(1) for experts)
+        # Step 3: Forward base model + ALL experts
         u_base = self.base_model(inputs)  # (N, output_dim)
         
-        # Batched forward: single einsum operation for all K experts
-        # u_experts: (N, K, output_dim)
-        u_experts = self.batched_experts.forward(inputs)
+        if len(self.experts) == 0:
+            return psi_base_norm * u_base
         
-        if len(self.experts) > 0:
-            # u_experts already computed via batched einsum: (N, K, output_dim)
-            # Step 4: Weighted sum - fully vectorized
-            weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts  # (N, K, out_dim)
-            u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
-        else:
-            u_total = psi_base_norm * u_base
+        # Batched einsum: single operation for all K experts (O(1))
+        # All experts have same architecture (config_base_architecture), so einsum always works
+        u_experts = self.batched_experts.forward(inputs)  # (N, K, output_dim)
+        
+        # Step 4: Weighted sum - fully vectorized
+        weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts  # (N, K, out_dim)
+        u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
         
         return u_total
     
@@ -775,12 +792,12 @@ class AdaptiveExpertPINN(nn.Module):
         # Compute masks (already vectorized)
         all_masks = self.batched_indicators.compute_hard_masks_only(inputs)
         
-        # Batched forward: single einsum operation for all K experts
-        u_experts = self.batched_experts.forward(inputs)  # (N, K, output_dim)
-        
         result['masks'] = {}
         
         if len(self.experts) > 0:
+            # Batched einsum: single operation for all K experts (O(1))
+            u_experts = self.batched_experts.forward(inputs)  # (N, K, output_dim)
+            
             # Store individual expert outputs and masks
             for i in range(len(self.experts)):
                 result[f'expert_{i}'] = u_experts[:, i, :]  # (N, out_dim)
@@ -824,10 +841,10 @@ class AdaptiveExpertPINN(nn.Module):
         u_base = self.base_model(inputs)
         result['base'] = u_base
         
-        # Batched forward: single einsum operation for all K experts
-        u_experts = self.batched_experts.forward(inputs)  # (N, K, output_dim)
-        
         if len(self.experts) > 0:
+            # Batched einsum: single operation for all K experts (O(1))
+            u_experts = self.batched_experts.forward(inputs)  # (N, K, output_dim)
+            
             # Store individual expert outputs
             for i in range(len(self.experts)):
                 result[f'expert_{i}'] = u_experts[:, i, :]  # (N, out_dim)
