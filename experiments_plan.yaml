@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "schrodinger_tests"
+experiment_name: "schrodinger_pretrained"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -90,8 +90,8 @@ base_config:
   # Adaptive Expert PINN configuration (Hierarchical Expert Tree)
   adaptive_pinn:
     enabled: true                    # Toggle feature on/off (override per experiment)
-    max_experts: 20                   # Maximum number of expert networks
-    max_depth: 5                      # Maximum depth in expert tree (NEW)
+    max_experts: 10                   # Maximum number of expert networks
+    max_depth: 3                      # Maximum depth in expert tree (NEW)
     overlap_threshold: 0.5            # Accept region if >50% outside siblings (NEW)
     min_samples_per_region: 20       # Min points to search in a subdomain (NEW)
     max_children_coverage: 0.95       # Skip parent if children cover >95% of it (NEW)
@@ -104,8 +104,8 @@ base_config:
     sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
     base_weight: 1.0                  # Uniform weight for base model (soft blending only)
     base_everywhere: true             # If false, u_0 has indicator = domain \ experts
-    pretrained_base_model: false      # If true, load base from path and freeze, build tree then train experts
-    pretrained_base_path: null        # 'outputs\experiments\Capacity\20k_samples\Schrodinger_Capacity_20251213_175504\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'        # Path to pretrained base model checkpoint (required if pretrained_base_model: true)
+    pretrained_base_model: true      # If true, load base from path and freeze, build tree then train experts
+    pretrained_base_path: 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'        # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
     rf_n_estimators: 100               # Number of trees in Random Forest
     rf_max_depth: 12                   # Max depth of each tree
     rf_min_samples_leaf: 10           # Min samples required in a leaf node
@@ -114,13 +114,9 @@ base_config:
 
 # Experiments to run
 experiments:  
-  - name: "500"
+  - name: "4k_Wn"
     problem: schrodinger
-    architecture: [2, 10, 10, 10, 10, 10, 2]
-
-  - name: "2000"
-    problem: schrodinger
-    architecture: [2, 20, 20, 20, 20, 20, 2]
+    architecture: [2, 30, 30, 30, 30, 30, 2]
 
   # - name: "5lyr_40k_Wn_flat"
   #   problem: burgers2d  
