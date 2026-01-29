@@ -709,6 +709,9 @@ class AdaptiveExpertPINN(nn.Module):
         When the base model is frozen, its output is constant for the same inputs.
         We cache the result to avoid redundant forward passes during training.
         
+        Cache is only valid when: same tensor id AND same shape (to prevent
+        false cache hits from memory reuse with different batch sizes).
+        
         Args:
             inputs: (N, n_dims) tensor of coordinates
             
@@ -716,9 +719,16 @@ class AdaptiveExpertPINN(nn.Module):
             u_base: (N, output_dim) base model output
         """
         if self._base_frozen:
-            # Use id() for fast comparison - same tensor object means same data
+            # Check cache validity: same tensor id AND same shape
+            # (id alone is unreliable - Python can reuse memory for different tensors)
             inputs_id = id(inputs)
-            if self._cached_inputs_id == inputs_id and self._cached_u_base is not None:
+            cache_valid = (
+                self._cached_u_base is not None and
+                self._cached_inputs_id == inputs_id and
+                self._cached_u_base.shape[0] == inputs.shape[0]
+            )
+            
+            if cache_valid:
                 return self._cached_u_base
             
             # Compute and cache (no_grad since base is frozen anyway)
