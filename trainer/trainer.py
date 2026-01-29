@@ -307,11 +307,16 @@ def _build_expert_tree_from_pretrained(
 
 
 def _create_adam_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer:
-    """Create Adam optimizer with config parameters."""
+    """Create Adam optimizer with config parameters.
+    
+    Only includes trainable parameters (requires_grad=True) to avoid
+    wasting memory/compute on frozen parameters (e.g., pretrained base model).
+    """
     betas = tuple(cfg.get('adam_betas', [0.9, 0.999]))
     eps = cfg.get('adam_eps', 1e-8)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
     return torch.optim.Adam(
-        model.parameters(),
+        trainable_params,
         lr=cfg['lr'],
         betas=betas,
         eps=eps
@@ -319,9 +324,14 @@ def _create_adam_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer
 
 
 def _create_lbfgs_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer:
-    """Create LBFGS optimizer. Should be used with full-batch training."""
+    """Create LBFGS optimizer. Should be used with full-batch training.
+    
+    Only includes trainable parameters (requires_grad=True) to avoid
+    wasting memory/compute on frozen parameters (e.g., pretrained base model).
+    """
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
     return torch.optim.LBFGS(
-        model.parameters(),
+        trainable_params,
         lr=cfg.get('lbfgs_lr', 1.0),
         max_iter=cfg.get('lbfgs_max_iter', 20),
         max_eval=None,  # Default: max_iter * 1.25
