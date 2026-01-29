@@ -189,6 +189,12 @@ class AdaptiveExpertPINN(nn.Module):
         # Hook management
         self.activations: Dict[str, torch.Tensor] = {}
         self.hook_handles: List[RemovableHandle] = []
+        
+        # Base model caching (for frozen pretrained base)
+        # When base is frozen, u_base is constant for same inputs - cache it
+        self._base_frozen = False
+        self._cached_u_base: Optional[torch.Tensor] = None
+        self._cached_inputs_id: Optional[int] = None  # Use id() for fast comparison
     
     @property
     def num_experts(self) -> int:
@@ -616,11 +622,16 @@ class AdaptiveExpertPINN(nn.Module):
         for param in self.base_model.parameters():
             param.requires_grad = False
         
+        # Enable base output caching (u_base is constant for same inputs when frozen)
+        self._base_frozen = True
+        self._cached_u_base = None
+        self._cached_inputs_id = None
+        
         # Count parameters
         total_params = sum(p.numel() for p in self.base_model.parameters())
         print(f"  Base model architecture: {pretrained_architecture}")
         print(f"  Base model parameters: {total_params:,}")
-        print(f"  Base model frozen: True (requires_grad=False)")
+        print(f"  Base model frozen: True (requires_grad=False, caching enabled)")
         
         # Note: Experts always use config architecture (via get_expert_architecture)
         # which returns config_base_architecture. BatchedExperts was initialized with
@@ -691,6 +702,42 @@ class AdaptiveExpertPINN(nn.Module):
         else:
             return self._forward_soft(inputs)
     
+    def _get_base_output(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Get base model output, with caching when base is frozen (pretrained).
+        
+        When the base model is frozen, its output is constant for the same inputs.
+        We cache the result to avoid redundant forward passes during training.
+        
+        Args:
+            inputs: (N, n_dims) tensor of coordinates
+            
+        Returns:
+            u_base: (N, output_dim) base model output
+        """
+        if self._base_frozen:
+            # Use id() for fast comparison - same tensor object means same data
+            inputs_id = id(inputs)
+            if self._cached_inputs_id == inputs_id and self._cached_u_base is not None:
+                return self._cached_u_base
+            
+            # Compute and cache (no_grad since base is frozen anyway)
+            with torch.no_grad():
+                u_base = self.base_model(inputs)
+            
+            # Cache for next call with same inputs
+            self._cached_u_base = u_base
+            self._cached_inputs_id = inputs_id
+            return u_base
+        else:
+            # Normal forward pass (base is trainable)
+            return self.base_model(inputs)
+    
+    def clear_base_cache(self) -> None:
+        """Clear the cached base model output. Call when inputs change."""
+        self._cached_u_base = None
+        self._cached_inputs_id = None
+    
     def _forward_hard(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Vectorized hard blending forward pass.
@@ -698,9 +745,10 @@ class AdaptiveExpertPINN(nn.Module):
         u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
         
         Optimized with batched einsum: All K experts computed in single operation (O(1)).
+        When base is frozen (pretrained), u_base is cached for same inputs.
         """
-        # Forward base model
-        u_base = self.base_model(inputs)  # (N, output_dim)
+        # Forward base model (with caching when frozen)
+        u_base = self._get_base_output(inputs)
         
         if len(self.experts) == 0:
             return u_base
@@ -730,6 +778,7 @@ class AdaptiveExpertPINN(nn.Module):
             - ψ̃_k = ψ_k / Σ_j ψ_j (partition of unity: Σ ψ̃_k = 1)
         
         Optimized with batched einsum: All K experts computed in single operation (O(1)).
+        When base is frozen (pretrained), u_base is cached for same inputs.
         """
         # Step 1: Compute ALL masks at once using batched indicators (already vectorized)
         # psi_base: (N, 1), psi_experts: (N, K)
@@ -741,8 +790,8 @@ class AdaptiveExpertPINN(nn.Module):
         psi_base_norm = psi_base / psi_sum  # (N, 1)
         psi_experts_norm = psi_experts / psi_sum  # (N, K)
         
-        # Step 3: Forward base model + ALL experts
-        u_base = self.base_model(inputs)  # (N, output_dim)
+        # Step 3: Forward base model (with caching when frozen) + ALL experts
+        u_base = self._get_base_output(inputs)
         
         if len(self.experts) == 0:
             return psi_base_norm * u_base
@@ -786,8 +835,8 @@ class AdaptiveExpertPINN(nn.Module):
         """Vectorized hard blending decomposed forward pass with batched einsum."""
         result = {}
         
-        # Forward base model
-        result['base'] = self.base_model(inputs)
+        # Forward base model (with caching when frozen)
+        result['base'] = self._get_base_output(inputs)
         
         # Compute masks (already vectorized)
         all_masks = self.batched_indicators.compute_hard_masks_only(inputs)
@@ -837,8 +886,8 @@ class AdaptiveExpertPINN(nn.Module):
         for i in range(psi_experts_norm.shape[1]):
             result['weights_normalized'][f'expert_{i}'] = psi_experts_norm[:, i:i+1]  # (N, 1)
         
-        # Forward base model
-        u_base = self.base_model(inputs)
+        # Forward base model (with caching when frozen)
+        u_base = self._get_base_output(inputs)
         result['base'] = u_base
         
         if len(self.experts) > 0:
