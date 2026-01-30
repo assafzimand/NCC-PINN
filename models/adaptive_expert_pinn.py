@@ -191,11 +191,9 @@ class AdaptiveExpertPINN(nn.Module):
         self.activations: Dict[str, torch.Tensor] = {}
         self.hook_handles: List[RemovableHandle] = []
         
-        # Base model caching (for frozen pretrained base)
-        # When base is frozen, u_base is constant for same inputs - cache it
+        # Flag to indicate if base model is frozen (pretrained)
+        # When True, caller should pass precomputed u_base to forward()
         self._base_frozen = False
-        self._cached_u_base: Optional[torch.Tensor] = None
-        self._cached_inputs_id: Optional[int] = None  # Use id() for fast comparison
     
     @property
     def num_experts(self) -> int:
@@ -623,16 +621,14 @@ class AdaptiveExpertPINN(nn.Module):
         for param in self.base_model.parameters():
             param.requires_grad = False
         
-        # Enable base output caching (u_base is constant for same inputs when frozen)
+        # Mark base as frozen - caller should precompute and pass u_base to forward()
         self._base_frozen = True
-        self._cached_u_base = None
-        self._cached_inputs_id = None
         
         # Count parameters
         total_params = sum(p.numel() for p in self.base_model.parameters())
         print(f"  Base model architecture: {pretrained_architecture}")
         print(f"  Base model parameters: {total_params:,}")
-        print(f"  Base model frozen: True (requires_grad=False, caching enabled)")
+        print(f"  Base model frozen: True (requires_grad=False)")
         
         # Note: Experts always use config architecture (via get_expert_architecture)
         # which returns config_base_architecture. BatchedExperts was initialized with
@@ -681,7 +677,7 @@ class AdaptiveExpertPINN(nn.Module):
             for param in expert.parameters():
                 param.requires_grad = True
     
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+    def forward(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> torch.Tensor:
         """
         Composed forward pass.
         
@@ -699,72 +695,36 @@ class AdaptiveExpertPINN(nn.Module):
         
         Args:
             inputs: (N, n_dims) tensor of coordinates [x, t] or [x, y, t]
+            u_base_precomputed: Optional (N, output_dim) precomputed base model output.
+                               When provided (typically for pretrained frozen base),
+                               skips base model forward pass entirely.
             
         Returns:
             u: (N, output_dim) composed solution
         """
         if self.blending_mode == 'hard':
-            return self._forward_hard(inputs)
+            return self._forward_hard(inputs, u_base_precomputed)
         else:
-            return self._forward_soft(inputs)
+            return self._forward_soft(inputs, u_base_precomputed)
     
-    def _get_base_output(self, inputs: torch.Tensor) -> torch.Tensor:
-        """
-        Get base model output, with caching when base is frozen (pretrained).
-        
-        When the base model is frozen, its output is constant for the same inputs.
-        We cache the result to avoid redundant forward passes during training.
-        
-        Cache is only valid when: same tensor id AND same shape (to prevent
-        false cache hits from memory reuse with different batch sizes).
-        
-        Args:
-            inputs: (N, n_dims) tensor of coordinates
-            
-        Returns:
-            u_base: (N, output_dim) base model output
-        """
-        if self._base_frozen:
-            # Check cache validity: same tensor id AND same shape
-            # (id alone is unreliable - Python can reuse memory for different tensors)
-            inputs_id = id(inputs)
-            cache_valid = (
-                self._cached_u_base is not None and
-                self._cached_inputs_id == inputs_id and
-                self._cached_u_base.shape[0] == inputs.shape[0]
-            )
-            
-            if cache_valid:
-                return self._cached_u_base
-            
-            # Compute and cache (no_grad since base is frozen anyway)
-            with torch.no_grad():
-                u_base = self.base_model(inputs)
-            
-            # Cache for next call with same inputs
-            self._cached_u_base = u_base
-            self._cached_inputs_id = inputs_id
-            return u_base
-        else:
-            # Normal forward pass (base is trainable)
-            return self.base_model(inputs)
-    
-    def clear_base_cache(self) -> None:
-        """Clear the cached base model output. Call when inputs change."""
-        self._cached_u_base = None
-        self._cached_inputs_id = None
-    
-    def _forward_hard(self, inputs: torch.Tensor) -> torch.Tensor:
+    def _forward_hard(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> torch.Tensor:
         """
         Vectorized hard blending forward pass.
         
         u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
         
         Optimized with batched einsum: All K experts computed in single operation (O(1)).
-        When base is frozen (pretrained), u_base is cached for same inputs.
+        
+        Args:
+            inputs: (N, n_dims) input coordinates
+            u_base_precomputed: Optional precomputed base output. If provided, skips
+                               base model forward pass (used for frozen pretrained base).
         """
-        # Forward base model (with caching when frozen)
-        u_base = self._get_base_output(inputs)
+        # Get base model output (precomputed or computed)
+        if u_base_precomputed is not None:
+            u_base = u_base_precomputed
+        else:
+            u_base = self.base_model(inputs)
         
         if len(self.experts) == 0:
             return u_base
@@ -782,7 +742,7 @@ class AdaptiveExpertPINN(nn.Module):
         
         return u_total
     
-    def _forward_soft(self, inputs: torch.Tensor) -> torch.Tensor:
+    def _forward_soft(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> torch.Tensor:
         """
         Vectorized soft blending forward pass with partition-of-unity normalization.
         
@@ -801,7 +761,11 @@ class AdaptiveExpertPINN(nn.Module):
                 - Experts provide additive corrections to the pretrained base
         
         Optimized with batched einsum: All K experts computed in single operation (O(1)).
-        When base is frozen (pretrained), u_base is cached for same inputs.
+        
+        Args:
+            inputs: (N, n_dims) input coordinates
+            u_base_precomputed: Optional precomputed base output. If provided, skips
+                               base model forward pass (used for frozen pretrained base).
         """
         # Check if we should use additive mode (base not part of partition of unity)
         use_additive_mode = self._base_frozen and not self.psi_for_pretrained_base
@@ -810,8 +774,11 @@ class AdaptiveExpertPINN(nn.Module):
         # psi_base: (N, 1), psi_experts: (N, K)
         psi_base, psi_experts = self.batched_indicators(inputs)
         
-        # Step 2: Forward base model (with caching when frozen)
-        u_base = self._get_base_output(inputs)
+        # Step 2: Get base model output (precomputed or computed)
+        if u_base_precomputed is not None:
+            u_base = u_base_precomputed
+        else:
+            u_base = self.base_model(inputs)
         
         if len(self.experts) == 0:
             # No experts - just return base model output
@@ -849,7 +816,7 @@ class AdaptiveExpertPINN(nn.Module):
         
         return u_total
     
-    def forward_decomposed(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward_decomposed(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> Dict[str, torch.Tensor]:
         """
         Forward pass returning individual model contributions.
         
@@ -860,6 +827,7 @@ class AdaptiveExpertPINN(nn.Module):
         
         Args:
             inputs: (N, n_dims) tensor of coordinates
+            u_base_precomputed: Optional precomputed base output.
             
         Returns:
             Dict with:
@@ -870,16 +838,19 @@ class AdaptiveExpertPINN(nn.Module):
                 - 'weights_normalized': (soft only) dict of normalized weights per model
         """
         if self.blending_mode == 'hard':
-            return self._forward_decomposed_hard(inputs)
+            return self._forward_decomposed_hard(inputs, u_base_precomputed)
         else:
-            return self._forward_decomposed_soft(inputs)
+            return self._forward_decomposed_soft(inputs, u_base_precomputed)
     
-    def _forward_decomposed_hard(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def _forward_decomposed_hard(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> Dict[str, torch.Tensor]:
         """Vectorized hard blending decomposed forward pass with batched einsum."""
         result = {}
         
-        # Forward base model (with caching when frozen)
-        result['base'] = self._get_base_output(inputs)
+        # Get base model output (precomputed or computed)
+        if u_base_precomputed is not None:
+            result['base'] = u_base_precomputed
+        else:
+            result['base'] = self.base_model(inputs)
         
         # Compute masks (already vectorized)
         all_masks = self.batched_indicators.compute_hard_masks_only(inputs)
@@ -904,7 +875,7 @@ class AdaptiveExpertPINN(nn.Module):
         result['composed'] = u_total
         return result
     
-    def _forward_decomposed_soft(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def _forward_decomposed_soft(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> Dict[str, torch.Tensor]:
         """Vectorized soft blending decomposed forward pass with batched einsum.
         
         Supports both standard partition-of-unity mode and additive mode
@@ -948,8 +919,11 @@ class AdaptiveExpertPINN(nn.Module):
                 result['weights_normalized'][f'expert_{i}'] = psi_experts_norm[:, i:i+1]  # (N, 1)
             result['blending_mode_info'] = 'partition_of_unity'
         
-        # Forward base model (with caching when frozen)
-        u_base = self._get_base_output(inputs)
+        # Get base model output (precomputed or computed)
+        if u_base_precomputed is not None:
+            u_base = u_base_precomputed
+        else:
+            u_base = self.base_model(inputs)
         result['base'] = u_base
         
         if len(self.experts) > 0:

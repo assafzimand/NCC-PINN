@@ -164,6 +164,9 @@ def build_loss(**cfg) -> Callable:
         h_gt = batch['h_gt']  # (N, 2) as (real, imag)
         masks = batch['mask']  # dict with boolean masks
         
+        # Precomputed base output for pretrained base mode (optional)
+        u_base_full = batch.get('u_base', None)
+        
         device = x.device
         
         # ============================================================
@@ -174,13 +177,18 @@ def build_loss(**cfg) -> Callable:
             x_f = x[masks['residual']].contiguous()  # (N_f, spatial_dim)
             t_f = t[masks['residual']].contiguous()  # (N_f, 1)
             
+            # Get precomputed base output for residual points if available
+            u_base_f = None
+            if u_base_full is not None:
+                u_base_f = u_base_full[masks['residual']].contiguous()
+            
             # Enable gradients for autograd
             x_f = x_f.clone().detach().requires_grad_(True)
             t_f = t_f.clone().detach().requires_grad_(True)
             
             # Model prediction: concatenate x,t -> predict (u,v)
             xt_f = torch.cat([x_f, t_f], dim=1)
-            uv_f = model(xt_f)  # (N_f, 2)
+            uv_f = model(xt_f, u_base_precomputed=u_base_f)  # (N_f, 2)
             
             # Extract u and v (these should have grad_fn from the model)
             u_f = uv_f[:, 0]
@@ -209,9 +217,14 @@ def build_loss(**cfg) -> Callable:
             t_0 = t[masks['IC']].contiguous()  # (N_0, 1)
             h_gt_0 = h_gt[masks['IC']].contiguous()  # (N_0, 2)
             
+            # Get precomputed base output for IC points if available
+            u_base_0 = None
+            if u_base_full is not None:
+                u_base_0 = u_base_full[masks['IC']].contiguous()
+            
             # Model prediction
             xt_0 = torch.cat([x_0, t_0], dim=1)
-            uv_0 = model(xt_0)  # (N_0, 2)
+            uv_0 = model(xt_0, u_base_precomputed=u_base_0)  # (N_0, 2)
             
             # Convert to complex
             h_pred = torch.complex(uv_0[:, 0], uv_0[:, 1])
@@ -251,9 +264,14 @@ def build_loss(**cfg) -> Callable:
             x_stacked = torch.cat([x_b_left, x_b_right], dim=0)
             t_stacked = torch.cat([t_b_left, t_b_right], dim=0)
             
+            # Get precomputed base output for BC points if available
+            u_base_bc = None
+            if u_base_full is not None:
+                u_base_bc = u_base_full[masks['BC']].contiguous()
+            
             # Single forward pass for both boundaries
             xt_stacked = torch.cat([x_stacked, t_stacked], dim=1)
-            uv_stacked = model(xt_stacked)
+            uv_stacked = model(xt_stacked, u_base_precomputed=u_base_bc)
             u_stacked = uv_stacked[:, 0]
             v_stacked = uv_stacked[:, 1]
             
