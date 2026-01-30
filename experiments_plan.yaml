@@ -141,7 +141,7 @@ experiments:
       wavelet_threshold: 0.0001            # Minimum wavelet norm to spawn (filters low-priority regions)
       inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
 
-- name: "regular_spawn"
+  - name: "regular_spawn"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
     adaptive_pinn:
