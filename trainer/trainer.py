@@ -711,7 +711,8 @@ def train(
             for batch in train_loader:
                 with torch.no_grad():
                     inputs = torch.cat([batch['x'], batch['t']], dim=1)
-                    h_pred = model(inputs)
+                    u_base = batch.get('u_base')
+                    h_pred = model(inputs, u_base_precomputed=u_base)
                     rel_l2 = compute_relative_l2_error(h_pred, batch['h_gt'])
                     inf_norm = compute_infinity_norm_error(h_pred, batch['h_gt'])
                     train_rel_l2 += rel_l2.item()
@@ -736,7 +737,8 @@ def train(
 
                 with torch.no_grad():
                     inputs = torch.cat([batch['x'], batch['t']], dim=1)
-                    h_pred = model(inputs)
+                    u_base = batch.get('u_base')
+                    h_pred = model(inputs, u_base_precomputed=u_base)
                     rel_l2 = compute_relative_l2_error(h_pred, batch['h_gt'])
                     inf_norm = compute_infinity_norm_error(h_pred, batch['h_gt'])
 
@@ -1110,7 +1112,8 @@ def train(
     model.eval()
     with torch.no_grad():
         inputs_eval = torch.cat([eval_data['x'], eval_data['t']], dim=1)
-        h_pred_eval = model(inputs_eval)
+        u_base_eval = eval_data.get('u_base')
+        h_pred_eval = model(inputs_eval, u_base_precomputed=u_base_eval)
 
     plot_final_comparison(
         h_pred_eval.cpu().numpy(),
