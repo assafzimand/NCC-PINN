@@ -509,6 +509,17 @@ def train(
             # Load pretrained base and freeze it
             model.load_pretrained_base(pretrained_base_path)
             
+            # Precompute base outputs for all data points ONCE
+            # This avoids repeated forward passes through frozen base during training
+            print("\n  Precomputing base model outputs for all data...")
+            with torch.no_grad():
+                train_inputs = torch.cat([train_data['x'], train_data['t']], dim=1)
+                eval_inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
+                train_data['u_base'] = model.base_model(train_inputs)
+                eval_data['u_base'] = model.base_model(eval_inputs)
+            print(f"    Train u_base shape: {train_data['u_base'].shape}")
+            print(f"    Eval u_base shape: {eval_data['u_base'].shape}")
+            
             # Build expert tree based ONLY on pretrained base
             num_experts_built = _build_expert_tree_from_pretrained(
                 model=model,
@@ -1270,7 +1281,7 @@ def train(
 
 def _move_batch_to_device(batch: Dict, device: torch.device) -> Dict:
     """Move a batch dictionary to specified device."""
-    return {
+    result = {
         'x': batch['x'].to(device),
         't': batch['t'].to(device),
         'h_gt': batch['h_gt'].to(device),
@@ -1280,6 +1291,10 @@ def _move_batch_to_device(batch: Dict, device: torch.device) -> Dict:
             'BC': batch['mask']['BC'].to(device)
         }
     }
+    # Include precomputed base output if available (for pretrained base mode)
+    if 'u_base' in batch:
+        result['u_base'] = batch['u_base'].to(device)
+    return result
 
 
 def _create_dataloader(
@@ -1291,22 +1306,36 @@ def _create_dataloader(
     Create DataLoader from data dictionary.
 
     Args:
-        data: Dictionary with 'x', 't', 'h_gt', 'mask'
+        data: Dictionary with 'x', 't', 'h_gt', 'mask', and optionally 'u_base'
         batch_size: Batch size
         shuffle: Whether to shuffle
 
     Returns:
         DataLoader
     """
-    # Create TensorDataset
-    dataset = TensorDataset(
-        data['x'],
-        data['t'],
-        data['h_gt'],
-        data['mask']['residual'],
-        data['mask']['IC'],
-        data['mask']['BC']
-    )
+    # Check if precomputed base outputs are available
+    has_u_base = 'u_base' in data
+    
+    # Create TensorDataset - include u_base if available
+    if has_u_base:
+        dataset = TensorDataset(
+            data['x'],
+            data['t'],
+            data['h_gt'],
+            data['mask']['residual'],
+            data['mask']['IC'],
+            data['mask']['BC'],
+            data['u_base']
+        )
+    else:
+        dataset = TensorDataset(
+            data['x'],
+            data['t'],
+            data['h_gt'],
+            data['mask']['residual'],
+            data['mask']['IC'],
+            data['mask']['BC']
+        )
 
     # Custom collate function to reconstruct dict format
     def collate_fn(batch_list):
@@ -1317,7 +1346,7 @@ def _create_dataloader(
         mask_ic_batch = torch.stack(tuple(item[4] for item in batch_list))
         mask_bc_batch = torch.stack(tuple(item[5] for item in batch_list))
 
-        return {
+        result = {
             'x': x_batch,
             't': t_batch,
             'h_gt': h_gt_batch,
@@ -1327,6 +1356,13 @@ def _create_dataloader(
                 'BC': mask_bc_batch
             }
         }
+        
+        # Include u_base if available (for pretrained base mode)
+        if has_u_base:
+            u_base_batch = torch.stack(tuple(item[6] for item in batch_list))
+            result['u_base'] = u_base_batch
+        
+        return result
 
     return DataLoader(
         dataset,

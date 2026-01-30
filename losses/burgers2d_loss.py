@@ -159,6 +159,9 @@ def build_loss(**cfg) -> Callable:
         h_gt = batch['h_gt']  # (N, 1)
         masks = batch['mask']  # dict with boolean masks
         
+        # Precomputed base output for pretrained base mode (optional)
+        u_base_full = batch.get('u_base', None)
+        
         device = x.device
         
         # ============================================================
@@ -169,13 +172,18 @@ def build_loss(**cfg) -> Callable:
             x_f = x[masks['residual']].contiguous()
             t_f = t[masks['residual']].contiguous()
             
+            # Get precomputed base output for residual points if available
+            u_base_f = None
+            if u_base_full is not None:
+                u_base_f = u_base_full[masks['residual']].contiguous()
+            
             # Enable gradients for autograd
             x_f = x_f.clone().detach().requires_grad_(True)
             t_f = t_f.clone().detach().requires_grad_(True)
             
             # Model prediction: concatenate x,t -> predict h
             xt_f = torch.cat([x_f, t_f], dim=1)
-            h_pred = model(xt_f)  # (N_f, 1)
+            h_pred = model(xt_f, u_base_precomputed=u_base_f)  # (N_f, 1)
             
             # Extract h (squeeze output dimension for derivative computation)
             h_f = h_pred[:, 0]
@@ -200,9 +208,14 @@ def build_loss(**cfg) -> Callable:
             t_0 = t[masks['IC']].contiguous()
             h_gt_0 = h_gt[masks['IC']].contiguous()  # (N_0, 1)
             
+            # Get precomputed base output for IC points if available
+            u_base_0 = None
+            if u_base_full is not None:
+                u_base_0 = u_base_full[masks['IC']].contiguous()
+            
             # Model prediction
             xt_0 = torch.cat([x_0, t_0], dim=1)
-            h_pred_0 = model(xt_0)  # (N_0, 1)
+            h_pred_0 = model(xt_0, u_base_precomputed=u_base_0)  # (N_0, 1)
             
             # IC loss: MSE between predicted and ground truth
             mse_ic = torch.mean((h_pred_0 - h_gt_0) ** 2)
@@ -218,9 +231,14 @@ def build_loss(**cfg) -> Callable:
             t_b = t[masks['BC']].contiguous()
             h_gt_b = h_gt[masks['BC']].contiguous()  # (N_b, 1)
             
+            # Get precomputed base output for BC points if available
+            u_base_b = None
+            if u_base_full is not None:
+                u_base_b = u_base_full[masks['BC']].contiguous()
+            
             # Model prediction
             xt_b = torch.cat([x_b, t_b], dim=1)
-            h_pred_b = model(xt_b)  # (N_b, 1)
+            h_pred_b = model(xt_b, u_base_precomputed=u_base_b)  # (N_b, 1)
             
             # BC loss: MSE between predicted and analytical boundary values
             mse_bc = torch.mean((h_pred_b - h_gt_b) ** 2)
