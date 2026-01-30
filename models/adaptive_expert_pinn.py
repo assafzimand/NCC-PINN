@@ -144,8 +144,7 @@ class AdaptiveExpertPINN(nn.Module):
         self.max_experts = adaptive_config.get('max_experts', 5)
         self.max_depth = adaptive_config.get('max_depth', 5)  # Maximum depth in expert tree
         self.blending_mode = adaptive_config.get('blending_mode', 'hard')
-        self.blending_sigma = adaptive_config.get('blending_sigma', 0.1)  # Legacy parameter
-        self.sigma_fraction = adaptive_config.get('sigma_fraction', 0.2)  # New: fraction of region size
+        self.sigma_fraction = adaptive_config.get('sigma_fraction', 0.2)  # For soft: sigma = fraction * region_size
         self.base_weight = adaptive_config.get('base_weight', 1.0)  # Uniform weight for base model
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
         self.freeze_mode = adaptive_config.get('freeze_mode', 'none')

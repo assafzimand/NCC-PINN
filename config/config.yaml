@@ -6,7 +6,6 @@ adam_eps: 1.0e-08
 adaptive_pinn:
   base_everywhere: true
   blending_mode: hard              # "hard" | "soft"
-  blending_sigma: 0.1              # Legacy: absolute sigma value (deprecated)
   sigma_fraction: 0.2              # For soft: sigma = fraction * region_size (per-dimension)
   base_weight: 1.0                 # Uniform weight for base model (soft blending only)
   enabled: true
