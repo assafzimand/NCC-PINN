@@ -5,7 +5,7 @@ experiment_name: "schrodinger_pretrained"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 10000
+  epochs: 10
   batch_size: 512
   lr: 0.0001
   
@@ -30,10 +30,10 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 200
-  print_every: 100
-  save_every: 5000
-  inner_metrics_eval_every: 3334
+  eval_every: 2
+  print_every: 1
+  save_every: 5
+  inner_metrics_eval_every: 4
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -90,7 +90,7 @@ base_config:
   # Adaptive Expert PINN configuration (Hierarchical Expert Tree)
   adaptive_pinn:
     enabled: true                    # Toggle feature on/off (override per experiment)
-    max_experts: 10                   # Maximum number of expert networks
+    max_experts: 2                   # Maximum number of expert networks
     max_depth: 3                      # Maximum depth in expert tree (NEW)
     overlap_threshold: 0.5            # Accept region if >50% outside siblings (NEW)
     min_samples_per_region: 20       # Min points to search in a subdomain (NEW)
@@ -106,6 +106,7 @@ base_config:
     base_everywhere: true             # If false, u_0 has indicator = domain \ experts
     pretrained_base_model: true      # If true, load base from path and freeze, build tree then train experts
     pretrained_base_path: 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'        # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
+    psi_for_pretrained_base: true    # If false, base contributes with ψ₀=1 everywhere (not normalized), experts are additive corrections
     rf_n_estimators: 100               # Number of trees in Random Forest
     rf_max_depth: 12                   # Max depth of each tree
     rf_min_samples_leaf: 10           # Min samples required in a leaf node

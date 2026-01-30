@@ -150,6 +150,7 @@ class AdaptiveExpertPINN(nn.Module):
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
         self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
         self.expert_architectures = adaptive_config.get('expert_architectures', None)
+        self.psi_for_pretrained_base = adaptive_config.get('psi_for_pretrained_base', True)
         
         # Store config architectures (before any pretrained loading)
         # This is used to determine expert architecture when pretrained base is loaded
@@ -687,9 +688,14 @@ class AdaptiveExpertPINN(nn.Module):
         For hard blending:
             u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
         
-        For soft blending (partition of unity):
+        For soft blending (partition of unity, default):
             u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t)
-            where ψ̃_k = ψ_k / Σ_j ψ_j (normalized weights)
+            where ψ̃_k = ψ_k / Σ_j ψ_j (normalized weights, including base)
+        
+        For soft blending with psi_for_pretrained_base=False (pretrained only):
+            u(x,t) = u_base(x,t) + Σ_k ψ̃_k(x,t) · u_k(x,t)
+            where ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K (experts only, base not normalized)
+            Base model contributes fully everywhere, experts are additive corrections.
         
         Args:
             inputs: (N, n_dims) tensor of coordinates [x, t] or [x, y, t]
@@ -780,39 +786,66 @@ class AdaptiveExpertPINN(nn.Module):
         """
         Vectorized soft blending forward pass with partition-of-unity normalization.
         
-        u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t)
+        Standard mode (psi_for_pretrained_base=True or non-pretrained):
+            u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t)
+            where:
+                - ψ_0 = uniform constant (base_weight) for base model
+                - ψ_k = sigmoid-based bump function for expert k
+                - ψ̃_k = ψ_k / Σ_j ψ_j (partition of unity: Σ ψ̃_k = 1)
         
-        where:
-            - ψ_0 = uniform constant (base_weight) for base model
-            - ψ_k = sigmoid-based bump function for expert k
-            - ψ̃_k = ψ_k / Σ_j ψ_j (partition of unity: Σ ψ̃_k = 1)
+        Additive mode (psi_for_pretrained_base=False AND pretrained base):
+            u(x,t) = u_base + Σ_k ψ̃_k(x,t) · u_k(x,t)
+            where:
+                - Base contributes with weight 1 everywhere (not normalized)
+                - ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K (experts only, excluding base)
+                - Experts provide additive corrections to the pretrained base
         
         Optimized with batched einsum: All K experts computed in single operation (O(1)).
         When base is frozen (pretrained), u_base is cached for same inputs.
         """
+        # Check if we should use additive mode (base not part of partition of unity)
+        use_additive_mode = self._base_frozen and not self.psi_for_pretrained_base
+        
         # Step 1: Compute ALL masks at once using batched indicators (already vectorized)
         # psi_base: (N, 1), psi_experts: (N, K)
         psi_base, psi_experts = self.batched_indicators(inputs)
         
-        # Step 2: Normalize (partition of unity) - fully vectorized
-        psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-        psi_sum = psi_sum.clamp(min=1e-8)
-        psi_base_norm = psi_base / psi_sum  # (N, 1)
-        psi_experts_norm = psi_experts / psi_sum  # (N, K)
-        
-        # Step 3: Forward base model (with caching when frozen) + ALL experts
+        # Step 2: Forward base model (with caching when frozen)
         u_base = self._get_base_output(inputs)
         
         if len(self.experts) == 0:
-            return psi_base_norm * u_base
+            # No experts - just return base model output
+            # In additive mode, this is just u_base (since there are no corrections)
+            # In partition mode, this is also just u_base (normalized weight = 1)
+            return u_base
         
-        # Batched einsum: single operation for all K experts (O(1))
-        # All experts have same architecture (config_base_architecture), so einsum always works
+        # Step 3: Compute normalized expert weights
+        if use_additive_mode:
+            # Additive mode: normalize experts among themselves only (exclude base)
+            # ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K
+            psi_experts_sum = psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
+            psi_experts_sum = psi_experts_sum.clamp(min=1e-8)
+            psi_experts_norm = psi_experts / psi_experts_sum  # (N, K)
+        else:
+            # Standard partition of unity: normalize ALL (base + experts)
+            # ψ̃_k = ψ_k / Σ_j ψ_j for j=0..K
+            psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
+            psi_sum = psi_sum.clamp(min=1e-8)
+            psi_base_norm = psi_base / psi_sum  # (N, 1)
+            psi_experts_norm = psi_experts / psi_sum  # (N, K)
+        
+        # Step 4: Batched einsum for all K experts (O(1))
         u_experts = self.batched_experts.forward(inputs)  # (N, K, output_dim)
         
-        # Step 4: Weighted sum - fully vectorized
+        # Step 5: Compute final output
         weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts  # (N, K, out_dim)
-        u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+        
+        if use_additive_mode:
+            # Additive: u = u_base + Σ ψ̃_k · u_k
+            u_total = u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+        else:
+            # Partition of unity: u = ψ̃_0 · u_base + Σ ψ̃_k · u_k
+            u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
         
         return u_total
     
@@ -872,29 +905,48 @@ class AdaptiveExpertPINN(nn.Module):
         return result
     
     def _forward_decomposed_soft(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Vectorized soft blending decomposed forward pass with batched einsum."""
+        """Vectorized soft blending decomposed forward pass with batched einsum.
+        
+        Supports both standard partition-of-unity mode and additive mode
+        (when psi_for_pretrained_base=False and base is pretrained).
+        """
         result = {}
+        
+        # Check if we should use additive mode (base not part of partition of unity)
+        use_additive_mode = self._base_frozen and not self.psi_for_pretrained_base
         
         # Compute all masks at once using batched indicators (already vectorized)
         psi_base, psi_experts = self.batched_indicators(inputs)  # (N, 1), (N, K)
         
-        # Compute normalization - vectorized
-        psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-        psi_sum = psi_sum.clamp(min=1e-8)
-        
-        # Normalized weights (partition of unity)
-        psi_base_norm = psi_base / psi_sum  # (N, 1)
-        psi_experts_norm = psi_experts / psi_sum  # (N, K)
-        
-        # Store masks (unnormalized soft weights)
+        # Store unnormalized masks
         result['masks'] = {'base': psi_base}
         for i in range(psi_experts.shape[1]):
             result['masks'][f'expert_{i}'] = psi_experts[:, i:i+1]  # (N, 1)
         
-        # Store normalized weights
-        result['weights_normalized'] = {'base': psi_base_norm}
-        for i in range(psi_experts_norm.shape[1]):
-            result['weights_normalized'][f'expert_{i}'] = psi_experts_norm[:, i:i+1]  # (N, 1)
+        # Compute normalized weights based on mode
+        if use_additive_mode:
+            # Additive mode: base weight is 1, experts normalized among themselves
+            psi_experts_sum = psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
+            psi_experts_sum = psi_experts_sum.clamp(min=1e-8)
+            psi_experts_norm = psi_experts / psi_experts_sum  # (N, K)
+            
+            # Store normalized weights (base gets special value of 1.0)
+            result['weights_normalized'] = {'base': torch.ones_like(psi_base)}
+            for i in range(psi_experts_norm.shape[1]):
+                result['weights_normalized'][f'expert_{i}'] = psi_experts_norm[:, i:i+1]  # (N, 1)
+            result['blending_mode_info'] = 'additive (psi_for_pretrained_base=False)'
+        else:
+            # Standard partition of unity
+            psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
+            psi_sum = psi_sum.clamp(min=1e-8)
+            psi_base_norm = psi_base / psi_sum  # (N, 1)
+            psi_experts_norm = psi_experts / psi_sum  # (N, K)
+            
+            # Store normalized weights
+            result['weights_normalized'] = {'base': psi_base_norm}
+            for i in range(psi_experts_norm.shape[1]):
+                result['weights_normalized'][f'expert_{i}'] = psi_experts_norm[:, i:i+1]  # (N, 1)
+            result['blending_mode_info'] = 'partition_of_unity'
         
         # Forward base model (with caching when frozen)
         u_base = self._get_base_output(inputs)
@@ -908,11 +960,17 @@ class AdaptiveExpertPINN(nn.Module):
             for i in range(len(self.experts)):
                 result[f'expert_{i}'] = u_experts[:, i, :]  # (N, out_dim)
             
-            # Composed output with normalized weights - vectorized
+            # Composed output based on mode
             weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts  # (N, K, out_dim)
-            u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+            
+            if use_additive_mode:
+                # Additive: u = u_base + Σ ψ̃_k · u_k
+                u_total = u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+            else:
+                # Partition of unity: u = ψ̃_0 · u_base + Σ ψ̃_k · u_k
+                u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
         else:
-            u_total = psi_base_norm * u_base
+            u_total = u_base
         
         result['composed'] = u_total
         return result

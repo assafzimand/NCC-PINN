@@ -18,6 +18,9 @@ adaptive_pinn:
   overlap_threshold: 0.5
   min_samples_per_region: 50
   max_children_coverage: 0.9
+  pretrained_base_model: false       # If true, load base from path and freeze
+  pretrained_base_path: null         # Path to pretrained base model checkpoint
+  psi_for_pretrained_base: true      # If false, base contributes with ψ₀=1 everywhere (not normalized)
   rf_max_depth: 12
   rf_min_samples_leaf: 10
   rf_n_estimators: 100
