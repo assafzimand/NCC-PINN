@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "schrodinger_pretrained"
+experiment_name: "schrodinger_pretrained_no_psi_base"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -90,7 +90,7 @@ base_config:
   # Adaptive Expert PINN configuration (Hierarchical Expert Tree)
   adaptive_pinn:
     enabled: true                    # Toggle feature on/off (override per experiment)
-    max_experts: 2                   # Maximum number of expert networks
+    max_experts: 10                   # Maximum number of expert networks
     max_depth: 3                      # Maximum depth in expert tree (NEW)
     overlap_threshold: 0.5            # Accept region if >50% outside siblings (NEW)
     min_samples_per_region: 20       # Min points to search in a subdomain (NEW)
@@ -100,13 +100,12 @@ base_config:
     expert_architectures: null        # null = same as base, or list of architectures
     freeze_mode: none                 # "none" | "previous" | "base_only"
     blending_mode: soft               # "hard" | "soft"
-    blending_sigma: 0.1               # Legacy: absolute sigma value (deprecated)
     sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
     base_weight: 1.0                  # Uniform weight for base model (soft blending only)
     base_everywhere: true             # If false, u_0 has indicator = domain \ experts
     pretrained_base_model: true      # If true, load base from path and freeze, build tree then train experts
     pretrained_base_path: 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'        # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
-    psi_for_pretrained_base: true    # If false, base contributes with ψ₀=1 everywhere (not normalized), experts are additive corrections
+    psi_for_pretrained_base: false    # If false, base contributes with ψ₀=1 everywhere (not normalized), experts are additive corrections
     rf_n_estimators: 100               # Number of trees in Random Forest
     rf_max_depth: 12                   # Max depth of each tree
     rf_min_samples_leaf: 10           # Min samples required in a leaf node
@@ -115,9 +114,59 @@ base_config:
 
 # Experiments to run
 experiments:  
-  - name: "4k_Wn"
+  - name: "spawn_by_depth"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
+    adaptive_pinn:
+      enabled: true                    # Toggle feature on/off (override per experiment)
+      max_experts: 10                   # Maximum number of expert networks
+      max_depth: 3                      # Maximum depth in expert tree (NEW)
+      overlap_threshold: 0.5            # Accept region if >50% outside siblings (NEW)
+      min_samples_per_region: 20       # Min points to search in a subdomain (NEW)
+      max_children_coverage: 0.95       # Skip parent if children cover >95% of it (NEW)
+      spawn_by_depth: true             # false: search all depths, true: complete depth d before d+1
+      spawn_every_epochs: 1000           # Check for spawning every N epochs (quick test value)
+      expert_architectures: null        # null = same as base, or list of architectures
+      freeze_mode: none                 # "none" | "previous" | "base_only"
+      blending_mode: soft               # "hard" | "soft"
+      sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
+      base_weight: 1.0                  # Uniform weight for base model (soft blending only)
+      base_everywhere: true             # If false, u_0 has indicator = domain \ experts
+      pretrained_base_model: true      # If true, load base from path and freeze, build tree then train experts
+      pretrained_base_path: 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'        # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
+      psi_for_pretrained_base: false    # If false, base contributes with ψ₀=1 everywhere (not normalized), experts are additive corrections
+      rf_n_estimators: 100               # Number of trees in Random Forest
+      rf_max_depth: 12                   # Max depth of each tree
+      rf_min_samples_leaf: 10           # Min samples required in a leaf node
+      wavelet_threshold: 0.0001            # Minimum wavelet norm to spawn (filters low-priority regions)
+      inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
+
+- name: "regular_spawn"
+    problem: schrodinger
+    architecture: [2, 30, 30, 30, 30, 30, 2]
+    adaptive_pinn:
+      enabled: true                    # Toggle feature on/off (override per experiment)
+      max_experts: 10                   # Maximum number of expert networks
+      max_depth: 3                      # Maximum depth in expert tree (NEW)
+      overlap_threshold: 0.5            # Accept region if >50% outside siblings (NEW)
+      min_samples_per_region: 20       # Min points to search in a subdomain (NEW)
+      max_children_coverage: 0.95       # Skip parent if children cover >95% of it (NEW)
+      spawn_by_depth: false             # false: search all depths, true: complete depth d before d+1
+      spawn_every_epochs: 1000           # Check for spawning every N epochs (quick test value)
+      expert_architectures: null        # null = same as base, or list of architectures
+      freeze_mode: none                 # "none" | "previous" | "base_only"
+      blending_mode: soft               # "hard" | "soft"
+      sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
+      base_weight: 1.0                  # Uniform weight for base model (soft blending only)
+      base_everywhere: true             # If false, u_0 has indicator = domain \ experts
+      pretrained_base_model: true      # If true, load base from path and freeze, build tree then train experts
+      pretrained_base_path: 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'        # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
+      psi_for_pretrained_base: false    # If false, base contributes with ψ₀=1 everywhere (not normalized), experts are additive corrections
+      rf_n_estimators: 100               # Number of trees in Random Forest
+      rf_max_depth: 12                   # Max depth of each tree
+      rf_min_samples_leaf: 10           # Min samples required in a leaf node
+      wavelet_threshold: 0.0001            # Minimum wavelet norm to spawn (filters low-priority regions)
+      inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
 
   # - name: "5lyr_40k_Wn_flat"
   #   problem: burgers2d  
