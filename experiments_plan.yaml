@@ -117,66 +117,99 @@ experiments:
   - name: "lr0.00001_switch_at1.0"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
-    epochs: 2000
-    lr: 0.00001
-    optimizer_switch_at: 1.0
-    lbfgs_lr: 1.0
+    epochs: 1000
+    lr: 0.0001
+    optimizer_switch_at: 0.9
+    lbfgs_lr: 0.0001
 
   - name: "lr0.000001_switch_at1.0"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
-    epochs: 2000
-    lr: 0.000001
-    optimizer_switch_at: 1.0
-    lbfgs_lr: 1.0
+    epochs: 1000
+    lr: 0.0001
+    optimizer_switch_at: 0.5
+    lbfgs_lr: 0.0001
 
   - name: "lr0.0001_switch_at0.25_lbfgs_lr0.1"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
-    epochs: 2000
+    epochs: 1000
     lr: 0.0001
-    optimizer_switch_at: 0.25
-    lbfgs_lr: 0.1
+    optimizer_switch_at: 0.9
+    lbfgs_lr: 0.00001
 
   - name: "lr0.0001_switch_at0.25_lbfgs_lr0.01"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
-    epochs: 2000
+    epochs: 1000
     lr: 0.0001
-    optimizer_switch_at: 0.25
-    lbfgs_lr: 0.01
+    optimizer_switch_at: 0.5
+    lbfgs_lr: 0.00001
 
   - name: "lr0.0001_switch_at0.25_lbfgs_lr0.001"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
-    epochs: 2000
+    epochs: 1000
     lr: 0.0001
-    optimizer_switch_at: 0.25
-    lbfgs_lr: 0.001
+    optimizer_switch_at: 0.9
+    lbfgs_lr: 0.000001
 
   - name: "lr0.00001_switch_at0.25_lbfgs_lr0.01"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
-    epochs: 2000
-    lr: 0.00001
-    optimizer_switch_at: 0.25
-    lbfgs_lr: 0.01
+    epochs: 1000
+    lr: 0.0001
+    optimizer_switch_at: 0.5
+    lbfgs_lr: 0.000001
 
   - name: "lr0.000001_switch_at0.25_lbfgs_lr0.1"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
-    epochs: 2000
-    lr: 0.000001
-    optimizer_switch_at: 0.25
-    lbfgs_lr: 0.01
+    epochs: 1000
+    lr: 0.0001
+    optimizer_switch_at: 0.9
+    lbfgs_lr: 0.0000001
 
   - name: "lr0.0000001_switch_at0.5_lbfgs_lr0.1"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
-    epochs: 2000
-    lr: 0.0000001
+    epochs: 1000
+    lr: 0.0001
     optimizer_switch_at: 0.5
-    lbfgs_lr: 0.1
+    lbfgs_lr: 0.0000001
+
+  - name: "lr0.000001_switch_at0.25_lbfgs_lr0.1"
+    problem: schrodinger
+    architecture: [2, 30, 30, 30, 30, 30, 2]
+    epochs: 1000
+    lr: 0.0001
+    optimizer_switch_at: 0.9
+    lbfgs_lr: 0.00000001
+
+  - name: "lr0.0000001_switch_at0.5_lbfgs_lr0.1"
+    problem: schrodinger
+    architecture: [2, 30, 30, 30, 30, 30, 2]
+    epochs: 1000
+    lr: 0.0001
+    optimizer_switch_at: 0.5
+    lbfgs_lr: 0.00000001
+
+  - name: "lr0.000001_switch_at0.25_lbfgs_lr0.1"
+    problem: schrodinger
+    architecture: [2, 30, 30, 30, 30, 30, 2]
+    epochs: 1000
+    lr: 0.0001
+    optimizer_switch_at: 0.9
+    lbfgs_lr: 0.000000001
+
+  - name: "lr0.0000001_switch_at0.5_lbfgs_lr0.1"
+    problem: schrodinger
+    architecture: [2, 30, 30, 30, 30, 30, 2]
+    epochs: 1000
+    lr: 0.0001
+    optimizer_switch_at: 0.5
+    lbfgs_lr: 0.000000001
+
 
   # - name: "5lyr_40k_Wn_flat"
   #   problem: burgers2d  
