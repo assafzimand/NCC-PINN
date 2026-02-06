@@ -17,7 +17,8 @@ def _build_expert_tree_from_pretrained(
     model: nn.Module,
     eval_data: Dict,
     cfg: Dict,
-    run_dir: Path
+    run_dir: Path,
+    loss_fn: Callable
 ) -> int:
     """
     Build the expert tree using ONLY the pretrained base model's predictions.
@@ -31,6 +32,7 @@ def _build_expert_tree_from_pretrained(
         eval_data: Evaluation data dictionary
         cfg: Configuration dictionary
         run_dir: Output directory for plots
+        loss_fn: Loss function (model, batch) -> scalar
         
     Returns:
         Number of experts spawned
@@ -57,7 +59,7 @@ def _build_expert_tree_from_pretrained(
         plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
         plot_expert_soft_weights
     )
-    from adaptive.residual_utils import compute_pde_residuals
+    from adaptive.residual_utils import compute_loss_components
     
     device = next(model.parameters()).device
     domain_bounds = model.get_domain_bounds()
@@ -88,21 +90,26 @@ def _build_expert_tree_from_pretrained(
     with torch.no_grad():
         u_pred_base = model.base_model(eval_inputs)
     
-    # Compute PDE residuals using base model only
-    # We need to temporarily make the composed forward use only base
+    # Compute per-sample loss components for total loss weighting
     problem = cfg.get('problem', 'schrodinger')
-    pde_residuals = compute_pde_residuals(
-        model=model.base_model,  # Use base model directly for residuals
+    loss_components = compute_loss_components(
+        model=model.base_model,  # Use base model directly for loss components
         x=eval_data['x'],
         t=eval_data['t'],
-        problem=problem,
-        config=cfg
+        target=eval_data.get('h_gt', eval_data.get('u_gt')),
+        masks=eval_data['mask'],
+        loss_fn=loss_fn,
+        weights={
+            'residual': cfg[problem]['loss_weights']['residual'],
+            'ic': cfg[problem]['loss_weights']['ic'],
+            'bc': cfg[problem]['loss_weights']['bc']
+        }
     )
     
     # Convert to numpy for RF
     X_eval_full = eval_inputs.cpu().numpy()
     y_eval_full = u_pred_base.cpu().numpy()
-    residuals_full = pde_residuals.detach().cpu().numpy()
+    loss_components_full = loss_components  # Dict already has numpy arrays
     
     spawn_step = 0
     total_experts_spawned = 0
@@ -170,7 +177,7 @@ def _build_expert_tree_from_pretrained(
                 
                 X_search = X_eval_full
                 y_search = y_eval_full
-                res_search = residuals_full
+                loss_comp_search = loss_components_full
                 
                 print(f"    Search domain: entire domain ({len(X_search)} points, {coverage*100:.1f}% covered)")
                 
@@ -184,7 +191,7 @@ def _build_expert_tree_from_pretrained(
                 region = region_detector.detect(
                     X=X_search,
                     y=y_search,
-                    residuals=res_search,
+                    loss_components=loss_comp_search,
                     sibling_regions=sibling_regions,
                     overlap_threshold=overlap_threshold,
                     wavelet_threshold=wavelet_threshold,
@@ -229,7 +236,12 @@ def _build_expert_tree_from_pretrained(
                     
                     X_search = X_eval_full[parent_mask_np]
                     y_search = y_eval_full[parent_mask_np]
-                    res_search = residuals_full[parent_mask_np]
+                    loss_comp_search = {
+                        'residual': loss_components_full['residual'][parent_mask_np],
+                        'ic': loss_components_full['ic'][parent_mask_np],
+                        'bc': loss_components_full['bc'][parent_mask_np],
+                        'weights': loss_components_full['weights']
+                    }
                     
                     print(f"      Parent E{parent_idx+1} (depth {depth-1}): {len(X_search)} points, {coverage*100:.1f}% covered")
                     
@@ -243,7 +255,7 @@ def _build_expert_tree_from_pretrained(
                     region = region_detector.detect(
                         X=X_search,
                         y=y_search,
-                        residuals=res_search,
+                        loss_components=loss_comp_search,
                         sibling_regions=sibling_regions,
                         overlap_threshold=overlap_threshold,
                         wavelet_threshold=wavelet_threshold,
@@ -509,23 +521,13 @@ def train(
             # Load pretrained base and freeze it
             model.load_pretrained_base(pretrained_base_path)
             
-            # Precompute base outputs for all data points ONCE
-            # This avoids repeated forward passes through frozen base during training
-            print("\n  Precomputing base model outputs for all data...")
-            with torch.no_grad():
-                train_inputs = torch.cat([train_data['x'], train_data['t']], dim=1)
-                eval_inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
-                train_data['u_base'] = model.base_model(train_inputs)
-                eval_data['u_base'] = model.base_model(eval_inputs)
-            print(f"    Train u_base shape: {train_data['u_base'].shape}")
-            print(f"    Eval u_base shape: {eval_data['u_base'].shape}")
-            
             # Build expert tree based ONLY on pretrained base
             num_experts_built = _build_expert_tree_from_pretrained(
                 model=model,
                 eval_data=eval_data,
                 cfg=cfg,
-                run_dir=run_dir
+                run_dir=run_dir,
+                loss_fn=loss_fn
             )
             
             print(f"\n{'='*60}")
@@ -564,7 +566,7 @@ def train(
                 plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
                 plot_expert_soft_weights
             )
-            from adaptive.residual_utils import compute_pde_residuals
+            from adaptive.residual_utils import compute_loss_components
             
             # Get domain bounds
             domain_bounds = model.get_domain_bounds()
@@ -735,8 +737,7 @@ def train(
             for batch in train_loader:
                 with torch.no_grad():
                     inputs = torch.cat([batch['x'], batch['t']], dim=1)
-                    u_base = batch.get('u_base')
-                    h_pred = model(inputs, u_base_precomputed=u_base)
+                    h_pred = model(inputs)
                     rel_l2 = compute_relative_l2_error(h_pred, batch['h_gt'])
                     inf_norm = compute_infinity_norm_error(h_pred, batch['h_gt'])
                     train_rel_l2 += rel_l2.item()
@@ -768,9 +769,8 @@ def train(
 
                 with torch.no_grad():
                     inputs = torch.cat([batch['x'], batch['t']], dim=1)
-                    u_base = batch.get('u_base')
                     _t2 = time.perf_counter() if disable_spawning_during_training else None
-                    h_pred = model(inputs, u_base_precomputed=u_base)
+                    h_pred = model(inputs)
                     if disable_spawning_during_training:
                         t_eval_loop_h_pred += time.perf_counter() - _t2
                     rel_l2 = compute_relative_l2_error(h_pred, batch['h_gt'])
@@ -894,20 +894,26 @@ def train(
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
             
-            # Compute PDE residuals for residual-weighted wavelet norms
+            # Compute per-sample loss components for total loss weighting
             problem = cfg.get('problem', 'schrodinger')
-            pde_residuals = compute_pde_residuals(
+            loss_components = compute_loss_components(
                 model=model,
                 x=eval_data['x'],
                 t=eval_data['t'],
-                problem=problem,
-                config=cfg
+                target=eval_data.get('h_gt', eval_data.get('u_gt')),
+                masks=eval_data['mask'],
+                loss_fn=loss_fn,
+                weights={
+                    'residual': cfg[problem]['loss_weights']['residual'],
+                    'ic': cfg[problem]['loss_weights']['ic'],
+                    'bc': cfg[problem]['loss_weights']['bc']
+                }
             )
+            loss_components_full = loss_components  # Dict already has numpy arrays
             
             # Convert to numpy for RF
             X_eval_full = eval_inputs.cpu().numpy()
             y_eval_full = u_pred.cpu().numpy()
-            residuals_full = pde_residuals.detach().cpu().numpy()
             
             experts_spawned_this_step = 0
             
@@ -967,7 +973,7 @@ def train(
                     
                     X_search = X_eval_full
                     y_search = y_eval_full
-                    res_search = residuals_full
+                    loss_comp_search = loss_components_full
                     
                     print(f"    Search domain: entire domain ({len(X_search)} points, {coverage*100:.1f}% covered)")
                     
@@ -984,7 +990,7 @@ def train(
                     region = region_detector.detect(
                         X=X_search,
                         y=y_search,
-                        residuals=res_search,
+                        loss_components=loss_comp_search,
                         sibling_regions=sibling_regions,
                         overlap_threshold=overlap_threshold,
                         wavelet_threshold=wavelet_threshold,
@@ -1050,7 +1056,12 @@ def train(
                         
                         X_search = X_eval_full[parent_mask_np]
                         y_search = y_eval_full[parent_mask_np]
-                        res_search = residuals_full[parent_mask_np]
+                        loss_comp_search = {
+                            'residual': loss_components_full['residual'][parent_mask_np],
+                            'ic': loss_components_full['ic'][parent_mask_np],
+                            'bc': loss_components_full['bc'][parent_mask_np],
+                            'weights': loss_components_full['weights']
+                        }
                         
                         print(f"      Parent E{parent_idx+1} (depth {depth-1}): {len(X_search)} points, {coverage*100:.1f}% covered")
                         
@@ -1067,7 +1078,7 @@ def train(
                         region = region_detector.detect(
                             X=X_search,
                             y=y_search,
-                            residuals=res_search,
+                            loss_components=loss_comp_search,
                             sibling_regions=sibling_regions,
                             overlap_threshold=overlap_threshold,
                             wavelet_threshold=wavelet_threshold,
@@ -1160,8 +1171,7 @@ def train(
     model.eval()
     with torch.no_grad():
         inputs_eval = torch.cat([eval_data['x'], eval_data['t']], dim=1)
-        u_base_eval = eval_data.get('u_base')
-        h_pred_eval = model(inputs_eval, u_base_precomputed=u_base_eval)
+        h_pred_eval = model(inputs_eval)
 
     plot_final_comparison(
         h_pred_eval.cpu().numpy(),
@@ -1342,9 +1352,6 @@ def _move_batch_to_device(batch: Dict, device: torch.device) -> Dict:
             'BC': batch['mask']['BC'].to(device)
         }
     }
-    # Include precomputed base output if available (for pretrained base mode)
-    if 'u_base' in batch:
-        result['u_base'] = batch['u_base'].to(device)
     return result
 
 
@@ -1357,36 +1364,21 @@ def _create_dataloader(
     Create DataLoader from data dictionary.
 
     Args:
-        data: Dictionary with 'x', 't', 'h_gt', 'mask', and optionally 'u_base'
+        data: Dictionary with 'x', 't', 'h_gt', 'mask'
         batch_size: Batch size
         shuffle: Whether to shuffle
 
     Returns:
         DataLoader
     """
-    # Check if precomputed base outputs are available
-    has_u_base = 'u_base' in data
-    
-    # Create TensorDataset - include u_base if available
-    if has_u_base:
-        dataset = TensorDataset(
-            data['x'],
-            data['t'],
-            data['h_gt'],
-            data['mask']['residual'],
-            data['mask']['IC'],
-            data['mask']['BC'],
-            data['u_base']
-        )
-    else:
-        dataset = TensorDataset(
-            data['x'],
-            data['t'],
-            data['h_gt'],
-            data['mask']['residual'],
-            data['mask']['IC'],
-            data['mask']['BC']
-        )
+    dataset = TensorDataset(
+        data['x'],
+        data['t'],
+        data['h_gt'],
+        data['mask']['residual'],
+        data['mask']['IC'],
+        data['mask']['BC']
+    )
 
     # Custom collate function to reconstruct dict format
     def collate_fn(batch_list):
@@ -1407,11 +1399,6 @@ def _create_dataloader(
                 'BC': mask_bc_batch
             }
         }
-        
-        # Include u_base if available (for pretrained base mode)
-        if has_u_base:
-            u_base_batch = torch.stack(tuple(item[6] for item in batch_list))
-            result['u_base'] = u_base_batch
         
         return result
 

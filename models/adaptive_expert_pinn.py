@@ -4,8 +4,23 @@ Implements a composed PINN that combines:
 - A global base model u_0(x,t) trained on the full domain
 - Regional expert models u_i(x,t) that specialize on high-error regions
 
-The composed solution is:
+The composed solution depends on the mode:
+
+**Hard blending:**
     u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
+
+**Soft blending (partition of unity, non-pretrained):**
+    u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t)
+    where ψ̃_k = ψ_k / Σ_j ψ_j (normalized, Σ ψ̃_k = 1)
+
+**Soft blending (additive mode, pretrained_base_model=True):**
+    u(x,t) = u_0(x,t) + Σ_k ψ̃_k(x,t) · u_k(x,t)
+    where ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K (experts only)
+    Base contributes with ψ_0 = 1 everywhere (not normalized).
+
+**Architecture support:**
+The implementation uses BatchedModels to support heterogeneous architectures
+by grouping models with the same architecture and computing each group in parallel.
 """
 
 import torch
@@ -23,45 +38,58 @@ from adaptive.indicators import (
     BatchedIndicators
 )
 
-class BatchedExperts:
+class BatchedModels:
     """
-    Batched expert weights for O(1) forward pass using einsum.
+    Batched model weights for O(1) forward pass using einsum.
     
-    Instead of iterating through K experts sequentially, this class stacks
-    all expert weights into batched tensors and computes all outputs in a
-    single einsum operation.
+    Computes all models (base + experts) in parallel, supporting HETEROGENEOUS
+    architectures by grouping models with the same architecture and running
+    parallel einsum operations per group.
     
-    Only works when all experts have the SAME architecture.
+    The output tensor indexes are: [0] = base, [1..K] = experts
     
     Note: Weights are stacked at forward time (not cached) to ensure gradients
     flow properly during training.
     """
     
-    def __init__(self, architecture: List[int], activation_fn: nn.Module):
+    def __init__(self, activation_fn: nn.Module):
         """
         Args:
-            architecture: Layer sizes [input_dim, hidden1, ..., output_dim]
             activation_fn: Activation function module (e.g., nn.Tanh())
         """
-        self.architecture = architecture
         self.activation_fn = activation_fn
-        self.num_layers = len(architecture) - 1
-        self._experts: Optional[nn.ModuleList] = None
+        self._models: List[nn.Module] = []
+        self._arch_groups: Dict[Tuple[int, ...], List[int]] = {}  # {arch_tuple: [model_indices]}
     
-    def sync_from_experts(self, experts: nn.ModuleList) -> None:
+    def sync_from_models(self, base_model: nn.Module, experts: nn.ModuleList) -> None:
         """
-        Register expert modules for batched forward pass.
+        Register all models (base + experts) for batched forward pass.
         
-        Call this after spawning new experts.
+        Groups models by architecture to support heterogeneous expert architectures.
+        
+        Call this after spawning new experts or loading pretrained base.
         
         Args:
-            experts: ModuleList of FCNet experts (all must have same architecture)
+            base_model: Base FCNet model (index 0)
+            experts: ModuleList of expert FCNets (indices 1..K)
         """
-        self._experts = experts
+        # Build unified model list: [base, expert_0, expert_1, ...]
+        self._models = [base_model] + list(experts)
+        
+        # Group models by architecture
+        self._arch_groups = {}
+        for idx, model in enumerate(self._models):
+            arch_tuple = tuple(model.architecture)
+            if arch_tuple not in self._arch_groups:
+                self._arch_groups[arch_tuple] = []
+            self._arch_groups[arch_tuple].append(idx)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Batched forward pass for all K experts simultaneously.
+        Batched forward pass for all models (base + K experts) simultaneously.
+        
+        Supports heterogeneous architectures by grouping and running parallel
+        einsum per architecture group.
         
         Stacks weights at forward time to ensure gradients flow properly.
         
@@ -69,44 +97,61 @@ class BatchedExperts:
             x: Input tensor (N, input_dim)
             
         Returns:
-            Output tensor (N, K, output_dim) - all K expert outputs
+            Output tensor (N, K+1, output_dim) where:
+                - [:, 0, :] is base model output
+                - [:, 1:, :] are expert outputs
         """
-        if self._experts is None or len(self._experts) == 0:
-            # Return empty tensor if no experts
-            return torch.empty((x.shape[0], 0, self.architecture[-1]), 
-                             device=x.device, dtype=x.dtype)
+        if len(self._models) == 0:
+            raise RuntimeError("No models registered. Call sync_from_models first.")
         
-        out = x  # (N, in_dim)
+        N = x.shape[0]
+        num_models = len(self._models)
         
-        for layer_idx in range(self.num_layers):
-            layer_name = f"layer_{layer_idx + 1}"
-            
-            # Stack weights at forward time (maintains gradient flow)
-            # nn.Linear weight is (out_features, in_features), transpose to (in, out)
-            W = torch.stack([
-                expert.network[layer_name].weight.t() 
-                for expert in self._experts
-            ], dim=0)  # (K, in_dim, out_dim)
-            
-            b = torch.stack([
-                expert.network[layer_name].bias 
-                for expert in self._experts
-            ], dim=0)  # (K, out_dim)
-            
-            if layer_idx == 0:
-                # First layer: (N, in) -> (N, K, hidden)
-                # einsum: 'ni,kio->nko'
-                out = torch.einsum('ni,kio->nko', out, W) + b.unsqueeze(0)
-            else:
-                # Subsequent layers: (N, K, in) -> (N, K, out)
-                # einsum: 'nki,kio->nko'
-                out = torch.einsum('nki,kio->nko', out, W) + b.unsqueeze(0)
-            
-            # Apply activation (except for last layer)
-            if layer_idx < self.num_layers - 1:
-                out = self.activation_fn(out)
+        # Infer output_dim from first model
+        output_dim = self._models[0].architecture[-1]
         
-        return out  # (N, K, output_dim)
+        # Initialize output tensor
+        outputs = torch.zeros((N, num_models, output_dim), device=x.device, dtype=x.dtype)
+        
+        # Process each architecture group
+        for arch_tuple, model_indices in self._arch_groups.items():
+            # Get one model from this group to determine layer count
+            representative_model = self._models[model_indices[0]]
+            num_layers = len(arch_tuple) - 1
+            
+            # Forward pass for this group
+            out = x  # (N, in_dim)
+            
+            for layer_idx in range(num_layers):
+                layer_name = f"layer_{layer_idx + 1}"
+                
+                # Stack weights for all models in this group
+                W = torch.stack([
+                    self._models[idx].network[layer_name].weight.t()
+                    for idx in model_indices
+                ], dim=0)  # (group_size, in_dim, out_dim)
+                
+                b = torch.stack([
+                    self._models[idx].network[layer_name].bias
+                    for idx in model_indices
+                ], dim=0)  # (group_size, out_dim)
+                
+                if layer_idx == 0:
+                    # First layer: (N, in) -> (N, group_size, hidden)
+                    out = torch.einsum('ni,kio->nko', out, W) + b.unsqueeze(0)
+                else:
+                    # Subsequent layers: (N, group_size, in) -> (N, group_size, out)
+                    out = torch.einsum('nki,kio->nko', out, W) + b.unsqueeze(0)
+                
+                # Apply activation (except for last layer)
+                if layer_idx < num_layers - 1:
+                    out = self.activation_fn(out)
+            
+            # Scatter results into output tensor at correct indices
+            for i, model_idx in enumerate(model_indices):
+                outputs[:, model_idx, :] = out[:, i, :]
+        
+        return outputs  # (N, K+1, output_dim)
 
 
 class AdaptiveExpertPINN(nn.Module):
@@ -149,7 +194,6 @@ class AdaptiveExpertPINN(nn.Module):
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
         self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
         self.expert_architectures = adaptive_config.get('expert_architectures', None)
-        self.psi_for_pretrained_base = adaptive_config.get('psi_for_pretrained_base', True)
         
         # Store config architectures (before any pretrained loading)
         # This is used to determine expert architecture when pretrained base is loaded
@@ -177,14 +221,13 @@ class AdaptiveExpertPINN(nn.Module):
         # Computes all K expert masks in a single GPU operation
         self.batched_indicators = BatchedIndicators(base_weight=self.base_weight)
         
-        # Batched experts for O(1) forward pass (GPU optimization)
-        # Stacks all expert weights for single einsum operation
-        # Always use config_base_architecture for experts (not pretrained base architecture)
-        expert_arch = self.expert_architectures or self.config_base_architecture
-        self.batched_experts = BatchedExperts(
-            architecture=expert_arch,
+        # Batched models for O(1) forward pass (GPU optimization)
+        # Computes all models (base + experts) with support for heterogeneous architectures
+        self.batched_models = BatchedModels(
             activation_fn=self.base_model.activation
         )
+        # Initial sync with base model only (no experts yet)
+        self.batched_models.sync_from_models(self.base_model, self.experts)
         
         # Hook management
         self.activations: Dict[str, torch.Tensor] = {}
@@ -425,14 +468,14 @@ class AdaptiveExpertPINN(nn.Module):
             sigma_fraction=self.sigma_fraction
         )
     
-    def sync_batched_experts(self) -> None:
+    def sync_batched_models(self) -> None:
         """
-        Synchronize batched expert weights for O(1) forward pass.
+        Synchronize batched models (base + experts) for O(1) forward pass.
         
         Call this after spawning experts or loading state dict to update
-        the stacked weight tensors used for batched einsum computation.
+        the batched structure used for parallel computation.
         """
-        self.batched_experts.sync_from_experts(self.experts)
+        self.batched_models.sync_from_models(self.base_model, self.experts)
     
     def spawn_expert(self, region: RegionDescriptor) -> int:
         """
@@ -484,7 +527,7 @@ class AdaptiveExpertPINN(nn.Module):
         
         # Sync batched structures for vectorized forward pass
         self.sync_batched_indicators()
-        self.sync_batched_experts()
+        self.sync_batched_models()
         
         return expert_idx
     
@@ -620,8 +663,11 @@ class AdaptiveExpertPINN(nn.Module):
         for param in self.base_model.parameters():
             param.requires_grad = False
         
-        # Mark base as frozen - caller should precompute and pass u_base to forward()
+        # Mark base as frozen
         self._base_frozen = True
+        
+        # Sync batched models after loading new base architecture
+        self.sync_batched_models()
         
         # Count parameters
         total_params = sum(p.numel() for p in self.base_model.parameters())
@@ -629,12 +675,11 @@ class AdaptiveExpertPINN(nn.Module):
         print(f"  Base model parameters: {total_params:,}")
         print(f"  Base model frozen: True (requires_grad=False)")
         
-        # Note: Experts always use config architecture (via get_expert_architecture)
-        # which returns config_base_architecture. BatchedExperts was initialized with
-        # this architecture, so batched einsum works regardless of pretrained base arch.
+        # Note: Experts use config architecture (via get_expert_architecture)
+        # BatchedModels supports heterogeneous architectures via grouping
         expert_arch = self.expert_architectures or self.config_base_architecture
         print(f"  Expert architecture: {expert_arch}")
-        print(f"  (All experts use batched einsum - same architecture)")
+        print(f"  (Batched models support mixed architectures)")
         
         print(f"{'='*60}\n")
     
@@ -676,64 +721,58 @@ class AdaptiveExpertPINN(nn.Module):
             for param in expert.parameters():
                 param.requires_grad = True
     
-    def forward(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Composed forward pass.
         
         For hard blending:
             u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
         
-        For soft blending (partition of unity, default):
+        For soft blending (partition of unity, non-pretrained):
             u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t)
             where ψ̃_k = ψ_k / Σ_j ψ_j (normalized weights, including base)
         
-        For soft blending with psi_for_pretrained_base=False (pretrained only):
+        For soft blending with pretrained base (additive mode):
             u(x,t) = u_base(x,t) + Σ_k ψ̃_k(x,t) · u_k(x,t)
             where ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K (experts only, base not normalized)
             Base model contributes fully everywhere, experts are additive corrections.
         
         Args:
             inputs: (N, n_dims) tensor of coordinates [x, t] or [x, y, t]
-            u_base_precomputed: Optional (N, output_dim) precomputed base model output.
-                               When provided (typically for pretrained frozen base),
-                               skips base model forward pass entirely.
             
         Returns:
             u: (N, output_dim) composed solution
         """
         if self.blending_mode == 'hard':
-            return self._forward_hard(inputs, u_base_precomputed)
+            return self._forward_hard(inputs)
         else:
-            return self._forward_soft(inputs, u_base_precomputed)
+            return self._forward_soft(inputs)
     
-    def _forward_hard(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> torch.Tensor:
+    def _forward_hard(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Vectorized hard blending forward pass.
         
         u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
         
-        Optimized with batched einsum: All K experts computed in single operation (O(1)).
+        Optimized with batched computation: All models (base + K experts) computed
+        in parallel operations supporting heterogeneous architectures.
         
         Args:
             inputs: (N, n_dims) input coordinates
-            u_base_precomputed: Optional precomputed base output. If provided, skips
-                               base model forward pass (used for frozen pretrained base).
         """
-        # Get base model output (precomputed or computed)
-        if u_base_precomputed is not None:
-            u_base = u_base_precomputed
-        else:
-            u_base = self.base_model(inputs)
+        # Compute all model outputs at once: [base, expert_0, ..., expert_K]
+        u_all = self.batched_models.forward(inputs)  # (N, K+1, output_dim)
+        
+        # Extract base and experts
+        u_base = u_all[:, 0, :]  # (N, output_dim)
         
         if len(self.experts) == 0:
             return u_base
         
+        u_experts = u_all[:, 1:, :]  # (N, K, output_dim)
+        
         # Compute masks (already vectorized)
         masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
-        
-        # Batched einsum: single operation for all K experts (O(1))
-        # All experts have same architecture (config_base_architecture), so einsum always works
-        u_experts = self.batched_experts.forward(inputs)  # (N, K, output_dim)
         
         # Apply masks and sum - fully vectorized
         weighted_experts = masks.unsqueeze(-1) * u_experts  # (N, K, out_dim)
@@ -741,49 +780,50 @@ class AdaptiveExpertPINN(nn.Module):
         
         return u_total
     
-    def _forward_soft(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> torch.Tensor:
+    def _forward_soft(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Vectorized soft blending forward pass with partition-of-unity normalization.
         
-        Standard mode (psi_for_pretrained_base=True or non-pretrained):
+        Standard mode (non-pretrained base):
             u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t)
             where:
                 - ψ_0 = uniform constant (base_weight) for base model
                 - ψ_k = sigmoid-based bump function for expert k
                 - ψ̃_k = ψ_k / Σ_j ψ_j (partition of unity: Σ ψ̃_k = 1)
         
-        Additive mode (psi_for_pretrained_base=False AND pretrained base):
+        Additive mode (pretrained_base_model=True):
             u(x,t) = u_base + Σ_k ψ̃_k(x,t) · u_k(x,t)
             where:
                 - Base contributes with weight 1 everywhere (not normalized)
                 - ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K (experts only, excluding base)
                 - Experts provide additive corrections to the pretrained base
         
-        Optimized with batched einsum: All K experts computed in single operation (O(1)).
+        Optimized with batched computation: All models (base + K experts) computed
+        in parallel operations supporting heterogeneous architectures.
         
         Args:
             inputs: (N, n_dims) input coordinates
-            u_base_precomputed: Optional precomputed base output. If provided, skips
-                               base model forward pass (used for frozen pretrained base).
         """
-        # Check if we should use additive mode (base not part of partition of unity)
-        use_additive_mode = self._base_frozen and not self.psi_for_pretrained_base
+        # Check if we should use additive mode (pretrained base)
+        use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
         
         # Step 1: Compute ALL masks at once using batched indicators (already vectorized)
         # psi_base: (N, 1), psi_experts: (N, K)
         psi_base, psi_experts = self.batched_indicators(inputs)
         
-        # Step 2: Get base model output (precomputed or computed)
-        if u_base_precomputed is not None:
-            u_base = u_base_precomputed
-        else:
-            u_base = self.base_model(inputs)
+        # Step 2: Compute all model outputs at once: [base, expert_0, ..., expert_K]
+        u_all = self.batched_models.forward(inputs)  # (N, K+1, output_dim)
+        
+        # Extract base and experts
+        u_base = u_all[:, 0, :]  # (N, output_dim)
         
         if len(self.experts) == 0:
             # No experts - just return base model output
             # In additive mode, this is just u_base (since there are no corrections)
             # In partition mode, this is also just u_base (normalized weight = 1)
             return u_base
+        
+        u_experts = u_all[:, 1:, :]  # (N, K, output_dim)
         
         # Step 3: Compute normalized expert weights
         if use_additive_mode:
@@ -800,10 +840,7 @@ class AdaptiveExpertPINN(nn.Module):
             psi_base_norm = psi_base / psi_sum  # (N, 1)
             psi_experts_norm = psi_experts / psi_sum  # (N, K)
         
-        # Step 4: Batched einsum for all K experts (O(1))
-        u_experts = self.batched_experts.forward(inputs)  # (N, K, output_dim)
-        
-        # Step 5: Compute final output
+        # Step 4: Compute final output
         weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts  # (N, K, out_dim)
         
         if use_additive_mode:
@@ -815,7 +852,7 @@ class AdaptiveExpertPINN(nn.Module):
         
         return u_total
     
-    def forward_decomposed(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> Dict[str, torch.Tensor]:
+    def forward_decomposed(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Forward pass returning individual model contributions.
         
@@ -826,7 +863,6 @@ class AdaptiveExpertPINN(nn.Module):
         
         Args:
             inputs: (N, n_dims) tensor of coordinates
-            u_base_precomputed: Optional precomputed base output.
             
         Returns:
             Dict with:
@@ -837,19 +873,17 @@ class AdaptiveExpertPINN(nn.Module):
                 - 'weights_normalized': (soft only) dict of normalized weights per model
         """
         if self.blending_mode == 'hard':
-            return self._forward_decomposed_hard(inputs, u_base_precomputed)
+            return self._forward_decomposed_hard(inputs)
         else:
-            return self._forward_decomposed_soft(inputs, u_base_precomputed)
+            return self._forward_decomposed_soft(inputs)
     
-    def _forward_decomposed_hard(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> Dict[str, torch.Tensor]:
-        """Vectorized hard blending decomposed forward pass with batched einsum."""
+    def _forward_decomposed_hard(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Vectorized hard blending decomposed forward pass with batched models."""
         result = {}
         
-        # Get base model output (precomputed or computed)
-        if u_base_precomputed is not None:
-            result['base'] = u_base_precomputed
-        else:
-            result['base'] = self.base_model(inputs)
+        # Compute all model outputs at once
+        u_all = self.batched_models.forward(inputs)  # (N, K+1, output_dim)
+        result['base'] = u_all[:, 0, :]  # (N, output_dim)
         
         # Compute masks (already vectorized)
         all_masks = self.batched_indicators.compute_hard_masks_only(inputs)
@@ -857,15 +891,13 @@ class AdaptiveExpertPINN(nn.Module):
         result['masks'] = {}
         
         if len(self.experts) > 0:
-            # Batched einsum: single operation for all K experts (O(1))
-            u_experts = self.batched_experts.forward(inputs)  # (N, K, output_dim)
-            
             # Store individual expert outputs and masks
             for i in range(len(self.experts)):
-                result[f'expert_{i}'] = u_experts[:, i, :]  # (N, out_dim)
+                result[f'expert_{i}'] = u_all[:, i+1, :]  # (N, out_dim)
                 result['masks'][f'expert_{i}'] = all_masks[:, i:i+1]  # (N, 1)
             
             # Compute composed output - vectorized
+            u_experts = u_all[:, 1:, :]  # (N, K, output_dim)
             weighted_experts = all_masks.unsqueeze(-1) * u_experts  # (N, K, out_dim)
             u_total = result['base'] + weighted_experts.sum(dim=1)  # (N, out_dim)
         else:
@@ -874,16 +906,16 @@ class AdaptiveExpertPINN(nn.Module):
         result['composed'] = u_total
         return result
     
-    def _forward_decomposed_soft(self, inputs: torch.Tensor, u_base_precomputed: torch.Tensor = None) -> Dict[str, torch.Tensor]:
-        """Vectorized soft blending decomposed forward pass with batched einsum.
+    def _forward_decomposed_soft(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Vectorized soft blending decomposed forward pass with batched models.
         
         Supports both standard partition-of-unity mode and additive mode
-        (when psi_for_pretrained_base=False and base is pretrained).
+        (when pretrained_base_model=True).
         """
         result = {}
         
-        # Check if we should use additive mode (base not part of partition of unity)
-        use_additive_mode = self._base_frozen and not self.psi_for_pretrained_base
+        # Check if we should use additive mode (pretrained base)
+        use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
         
         # Compute all masks at once using batched indicators (already vectorized)
         psi_base, psi_experts = self.batched_indicators(inputs)  # (N, 1), (N, K)
@@ -904,7 +936,7 @@ class AdaptiveExpertPINN(nn.Module):
             result['weights_normalized'] = {'base': torch.ones_like(psi_base)}
             for i in range(psi_experts_norm.shape[1]):
                 result['weights_normalized'][f'expert_{i}'] = psi_experts_norm[:, i:i+1]  # (N, 1)
-            result['blending_mode_info'] = 'additive (psi_for_pretrained_base=False)'
+            result['blending_mode_info'] = 'additive (pretrained_base_model=True)'
         else:
             # Standard partition of unity
             psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
@@ -918,16 +950,14 @@ class AdaptiveExpertPINN(nn.Module):
                 result['weights_normalized'][f'expert_{i}'] = psi_experts_norm[:, i:i+1]  # (N, 1)
             result['blending_mode_info'] = 'partition_of_unity'
         
-        # Get base model output (precomputed or computed)
-        if u_base_precomputed is not None:
-            u_base = u_base_precomputed
-        else:
-            u_base = self.base_model(inputs)
+        # Compute all model outputs at once
+        u_all = self.batched_models.forward(inputs)  # (N, K+1, output_dim)
+        u_base = u_all[:, 0, :]  # (N, output_dim)
         result['base'] = u_base
         
         if len(self.experts) > 0:
-            # Batched einsum: single operation for all K experts (O(1))
-            u_experts = self.batched_experts.forward(inputs)  # (N, K, output_dim)
+            # Extract expert outputs
+            u_experts = u_all[:, 1:, :]  # (N, K, output_dim)
             
             # Store individual expert outputs
             for i in range(len(self.experts)):
@@ -1106,15 +1136,6 @@ class AdaptiveExpertPINN(nn.Module):
                 soft_indicator = SoftIndicator(region, sigma_fraction=self.sigma_fraction)
                 self.soft_indicators.append(soft_indicator)
         
-        # Recreate batched experts with correct architecture (from loaded experts)
-        if len(self.experts) > 0:
-            # Infer architecture from first expert
-            first_expert_arch = self._infer_architecture_from_state_dict(state_dict['experts'][0])
-            self.batched_experts = BatchedExperts(
-                architecture=first_expert_arch,
-                activation_fn=self.base_model.activation
-            )
-        
         # Restore base frozen state if saved
         if 'base_frozen' in state_dict:
             self._base_frozen = state_dict['base_frozen']
@@ -1124,7 +1145,7 @@ class AdaptiveExpertPINN(nn.Module):
         
         # Sync batched structures
         self.sync_batched_indicators()
-        self.sync_batched_experts()
+        self.sync_batched_models()
     
     def __repr__(self) -> str:
         """String representation."""
