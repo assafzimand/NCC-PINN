@@ -16,8 +16,8 @@ adaptive_pinn:
   max_experts: 10
   min_samples_per_region: 20
   overlap_threshold: 0.5
-  pretrained_base_model: true
-  pretrained_base_path: adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt
+  pretrained_base_model: false
+  pretrained_base_path: null
   rf_max_depth: 12
   rf_min_samples_leaf: 10
   rf_n_estimators: 100

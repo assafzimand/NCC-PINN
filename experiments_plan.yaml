@@ -103,8 +103,8 @@ base_config:
     sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
     base_weight: 1.0                  # Uniform weight for base model (soft blending only)
     base_everywhere: true             # If false, u_0 has indicator = domain \ experts
-    pretrained_base_model: true      # If true, load base from path and freeze, build tree then train experts
-    pretrained_base_path: 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'       # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
+    pretrained_base_model: false      # If true, load base from path and freeze, build tree then train experts
+    pretrained_base_path: null        # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'       # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
     rf_n_estimators: 100               # Number of trees in Random Forest
     rf_max_depth: 12                   # Max depth of each tree
     rf_min_samples_leaf: 10           # Min samples required in a leaf node
