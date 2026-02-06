@@ -8,6 +8,7 @@ in a single vectorized GPU operation for maximum efficiency.
 """
 
 import torch
+from torch.func import vmap
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -250,6 +251,33 @@ def create_indicator(region: RegionDescriptor, mode: str = 'hard', sigma_fractio
         raise ValueError(f"Unknown indicator mode: {mode}. Use 'hard' or 'soft'.")
 
 
+def _soft_indicator_fn(
+    lower: torch.Tensor,
+    upper: torch.Tensor,
+    sigma: torch.Tensor,
+    point: torch.Tensor
+) -> torch.Tensor:
+    """
+    Pure function: compute soft sigmoid-box indicator for one region at one point.
+    
+    This function is designed to be vmapped:
+    - Inner vmap over K regions (different lower, upper, sigma; same point)
+    - Outer vmap over N points (same params; different point)
+    
+    Args:
+        lower: (D,) lower bounds of the region
+        upper: (D,) upper bounds of the region
+        sigma: (D,) per-dimension smoothness parameter
+        point: (D,) input coordinates
+        
+    Returns:
+        Scalar tensor — smooth indicator value in [0, 1]
+    """
+    dist_lower = (point - lower) / sigma  # (D,)
+    dist_upper = (upper - point) / sigma  # (D,)
+    return (torch.sigmoid(dist_lower) * torch.sigmoid(dist_upper)).prod()
+
+
 class BatchedIndicators:
     """Compute all indicator masks (base + K experts) in one vectorized GPU operation.
     
@@ -385,7 +413,11 @@ class BatchedIndicators:
     
     def _compute_soft_masks(self, inputs: torch.Tensor) -> torch.Tensor:
         """
-        Compute all soft indicator masks in one vectorized operation.
+        Compute all soft indicator masks using vmap over a pure function.
+        
+        Uses vmap to evaluate the same sigmoid-box indicator function
+        with K different parameter sets (region bounds) across N points
+        in parallel.
         
         Args:
             inputs: (N, D) tensor of coordinates
@@ -393,22 +425,16 @@ class BatchedIndicators:
         Returns:
             masks: (N, K) float tensor - smooth values in [0, 1]
         """
-        # Expand for broadcasting: (N, 1, D) vs (1, K, D) -> (N, K, D)
-        x = inputs.unsqueeze(1)  # (N, 1, D)
-        lower = self.all_lower.unsqueeze(0)  # (1, K, D)
-        upper = self.all_upper.unsqueeze(0)  # (1, K, D)
-        sigma = self.all_sigma.unsqueeze(0)  # (1, K, D)
-        
-        # Distance from bounds, scaled by sigma
-        dist_lower = (x - lower) / sigma  # (N, K, D)
-        dist_upper = (upper - x) / sigma  # (N, K, D)
-        
-        # Sigmoid transitions at boundaries, then product over dimensions
-        weight_lower = torch.sigmoid(dist_lower)  # (N, K, D)
-        weight_upper = torch.sigmoid(dist_upper)  # (N, K, D)
-        
-        # Product over dimensions gives soft box indicator
-        masks = (weight_lower * weight_upper).prod(dim=2)  # (N, K)
+        # vmap over K indicators (different params, same point),
+        # then vmap over N points (same params, different points)
+        # Result: (N, K)
+        vmapped_indicators = vmap(
+            vmap(_soft_indicator_fn, in_dims=(0, 0, 0, None)),
+            in_dims=(None, None, None, 0)
+        )
+        masks = vmapped_indicators(
+            self.all_lower, self.all_upper, self.all_sigma, inputs
+        )  # (N, K)
         
         return masks
     
