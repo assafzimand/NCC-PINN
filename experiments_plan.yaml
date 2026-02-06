@@ -30,8 +30,8 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 20
-  print_every: 10
+  eval_every: 2
+  print_every: 1
   save_every: 50
   inner_metrics_eval_every: 40
   seed: 42
