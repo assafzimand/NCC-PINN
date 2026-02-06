@@ -42,6 +42,10 @@ def compute_loss_components(
             - 'bc': (N,) numpy array of per-sample BC losses
             - 'weights': Dict of loss weights
     """
+    # Enable gradients for inputs (needed for PDE derivative computation)
+    x = x.requires_grad_(True)
+    t = t.requires_grad_(True)
+    
     batch = {
         'x': x,
         't': t,
@@ -49,8 +53,10 @@ def compute_loss_components(
         'mask': masks
     }
     
-    with torch.no_grad():
-        loss_components = loss_fn(model, batch, for_tree_spawning=True)
+    # No torch.no_grad() here - we need the computation graph to compute
+    # derivatives w.r.t. inputs. Model parameters won't be updated since
+    # we never call .backward() on the loss.
+    loss_components = loss_fn(model, batch, for_tree_spawning=True)
     
     return {
         'residual': loss_components['residual'].detach().cpu().numpy(),
