@@ -108,7 +108,7 @@ base_config:
     rf_n_estimators: 100               # Number of trees in Random Forest
     rf_max_depth: 12                   # Max depth of each tree
     rf_min_samples_leaf: 10           # Min samples required in a leaf node
-    wavelet_threshold: 0.0001            # Minimum wavelet norm to spawn (filters low-priority regions)
+    wavelet_threshold: 0.0000001            # Minimum wavelet norm to spawn (filters low-priority regions)
     inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
 
 # Experiments to run

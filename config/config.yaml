@@ -24,7 +24,7 @@ adaptive_pinn:
   sigma_fraction: 0.2
   spawn_by_depth: true
   spawn_every_epochs: 10
-  wavelet_threshold: 0.0001
+  wavelet_threshold: 1.0e-07
 architecture:
 - 2
 - 30
