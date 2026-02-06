@@ -274,6 +274,9 @@ class AdaptiveExpertPINN(nn.Module):
         # Flag to indicate if base model is frozen (pretrained)
         # When True, caller should pass precomputed u_base to forward()
         self._base_frozen = False
+        
+        # Optional epoch timer for performance profiling (set by trainer)
+        self._timer = None
     
     @property
     def num_experts(self) -> int:
@@ -798,8 +801,12 @@ class AdaptiveExpertPINN(nn.Module):
         Args:
             inputs: (N, n_dims) input coordinates
         """
+        _t = self._timer
+        
         # Compute all model outputs at once: [base, expert_0, ..., expert_K]
+        if _t: _t.start('fwd.batched_models')
         u_all = self.batched_models.forward(inputs)  # (N, K+1, output_dim)
+        if _t: _t.stop('fwd.batched_models')
         
         # Extract base and experts
         u_base = u_all[:, 0, :]  # (N, output_dim)
@@ -810,11 +817,15 @@ class AdaptiveExpertPINN(nn.Module):
         u_experts = u_all[:, 1:, :]  # (N, K, output_dim)
         
         # Compute masks (already vectorized)
+        if _t: _t.start('fwd.compute_masks')
         masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
+        if _t: _t.stop('fwd.compute_masks')
         
         # Apply masks and sum - fully vectorized
+        if _t: _t.start('fwd.blend')
         weighted_experts = masks.unsqueeze(-1) * u_experts  # (N, K, out_dim)
         u_total = u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+        if _t: _t.stop('fwd.blend')
         
         return u_total
     
@@ -842,15 +853,21 @@ class AdaptiveExpertPINN(nn.Module):
         Args:
             inputs: (N, n_dims) input coordinates
         """
+        _t = self._timer
+        
         # Check if we should use additive mode (pretrained base)
         use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
         
         # Step 1: Compute ALL masks at once using batched indicators (already vectorized)
         # psi_base: (N, 1), psi_experts: (N, K)
+        if _t: _t.start('fwd.compute_masks')
         psi_base, psi_experts = self.batched_indicators(inputs)
+        if _t: _t.stop('fwd.compute_masks')
         
         # Step 2: Compute all model outputs at once: [base, expert_0, ..., expert_K]
+        if _t: _t.start('fwd.batched_models')
         u_all = self.batched_models.forward(inputs)  # (N, K+1, output_dim)
+        if _t: _t.stop('fwd.batched_models')
         
         # Extract base and experts
         u_base = u_all[:, 0, :]  # (N, output_dim)
@@ -864,6 +881,7 @@ class AdaptiveExpertPINN(nn.Module):
         u_experts = u_all[:, 1:, :]  # (N, K, output_dim)
         
         # Step 3: Compute normalized expert weights
+        if _t: _t.start('fwd.blend')
         if use_additive_mode:
             # Additive mode: normalize experts among themselves only (exclude base)
             # ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K
@@ -887,6 +905,7 @@ class AdaptiveExpertPINN(nn.Module):
         else:
             # Partition of unity: u = ψ̃_0 · u_base + Σ ψ̃_k · u_k
             u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+        if _t: _t.stop('fwd.blend')
         
         return u_total
     

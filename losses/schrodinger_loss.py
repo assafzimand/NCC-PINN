@@ -171,6 +171,9 @@ def build_loss(**cfg) -> Callable:
         N = x.shape[0]
         device = x.device
         
+        # Timer (attached to model by trainer)
+        _t = getattr(model, '_timer', None)
+        
         # Initialize per-sample arrays if needed
         if for_tree_spawning:
             residual_per_sample = torch.zeros(N, device=device)
@@ -191,7 +194,9 @@ def build_loss(**cfg) -> Callable:
             
             # Model prediction: concatenate x,t -> predict (u,v)
             xt_f = torch.cat([x_f, t_f], dim=1)
+            if _t: _t.start('loss.residual.forward')
             uv_f = model(xt_f)  # (N_f, 2)
+            if _t: _t.stop('loss.residual.forward')
             
             # Extract u and v (these should have grad_fn from the model)
             u_f = uv_f[:, 0]
@@ -199,7 +204,9 @@ def build_loss(**cfg) -> Callable:
             
             
             # Compute derivatives
+            if _t: _t.start('loss.residual.derivatives')
             h_t, h_x, h_xx = compute_derivatives(u_f, v_f, x_f, t_f)
+            if _t: _t.stop('loss.residual.derivatives')
             
             # Compute PDE residual: i*h_t + 0.5*h_xx + |h|²*h
             # Need h for |h|² term
@@ -228,7 +235,9 @@ def build_loss(**cfg) -> Callable:
             
             # Model prediction
             xt_0 = torch.cat([x_0, t_0], dim=1)
+            if _t: _t.start('loss.ic.forward')
             uv_0 = model(xt_0)  # (N_0, 2)
+            if _t: _t.stop('loss.ic.forward')
             
             # Convert to complex
             h_pred = torch.complex(uv_0[:, 0], uv_0[:, 1])
@@ -276,12 +285,16 @@ def build_loss(**cfg) -> Callable:
             
             # Single forward pass for both boundaries
             xt_stacked = torch.cat([x_stacked, t_stacked], dim=1)
+            if _t: _t.start('loss.bc.forward')
             uv_stacked = model(xt_stacked)
+            if _t: _t.stop('loss.bc.forward')
             u_stacked = uv_stacked[:, 0]
             v_stacked = uv_stacked[:, 1]
             
             # Compute spatial derivatives at boundaries
+            if _t: _t.start('loss.bc.derivatives')
             _, h_x_stacked, _ = compute_derivatives(u_stacked, v_stacked, x_stacked, t_stacked)
+            if _t: _t.stop('loss.bc.derivatives')
             
             # Split predictions and derivatives (use actual sizes, not torch.chunk)
             u_left = u_stacked[:n_b_left]
