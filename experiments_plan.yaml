@@ -105,7 +105,6 @@ base_config:
     base_everywhere: true             # If false, u_0 has indicator = domain \ experts
     pretrained_base_model: true      # If true, load base from path and freeze, build tree then train experts
     pretrained_base_path: 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'       # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
-    psi_for_pretrained_base: false    # If false, base contributes with ψ₀=1 everywhere (not normalized), experts are additive corrections
     rf_n_estimators: 100               # Number of trees in Random Forest
     rf_max_depth: 12                   # Max depth of each tree
     rf_min_samples_leaf: 10           # Min samples required in a leaf node

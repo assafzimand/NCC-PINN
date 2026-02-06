@@ -139,7 +139,8 @@ def build_loss(**cfg) -> Callable:
     # Get viscosity parameter
     nu = problem_config.get('nu', 0.1)
     
-    def loss_fn(model: nn.Module, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def loss_fn(model: nn.Module, batch: Dict[str, torch.Tensor], 
+                for_tree_spawning: bool = False):
         """
         Compute physics-informed loss for 2D viscous Burgers equation.
         
@@ -150,19 +151,26 @@ def build_loss(**cfg) -> Callable:
                 - 't': (N, 1) temporal coordinates
                 - 'h_gt': (N, 1) ground truth (for IC and BC)
                 - 'mask': dict with 'residual', 'IC', 'BC' boolean masks
+            for_tree_spawning: If True, return per-sample loss components dict
                 
         Returns:
-            Scalar loss tensor
+            - If for_tree_spawning=False: Scalar total loss
+            - If for_tree_spawning=True: Dict with keys 'residual', 'ic', 'bc'
+              containing per-sample loss tensors (N,)
         """
         x = batch['x']  # (N, 2)
         t = batch['t']  # (N, 1)
-        h_gt = batch['h_gt']  # (N, 1)
+        h_gt = batch.get('h_gt', batch.get('u_gt'))  # (N, 1) - handle both names
         masks = batch['mask']  # dict with boolean masks
         
-        # Precomputed base output for pretrained base mode (optional)
-        u_base_full = batch.get('u_base', None)
-        
+        N = x.shape[0]
         device = x.device
+        
+        # Initialize per-sample arrays if needed
+        if for_tree_spawning:
+            residual_per_sample = torch.zeros(N, device=device)
+            ic_per_sample = torch.zeros(N, device=device)
+            bc_per_sample = torch.zeros(N, device=device)
         
         # ============================================================
         # MSE_f: PDE Residual Loss
@@ -172,18 +180,13 @@ def build_loss(**cfg) -> Callable:
             x_f = x[masks['residual']].contiguous()
             t_f = t[masks['residual']].contiguous()
             
-            # Get precomputed base output for residual points if available
-            u_base_f = None
-            if u_base_full is not None:
-                u_base_f = u_base_full[masks['residual']].contiguous()
-            
             # Enable gradients for autograd
             x_f = x_f.clone().detach().requires_grad_(True)
             t_f = t_f.clone().detach().requires_grad_(True)
             
             # Model prediction: concatenate x,t -> predict h
             xt_f = torch.cat([x_f, t_f], dim=1)
-            h_pred = model(xt_f, u_base_precomputed=u_base_f)  # (N_f, 1)
+            h_pred = model(xt_f)  # (N_f, 1)
             
             # Extract h (squeeze output dimension for derivative computation)
             h_f = h_pred[:, 0]
@@ -194,10 +197,16 @@ def build_loss(**cfg) -> Callable:
             # Compute PDE residual: h_t + h*(h_x0 + h_x1) - nu*(h_x0x0 + h_x1x1)
             residual = pde_residual(h_f, h_t, h_x0, h_x1, h_x0x0, h_x1x1, nu=nu)
             
-            # MSE of residual
-            mse_residual = torch.mean(residual ** 2)
+            # Per-sample squared residual
+            residual_squared = residual ** 2
+            
+            if for_tree_spawning:
+                residual_per_sample[masks['residual']] = residual_squared
+            else:
+                mse_residual = torch.mean(residual_squared)
         else:
-            mse_residual = torch.tensor(0.0, device=device)
+            if not for_tree_spawning:
+                mse_residual = torch.tensor(0.0, device=device)
         
         # ============================================================
         # MSE_0: Initial Condition Loss
@@ -208,19 +217,20 @@ def build_loss(**cfg) -> Callable:
             t_0 = t[masks['IC']].contiguous()
             h_gt_0 = h_gt[masks['IC']].contiguous()  # (N_0, 1)
             
-            # Get precomputed base output for IC points if available
-            u_base_0 = None
-            if u_base_full is not None:
-                u_base_0 = u_base_full[masks['IC']].contiguous()
-            
             # Model prediction
             xt_0 = torch.cat([x_0, t_0], dim=1)
-            h_pred_0 = model(xt_0, u_base_precomputed=u_base_0)  # (N_0, 1)
+            h_pred_0 = model(xt_0)  # (N_0, 1)
             
             # IC loss: MSE between predicted and ground truth
-            mse_ic = torch.mean((h_pred_0 - h_gt_0) ** 2)
+            ic_squared = (h_pred_0 - h_gt_0) ** 2
+            
+            if for_tree_spawning:
+                ic_per_sample[masks['IC']] = ic_squared.squeeze(-1)
+            else:
+                mse_ic = torch.mean(ic_squared)
         else:
-            mse_ic = torch.tensor(0.0, device=device)
+            if not for_tree_spawning:
+                mse_ic = torch.tensor(0.0, device=device)
         
         # ============================================================
         # MSE_b: Boundary Condition Loss
@@ -231,30 +241,37 @@ def build_loss(**cfg) -> Callable:
             t_b = t[masks['BC']].contiguous()
             h_gt_b = h_gt[masks['BC']].contiguous()  # (N_b, 1)
             
-            # Get precomputed base output for BC points if available
-            u_base_b = None
-            if u_base_full is not None:
-                u_base_b = u_base_full[masks['BC']].contiguous()
-            
             # Model prediction
             xt_b = torch.cat([x_b, t_b], dim=1)
-            h_pred_b = model(xt_b, u_base_precomputed=u_base_b)  # (N_b, 1)
+            h_pred_b = model(xt_b)  # (N_b, 1)
             
             # BC loss: MSE between predicted and analytical boundary values
-            mse_bc = torch.mean((h_pred_b - h_gt_b) ** 2)
+            bc_squared = (h_pred_b - h_gt_b) ** 2
+            
+            if for_tree_spawning:
+                bc_per_sample[masks['BC']] = bc_squared.squeeze(-1)
+            else:
+                mse_bc = torch.mean(bc_squared)
         else:
-            mse_bc = torch.tensor(0.0, device=device)
+            if not for_tree_spawning:
+                mse_bc = torch.tensor(0.0, device=device)
         
         # ============================================================
-        # Total Weighted Loss
+        # Return
         # ============================================================
-        total_loss = (
-            weight_residual * mse_residual +
-            weight_ic * mse_ic +
-            weight_bc * mse_bc
-        )
-        
-        return total_loss
+        if for_tree_spawning:
+            return {
+                'residual': residual_per_sample,  # (N,)
+                'ic': ic_per_sample,              # (N,)
+                'bc': bc_per_sample               # (N,)
+            }
+        else:
+            total_loss = (
+                weight_residual * mse_residual +
+                weight_ic * mse_ic +
+                weight_bc * mse_bc
+            )
+            return total_loss
     
     return loss_fn
 

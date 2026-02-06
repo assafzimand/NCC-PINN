@@ -26,8 +26,9 @@ class TreeNodeInfo:
     bounds_upper: List[float]
     prediction: np.ndarray  # Q_Ω(x) - local mean value, shape (d,) for d-dim output
     parent_prediction: Optional[np.ndarray]  # Q_Ω_parent(x), shape (d,) or None
-    wavelet_norm: float = 0.0  # ||Q_child - Q_parent||² × Σ residuals
-    sum_residuals: float = 0.0  # Sum of residuals in this node (for diagnostics)
+    wavelet_norm: float = 0.0  # ||ψ||² = ||Q_child - Q_parent||² × total_loss(ω_i)
+    total_loss_omega: float = 0.0  # Total weighted loss in this region
+    sum_residuals: float = 0.0  # DEPRECATED: Sum of residuals (for backward compat)
 
 
 class RegionDetector:
@@ -64,12 +65,17 @@ class RegionDetector:
         self.rf: Optional[RandomForestRegressor] = None
         self._X: Optional[np.ndarray] = None
         self._y: Optional[np.ndarray] = None
-        self._residuals: Optional[np.ndarray] = None  # PDE residuals for weighting
+        self._residuals: Optional[np.ndarray] = None  # DEPRECATED: kept for backward compatibility
+        self._residual_losses: Optional[np.ndarray] = None  # Per-sample residual losses
+        self._ic_losses: Optional[np.ndarray] = None  # Per-sample IC losses
+        self._bc_losses: Optional[np.ndarray] = None  # Per-sample BC losses
+        self._loss_weights: Optional[Dict[str, float]] = None  # Loss weights dict
     
     def fit(
         self, 
         X: np.ndarray, 
         y: np.ndarray,
+        loss_components: Optional[Dict[str, np.ndarray]] = None,
         residuals: Optional[np.ndarray] = None
     ) -> 'RegionDetector':
         """
@@ -80,8 +86,9 @@ class RegionDetector:
             y: (N,) or (N, output_dim) array of solution values
                Multi-output is supported - RF fits on d-dimensional y,
                and wavelet norm is computed as ||Q_child - Q_parent||²
-            residuals: (N,) array of PDE residuals |L[u] - f| for weighting
-                       If None, uses uniform weighting (n_samples)
+            loss_components: Dict with 'residual', 'ic', 'bc' arrays and 'weights'
+                (new tree spawning approach using total loss)
+            residuals: DEPRECATED - (N,) array of PDE residuals (for backward compatibility)
             
         Returns:
             self for chaining
@@ -95,14 +102,32 @@ class RegionDetector:
         self._X = X
         self._y = y
         
-        # Store residuals (use uniform weighting if not provided)
-        if residuals is not None:
+        # Store loss components (new approach)
+        if loss_components is not None:
+            self._residual_losses = loss_components['residual']
+            self._ic_losses = loss_components['ic']
+            self._bc_losses = loss_components['bc']
+            self._loss_weights = loss_components['weights']
+            # For backward compatibility with diagnostic code
+            self._residuals = loss_components['residual'].copy()
+        elif residuals is not None:
+            # Fallback to old residual-only approach
             if residuals.ndim > 1:
                 residuals = residuals.ravel()
-            self._residuals = np.abs(residuals)  # Ensure positive
+            self._residuals = np.abs(residuals)
+            # Fill loss components with residuals for compatibility
+            self._residual_losses = self._residuals.copy()
+            self._ic_losses = np.zeros_like(self._residuals)
+            self._bc_losses = np.zeros_like(self._residuals)
+            self._loss_weights = {'residual': 1.0, 'ic': 0.0, 'bc': 0.0}
         else:
             # Fallback: uniform weighting (equivalent to n_samples)
-            self._residuals = np.ones(len(y) if y.ndim == 1 else y.shape[0])
+            n = len(y) if y.ndim == 1 else y.shape[0]
+            self._residuals = np.ones(n)
+            self._residual_losses = np.ones(n)
+            self._ic_losses = np.zeros(n)
+            self._bc_losses = np.zeros(n)
+            self._loss_weights = {'residual': 1.0, 'ic': 0.0, 'bc': 0.0}
         
         # ALWAYS update domain bounds from the data being fitted
         # This is critical when fitting on filtered subdomains - the bounds
@@ -225,18 +250,35 @@ class RegionDetector:
                 if parent_id is not None:
                     parent_prediction = tree.value[parent_id, :, 0].copy()  # Shape (d,)
                 
-                # Compute wavelet norm: ||ψ||²_r = ||Q_child - Q_parent||² × Σ residuals
-                # This weights by PDE residual - regions with high error get higher priority
+                # Compute wavelet norm: ||ψ||² = ||Q_child - Q_parent||² × total_loss(ω_i)
+                # This weights by total physics-informed loss - regions with high error get priority
                 wavelet_norm = 0.0
-                sum_residuals = 0.0
-                if parent_prediction is not None:
+                total_loss_omega = 0.0
+                sum_residuals = 0.0  # DEPRECATED: kept for backward compatibility
+                
+                if parent_prediction is not None and len(sample_indices) > 0:
                     diff = prediction - parent_prediction  # Shape (d,)
                     # L2 norm squared of the difference
                     l2_norm_squared = float(np.sum(diff ** 2))
-                    # Sum of residuals in this node (residual-weighted norm)
-                    sum_residuals = float(self._residuals[sample_indices].sum())
-                    # Residual-weighted L2 norm: prioritizes non-smooth regions with high error
-                    wavelet_norm = l2_norm_squared * sum_residuals
+                    
+                    # Compute total_loss(ω_i) over this region
+                    # total_loss(ω_i) = w_res·mean(res[ω]) + w_ic·mean(ic[ω]) + w_bc·mean(bc[ω])
+                    mean_residual = float(self._residual_losses[sample_indices].mean())
+                    mean_ic = float(self._ic_losses[sample_indices].mean())
+                    mean_bc = float(self._bc_losses[sample_indices].mean())
+                    
+                    # Weighted sum (same as training loss)
+                    total_loss_omega = (
+                        self._loss_weights['residual'] * mean_residual +
+                        self._loss_weights['ic'] * mean_ic +
+                        self._loss_weights['bc'] * mean_bc
+                    )
+                    
+                    # Wavelet norm = ||Q_child - Q_parent||² × total_loss(ω_i)
+                    wavelet_norm = l2_norm_squared * total_loss_omega
+                    
+                    # For backward compatibility
+                    sum_residuals = float(self._residual_losses[sample_indices].sum())
                 
                 all_nodes.append(TreeNodeInfo(
                     node_id=node_id,
@@ -248,6 +290,7 @@ class RegionDetector:
                     prediction=prediction,
                     parent_prediction=parent_prediction,
                     wavelet_norm=wavelet_norm,
+                    total_loss_omega=total_loss_omega,
                     sum_residuals=sum_residuals
                 ))
         
@@ -449,6 +492,7 @@ class RegionDetector:
         self,
         X: np.ndarray,
         y: np.ndarray,
+        loss_components: Optional[Dict[str, np.ndarray]] = None,
         residuals: Optional[np.ndarray] = None,
         sibling_regions: Optional[List[RegionDescriptor]] = None,
         overlap_threshold: float = 0.5,
@@ -464,7 +508,9 @@ class RegionDetector:
         Args:
             X: (N, n_dims) array of coordinates
             y: (N,) or (N, output_dim) array of solution values
-            residuals: (N,) array of PDE residuals for weighting (higher = more priority)
+            loss_components: Dict with 'residual', 'ic', 'bc' arrays and 'weights'
+                (new approach using total loss)
+            residuals: DEPRECATED - (N,) array of PDE residuals (for backward compatibility)
             sibling_regions: List of same-parent regions to check overlap against
             overlap_threshold: Accept region if more than this fraction is outside siblings
             wavelet_threshold: Minimum wavelet norm to spawn
@@ -476,7 +522,7 @@ class RegionDetector:
         Returns:
             RegionDescriptor for the selected region, or None
         """
-        self.fit(X, y, residuals=residuals)
+        self.fit(X, y, loss_components=loss_components, residuals=residuals)
         return self.select_refinement_region(
             sibling_regions=sibling_regions,
             overlap_threshold=overlap_threshold,
