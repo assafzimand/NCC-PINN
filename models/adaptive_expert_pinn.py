@@ -174,6 +174,11 @@ class BatchedModels:
             # Single model: direct forward, avoid vmap overhead
             return models[0](x).unsqueeze(0)  # (1, N, output_dim)
         
+        # Ensure all models share the same train/eval mode (required by stack_module_state)
+        is_training = template.training
+        for m in models:
+            m.train(is_training)
+        
         # Stack parameters from all models in this group
         params, buffers = stack_module_state(models)
         
