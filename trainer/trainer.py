@@ -603,12 +603,6 @@ def train(
     start_time = time.time()
 
     for epoch in range(1, epochs + 1):
-        # Timing debug: accumulators for pretrained base case
-        if disable_spawning_during_training:
-            t_epoch_start = time.perf_counter()
-            t_train_loss_fn, t_train_backward, t_train_step = 0.0, 0.0, 0.0
-            t_eval_train_metrics, t_eval_loop_loss_fn, t_eval_loop_h_pred = 0.0, 0.0, 0.0
-
         # Train phase
         model.train()
         train_loss = 0.0
@@ -792,20 +786,6 @@ def train(
             metrics['eval_rel_l2'].append(eval_rel_l2)
             metrics['train_inf_norm'].append(train_inf_norm)
             metrics['eval_inf_norm'].append(eval_inf_norm)
-
-        # Timing debug: print breakdown for pretrained base case
-        if disable_spawning_during_training:
-            t_epoch_total = time.perf_counter() - t_epoch_start
-            if should_evaluate:
-                print(f"  [TIMING] Epoch {epoch} total: {t_epoch_total:.3f}s")
-                print(f"    Train: loss_fn={t_train_loss_fn:.3f}s backward={t_train_backward:.3f}s step={t_train_step:.3f}s "
-                      f"(batches={n_train_batches})")
-                print(f"    Eval:  train_metrics={t_eval_train_metrics:.3f}s | "
-                      f"eval_loop: loss_fn={t_eval_loop_loss_fn:.3f}s model_h_pred={t_eval_loop_h_pred:.3f}s "
-                      f"(batches={n_eval_batches})")
-            else:
-                print(f"  [TIMING] Epoch {epoch} total: {t_epoch_total:.3f}s | "
-                      f"loss_fn={t_train_loss_fn:.3f}s backward={t_train_backward:.3f}s step={t_train_step:.3f}s")
 
         # Print progress
         if should_evaluate:
