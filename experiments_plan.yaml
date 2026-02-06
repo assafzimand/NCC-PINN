@@ -113,7 +113,7 @@ base_config:
 
 # Experiments to run
 experiments:  
-  - name: "4k_experts
+  - name: "4k_experts"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
 
