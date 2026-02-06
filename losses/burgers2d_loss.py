@@ -166,6 +166,9 @@ def build_loss(**cfg) -> Callable:
         N = x.shape[0]
         device = x.device
         
+        # Timer (attached to model by trainer)
+        _t = getattr(model, '_timer', None)
+        
         # Initialize per-sample arrays if needed
         if for_tree_spawning:
             residual_per_sample = torch.zeros(N, device=device)
@@ -186,13 +189,17 @@ def build_loss(**cfg) -> Callable:
             
             # Model prediction: concatenate x,t -> predict h
             xt_f = torch.cat([x_f, t_f], dim=1)
+            if _t: _t.start('loss.residual.forward')
             h_pred = model(xt_f)  # (N_f, 1)
+            if _t: _t.stop('loss.residual.forward')
             
             # Extract h (squeeze output dimension for derivative computation)
             h_f = h_pred[:, 0]
             
             # Compute derivatives
+            if _t: _t.start('loss.residual.derivatives')
             h_t, h_x0, h_x1, h_x0x0, h_x1x1 = compute_derivatives(h_f, x_f, t_f)
+            if _t: _t.stop('loss.residual.derivatives')
             
             # Compute PDE residual: h_t + h*(h_x0 + h_x1) - nu*(h_x0x0 + h_x1x1)
             residual = pde_residual(h_f, h_t, h_x0, h_x1, h_x0x0, h_x1x1, nu=nu)
@@ -219,7 +226,9 @@ def build_loss(**cfg) -> Callable:
             
             # Model prediction
             xt_0 = torch.cat([x_0, t_0], dim=1)
+            if _t: _t.start('loss.ic.forward')
             h_pred_0 = model(xt_0)  # (N_0, 1)
+            if _t: _t.stop('loss.ic.forward')
             
             # IC loss: MSE between predicted and ground truth
             ic_squared = (h_pred_0 - h_gt_0) ** 2
@@ -243,7 +252,9 @@ def build_loss(**cfg) -> Callable:
             
             # Model prediction
             xt_b = torch.cat([x_b, t_b], dim=1)
+            if _t: _t.start('loss.bc.forward')
             h_pred_b = model(xt_b)  # (N_b, 1)
+            if _t: _t.stop('loss.bc.forward')
             
             # BC loss: MSE between predicted and analytical boundary values
             bc_squared = (h_pred_b - h_gt_b) ** 2
