@@ -27,6 +27,7 @@ import torch
 import torch.nn as nn
 from typing import List, Dict, Optional, Tuple
 from torch.utils.hooks import RemovableHandle
+from torch.func import stack_module_state, functional_call, vmap
 from pathlib import Path
 
 from models.fc_model import FCNet
@@ -40,16 +41,17 @@ from adaptive.indicators import (
 
 class BatchedModels:
     """
-    Batched model weights for O(1) forward pass using einsum.
+    Batched model forward pass using vmap + functional_call.
     
     Computes all models (base + experts) in parallel, supporting HETEROGENEOUS
     architectures by grouping models with the same architecture and running
-    parallel einsum operations per group.
+    vmap(functional_call) per group. Different architecture groups run on
+    separate CUDA streams for concurrent execution.
     
     The output tensor indexes are: [0] = base, [1..K] = experts
     
-    Note: Weights are stacked at forward time (not cached) to ensure gradients
-    flow properly during training.
+    Note: stack_module_state is called every forward so gradients flow to
+    the original model parameters during training.
     """
     
     def __init__(self, activation_fn: nn.Module):
@@ -59,7 +61,8 @@ class BatchedModels:
         """
         self.activation_fn = activation_fn
         self._models: List[nn.Module] = []
-        self._arch_groups: Dict[Tuple[int, ...], List[int]] = {}  # {arch_tuple: [model_indices]}
+        self._groups: Dict[Tuple[int, ...], Dict] = {}
+        # {arch_tuple: {'indices': [int], 'template': FCNet, 'models': [FCNet]}}
     
     def sync_from_models(self, base_model: nn.Module, experts: nn.ModuleList) -> None:
         """
@@ -77,21 +80,25 @@ class BatchedModels:
         self._models = [base_model] + list(experts)
         
         # Group models by architecture
-        self._arch_groups = {}
+        self._groups = {}
         for idx, model in enumerate(self._models):
             arch_tuple = tuple(model.layers)
-            if arch_tuple not in self._arch_groups:
-                self._arch_groups[arch_tuple] = []
-            self._arch_groups[arch_tuple].append(idx)
+            if arch_tuple not in self._groups:
+                self._groups[arch_tuple] = {
+                    'indices': [],
+                    'template': model,  # Use first model as functional_call template
+                    'models': []
+                }
+            self._groups[arch_tuple]['indices'].append(idx)
+            self._groups[arch_tuple]['models'].append(model)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Batched forward pass for all models (base + K experts) simultaneously.
+        Batched forward pass using vmap + functional_call.
         
-        Supports heterogeneous architectures by grouping and running parallel
-        einsum per architecture group.
-        
-        Stacks weights at forward time to ensure gradients flow properly.
+        Per architecture group: stack_module_state to get batched params,
+        then vmap(functional_call) to run all models in parallel.
+        Different groups run on separate CUDA streams.
         
         Args:
             x: Input tensor (N, input_dim)
@@ -106,52 +113,78 @@ class BatchedModels:
         
         N = x.shape[0]
         num_models = len(self._models)
-        
-        # Infer output_dim from first model
         output_dim = self._models[0].layers[-1]
         
         # Initialize output tensor
         outputs = torch.zeros((N, num_models, output_dim), device=x.device, dtype=x.dtype)
         
-        # Process each architecture group
-        for arch_tuple, model_indices in self._arch_groups.items():
-            # Get one model from this group to determine layer count
-            representative_model = self._models[model_indices[0]]
-            num_layers = len(arch_tuple) - 1
+        use_streams = (x.is_cuda and len(self._groups) > 1)
+        
+        if use_streams:
+            # Multiple architecture groups on CUDA: run on parallel streams
+            streams = []
+            results = {}
             
-            # Forward pass for this group
-            out = x  # (N, in_dim)
+            for arch_tuple, group in self._groups.items():
+                stream = torch.cuda.Stream(device=x.device)
+                streams.append(stream)
+                with torch.cuda.stream(stream):
+                    results[arch_tuple] = self._forward_group(
+                        x, group['template'], group['models']
+                    )
             
-            for layer_idx in range(num_layers):
-                layer_name = f"layer_{layer_idx + 1}"
-                
-                # Stack weights for all models in this group
-                W = torch.stack([
-                    self._models[idx].network[layer_name].weight.t()
-                    for idx in model_indices
-                ], dim=0)  # (group_size, in_dim, out_dim)
-                
-                b = torch.stack([
-                    self._models[idx].network[layer_name].bias
-                    for idx in model_indices
-                ], dim=0)  # (group_size, out_dim)
-                
-                if layer_idx == 0:
-                    # First layer: (N, in) -> (N, group_size, hidden)
-                    out = torch.einsum('ni,kio->nko', out, W) + b.unsqueeze(0)
-                else:
-                    # Subsequent layers: (N, group_size, in) -> (N, group_size, out)
-                    out = torch.einsum('nki,kio->nko', out, W) + b.unsqueeze(0)
-                
-                # Apply activation (except for last layer)
-                if layer_idx < num_layers - 1:
-                    out = self.activation_fn(out)
+            # Synchronize all streams
+            for stream in streams:
+                stream.synchronize()
             
-            # Scatter results into output tensor at correct indices
-            for i, model_idx in enumerate(model_indices):
-                outputs[:, model_idx, :] = out[:, i, :]
+            # Scatter results
+            for arch_tuple, group in self._groups.items():
+                group_out = results[arch_tuple]  # (K_group, N, output_dim)
+                for i, model_idx in enumerate(group['indices']):
+                    outputs[:, model_idx, :] = group_out[i]
+        else:
+            # Single group or CPU: no stream overhead
+            for arch_tuple, group in self._groups.items():
+                group_out = self._forward_group(
+                    x, group['template'], group['models']
+                )  # (K_group, N, output_dim)
+                for i, model_idx in enumerate(group['indices']):
+                    outputs[:, model_idx, :] = group_out[i]
         
         return outputs  # (N, K+1, output_dim)
+    
+    def _forward_group(
+        self,
+        x: torch.Tensor,
+        template: nn.Module,
+        models: List[nn.Module]
+    ) -> torch.Tensor:
+        """
+        Forward pass for one architecture group using vmap + functional_call.
+        
+        Args:
+            x: Input tensor (N, input_dim)
+            template: Template model for functional_call
+            models: List of models in this group
+            
+        Returns:
+            (K_group, N, output_dim) tensor of outputs
+        """
+        if len(models) == 1:
+            # Single model: direct forward, avoid vmap overhead
+            return models[0](x).unsqueeze(0)  # (1, N, output_dim)
+        
+        # Stack parameters from all models in this group
+        params, buffers = stack_module_state(models)
+        
+        # Define single-model forward using functional_call
+        def single_forward(params, buffers, x):
+            return functional_call(template, (params, buffers), (x,))
+        
+        # vmap over model dimension (dim 0 of params/buffers), broadcast input x
+        batched_forward = vmap(single_forward, in_dims=(0, 0, None))
+        
+        return batched_forward(params, buffers, x)  # (K_group, N, output_dim)
 
 
 class AdaptiveExpertPINN(nn.Module):

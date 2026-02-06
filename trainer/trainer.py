@@ -1176,8 +1176,8 @@ def train(
     plot_final_comparison(
         h_pred_eval.cpu().numpy(),
         eval_data['h_gt'].cpu().numpy(),
-        eval_data['x'].cpu().numpy(),
-        eval_data['t'].cpu().numpy(),
+        eval_data['x'].detach().cpu().numpy(),
+        eval_data['t'].detach().cpu().numpy(),
         training_plots_dir
     )
 
