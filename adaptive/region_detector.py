@@ -26,7 +26,7 @@ class TreeNodeInfo:
     bounds_upper: List[float]
     prediction: np.ndarray  # Q_Ω(x) - local mean value, shape (d,) for d-dim output
     parent_prediction: Optional[np.ndarray]  # Q_Ω_parent(x), shape (d,) or None
-    wavelet_norm: float = 0.0  # ||ψ||² = ||Q_child - Q_parent||² × total_loss(ω_i)
+    wavelet_norm: float = 0.0  # ||ψ||² = ||Q_child - Q_parent||² × total_loss(ω_i) × |ω_i|
     total_loss_omega: float = 0.0  # Total weighted loss in this region
     sum_residuals: float = 0.0  # DEPRECATED: Sum of residuals (for backward compat)
 
@@ -250,8 +250,8 @@ class RegionDetector:
                 if parent_id is not None:
                     parent_prediction = tree.value[parent_id, :, 0].copy()  # Shape (d,)
                 
-                # Compute wavelet norm: ||ψ||² = ||Q_child - Q_parent||² × total_loss(ω_i)
-                # This weights by total physics-informed loss - regions with high error get priority
+                # Compute wavelet norm: ||ψ||² = ||Q_child - Q_parent||² × total_loss(ω_i) × |ω_i|
+                # Weights by total loss AND region size — larger high-error regions get priority
                 wavelet_norm = 0.0
                 total_loss_omega = 0.0
                 sum_residuals = 0.0  # DEPRECATED: kept for backward compatibility
@@ -274,8 +274,8 @@ class RegionDetector:
                         self._loss_weights['bc'] * mean_bc
                     )
                     
-                    # Wavelet norm = ||Q_child - Q_parent||² × total_loss(ω_i)
-                    wavelet_norm = l2_norm_squared * total_loss_omega
+                    # Wavelet norm = ||Q_child - Q_parent||² × total_loss(ω_i) × |ω_i|
+                    wavelet_norm = l2_norm_squared * total_loss_omega * n_samples
                     
                     # For backward compatibility
                     sum_residuals = float(self._residual_losses[sample_indices].sum())
