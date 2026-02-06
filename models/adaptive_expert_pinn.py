@@ -79,7 +79,7 @@ class BatchedModels:
         # Group models by architecture
         self._arch_groups = {}
         for idx, model in enumerate(self._models):
-            arch_tuple = tuple(model.architecture)
+            arch_tuple = tuple(model.layers)
             if arch_tuple not in self._arch_groups:
                 self._arch_groups[arch_tuple] = []
             self._arch_groups[arch_tuple].append(idx)
@@ -108,7 +108,7 @@ class BatchedModels:
         num_models = len(self._models)
         
         # Infer output_dim from first model
-        output_dim = self._models[0].architecture[-1]
+        output_dim = self._models[0].layers[-1]
         
         # Initialize output tensor
         outputs = torch.zeros((N, num_models, output_dim), device=x.device, dtype=x.dtype)
