@@ -1080,95 +1080,178 @@ class AdaptiveExpertPINN(nn.Module):
             return self._forward_decomposed_soft(inputs)
     
     def _forward_decomposed_hard(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Vectorized hard blending decomposed forward pass with batched models."""
+        """
+        ANT-compatible hard blending decomposed forward pass.
+
+        NOTE: Hard blending is NOT recommended for ANT design since the
+        leaves-only partition of unity is designed for soft blending.
+        This method is provided for compatibility but may not work as expected.
+        """
         result = {}
-        
-        # Compute all model outputs at once
-        u_all = self.batched_models.forward(inputs)  # (N, K+1, output_dim)
-        result['base'] = u_all[:, 0, :]  # (N, output_dim)
-        
-        # Compute masks (already vectorized)
-        all_masks = self.batched_indicators.compute_hard_masks_only(inputs)
-        
+        N = inputs.size(0)
+        max_depth = max(self.depths) if self.depths else 0
+
+        # Storage for outputs and activations at each node
+        node_outputs = {}
+        node_activations = {}
+
+        # Depth 0: Compute base model
+        u_base, A_base = self.base_model(inputs, return_activation=True)
+        node_outputs[-1] = u_base
+        node_activations[-1] = A_base
+        result['base'] = u_base
+
+        # Depths 1 to max_depth: Process level-by-level
+        for depth in range(1, max_depth + 1):
+            expert_indices = self.experts_by_depth[depth]
+            if not expert_indices:
+                continue
+
+            for expert_idx in expert_indices:
+                parent_idx = self.parent_indices[expert_idx]
+                A_parent = node_activations[parent_idx]
+
+                expert = self.experts[expert_idx]
+                u_i, A_i = expert(A_parent, return_activation=True)
+
+                node_outputs[expert_idx] = u_i
+                node_activations[expert_idx] = A_i
+                result[f'expert_{expert_idx}'] = u_i
+
+        # For hard blending, use leaves only (consistent with ANT forward)
+        leaf_outputs = []
+        leaf_regions = []
+        leaf_indices = []
+
+        if self.base_is_leaf:
+            leaf_outputs.append(node_outputs[-1])
+            leaf_regions.append(None)
+            leaf_indices.append(-1)
+
+        for expert_idx, is_leaf in enumerate(self.leaf_status):
+            if is_leaf:
+                leaf_outputs.append(node_outputs[expert_idx])
+                leaf_regions.append(self.regions[expert_idx])
+                leaf_indices.append(expert_idx)
+
+        # Compute hard masks for leaves
         result['masks'] = {}
-        
-        if len(self.experts) > 0:
-            # Store individual expert outputs and masks
-            for i in range(len(self.experts)):
-                result[f'expert_{i}'] = u_all[:, i+1, :]  # (N, out_dim)
-                result['masks'][f'expert_{i}'] = all_masks[:, i:i+1]  # (N, 1)
-            
-            # Compute composed output - vectorized
-            u_experts = u_all[:, 1:, :]  # (N, K, output_dim)
-            weighted_experts = all_masks.unsqueeze(-1) * u_experts  # (N, K, out_dim)
-            u_total = result['base'] + weighted_experts.sum(dim=1)  # (N, out_dim)
-        else:
-            u_total = result['base'].clone()
-        
+        psi_normalized = self._compute_leaf_indicators(inputs, leaf_regions)
+
+        for i, leaf_idx in enumerate(leaf_indices):
+            if leaf_idx == -1:
+                result['masks']['base'] = psi_normalized[:, i:i+1]
+            else:
+                result['masks'][f'expert_{leaf_idx}'] = psi_normalized[:, i:i+1]
+
+        # Weighted combination
+        leaf_stack = torch.stack(leaf_outputs, dim=1)
+        u_total = (psi_normalized.unsqueeze(-1) * leaf_stack).sum(dim=1)
+
         result['composed'] = u_total
         return result
     
     def _forward_decomposed_soft(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Vectorized soft blending decomposed forward pass with batched models.
-        
-        Supports both standard partition-of-unity mode and additive mode
-        (when pretrained_base_model=True).
+        """
+        ANT-compatible soft blending decomposed forward pass.
+
+        Uses depth-by-depth computation since experts have heterogeneous
+        architectures (different input dimensions based on parent activations).
         """
         result = {}
+        N = inputs.size(0)
+        max_depth = max(self.depths) if self.depths else 0
 
-        # ============================================================
-        # PRETRAINED CASE - COMMENTED OUT
-        # ============================================================
-        # # Check if we should use additive mode (pretrained base)
-        # use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
-        use_additive_mode = False  # Always False for ANT design
+        # Storage for outputs and activations at each node
+        node_outputs = {}
+        node_activations = {}
 
-        # Compute all masks at once using batched indicators (already vectorized)
-        psi_base, psi_experts = self.batched_indicators(inputs)  # (N, 1), (N, K)
-
-        # Store unnormalized masks
-        result['masks'] = {'base': psi_base}
-        for i in range(psi_experts.shape[1]):
-            result['masks'][f'expert_{i}'] = psi_experts[:, i:i+1]  # (N, 1)
-
-        # Compute normalized weights - standard partition of unity only
-        # Standard partition of unity
-        psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-        psi_sum = psi_sum.clamp(min=1e-8)
-        psi_base_norm = psi_base / psi_sum  # (N, 1)
-            psi_experts_norm = psi_experts / psi_sum  # (N, K)
-            
-            # Store normalized weights
-            result['weights_normalized'] = {'base': psi_base_norm}
-            for i in range(psi_experts_norm.shape[1]):
-                result['weights_normalized'][f'expert_{i}'] = psi_experts_norm[:, i:i+1]  # (N, 1)
-            result['blending_mode_info'] = 'partition_of_unity'
-        
-        # Compute all model outputs at once
-        u_all = self.batched_models.forward(inputs)  # (N, K+1, output_dim)
-        u_base = u_all[:, 0, :]  # (N, output_dim)
+        # Depth 0: Compute base model
+        u_base, A_base = self.base_model(inputs, return_activation=True)
+        node_outputs[-1] = u_base  # -1 represents base
+        node_activations[-1] = A_base
         result['base'] = u_base
-        
-        if len(self.experts) > 0:
-            # Extract expert outputs
-            u_experts = u_all[:, 1:, :]  # (N, K, output_dim)
-            
-            # Store individual expert outputs
-            for i in range(len(self.experts)):
-                result[f'expert_{i}'] = u_experts[:, i, :]  # (N, out_dim)
-            
-            # Composed output based on mode
-            weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts  # (N, K, out_dim)
-            
-            if use_additive_mode:
-                # Additive: u = u_base + Σ ψ̃_k · u_k
-                u_total = u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+
+        # Depths 1 to max_depth: Process level-by-level (same as forward)
+        for depth in range(1, max_depth + 1):
+            expert_indices = self.experts_by_depth[depth]
+            if not expert_indices:
+                continue
+
+            for expert_idx in expert_indices:
+                parent_idx = self.parent_indices[expert_idx]
+                A_parent = node_activations[parent_idx]  # (N, parent_activation_dim)
+
+                # Forward pass through this expert
+                expert = self.experts[expert_idx]
+                u_i, A_i = expert(A_parent, return_activation=True)
+
+                # Store for this expert
+                node_outputs[expert_idx] = u_i
+                node_activations[expert_idx] = A_i
+                result[f'expert_{expert_idx}'] = u_i  # (N, output_dim)
+
+        # Compute indicators for LEAVES only (ANT design)
+        leaf_outputs = []
+        leaf_regions = []
+        leaf_indices = []  # Track which indices are leaves for weights
+
+        if self.base_is_leaf:
+            leaf_outputs.append(node_outputs[-1])
+            leaf_regions.append(None)
+            leaf_indices.append(-1)
+
+        for expert_idx, is_leaf in enumerate(self.leaf_status):
+            if is_leaf:
+                leaf_outputs.append(node_outputs[expert_idx])
+                leaf_regions.append(self.regions[expert_idx])
+                leaf_indices.append(expert_idx)
+
+        # Compute normalized indicators for leaves only
+        psi_normalized = self._compute_leaf_indicators(inputs, leaf_regions)  # (N, num_leaves)
+
+        # Store normalized weights (always include 'base' for visualization compatibility)
+        result['weights_normalized'] = {}
+        base_weight_set = False
+        for i, leaf_idx in enumerate(leaf_indices):
+            if leaf_idx == -1:
+                result['weights_normalized']['base'] = psi_normalized[:, i:i+1]
+                base_weight_set = True
             else:
-                # Partition of unity: u = ψ̃_0 · u_base + Σ ψ̃_k · u_k
-                u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
-        else:
-            u_total = u_base
-        
+                result['weights_normalized'][f'expert_{leaf_idx}'] = psi_normalized[:, i:i+1]
+
+        # If base is not a leaf, add it with zero weight (for visualization compatibility)
+        if not base_weight_set:
+            result['weights_normalized']['base'] = torch.zeros(N, 1, device=inputs.device)
+
+        # Store unnormalized masks (always include 'base' for visualization compatibility)
+        result['masks'] = {}
+        base_mask_set = False
+        for i, region in enumerate(leaf_regions):
+            if region is None:
+                result['masks']['base'] = torch.ones(N, 1, device=inputs.device) * self.base_weight
+                base_mask_set = True
+            else:
+                leaf_idx = leaf_indices[i]
+                # Get indicator object for this region
+                region_idx = self.regions.index(region)
+                if self.blending_mode == 'hard':
+                    indicator_obj = self.hard_indicators[region_idx]
+                else:
+                    indicator_obj = self.soft_indicators[region_idx]
+                indicator = indicator_obj(inputs).squeeze(-1)  # (N,)
+                result['masks'][f'expert_{leaf_idx}'] = indicator.unsqueeze(1)
+
+        # If base is not a leaf, add it with zero mask (for visualization compatibility)
+        if not base_mask_set:
+            result['masks']['base'] = torch.zeros(N, 1, device=inputs.device)
+
+        result['blending_mode_info'] = 'partition_of_unity_leaves_only'
+
+        # Weighted combination (same as forward)
+        leaf_stack = torch.stack(leaf_outputs, dim=1)  # (N, num_leaves, output_dim)
+        u_total = (psi_normalized.unsqueeze(-1) * leaf_stack).sum(dim=1)  # (N, output_dim)
+
         result['composed'] = u_total
         return result
     

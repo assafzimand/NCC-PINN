@@ -388,7 +388,7 @@ def train(
     # PRETRAINED CASE - COMMENTED OUT (ANT design uses non-pretrained only)
     # ============================================================
     # # Pretrained base model mode
-    # pretrained_base_model = adaptive_cfg.get('pretrained_base_model', False)
+    pretrained_base_model = adaptive_cfg.get('pretrained_base_model', False)
     # pretrained_base_path = adaptive_cfg.get('pretrained_base_path', None)
     # disable_spawning_during_training = False  # Will be set to True after tree building
     disable_spawning_during_training = False  # Keep for compatibility
@@ -457,7 +457,7 @@ def train(
         #         current_optimizer_name = 'LBFGS'
         #     else:
         #         optimizer = _create_adam_optimizer(model, cfg)
-                current_optimizer_name = 'Adam'
+        current_optimizer_name = 'Adam'
         
         # Import and create region detector (only needed if not pretrained mode)
         if not pretrained_base_model:
