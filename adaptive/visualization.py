@@ -25,12 +25,12 @@ def prepare_ground_truth_grid(
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Prepare ground truth data on a regular grid for visualization.
-    
+
     Args:
         eval_data: Dictionary with 'x', 't', 'h' tensors
         domain_bounds: {'lower': [x_min, t_min], 'upper': [x_max, t_max]}
         resolution: Grid resolution for each dimension
-        
+
     Returns:
         (ground_truth, grid_x, grid_t) or (None, None, None) if preparation fails
     """
@@ -38,17 +38,23 @@ def prepare_ground_truth_grid(
         # Extract data (ground truth key can be 'h', 'h_gt', or 'u')
         x = eval_data['x'].cpu().numpy()
         t = eval_data['t'].cpu().numpy()
-        
-        # Try different keys for ground truth
-        if 'h_gt' in eval_data:
-            h = eval_data['h_gt'].cpu().numpy()
-        elif 'h' in eval_data:
-            h = eval_data['h'].cpu().numpy()
-        elif 'u' in eval_data:
-            h = eval_data['u'].cpu().numpy()
-        else:
-            print(f"  Warning: No ground truth key found. Available: {list(eval_data.keys())}")
+
+        # Try different keys for ground truth (expanded search)
+        h = None
+        gt_key_used = None
+        for key in ['h_gt', 'h', 'u', 'u_gt', 'y', 'y_gt']:
+            if key in eval_data:
+                h = eval_data[key].cpu().numpy()
+                gt_key_used = key
+                break
+
+        if h is None:
+            print(f"  [prepare_ground_truth_grid] Warning: No ground truth key found.")
+            print(f"  [prepare_ground_truth_grid] Available keys: {list(eval_data.keys())}")
+            print(f"  [prepare_ground_truth_grid] Tried: h_gt, h, u, u_gt, y, y_gt")
             return None, None, None
+
+        print(f"  [prepare_ground_truth_grid] Using key '{gt_key_used}' for ground truth")
         
         # Only support 2D domains (x, t) for now
         if len(domain_bounds['lower']) != 2:
@@ -81,17 +87,30 @@ def prepare_ground_truth_grid(
         
         # Interpolate using linear method
         ground_truth = griddata(points, h_display, (X_grid, T_grid), method='linear')
-        
+
         # Fill NaN values with nearest neighbor
         mask = np.isnan(ground_truth)
         if mask.any():
             ground_truth_nn = griddata(points, h_display, (X_grid, T_grid), method='nearest')
             ground_truth[mask] = ground_truth_nn[mask]
-        
+
+        # Verify output
+        if ground_truth is None or grid_x is None or grid_t is None:
+            print(f"  [prepare_ground_truth_grid] ERROR: Output is None (grid preparation failed)")
+            return None, None, None
+
+        print(f"  [prepare_ground_truth_grid] Success: grid shape {ground_truth.shape}, "
+              f"x range [{grid_x.min():.2f}, {grid_x.max():.2f}], "
+              f"t range [{grid_t.min():.2f}, {grid_t.max():.2f}]")
+
         return ground_truth, grid_x, grid_t
-        
+
     except Exception as e:
-        print(f"  Warning: Could not prepare ground truth grid: {e}")
+        import traceback
+        print(f"  [prepare_ground_truth_grid] ERROR: Could not prepare ground truth grid")
+        print(f"  [prepare_ground_truth_grid] Exception: {e}")
+        print(f"  [prepare_ground_truth_grid] Traceback:")
+        traceback.print_exc()
         return None, None, None
 
 
