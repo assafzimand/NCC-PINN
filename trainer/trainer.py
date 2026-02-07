@@ -1163,9 +1163,15 @@ def train(
     )
 
     # Run final probes, derivatives, and frequency analysis (without epoch_suffix for main directory)
-    print("\n" + "=" * 60)
-    print("Running Final Probe, Derivative, and Frequency Analysis")
-    print("=" * 60)
+    # Skip if adaptive PINN with inner_metrics_calculation disabled
+    skip_final_inner_metrics = is_adaptive and not adaptive_inner_metrics
+    
+    if skip_final_inner_metrics:
+        print("\n  [Skipping final inner metrics (probes/derivatives/frequency) — inner_metrics_calculation=false]")
+    else:
+        print("\n" + "=" * 60)
+        print("Running Final Probe, Derivative, and Frequency Analysis")
+        print("=" * 60)
     
     from probes.probe_runner import run_probes
     from derivatives_tracker.derivatives_runner import run_derivatives_tracker
@@ -1174,51 +1180,53 @@ def train(
     train_data_path = Path("datasets") / cfg['problem'] / "training_data.pt"
     eval_data_path = Path("datasets") / cfg['problem'] / "eval_data.pt"
     
-    # Final probes (saves to main probe_plots/ directory)
-    print("\nRunning final probe analysis...")
-    final_probe_metrics = run_probes(
-        model=model,
-        train_data_path=str(train_data_path),
-        eval_data_path=str(eval_data_path),
-        cfg=cfg,
-        run_dir=run_dir
-    )
-    
-    # Final derivatives (saves to main derivatives_plots/ directory)
-    print("\nRunning final derivatives analysis...")
-    final_deriv_metrics = run_derivatives_tracker(
-        model=model,
-        train_data_path=str(train_data_path),
-        eval_data_path=str(eval_data_path),
-        cfg=cfg,
-        run_dir=run_dir
-    )
-    
-    # Final frequency (saves to main frequency_plots/ directory)
-    print("\nRunning final frequency analysis...")
-    final_freq_metrics = run_frequency_tracker(
-        model=model,
-        train_data_path=str(train_data_path),
-        eval_data_path=str(eval_data_path),
-        cfg=cfg,
-        run_dir=run_dir
-    )
+    if not skip_final_inner_metrics:
+        # Final probes (saves to main probe_plots/ directory)
+        print("\nRunning final probe analysis...")
+        final_probe_metrics = run_probes(
+            model=model,
+            train_data_path=str(train_data_path),
+            eval_data_path=str(eval_data_path),
+            cfg=cfg,
+            run_dir=run_dir
+        )
+        
+        # Final derivatives (saves to main derivatives_plots/ directory)
+        print("\nRunning final derivatives analysis...")
+        final_deriv_metrics = run_derivatives_tracker(
+            model=model,
+            train_data_path=str(train_data_path),
+            eval_data_path=str(eval_data_path),
+            cfg=cfg,
+            run_dir=run_dir
+        )
+        
+        # Final frequency (saves to main frequency_plots/ directory)
+        print("\nRunning final frequency analysis...")
+        final_freq_metrics = run_frequency_tracker(
+            model=model,
+            train_data_path=str(train_data_path),
+            eval_data_path=str(eval_data_path),
+            cfg=cfg,
+            run_dir=run_dir
+        )
     
     # Add final results to history for shaded plotting
-    if 'probe_history' not in metrics:
-        metrics['probe_history'] = []
-    if final_probe_metrics is not None:
-        metrics['probe_history'].append((epochs, final_probe_metrics))
-    
-    if 'deriv_history' not in metrics:
-        metrics['deriv_history'] = []
-    if final_deriv_metrics is not None:
-        metrics['deriv_history'].append((epochs, final_deriv_metrics))
-    
-    if 'freq_history' not in metrics:
-        metrics['freq_history'] = []
-    if final_freq_metrics is not None:
-        metrics['freq_history'].append((epochs, final_freq_metrics))
+    if not skip_final_inner_metrics:
+        if 'probe_history' not in metrics:
+            metrics['probe_history'] = []
+        if final_probe_metrics is not None:
+            metrics['probe_history'].append((epochs, final_probe_metrics))
+        
+        if 'deriv_history' not in metrics:
+            metrics['deriv_history'] = []
+        if final_deriv_metrics is not None:
+            metrics['deriv_history'].append((epochs, final_deriv_metrics))
+        
+        if 'freq_history' not in metrics:
+            metrics['freq_history'] = []
+        if final_freq_metrics is not None:
+            metrics['freq_history'].append((epochs, final_freq_metrics))
     
     # Post-run shaded overlays for mid-training metrics (if collected)
     _maybe_plot_ncc_history(metrics, run_dir)
