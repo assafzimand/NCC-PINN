@@ -16,35 +16,45 @@ class FCNet(nn.Module):
     - Configurable architecture and activation function
     """
 
-    def __init__(self, layers: List[int], activation: str, config: Dict):
+    def __init__(self, layers: List[int], activation: str, config: Dict, is_base: bool = True):
         """
         Initialize FCNet.
 
         Args:
             layers: List of layer sizes [input_dim, hidden1, ..., output_dim]
+                   - For base (is_base=True): input_dim = spatial_dim + 1 (e.g., [x, t])
+                   - For experts (is_base=False): input_dim = parent_activation_dim (varies!)
             activation: Activation function name ('tanh', 'relu', 'sigmoid')
             config: Configuration dict for verification
+            is_base: True if this is the base model (takes spatial coordinates),
+                    False if this is an expert (takes parent activation)
 
         Example:
-            layers = [2, 50, 100, 50, 2]
-            Creates: input(2) -> hidden(50) -> hidden(100) ->
-                     hidden(50) -> output(2)
+            Base: layers = [2, 50, 100, 50, 2]  # input_dim=2 for [x, t]
+            Expert: layers = [50, 30, 30, 2]  # input_dim=50 (parent's last hidden layer)
         """
         super().__init__()
+
+        # Store is_base flag
+        self.is_base = is_base
 
         # Verify architecture matches problem configuration
         problem = config['problem']
         problem_config = config[problem]
         spatial_dim = problem_config['spatial_dim']
         output_dim = problem_config.get('output_dim', 2)  # Default to 2 for legacy
-        expected_input_dim = spatial_dim + 1  # x + t
 
-        assert layers[0] == expected_input_dim, (
-            f"Architecture input dimension {layers[0]} does not match "
-            f"expected dimension {expected_input_dim} "
-            f"(spatial_dim={spatial_dim} + 1 for time)"
-        )
-        
+        # Only check input dimension for base model
+        if is_base:
+            expected_input_dim = spatial_dim + 1  # x + t
+            assert layers[0] == expected_input_dim, (
+                f"Base model input dimension {layers[0]} does not match "
+                f"expected dimension {expected_input_dim} "
+                f"(spatial_dim={spatial_dim} + 1 for time)"
+            )
+        # For experts, input_dim is parent's activation_dim (validated at spawn time)
+
+        # Always check output dimension
         assert layers[-1] == output_dim, (
             f"Architecture output dimension {layers[-1]} does not match "
             f"expected dimension {output_dim} (problem={problem})"
@@ -89,16 +99,22 @@ class FCNet(nn.Module):
 
         return activations[activation.lower()]
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_activation: bool = False):
         """
         Forward pass through the network.
 
         Args:
-            x: Input tensor of shape (N, input_dim) where
-               input_dim = spatial_dim + 1 (concatenated [x, t])
+            x: Input tensor of shape (N, input_dim) where:
+               - If is_base=True: input_dim = spatial_dim + 1 (e.g., [x, t])
+               - If is_base=False: input_dim = parent_activation_dim (parent's last hidden layer)
+            return_activation: If True, return (output, activation) tuple.
+                             If False, return only output.
 
         Returns:
-            Output tensor of shape (N, output_dim)
+            If return_activation=False:
+                output: (N, output_dim) tensor
+            If return_activation=True:
+                (output, activation): Tuple of (N, output_dim) and (N, last_hidden_dim) tensors
         """
         out = x
 
@@ -108,10 +124,29 @@ class FCNet(nn.Module):
             out = self.network[layer_name](out)
             out = self.activation(out)
 
-        # Last layer (no activation)
-        out = self.network[layer_names[-1]](out)
+        # out is now the last hidden layer activation (before final output layer)
+        activation = out  # Store activation for potential return
 
-        return out
+        # Last layer (no activation)
+        output = self.network[layer_names[-1]](out)
+
+        if return_activation:
+            return output, activation  # (N, output_dim), (N, last_hidden_dim)
+        return output  # (N, output_dim)
+
+    def get_activation_dim(self) -> int:
+        """
+        Get the dimension of the activation output (last hidden layer size).
+
+        This is used for ANT architecture to determine the input dimension
+        for child experts.
+
+        Returns:
+            Activation dimension (size of last hidden layer before output)
+        """
+        # layers = [input_dim, hidden1, hidden2, ..., hidden_last, output_dim]
+        # Activation dim = hidden_last = layers[-2]
+        return self.layers[-2]
 
     def register_ncc_hooks(
         self,

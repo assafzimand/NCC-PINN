@@ -14,199 +14,204 @@ from trainer.utils import compute_relative_l2_error, compute_infinity_norm_error
 from trainer.timing import EpochTimer
 
 
-def _build_expert_tree_from_pretrained(
-    model: nn.Module,
-    eval_data: Dict,
-    cfg: Dict,
-    run_dir: Path,
-    loss_fn: Callable
-) -> int:
-    """
-    Build the expert tree using single decision tree traversal.
-    (Pretrained case: build entire tree upfront)
-
-    Args:
-        model: AdaptiveExpertPINN with pretrained, frozen base model
-        eval_data: Evaluation data dictionary
-        cfg: Configuration dictionary
-        run_dir: Output directory for plots
-        loss_fn: Loss function (model, batch) -> scalar
-
-    Returns:
-        Number of experts spawned
-    """
-    print("\n" + "=" * 60)
-    print("PHASE 1: Building Expert Tree (Tree-Based Spawning)")
-    print("=" * 60)
-    print("  Base model is frozen - spawning decisions based ONLY on base predictions")
-    print("  Using single decision tree traversal (BFS)")
-    print("=" * 60)
-
-    adaptive_cfg = cfg.get('adaptive_pinn', {})
-    max_experts = adaptive_cfg.get('max_experts', 5)
-    wavelet_threshold = adaptive_cfg.get('wavelet_threshold', None)
-    tree_max_depth = adaptive_cfg.get('tree_max_depth', 15)
-    tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
-
-    # Import adaptive modules
-    from adaptive.region_detector import RegionDetector
-    from adaptive.visualization import (
-        plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
-        plot_expert_soft_weights
-    )
-    from adaptive.residual_utils import compute_loss_components
-    from adaptive.indicators import RegionDescriptor
-
-    device = next(model.parameters()).device
-    domain_bounds = model.get_domain_bounds()
-
-    # Prepare ground truth grid for visualization
-    gt_grid, gt_x, gt_t = prepare_ground_truth_grid(eval_data, domain_bounds)
-
-    # Create RegionDetector with n_estimators=1 (single tree)
-    region_detector = RegionDetector(
-        n_estimators=1,  # CRITICAL: single tree only
-        max_depth=tree_max_depth,
-        min_samples_leaf=tree_min_samples_leaf,
-        domain_bounds=domain_bounds
-    )
-
-    # Create directory for adaptive outputs
-    adaptive_plots_dir = run_dir / "adaptive_plots"
-    adaptive_plots_dir.mkdir(exist_ok=True)
-
-    # Get base model predictions on eval_data (frozen, won't change)
-    # CRITICAL: Always use eval_data, not train data
-    model.eval()
-    eval_inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
-
-    with torch.no_grad():
-        u_pred_base = model.base_model(eval_inputs)  # Base only (pretrained, frozen)
-
-    # Compute per-sample loss components for total loss weighting
-    problem = cfg.get('problem', 'schrodinger')
-    loss_components = compute_loss_components(
-        model=model.base_model,  # Use base model directly for loss components
-        x=eval_data['x'],
-        t=eval_data['t'],
-        target=eval_data.get('h_gt', eval_data.get('u_gt')),
-        masks=eval_data['mask'],
-        loss_fn=loss_fn,
-        weights={
-            'residual': cfg[problem]['loss_weights']['residual'],
-            'ic': cfg[problem]['loss_weights']['ic'],
-            'bc': cfg[problem]['loss_weights']['bc']
-        }
-    )
-
-    # Convert to numpy for RF
-    X_eval = eval_inputs.cpu().numpy()
-    y_eval = u_pred_base.cpu().numpy()
-
-    # Fit tree once on entire domain (using eval_data)
-    print(f"\nFitting single decision tree (max_depth={tree_max_depth}, min_samples_leaf={tree_min_samples_leaf})...")
-    region_detector.fit(X=X_eval, y=y_eval, loss_components=loss_components)
-
-    # Traverse tree (BFS) to get candidate regions
-    print(f"\nTraversing tree (BFS) to extract regions...")
-    traversal_result = region_detector.extract_regions_from_tree(
-        wavelet_threshold=wavelet_threshold,
-        verbose=True
-    )
-
-    if not traversal_result:
-        print(f"\nNo regions to spawn (all below threshold or tree is empty)")
-        return 0
-
-    # Build mapping from tree node IDs to expert indices
-    tree_node_to_expert = {-1: -1}  # Root/base maps to expert -1
-    experts_spawned = 0
-
-    print(f"\n{'='*60}")
-    print(f"Spawning experts (max_experts={max_experts})...")
-    print(f"{'='*60}")
-
-    # Spawn experts in BFS order
-    for node_info, parent_tree_node_id in traversal_result:
-        if experts_spawned >= max_experts:
-            print(f"\nMax experts reached ({max_experts}), stopping spawn process")
-            break
-
-        # Map parent tree node to expert index
-        if parent_tree_node_id == -1:
-            # Root node (base model)
-            parent_idx = -1
-            depth = 1
-        elif parent_tree_node_id in tree_node_to_expert:
-            parent_idx = tree_node_to_expert[parent_tree_node_id]
-            # Compute depth based on parent
-            if parent_idx == -1:
-                depth = 1
-            else:
-                parent_region = model.regions[parent_idx]
-                depth = parent_region.depth + 1
-        else:
-            # Parent wasn't spawned (shouldn't happen with correct traversal)
-            print(f"  WARNING: Parent tree node {parent_tree_node_id} not found, using base as parent")
-            parent_idx = -1
-            depth = 1
-
-        # Create RegionDescriptor
-        region = RegionDescriptor(
-            bounds_lower=node_info.bounds_lower,
-            bounds_upper=node_info.bounds_upper,
-            wavelet_norm=node_info.wavelet_norm,
-            spawn_epoch=0,  # Tree building phase
-            depth=depth,
-            parent_idx=parent_idx
-        )
-
-        # Spawn expert
-        expert_idx = model.spawn_expert(region)
-        if expert_idx >= 0:
-            # Track mapping for future children
-            tree_node_to_expert[node_info.node_id] = expert_idx
-            experts_spawned += 1
-        else:
-            print(f"  Failed to spawn expert for node {node_info.node_id}")
-            break
-
-    # Save tree building summary
-    print(f"\n{'='*60}")
-    print(f"PHASE 1 COMPLETE: Expert Tree Built (Tree-Based Spawning)")
-    print(f"  Total experts spawned: {model.num_experts}")
-    print(f"  Highest depth: {model.get_highest_depth()}")
-    print(f"{'='*60}")
-
-    # Visualize final tree structure
-    problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
-    plot_expert_regions(
-        regions=model.regions,
-        domain_bounds=domain_bounds,
-        output_path=adaptive_plots_dir / f"expert_regions_final.png",
-        problem_type=problem_type,
-        title=f"Expert Tree ({model.num_experts} experts)",
-        ground_truth=gt_grid,
-        grid_x=gt_x,
-        grid_t=gt_t
-    )
-
-    # Plot soft weights if using soft blending
-    if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
-        plot_expert_soft_weights(
-            model=model,
-            domain_bounds=domain_bounds,
-            output_path=adaptive_plots_dir / f"soft_weights_final.png",
-            title_prefix="Final Tree: "
-        )
-
-    # Save final tree structure
-    save_regions_metadata(
-        regions=model.regions,
-        output_path=adaptive_plots_dir / "expert_tree_structure.json"
-    )
-
-    return model.num_experts
+# ============================================================
+# PRETRAINED CASE - COMMENTED OUT (ANT design uses non-pretrained only)
+# Will be removed in future cleanup
+# ============================================================
+# def _build_expert_tree_from_pretrained(
+#     model: nn.Module,
+#     eval_data: Dict,
+#     cfg: Dict,
+#     run_dir: Path,
+#     loss_fn: Callable
+# ) -> int:
+#     """
+#     Build the expert tree using single decision tree traversal.
+#     (Pretrained case: build entire tree upfront)
+#
+#     Args:
+#         model: AdaptiveExpertPINN with pretrained, frozen base model
+#         eval_data: Evaluation data dictionary
+#         cfg: Configuration dictionary
+#         run_dir: Output directory for plots
+#         loss_fn: Loss function (model, batch) -> scalar
+#
+#     Returns:
+#         Number of experts spawned
+#     """
+#     print("\n" + "=" * 60)
+#     print("PHASE 1: Building Expert Tree (Tree-Based Spawning)")
+#     print("=" * 60)
+#     print("  Base model is frozen - spawning decisions based ONLY on base predictions")
+#     print("  Using single decision tree traversal (BFS)")
+#     print("=" * 60)
+#
+#     adaptive_cfg = cfg.get('adaptive_pinn', {})
+#     max_experts = adaptive_cfg.get('max_experts', 5)
+#     wavelet_threshold = adaptive_cfg.get('wavelet_threshold', None)
+#     tree_max_depth = adaptive_cfg.get('tree_max_depth', 15)
+#     tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
+#
+#     # Import adaptive modules
+#     from adaptive.region_detector import RegionDetector
+#     from adaptive.visualization import (
+#         plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
+#         plot_expert_soft_weights
+#     )
+#     from adaptive.residual_utils import compute_loss_components
+#     from adaptive.indicators import RegionDescriptor
+#
+#     device = next(model.parameters()).device
+#     domain_bounds = model.get_domain_bounds()
+#
+#     # Prepare ground truth grid for visualization
+#     gt_grid, gt_x, gt_t = prepare_ground_truth_grid(eval_data, domain_bounds)
+#
+#     # Create RegionDetector with n_estimators=1 (single tree)
+#     region_detector = RegionDetector(
+#         n_estimators=1,  # CRITICAL: single tree only
+#         max_depth=tree_max_depth,
+#         min_samples_leaf=tree_min_samples_leaf,
+#         domain_bounds=domain_bounds
+#     )
+#
+#     # Create directory for adaptive outputs
+#     adaptive_plots_dir = run_dir / "adaptive_plots"
+#     adaptive_plots_dir.mkdir(exist_ok=True)
+#
+#     # Get base model predictions on eval_data (frozen, won't change)
+#     # CRITICAL: Always use eval_data, not train data
+#     model.eval()
+#     eval_inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
+#
+#     with torch.no_grad():
+#         u_pred_base = model.base_model(eval_inputs)  # Base only (pretrained, frozen)
+#
+#     # Compute per-sample loss components for total loss weighting
+#     problem = cfg.get('problem', 'schrodinger')
+#     loss_components = compute_loss_components(
+#         model=model.base_model,  # Use base model directly for loss components
+#         x=eval_data['x'],
+#         t=eval_data['t'],
+#         target=eval_data.get('h_gt', eval_data.get('u_gt')),
+#         masks=eval_data['mask'],
+#         loss_fn=loss_fn,
+#         weights={
+#             'residual': cfg[problem]['loss_weights']['residual'],
+#             'ic': cfg[problem]['loss_weights']['ic'],
+#             'bc': cfg[problem]['loss_weights']['bc']
+#         }
+#     )
+#
+#     # Convert to numpy for RF
+#     X_eval = eval_inputs.cpu().numpy()
+#     y_eval = u_pred_base.cpu().numpy()
+#
+#     # Fit tree once on entire domain (using eval_data)
+#     print(f"\nFitting single decision tree (max_depth={tree_max_depth}, min_samples_leaf={tree_min_samples_leaf})...")
+#     region_detector.fit(X=X_eval, y=y_eval, loss_components=loss_components)
+#
+#     # Traverse tree (BFS) to get candidate regions
+#     print(f"\nTraversing tree (BFS) to extract regions...")
+#     traversal_result = region_detector.extract_regions_from_tree(
+#         wavelet_threshold=wavelet_threshold,
+#         verbose=True
+#     )
+#
+#     if not traversal_result:
+#         print(f"\nNo regions to spawn (all below threshold or tree is empty)")
+#         return 0
+#
+#     # Build mapping from tree node IDs to expert indices
+#     tree_node_to_expert = {-1: -1}  # Root/base maps to expert -1
+#     experts_spawned = 0
+#
+#     print(f"\n{'='*60}")
+#     print(f"Spawning experts (max_experts={max_experts})...")
+#     print(f"{'='*60}")
+#
+#     # Spawn experts in BFS order
+#     for node_info, parent_tree_node_id in traversal_result:
+#         if experts_spawned >= max_experts:
+#             print(f"\nMax experts reached ({max_experts}), stopping spawn process")
+#             break
+#
+#         # Map parent tree node to expert index
+#         if parent_tree_node_id == -1:
+#             # Root node (base model)
+#             parent_idx = -1
+#             depth = 1
+#         elif parent_tree_node_id in tree_node_to_expert:
+#             parent_idx = tree_node_to_expert[parent_tree_node_id]
+#             # Compute depth based on parent
+#             if parent_idx == -1:
+#                 depth = 1
+#             else:
+#                 parent_region = model.regions[parent_idx]
+#                 depth = parent_region.depth + 1
+#         else:
+#             # Parent wasn't spawned (shouldn't happen with correct traversal)
+#             print(f"  WARNING: Parent tree node {parent_tree_node_id} not found, using base as parent")
+#             parent_idx = -1
+#             depth = 1
+#
+#         # Create RegionDescriptor
+#         region = RegionDescriptor(
+#             bounds_lower=node_info.bounds_lower,
+#             bounds_upper=node_info.bounds_upper,
+#             wavelet_norm=node_info.wavelet_norm,
+#             spawn_epoch=0,  # Tree building phase
+#             depth=depth,
+#             parent_idx=parent_idx
+#         )
+#
+#         # Spawn expert
+#         expert_idx = model.spawn_expert(region)
+#         if expert_idx >= 0:
+#             # Track mapping for future children
+#             tree_node_to_expert[node_info.node_id] = expert_idx
+#             experts_spawned += 1
+#         else:
+#             print(f"  Failed to spawn expert for node {node_info.node_id}")
+#             break
+#
+#     # Save tree building summary
+#     print(f"\n{'='*60}")
+#     print(f"PHASE 1 COMPLETE: Expert Tree Built (Tree-Based Spawning)")
+#     print(f"  Total experts spawned: {model.num_experts}")
+#     print(f"  Highest depth: {model.get_highest_depth()}")
+#     print(f"{'='*60}")
+#
+#     # Visualize final tree structure
+#     problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
+#     plot_expert_regions(
+#         regions=model.regions,
+#         domain_bounds=domain_bounds,
+#         output_path=adaptive_plots_dir / f"expert_regions_final.png",
+#         problem_type=problem_type,
+#         title=f"Expert Tree ({model.num_experts} experts)",
+#         ground_truth=gt_grid,
+#         grid_x=gt_x,
+#         grid_t=gt_t
+#     )
+#
+#     # Plot soft weights if using soft blending
+#     if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
+#         plot_expert_soft_weights(
+#             model=model,
+#             domain_bounds=domain_bounds,
+#             output_path=adaptive_plots_dir / f"soft_weights_final.png",
+#             title_prefix="Final Tree: "
+#         )
+#
+#     # Save final tree structure
+#     save_regions_metadata(
+#         regions=model.regions,
+#         output_path=adaptive_plots_dir / "expert_tree_structure.json"
+#     )
+#
+#     return model.num_experts
+# ============================================================
 
 
 def _create_adam_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer:
@@ -378,18 +383,22 @@ def train(
     max_experts = adaptive_cfg.get('max_experts', 5)
     wavelet_threshold = adaptive_cfg.get('wavelet_threshold', None)
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
-    
-    # Pretrained base model mode
-    pretrained_base_model = adaptive_cfg.get('pretrained_base_model', False)
-    pretrained_base_path = adaptive_cfg.get('pretrained_base_path', None)
-    disable_spawning_during_training = False  # Will be set to True after tree building
-    
+
+    # ============================================================
+    # PRETRAINED CASE - COMMENTED OUT (ANT design uses non-pretrained only)
+    # ============================================================
+    # # Pretrained base model mode
+    # pretrained_base_model = adaptive_cfg.get('pretrained_base_model', False)
+    # pretrained_base_path = adaptive_cfg.get('pretrained_base_path', None)
+    # disable_spawning_during_training = False  # Will be set to True after tree building
+    disable_spawning_during_training = False  # Keep for compatibility
+
     if is_adaptive:
         # Extract tree-based spawning parameters
         tree_max_depth = adaptive_cfg.get('tree_max_depth', 15)
         tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
 
-        print(f"\nAdaptive PINN enabled (Tree-Based Spawning):")
+        print(f"\nAdaptive PINN enabled (ANT Tree-Based Spawning):")
         print(f"  Max experts: {max_experts}")
         print(f"  Spawn every: {spawn_every} epochs")
         print(f"  Wavelet threshold: {wavelet_threshold}")
@@ -397,54 +406,57 @@ def train(
         print(f"  Tree min samples leaf: {tree_min_samples_leaf}")
         print(f"  Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
         print(f"  Freeze mode: {adaptive_cfg.get('freeze_mode', 'none')}")
-        print(f"  Pretrained base model: {pretrained_base_model}")
+        # print(f"  Pretrained base model: {pretrained_base_model}")  # COMMENTED OUT
         enable_timing_cfg = adaptive_cfg.get('enable_timing', False)
         print(f"  Timing profiling: {'enabled' if enable_timing_cfg else 'disabled'}")
-        
-        # Handle pretrained base model mode
-        if pretrained_base_model:
-            if pretrained_base_path is None:
-                raise ValueError("pretrained_base_model is True but pretrained_base_path is not set")
-            
-            # Load pretrained base and freeze it
-            model.load_pretrained_base(pretrained_base_path)
-            
-            # Build expert tree based ONLY on pretrained base
-            num_experts_built = _build_expert_tree_from_pretrained(
-                model=model,
-                eval_data=eval_data,
-                cfg=cfg,
-                run_dir=run_dir,
-                loss_fn=loss_fn
-            )
-            
-            print(f"\n{'='*60}")
-            print(f"PHASE 2: Training Experts (Base Frozen)")
-            print(f"  Experts to train: {num_experts_built}")
-            print(f"  Base model: FROZEN (pretrained)")
-            print(f"  Spawning: DISABLED (tree already built)")
-            print(f"{'='*60}\n")
-            
-            # Disable spawning during training - tree is already built
-            disable_spawning_during_training = True
-            
-            # Ensure base stays frozen and experts are trainable
-            model.freeze_base_model()
-            model.unfreeze_experts()
-            
-            # DIAGNOSTIC: Verify all models on correct device after tree building
-            print(f"\n{'='*40} POST-TREE GPU CHECK {'='*40}")
-            print(f"Base model device: {next(model.base_model.parameters()).device}")
-            for i, expert in enumerate(model.experts):
-                print(f"Expert {i} device: {next(expert.parameters()).device}")
-            print(f"{'='*80}\n")
-            
-            # Recreate optimizer to include all expert parameters
-            if switch_at_fraction == 0.0:
-                optimizer = _create_lbfgs_optimizer(model, cfg)
-                current_optimizer_name = 'LBFGS'
-            else:
-                optimizer = _create_adam_optimizer(model, cfg)
+
+        # ============================================================
+        # PRETRAINED CASE - COMMENTED OUT
+        # ============================================================
+        # # Handle pretrained base model mode
+        # if pretrained_base_model:
+        #     if pretrained_base_path is None:
+        #         raise ValueError("pretrained_base_model is True but pretrained_base_path is not set")
+        #
+        #     # Load pretrained base and freeze it
+        #     model.load_pretrained_base(pretrained_base_path)
+        #
+        #     # Build expert tree based ONLY on pretrained base
+        #     num_experts_built = _build_expert_tree_from_pretrained(
+        #         model=model,
+        #         eval_data=eval_data,
+        #         cfg=cfg,
+        #         run_dir=run_dir,
+        #         loss_fn=loss_fn
+        #     )
+        #
+        #     print(f"\n{'='*60}")
+        #     print(f"PHASE 2: Training Experts (Base Frozen)")
+        #     print(f"  Experts to train: {num_experts_built}")
+        #     print(f"  Base model: FROZEN (pretrained)")
+        #     print(f"  Spawning: DISABLED (tree already built)")
+        #     print(f"{'='*60}\n")
+        #
+        #     # Disable spawning during training - tree is already built
+        #     disable_spawning_during_training = True
+        #
+        #     # Ensure base stays frozen and experts are trainable
+        #     model.freeze_base_model()
+        #     model.unfreeze_experts()
+        #
+        #     # DIAGNOSTIC: Verify all models on correct device after tree building
+        #     print(f"\n{'='*40} POST-TREE GPU CHECK {'='*40}")
+        #     print(f"Base model device: {next(model.base_model.parameters()).device}")
+        #     for i, expert in enumerate(model.experts):
+        #         print(f"Expert {i} device: {next(expert.parameters()).device}")
+        #     print(f"{'='*80}\n")
+        #
+        #     # Recreate optimizer to include all expert parameters
+        #     if switch_at_fraction == 0.0:
+        #         optimizer = _create_lbfgs_optimizer(model, cfg)
+        #         current_optimizer_name = 'LBFGS'
+        #     else:
+        #         optimizer = _create_adam_optimizer(model, cfg)
                 current_optimizer_name = 'Adam'
         
         # Import and create region detector (only needed if not pretrained mode)
@@ -826,9 +838,9 @@ def train(
 
                 print(f"\n    [Spawning] Parent {parent_str} (depth {deepest_depth})")
 
-                # Spawn children for this parent
+                # Spawn children for this parent using all-or-nothing rule
                 # IMPORTANT: X_eval is filtered to subdomain, but y_eval is GLOBAL solution
-                children = region_detector.spawn_children_for_node(
+                children, should_spawn = region_detector.spawn_children_for_node(
                     parent_region=parent_region if parent_region is not None else
                                  RegionDescriptor(
                                      bounds_lower=list(domain_bounds['lower']),
@@ -841,10 +853,16 @@ def train(
                     X=X_eval,  # Full eval_data coordinates
                     y=y_eval,  # Global solution predictions
                     loss_components=loss_components,
+                    wavelet_threshold=wavelet_threshold,  # Pass threshold for all-or-nothing check
                     verbose=True
                 )
 
-                # For each child, check wavelet threshold and spawn or track as skipped
+                if not should_spawn:
+                    # All-or-nothing rule rejected both children
+                    # Mark parent as terminal (no future children attempts)
+                    continue
+
+                # Spawn both children (all-or-nothing rule accepted)
                 for child_node, _ in children:
                     if model.num_experts >= max_experts:
                         break
@@ -859,15 +877,7 @@ def train(
                         parent_idx=parent_idx
                     )
 
-                    # Check wavelet threshold
-                    if wavelet_threshold is not None and child_node.wavelet_norm < wavelet_threshold:
-                        print(f"      [Spawning] Skip child (wavelet={child_node.wavelet_norm:.6f} < threshold={wavelet_threshold})")
-                        print(f"                 → Will check its children at depth {deepest_depth + 2}")
-                        # Track this skipped region so we can check its children in next depth
-                        skipped_regions_at_depth[deepest_depth + 1].append((child_region, parent_idx))
-                        continue
-
-                    # Spawn child
+                    # Spawn child (threshold already checked by all-or-nothing rule)
                     expert_idx = model.spawn_expert(child_region)
                     if expert_idx >= 0:
                         experts_spawned_this_step += 1

@@ -9,7 +9,8 @@ adaptive_pinn:
   sigma_fraction: 0.2              # For soft: sigma = fraction * region_size (per-dimension)
   base_weight: 1.0                 # Uniform weight for base model (soft blending only)
   enabled: true
-  expert_architectures: null
+  expert_hidden_layers: [70, 70, 70]  # Hidden layers for experts (input_dim auto from parent)
+  expert_architectures: null       # DEPRECATED: use expert_hidden_layers instead
   freeze_mode: none
   inner_metrics_calculation: false
   max_experts: 10
@@ -17,8 +18,12 @@ adaptive_pinn:
   overlap_threshold: 0.5
   min_samples_per_region: 50
   max_children_coverage: 0.9
-  pretrained_base_model: false       # If true, load base from path and freeze
-  pretrained_base_path: null         # Path to pretrained base model checkpoint
+  # ============================================================
+  # PRETRAINED CASE - COMMENTED OUT (ANT design uses non-pretrained only)
+  # Will be removed in future cleanup
+  # ============================================================
+  # pretrained_base_model: false       # If true, load base from path and freeze
+  # pretrained_base_path: null         # Path to pretrained base model checkpoint
   rf_max_depth: 12
   rf_min_samples_leaf: 10
   rf_n_estimators: 100

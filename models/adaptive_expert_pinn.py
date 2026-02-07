@@ -237,8 +237,8 @@ class AdaptiveExpertPINN(nn.Module):
         # This is used to determine expert architecture when pretrained base is loaded
         self.config_base_architecture = base_architecture
         
-        # Create base model
-        self.base_model = FCNet(base_architecture, activation, config)
+        # Create base model (is_base=True since it takes spatial coordinates)
+        self.base_model = FCNet(base_architecture, activation, config, is_base=True)
         
         # Create uniform indicator for base model (used in soft blending for partition of unity)
         self.base_indicator: Optional[UniformIndicator] = None
@@ -248,7 +248,15 @@ class AdaptiveExpertPINN(nn.Module):
         # Expert storage
         self.experts = nn.ModuleList()
         self.regions: List[RegionDescriptor] = []
-        
+
+        # ANT tree structure tracking (for activation-based hierarchical architecture)
+        self.parent_indices: List[int] = []  # parent_indices[i] = parent index of expert i (-1 for base)
+        self.depths: List[int] = []  # depths[i] = depth of expert i
+        self.leaf_status: List[bool] = []  # leaf_status[i] = True if expert i is a leaf (no children)
+        self.base_is_leaf: bool = True  # Initially base has no children
+        from collections import defaultdict
+        self.experts_by_depth: defaultdict = defaultdict(list)  # {depth: [expert_indices]}
+
         # Indicator storage - always have both for clarity
         # hard_indicators: used for coverage/overlap checks (always created)
         # soft_indicators: used for forward pass blending (only created when blending_mode == 'soft')
@@ -520,56 +528,93 @@ class AdaptiveExpertPINN(nn.Module):
     
     def spawn_expert(self, region: RegionDescriptor) -> int:
         """
-        Spawn a new expert PINN for the given region.
-        
+        Spawn a new expert PINN for the given region (ANT architecture).
+
+        In ANT design, each expert takes its parent's activation as input,
+        creating a compositional hierarchy where each path from base to leaf
+        forms a deep network.
+
         Args:
-            region: RegionDescriptor defining the expert's domain (includes depth)
-            
+            region: RegionDescriptor defining the expert's domain (includes depth, parent_idx)
+
         Returns:
             Index of the new expert
         """
         if len(self.experts) >= self.max_experts:
             print(f"  Cannot spawn more experts: max_experts={self.max_experts} reached")
             return -1
-        
+
         expert_idx = len(self.experts)
-        architecture = self.get_expert_architecture(expert_idx)
-        
-        # Create new expert FCNet
-        expert = FCNet(architecture, self.activation, self.config)
-        
+        parent_idx = region.parent_idx
+        depth = region.depth
+
+        # Get parent's activation dimension (last hidden layer size)
+        if parent_idx == -1:
+            # Parent is base model
+            parent_model = self.base_model
+        else:
+            # Parent is another expert
+            parent_model = self.experts[parent_idx]
+
+        parent_activation_dim = parent_model.get_activation_dim()
+
+        # Get expert hidden layers from config (ANT design)
+        # Input dimension is automatically determined from parent's activation dimension
+        hidden_layers = self.adaptive_config.get('expert_hidden_layers', [50, 50, 50])
+        output_dim = self.config[self.config['problem']].get('output_dim', 2)
+
+        # Create expert architecture with parent's activation as input
+        # layers = [parent_activation_dim, hidden1, hidden2, ..., output_dim]
+        architecture = [parent_activation_dim] + hidden_layers + [output_dim]
+
+        # Create new expert FCNet (is_base=False since this is an expert)
+        expert = FCNet(architecture, self.activation, self.config, is_base=False)
+
         # Move to same device as base model
         device = next(self.base_model.parameters()).device
         expert = expert.to(device)
-        
+
         # DIAGNOSTIC: Verify expert is on correct device
         actual_device = next(expert.parameters()).device
         print(f"    Expert created on device: {actual_device}")
-        
+
         # Store expert and region
         self.experts.append(expert)
         self.regions.append(region)
-        
+
+        # ANT tree structure tracking
+        self.parent_indices.append(parent_idx)
+        self.depths.append(depth)
+        self.leaf_status.append(True)  # New expert is always a leaf
+        self.experts_by_depth[depth].append(expert_idx)
+
+        # Mark parent as non-leaf
+        if parent_idx >= 0:  # Parent is an expert (not base)
+            self.leaf_status[parent_idx] = False
+        else:  # Parent is base
+            self.base_is_leaf = False
+
         # Always create hard indicator (used for coverage/overlap checks)
         hard_indicator = HardIndicator(region)
         self.hard_indicators.append(hard_indicator)
-        
+
         # Create soft indicator only if blending_mode is 'soft' (used for forward pass)
         if self.blending_mode == 'soft':
             soft_indicator = SoftIndicator(region, sigma_fraction=self.sigma_fraction)
             self.soft_indicators.append(soft_indicator)
-        
+
         parent_info = f"Base Model" if region.parent_idx == -1 else f"E{region.parent_idx + 1}"
         print(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
-        print(f"    Architecture: {architecture}")
+        print(f"    Architecture: {architecture} (input={parent_activation_dim} from parent)")
         print(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
         print(f"    Residual-weighted wavelet norm: {region.wavelet_norm:.6f}")
         print(f"    Spawn epoch: {region.spawn_epoch}")
-        
+        print(f"    Parent activation dim: {parent_activation_dim}")
+
         # Sync batched structures for vectorized forward pass
         self.sync_batched_indicators()
         self.sync_batched_models()
-        
+
         return expert_idx
     
     def freeze_models(self, mode: Optional[str] = None):
@@ -608,187 +653,293 @@ class AdaptiveExpertPINN(nn.Module):
         else:
             raise ValueError(f"Unknown freeze_mode: {mode}")
     
-    def load_pretrained_base(self, checkpoint_path: str) -> None:
-        """
-        Load a pretrained base model from checkpoint and freeze its weights.
-        
-        This is used for the pretrained_base_model workflow where:
-        1. Base model is loaded from a previously trained checkpoint
-        2. Base weights are frozen (never updated)
-        3. Expert tree is built based on base model predictions only
-        4. All experts are trained after tree building
-        
-        The base model architecture is determined FROM THE CHECKPOINT, not from
-        the current config. This allows loading any pretrained model regardless
-        of the expert architecture specified in config.
-        
-        Args:
-            checkpoint_path: Path to checkpoint file (expects either standard 
-                           checkpoint format with 'model_state_dict' or
-                           adaptive format with 'adaptive_state')
-                           Path separators are automatically normalized for cross-platform compatibility.
-        """
-        import os
-        # Normalize path for cross-platform compatibility
-        # Replace backslashes with forward slashes (forward slashes work on both Windows and Linux)
-        # Then use normpath to clean up any double slashes, etc.
-        checkpoint_path = checkpoint_path.replace('\\', '/')
-        checkpoint_path = os.path.normpath(checkpoint_path)
-        
-        if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(f"Pretrained base checkpoint not found: {checkpoint_path}")
-        
-        print(f"\n{'='*60}")
-        print(f"Loading pretrained base model from: {checkpoint_path}")
-        print(f"{'='*60}")
-        
-        # CRITICAL: Save device BEFORE any model recreation
-        device = next(iter(self.base_model.parameters())).device
-        print(f"  Current device: {device}")
-        
-        # Use weights_only=False to support checkpoints with numpy arrays (PyTorch 2.6+)
-        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-        
-        # Handle different checkpoint formats and extract architecture
-        pretrained_architecture = None
-        pretrained_activation = None
-        
-        if 'adaptive_state' in checkpoint:
-            # Adaptive PINN checkpoint - extract base model state and architecture
-            adaptive_state = checkpoint['adaptive_state']
-            base_state_dict = adaptive_state['base_model']
-            pretrained_architecture = adaptive_state.get('base_architecture')
-            pretrained_activation = adaptive_state.get('activation')
-            print("  Loaded from adaptive PINN checkpoint (using base model only)")
-        elif 'model_state_dict' in checkpoint:
-            # Standard PINN checkpoint
-            base_state_dict = checkpoint['model_state_dict']
-            # Try to get architecture from config stored in checkpoint
-            if 'config' in checkpoint:
-                pretrained_architecture = checkpoint['config'].get('architecture')
-                pretrained_activation = checkpoint['config'].get('activation')
-            print("  Loaded from standard PINN checkpoint")
-        else:
-            # Try to load directly (raw state dict)
-            base_state_dict = checkpoint
-            print("  Loaded raw state dict")
-        
-        # If we couldn't find architecture in checkpoint, infer from state dict
-        if pretrained_architecture is None:
-            pretrained_architecture = self._infer_architecture_from_state_dict(base_state_dict)
-            print(f"  Inferred architecture from weights: {pretrained_architecture}")
-        
-        if pretrained_activation is None:
-            pretrained_activation = self.activation  # Fall back to current config
-        
-        # Check if we need to recreate the base model with different architecture
-        if pretrained_architecture != self.base_architecture:
-            print(f"  Pretrained architecture: {pretrained_architecture}")
-            print(f"  Config architecture: {self.base_architecture}")
-            print(f"  Recreating base model to match pretrained architecture...")
-            
-            # Recreate base model with pretrained architecture
-            self.base_model = FCNet(pretrained_architecture, pretrained_activation, self.config)
-            
-            # Update stored architecture
-            self.base_architecture = pretrained_architecture
-        
-        # Load weights into base model
-        self.base_model.load_state_dict(base_state_dict)
-        
-        # Move to correct device AFTER loading (device was saved at start)
-        self.base_model = self.base_model.to(device)
-        print(f"  Moved base model to device: {device}")
-        
-        # Freeze base model weights
-        for param in self.base_model.parameters():
-            param.requires_grad = False
-        
-        # Mark base as frozen
-        self._base_frozen = True
-        
-        # Sync batched models after loading new base architecture
-        self.sync_batched_models()
-        
-        # Count parameters
-        total_params = sum(p.numel() for p in self.base_model.parameters())
-        print(f"  Base model architecture: {pretrained_architecture}")
-        print(f"  Base model parameters: {total_params:,}")
-        print(f"  Base model frozen: True (requires_grad=False)")
-        
-        # Note: Experts use config architecture (via get_expert_architecture)
-        # BatchedModels supports heterogeneous architectures via grouping
-        expert_arch = self.expert_architectures or self.config_base_architecture
-        print(f"  Expert architecture: {expert_arch}")
-        print(f"  (Batched models support mixed architectures)")
-        
-        print(f"{'='*60}\n")
-    
-    def _infer_architecture_from_state_dict(self, state_dict: Dict) -> List[int]:
-        """
-        Infer the network architecture from a state dict by examining layer shapes.
-        
-        Args:
-            state_dict: Model state dictionary
-            
-        Returns:
-            List of layer sizes [input_dim, hidden1, hidden2, ..., output_dim]
-        """
-        architecture = []
-        layer_idx = 1
-        
-        while f'network.layer_{layer_idx}.weight' in state_dict:
-            weight = state_dict[f'network.layer_{layer_idx}.weight']
-            if layer_idx == 1:
-                # First layer: input_dim is weight.shape[1]
-                architecture.append(weight.shape[1])
-            # Hidden/output size is weight.shape[0]
-            architecture.append(weight.shape[0])
-            layer_idx += 1
-        
-        if not architecture:
-            raise ValueError("Could not infer architecture from state dict")
-        
-        return architecture
-    
-    def freeze_base_model(self) -> None:
-        """Freeze base model weights (convenience method)."""
-        for param in self.base_model.parameters():
-            param.requires_grad = False
-    
-    def unfreeze_experts(self) -> None:
-        """Unfreeze all expert weights (for training after tree building)."""
-        for expert in self.experts:
-            for param in expert.parameters():
-                param.requires_grad = True
+    # ============================================================
+    # PRETRAINED CASE - COMMENTED OUT (ANT design uses non-pretrained only)
+    # ============================================================
+    # def load_pretrained_base(self, checkpoint_path: str) -> None:
+    #     """
+    #     Load a pretrained base model from checkpoint and freeze its weights.
+    #
+    #     This is used for the pretrained_base_model workflow where:
+    #     1. Base model is loaded from a previously trained checkpoint
+    #     2. Base weights are frozen (never updated)
+    #     3. Expert tree is built based on base model predictions only
+    #     4. All experts are trained after tree building
+    #
+    #     The base model architecture is determined FROM THE CHECKPOINT, not from
+    #     the current config. This allows loading any pretrained model regardless
+    #     of the expert architecture specified in config.
+    #
+    #     Args:
+    #         checkpoint_path: Path to checkpoint file (expects either standard
+    #                        checkpoint format with 'model_state_dict' or
+    #                        adaptive format with 'adaptive_state')
+    #                        Path separators are automatically normalized for cross-platform compatibility.
+    #     """
+    #     import os
+    #     # Normalize path for cross-platform compatibility
+    #     # Replace backslashes with forward slashes (forward slashes work on both Windows and Linux)
+    #     # Then use normpath to clean up any double slashes, etc.
+    #     checkpoint_path = checkpoint_path.replace('\\', '/')
+    #     checkpoint_path = os.path.normpath(checkpoint_path)
+    #
+    #     if not os.path.exists(checkpoint_path):
+    #         raise FileNotFoundError(f"Pretrained base checkpoint not found: {checkpoint_path}")
+    #
+    #     print(f"\n{'='*60}")
+    #     print(f"Loading pretrained base model from: {checkpoint_path}")
+    #     print(f"{'='*60}")
+    #
+    #     # CRITICAL: Save device BEFORE any model recreation
+    #     device = next(iter(self.base_model.parameters())).device
+    #     print(f"  Current device: {device}")
+    #
+    #     # Use weights_only=False to support checkpoints with numpy arrays (PyTorch 2.6+)
+    #     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    #
+    #     # Handle different checkpoint formats and extract architecture
+    #     pretrained_architecture = None
+    #     pretrained_activation = None
+    #
+    #     if 'adaptive_state' in checkpoint:
+    #         # Adaptive PINN checkpoint - extract base model state and architecture
+    #         adaptive_state = checkpoint['adaptive_state']
+    #         base_state_dict = adaptive_state['base_model']
+    #         pretrained_architecture = adaptive_state.get('base_architecture')
+    #         pretrained_activation = adaptive_state.get('activation')
+    #         print("  Loaded from adaptive PINN checkpoint (using base model only)")
+    #     elif 'model_state_dict' in checkpoint:
+    #         # Standard PINN checkpoint
+    #         base_state_dict = checkpoint['model_state_dict']
+    #         # Try to get architecture from config stored in checkpoint
+    #         if 'config' in checkpoint:
+    #             pretrained_architecture = checkpoint['config'].get('architecture')
+    #             pretrained_activation = checkpoint['config'].get('activation')
+    #         print("  Loaded from standard PINN checkpoint")
+    #     else:
+    #         # Try to load directly (raw state dict)
+    #         base_state_dict = checkpoint
+    #         print("  Loaded raw state dict")
+    #
+    #     # If we couldn't find architecture in checkpoint, infer from state dict
+    #     if pretrained_architecture is None:
+    #         pretrained_architecture = self._infer_architecture_from_state_dict(base_state_dict)
+    #         print(f"  Inferred architecture from weights: {pretrained_architecture}")
+    #
+    #     if pretrained_activation is None:
+    #         pretrained_activation = self.activation  # Fall back to current config
+    #
+    #     # Check if we need to recreate the base model with different architecture
+    #     if pretrained_architecture != self.base_architecture:
+    #         print(f"  Pretrained architecture: {pretrained_architecture}")
+    #         print(f"  Config architecture: {self.base_architecture}")
+    #         print(f"  Recreating base model to match pretrained architecture...")
+    #
+    #         # Recreate base model with pretrained architecture
+    #         self.base_model = FCNet(pretrained_architecture, pretrained_activation, self.config)
+    #
+    #         # Update stored architecture
+    #         self.base_architecture = pretrained_architecture
+    #
+    #     # Load weights into base model
+    #     self.base_model.load_state_dict(base_state_dict)
+    #
+    #     # Move to correct device AFTER loading (device was saved at start)
+    #     self.base_model = self.base_model.to(device)
+    #     print(f"  Moved base model to device: {device}")
+    #
+    #     # Freeze base model weights
+    #     for param in self.base_model.parameters():
+    #         param.requires_grad = False
+    #
+    #     # Mark base as frozen
+    #     self._base_frozen = True
+    #
+    #     # Sync batched models after loading new base architecture
+    #     self.sync_batched_models()
+    #
+    #     # Count parameters
+    #     total_params = sum(p.numel() for p in self.base_model.parameters())
+    #     print(f"  Base model architecture: {pretrained_architecture}")
+    #     print(f"  Base model parameters: {total_params:,}")
+    #     print(f"  Base model frozen: True (requires_grad=False)")
+    #
+    #     # Note: Experts use config architecture (via get_expert_architecture)
+    #     # BatchedModels supports heterogeneous architectures via grouping
+    #     expert_arch = self.expert_architectures or self.config_base_architecture
+    #     print(f"  Expert architecture: {expert_arch}")
+    #     print(f"  (Batched models support mixed architectures)")
+    #
+    #     print(f"{'='*60}\n")
+    #
+    # def _infer_architecture_from_state_dict(self, state_dict: Dict) -> List[int]:
+    #     """
+    #     Infer the network architecture from a state dict by examining layer shapes.
+    #
+    #     Args:
+    #         state_dict: Model state dictionary
+    #
+    #     Returns:
+    #         List of layer sizes [input_dim, hidden1, hidden2, ..., output_dim]
+    #     """
+    #     architecture = []
+    #     layer_idx = 1
+    #
+    #     while f'network.layer_{layer_idx}.weight' in state_dict:
+    #         weight = state_dict[f'network.layer_{layer_idx}.weight']
+    #         if layer_idx == 1:
+    #             # First layer: input_dim is weight.shape[1]
+    #             architecture.append(weight.shape[1])
+    #         # Hidden/output size is weight.shape[0]
+    #         architecture.append(weight.shape[0])
+    #         layer_idx += 1
+    #
+    #     if not architecture:
+    #         raise ValueError("Could not infer architecture from state dict")
+    #
+    #     return architecture
+    #
+    # def freeze_base_model(self) -> None:
+    #     """Freeze base model weights (convenience method)."""
+    #     for param in self.base_model.parameters():
+    #         param.requires_grad = False
+    #
+    # def unfreeze_experts(self) -> None:
+    #     """Unfreeze all expert weights (for training after tree building)."""
+    #     for expert in self.experts:
+    #         for param in expert.parameters():
+    #             param.requires_grad = True
+    # ============================================================
     
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """
-        Composed forward pass.
-        
-        For hard blending:
-            u(x,t) = u_0(x,t) + Σ 1_Ωi(x,t) · u_i(x,t)
-        
-        For soft blending (partition of unity, non-pretrained):
-            u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t)
-            where ψ̃_k = ψ_k / Σ_j ψ_j (normalized weights, including base)
-        
-        For soft blending with pretrained base (additive mode):
-            u(x,t) = u_base(x,t) + Σ_k ψ̃_k(x,t) · u_k(x,t)
-            where ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K (experts only, base not normalized)
-            Base model contributes fully everywhere, experts are additive corrections.
-        
+        ANT (Adaptive Neural Tree) forward pass using depth-by-depth traversal.
+
+        Key insight: All nodes at depth D depend only on activations from depth D-1,
+        so we compute each depth level sequentially. All nodes within a depth are
+        processed in sequence (supporting heterogeneous architectures).
+
+        Global solution (partition of unity over leaves only):
+            u(x,t) = Σ_{j ∈ leaves} ψ̃_j(x,t) · u_j(x,t)
+            where ψ̃_j = ψ_j / Σ_{k ∈ leaves} ψ_k
+
+        Non-leaf nodes contribute by being part of the computational path.
+        Each path from base to leaf forms a compositional deep network.
+
         Args:
-            inputs: (N, n_dims) tensor of coordinates [x, t] or [x, y, t]
-            
+            inputs: (N, spatial_dim) coordinates [x, t] or [x, y, t]
+
         Returns:
-            u: (N, output_dim) composed solution
+            u: (N, output_dim) global solution
         """
-        if self.blending_mode == 'hard':
-            return self._forward_hard(inputs)
-        else:
-            return self._forward_soft(inputs)
-    
+        N = inputs.size(0)
+
+        # Handle case with no experts yet
+        if len(self.experts) == 0:
+            # Just return base model output
+            return self.base_model(inputs)
+
+        max_depth = max(self.depths) if self.depths else 0
+
+        # Storage for outputs and activations at each node
+        # node_outputs[expert_idx] = (N, output_dim)
+        # node_activations[expert_idx] = (N, activation_dim)
+        node_outputs = {}
+        node_activations = {}
+
+        # Depth 0: Compute base model
+        u_base, A_base = self.base_model(inputs, return_activation=True)
+        node_outputs[-1] = u_base  # -1 represents base
+        node_activations[-1] = A_base
+
+        # Depths 1 to max_depth: Process level-by-level
+        for depth in range(1, max_depth + 1):
+            expert_indices = self.experts_by_depth[depth]
+            if not expert_indices:
+                continue
+
+            # Process all experts at this depth
+            # Note: Simple loop since each expert may have different architecture
+            # PyTorch will automatically parallelize GPU operations
+            for expert_idx in expert_indices:
+                parent_idx = self.parent_indices[expert_idx]
+                A_parent = node_activations[parent_idx]  # (N, parent_activation_dim)
+
+                # Forward pass through this expert
+                expert = self.experts[expert_idx]
+                u_i, A_i = expert(A_parent, return_activation=True)
+                # u_i: (N, output_dim), A_i: (N, this_expert_activation_dim)
+
+                # Store for this expert
+                node_outputs[expert_idx] = u_i
+                node_activations[expert_idx] = A_i
+
+        # Collect leaf outputs only
+        leaf_outputs = []  # List of (N, output_dim)
+        leaf_regions = []  # List of RegionDescriptors
+
+        if self.base_is_leaf:
+            leaf_outputs.append(node_outputs[-1])
+            leaf_regions.append(None)  # Base has no region
+
+        for expert_idx, is_leaf in enumerate(self.leaf_status):
+            if is_leaf:
+                leaf_outputs.append(node_outputs[expert_idx])
+                leaf_regions.append(self.regions[expert_idx])
+
+        # Compute normalized indicators for leaves only (based on spatial coordinates)
+        psi_normalized = self._compute_leaf_indicators(inputs, leaf_regions)  # (N, num_leaves)
+
+        # Weighted combination
+        leaf_stack = torch.stack(leaf_outputs, dim=1)  # (N, num_leaves, output_dim)
+        u_global = (psi_normalized.unsqueeze(-1) * leaf_stack).sum(dim=1)  # (N, output_dim)
+
+        return u_global
+
+    def _compute_leaf_indicators(self, inputs: torch.Tensor, leaf_regions: List) -> torch.Tensor:
+        """
+        Compute normalized indicators (partition of unity) for leaf nodes only.
+
+        Note: Indicators are based on spatial coordinates (x,t), not activations.
+        Regions are only relevant at the final weighted sum, not during tree traversal.
+
+        Args:
+            inputs: (N, spatial_dim) coordinates
+            leaf_regions: List of RegionDescriptors (None for base if base is leaf)
+
+        Returns:
+            psi_normalized: (N, num_leaves) normalized weights summing to 1
+        """
+        N = inputs.size(0)
+        num_leaves = len(leaf_regions)
+        psi_raw = torch.zeros(N, num_leaves, device=inputs.device, dtype=inputs.dtype)
+
+        for i, region in enumerate(leaf_regions):
+            if region is None:
+                # Base is a leaf - use base weight (uniform 1.0)
+                psi_raw[:, i] = self.base_weight
+            else:
+                # Compute indicator for this region
+                if self.blending_mode == 'hard':
+                    # Use hard indicator (step function)
+                    indicator_obj = self.hard_indicators[self.regions.index(region)]
+                    indicator = indicator_obj(inputs).squeeze(-1)  # (N,)
+                else:
+                    # Use soft indicator (smooth bump function)
+                    indicator_obj = self.soft_indicators[self.regions.index(region)]
+                    indicator = indicator_obj(inputs).squeeze(-1)  # (N,)
+                psi_raw[:, i] = indicator
+
+        # Normalize to sum to 1 (partition of unity)
+        psi_sum = psi_raw.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        psi_normalized = psi_raw / psi_sum
+
+        return psi_normalized
+
+    # ============================================================
+    # OLD FORWARD METHODS - KEPT FOR COMPATIBILITY (may be removed later)
+    # ANT design uses new depth-by-depth forward pass above
+    # ============================================================
     def _forward_hard(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Vectorized hard blending forward pass.
@@ -832,79 +983,73 @@ class AdaptiveExpertPINN(nn.Module):
     def _forward_soft(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Vectorized soft blending forward pass with partition-of-unity normalization.
-        
-        Standard mode (non-pretrained base):
+
+        Standard mode (partition of unity):
             u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t)
             where:
                 - ψ_0 = uniform constant (base_weight) for base model
                 - ψ_k = sigmoid-based bump function for expert k
                 - ψ̃_k = ψ_k / Σ_j ψ_j (partition of unity: Σ ψ̃_k = 1)
-        
-        Additive mode (pretrained_base_model=True):
-            u(x,t) = u_base + Σ_k ψ̃_k(x,t) · u_k(x,t)
-            where:
-                - Base contributes with weight 1 everywhere (not normalized)
-                - ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K (experts only, excluding base)
-                - Experts provide additive corrections to the pretrained base
-        
+
+        # ============================================================
+        # Additive mode (pretrained_base_model=True) COMMENTED OUT
+        # ============================================================
+        # Additive mode (pretrained_base_model=True):
+        #     u(x,t) = u_base + Σ_k ψ̃_k(x,t) · u_k(x,t)
+        #     where:
+        #         - Base contributes with weight 1 everywhere (not normalized)
+        #         - ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K (experts only, excluding base)
+        #         - Experts provide additive corrections to the pretrained base
+
         Optimized with batched computation: All models (base + K experts) computed
         in parallel operations supporting heterogeneous architectures.
-        
+
         Args:
             inputs: (N, n_dims) input coordinates
         """
         _t = self._timer
-        
-        # Check if we should use additive mode (pretrained base)
-        use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
-        
+
+        # ============================================================
+        # PRETRAINED CASE - COMMENTED OUT
+        # ============================================================
+        # # Check if we should use additive mode (pretrained base)
+        # use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
+        use_additive_mode = False  # Always False for ANT design
+
         # Step 1: Compute ALL masks at once using batched indicators (already vectorized)
         # psi_base: (N, 1), psi_experts: (N, K)
         if _t: _t.start('fwd.compute_masks')
         psi_base, psi_experts = self.batched_indicators(inputs)
         if _t: _t.stop('fwd.compute_masks')
-        
+
         # Step 2: Compute all model outputs at once: [base, expert_0, ..., expert_K]
         if _t: _t.start('fwd.batched_models')
         u_all = self.batched_models.forward(inputs)  # (N, K+1, output_dim)
         if _t: _t.stop('fwd.batched_models')
-        
+
         # Extract base and experts
         u_base = u_all[:, 0, :]  # (N, output_dim)
-        
+
         if len(self.experts) == 0:
             # No experts - just return base model output
-            # In additive mode, this is just u_base (since there are no corrections)
-            # In partition mode, this is also just u_base (normalized weight = 1)
             return u_base
-        
+
         u_experts = u_all[:, 1:, :]  # (N, K, output_dim)
-        
+
         # Step 3: Compute normalized expert weights
         if _t: _t.start('fwd.blend')
-        if use_additive_mode:
-            # Additive mode: normalize experts among themselves only (exclude base)
-            # ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K
-            psi_experts_sum = psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-            psi_experts_sum = psi_experts_sum.clamp(min=1e-8)
-            psi_experts_norm = psi_experts / psi_experts_sum  # (N, K)
-        else:
-            # Standard partition of unity: normalize ALL (base + experts)
-            # ψ̃_k = ψ_k / Σ_j ψ_j for j=0..K
-            psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-            psi_sum = psi_sum.clamp(min=1e-8)
-            psi_base_norm = psi_base / psi_sum  # (N, 1)
-            psi_experts_norm = psi_experts / psi_sum  # (N, K)
-        
+        # Standard partition of unity: normalize ALL (base + experts)
+        # ψ̃_k = ψ_k / Σ_j ψ_j for j=0..K
+        psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
+        psi_sum = psi_sum.clamp(min=1e-8)
+        psi_base_norm = psi_base / psi_sum  # (N, 1)
+        psi_experts_norm = psi_experts / psi_sum  # (N, K)
+
         # Step 4: Compute final output
         weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts  # (N, K, out_dim)
-        
-        if use_additive_mode:
-            # Additive: u = u_base + Σ ψ̃_k · u_k
-            u_total = u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
-        else:
-            # Partition of unity: u = ψ̃_0 · u_base + Σ ψ̃_k · u_k
-            u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+
+        # Partition of unity: u = ψ̃_0 · u_base + Σ ψ̃_k · u_k
+        u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
         if _t: _t.stop('fwd.blend')
         
         return u_total
@@ -970,35 +1115,27 @@ class AdaptiveExpertPINN(nn.Module):
         (when pretrained_base_model=True).
         """
         result = {}
-        
-        # Check if we should use additive mode (pretrained base)
-        use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
-        
+
+        # ============================================================
+        # PRETRAINED CASE - COMMENTED OUT
+        # ============================================================
+        # # Check if we should use additive mode (pretrained base)
+        # use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
+        use_additive_mode = False  # Always False for ANT design
+
         # Compute all masks at once using batched indicators (already vectorized)
         psi_base, psi_experts = self.batched_indicators(inputs)  # (N, 1), (N, K)
-        
+
         # Store unnormalized masks
         result['masks'] = {'base': psi_base}
         for i in range(psi_experts.shape[1]):
             result['masks'][f'expert_{i}'] = psi_experts[:, i:i+1]  # (N, 1)
-        
-        # Compute normalized weights based on mode
-        if use_additive_mode:
-            # Additive mode: base weight is 1, experts normalized among themselves
-            psi_experts_sum = psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-            psi_experts_sum = psi_experts_sum.clamp(min=1e-8)
-            psi_experts_norm = psi_experts / psi_experts_sum  # (N, K)
-            
-            # Store normalized weights (base gets special value of 1.0)
-            result['weights_normalized'] = {'base': torch.ones_like(psi_base)}
-            for i in range(psi_experts_norm.shape[1]):
-                result['weights_normalized'][f'expert_{i}'] = psi_experts_norm[:, i:i+1]  # (N, 1)
-            result['blending_mode_info'] = 'additive (pretrained_base_model=True)'
-        else:
-            # Standard partition of unity
-            psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-            psi_sum = psi_sum.clamp(min=1e-8)
-            psi_base_norm = psi_base / psi_sum  # (N, 1)
+
+        # Compute normalized weights - standard partition of unity only
+        # Standard partition of unity
+        psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
+        psi_sum = psi_sum.clamp(min=1e-8)
+        psi_base_norm = psi_base / psi_sum  # (N, 1)
             psi_experts_norm = psi_experts / psi_sum  # (N, K)
             
             # Store normalized weights

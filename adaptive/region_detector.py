@@ -296,136 +296,141 @@ class RegionDetector:
         
         return all_nodes
     
-    def extract_regions_from_tree(
-        self,
-        wavelet_threshold: Optional[float] = None,
-        verbose: bool = True
-    ) -> List[Tuple[TreeNodeInfo, int]]:
-        """
-        Traverse a single decision tree (BFS) and extract spawnable regions.
-
-        Prerequisites:
-        - fit() must be called first with n_estimators=1
-
-        Args:
-            wavelet_threshold: Minimum wavelet norm to spawn (None = spawn all non-root)
-            verbose: Print diagnostic information
-
-        Returns:
-            List of (TreeNodeInfo, parent_tree_node_id) tuples in BFS order.
-            parent_tree_node_id is the tree node ID of nearest SPAWNED ancestor,
-            or -1 for base model.
-        """
-        from collections import deque
-
-        # Validation
-        if self.rf is None:
-            raise RuntimeError("Must call fit() before extract_regions_from_tree()")
-        if self.n_estimators != 1:
-            raise RuntimeError(f"extract_regions_from_tree requires n_estimators=1, got {self.n_estimators}")
-
-        # Get the single tree
-        tree = self.rf.estimators_[0].tree_
-
-        # Compute wavelet norms for all nodes
-        all_nodes = self.compute_wavelet_norms()
-
-        if not all_nodes:
-            if verbose:
-                print(f"    [Traverse] No nodes in tree")
-            return []
-
-        # Build node_id -> TreeNodeInfo lookup
-        node_lookup = {node.node_id: node for node in all_nodes}
-
-        # Result: list of (TreeNodeInfo, nearest_spawned_ancestor_tree_node_id)
-        result = []
-
-        # Tracking structure: maps tree_node_id -> whether it was spawned
-        spawned_nodes = {0: True}  # Root is always considered "spawned" (represents base model)
-
-        # BFS queue initialization
-        queue = deque([(0, -1)])  # (node_id, nearest_spawned_ancestor_id)
-        # -1 means "root" which maps to base model (parent_idx=-1 in RegionDescriptor)
-
-        visited_count = 0
-        spawned_count = 0
-        skipped_count = 0
-
-        if verbose:
-            print(f"\n  [Traverse] Starting BFS traversal of tree with {tree.node_count} nodes")
-
-        # Traverse the tree (BFS)
-        while queue:
-            current_id, nearest_spawned_ancestor = queue.popleft()
-            visited_count += 1
-
-            # Skip if node doesn't exist in lookup (too few samples)
-            if current_id not in node_lookup:
-                continue
-
-            node = node_lookup[current_id]
-
-            # Determine if this node should spawn
-            should_spawn = False
-            rejection_reason = None
-
-            if current_id == 0:
-                # Root node: skip (represents base model, not a spawnable expert)
-                should_spawn = False
-                rejection_reason = "root node"
-            elif node.parent_prediction is None:
-                # No parent (shouldn't happen except for root, but defensive)
-                should_spawn = False
-                rejection_reason = "no parent prediction"
-            elif wavelet_threshold is not None and node.wavelet_norm < wavelet_threshold:
-                # Below threshold
-                should_spawn = False
-                rejection_reason = f"wavelet_norm {node.wavelet_norm:.6f} < threshold {wavelet_threshold}"
-            else:
-                # Passes all checks
-                should_spawn = True
-
-            # Update tracking
-            if should_spawn:
-                spawned_nodes[current_id] = True
-                result.append((node, nearest_spawned_ancestor))
-                spawned_count += 1
-
-                if verbose:
-                    parent_str = "Base" if nearest_spawned_ancestor == -1 else f"Node{nearest_spawned_ancestor}"
-                    print(f"    [Traverse] Node {current_id}: SPAWN (parent={parent_str}, "
-                          f"wavelet={node.wavelet_norm:.6f}, samples={node.n_samples})")
-
-                # This node becomes the new nearest spawned ancestor for its children
-                next_nearest_spawned = current_id
-            else:
-                spawned_nodes[current_id] = False
-                skipped_count += 1
-
-                if verbose and rejection_reason:
-                    print(f"    [Traverse] Node {current_id}: SKIP ({rejection_reason})")
-
-                # Children inherit current nearest_spawned_ancestor (pass through)
-                next_nearest_spawned = nearest_spawned_ancestor
-
-            # Add children to queue
-            left_child = tree.children_left[current_id]
-            right_child = tree.children_right[current_id]
-
-            if left_child != -1:  # Not a leaf
-                queue.append((left_child, next_nearest_spawned))
-
-            if right_child != -1:  # Not a leaf
-                queue.append((right_child, next_nearest_spawned))
-
-        if verbose:
-            print(f"\n  [Traverse] Summary:")
-            print(f"    Visited nodes: {visited_count}")
-            print(f"    Spawnable nodes: {spawned_count}")
-            print(f"    Skipped nodes: {skipped_count}")
-
-        return result
+    # ============================================================
+    # PRETRAINED CASE - COMMENTED OUT (ANT design uses non-pretrained only)
+    # Will be removed in future cleanup
+    # ============================================================
+    # def extract_regions_from_tree(
+    #     self,
+    #     wavelet_threshold: Optional[float] = None,
+    #     verbose: bool = True
+    # ) -> List[Tuple[TreeNodeInfo, int]]:
+    #     """
+    #     Traverse a single decision tree (BFS) and extract spawnable regions.
+    #
+    #     Prerequisites:
+    #     - fit() must be called first with n_estimators=1
+    #
+    #     Args:
+    #         wavelet_threshold: Minimum wavelet norm to spawn (None = spawn all non-root)
+    #         verbose: Print diagnostic information
+    #
+    #     Returns:
+    #         List of (TreeNodeInfo, parent_tree_node_id) tuples in BFS order.
+    #         parent_tree_node_id is the tree node ID of nearest SPAWNED ancestor,
+    #         or -1 for base model.
+    #     """
+    #     from collections import deque
+    #
+    #     # Validation
+    #     if self.rf is None:
+    #         raise RuntimeError("Must call fit() before extract_regions_from_tree()")
+    #     if self.n_estimators != 1:
+    #         raise RuntimeError(f"extract_regions_from_tree requires n_estimators=1, got {self.n_estimators}")
+    #
+    #     # Get the single tree
+    #     tree = self.rf.estimators_[0].tree_
+    #
+    #     # Compute wavelet norms for all nodes
+    #     all_nodes = self.compute_wavelet_norms()
+    #
+    #     if not all_nodes:
+    #         if verbose:
+    #             print(f"    [Traverse] No nodes in tree")
+    #         return []
+    #
+    #     # Build node_id -> TreeNodeInfo lookup
+    #     node_lookup = {node.node_id: node for node in all_nodes}
+    #
+    #     # Result: list of (TreeNodeInfo, nearest_spawned_ancestor_tree_node_id)
+    #     result = []
+    #
+    #     # Tracking structure: maps tree_node_id -> whether it was spawned
+    #     spawned_nodes = {0: True}  # Root is always considered "spawned" (represents base model)
+    #
+    #     # BFS queue initialization
+    #     queue = deque([(0, -1)])  # (node_id, nearest_spawned_ancestor_id)
+    #     # -1 means "root" which maps to base model (parent_idx=-1 in RegionDescriptor)
+    #
+    #     visited_count = 0
+    #     spawned_count = 0
+    #     skipped_count = 0
+    #
+    #     if verbose:
+    #         print(f"\n  [Traverse] Starting BFS traversal of tree with {tree.node_count} nodes")
+    #
+    #     # Traverse the tree (BFS)
+    #     while queue:
+    #         current_id, nearest_spawned_ancestor = queue.popleft()
+    #         visited_count += 1
+    #
+    #         # Skip if node doesn't exist in lookup (too few samples)
+    #         if current_id not in node_lookup:
+    #             continue
+    #
+    #         node = node_lookup[current_id]
+    #
+    #         # Determine if this node should spawn
+    #         should_spawn = False
+    #         rejection_reason = None
+    #
+    #         if current_id == 0:
+    #             # Root node: skip (represents base model, not a spawnable expert)
+    #             should_spawn = False
+    #             rejection_reason = "root node"
+    #         elif node.parent_prediction is None:
+    #             # No parent (shouldn't happen except for root, but defensive)
+    #             should_spawn = False
+    #             rejection_reason = "no parent prediction"
+    #         elif wavelet_threshold is not None and node.wavelet_norm < wavelet_threshold:
+    #             # Below threshold
+    #             should_spawn = False
+    #             rejection_reason = f"wavelet_norm {node.wavelet_norm:.6f} < threshold {wavelet_threshold}"
+    #         else:
+    #             # Passes all checks
+    #             should_spawn = True
+    #
+    #         # Update tracking
+    #         if should_spawn:
+    #             spawned_nodes[current_id] = True
+    #             result.append((node, nearest_spawned_ancestor))
+    #             spawned_count += 1
+    #
+    #             if verbose:
+    #                 parent_str = "Base" if nearest_spawned_ancestor == -1 else f"Node{nearest_spawned_ancestor}"
+    #                 print(f"    [Traverse] Node {current_id}: SPAWN (parent={parent_str}, "
+    #                       f"wavelet={node.wavelet_norm:.6f}, samples={node.n_samples})")
+    #
+    #             # This node becomes the new nearest spawned ancestor for its children
+    #             next_nearest_spawned = current_id
+    #         else:
+    #             spawned_nodes[current_id] = False
+    #             skipped_count += 1
+    #
+    #             if verbose and rejection_reason:
+    #                 print(f"    [Traverse] Node {current_id}: SKIP ({rejection_reason})")
+    #
+    #             # Children inherit current nearest_spawned_ancestor (pass through)
+    #             next_nearest_spawned = nearest_spawned_ancestor
+    #
+    #         # Add children to queue
+    #         left_child = tree.children_left[current_id]
+    #         right_child = tree.children_right[current_id]
+    #
+    #         if left_child != -1:  # Not a leaf
+    #             queue.append((left_child, next_nearest_spawned))
+    #
+    #         if right_child != -1:  # Not a leaf
+    #             queue.append((right_child, next_nearest_spawned))
+    #
+    #     if verbose:
+    #         print(f"\n  [Traverse] Summary:")
+    #         print(f"    Visited nodes: {visited_count}")
+    #         print(f"    Spawnable nodes: {spawned_count}")
+    #         print(f"    Skipped nodes: {skipped_count}")
+    #
+    #     return result
+    # ============================================================
 
     def spawn_children_for_node(
         self,
@@ -433,25 +438,31 @@ class RegionDetector:
         X: np.ndarray,
         y: np.ndarray,
         loss_components: Dict,
+        wavelet_threshold: Optional[float] = None,
         verbose: bool = True
-    ) -> List[Tuple[TreeNodeInfo, int]]:
+    ) -> Tuple[List[Tuple[TreeNodeInfo, int]], bool]:
         """
-        Spawn children for a single parent node (non-pretrained case).
+        Spawn children for a single parent node using all-or-nothing rule (ANT design).
 
         Fits a single-split tree (max_depth=1) on the parent's subdomain.
         Creates 2 children (left/right) and computes their wavelet norms.
+
+        All-or-nothing rule:
+        - If at least ONE child meets the wavelet threshold → spawn BOTH children
+        - If BOTH children are below threshold → spawn NEITHER child
 
         Args:
             parent_region: The parent node's region descriptor
             X: (N, n_dims) coordinates (full eval_data)
             y: (N, output_dim) predictions (global solution)
             loss_components: Per-sample losses
+            wavelet_threshold: Minimum wavelet norm to spawn (None = always spawn)
             verbose: Print diagnostic info
 
         Returns:
-            List of (TreeNodeInfo, parent_tree_node_id=-2) tuples for left/right children.
-            parent_tree_node_id=-2 is a special marker meaning "spawned during training".
-            Caller should set proper parent_idx based on parent expert index.
+            Tuple of (children, should_spawn):
+            - children: List of (TreeNodeInfo, parent_tree_node_id=-2) tuples for left/right children
+            - should_spawn: True if both children should be spawned, False otherwise
         """
         # Filter X, y, loss_components to parent's subdomain
         # IMPORTANT: X is filtered to subdomain, but y is GLOBAL solution (all experts blended)
@@ -477,7 +488,7 @@ class RegionDetector:
         if len(X_sub) < 2 * self.min_samples_leaf:
             if verbose:
                 print(f"      Not enough samples ({len(X_sub)} < {2 * self.min_samples_leaf}), cannot split")
-            return []
+            return [], False
 
         # Fit single-split tree on subdomain (max_depth=1)
         # Temporarily store old settings
@@ -506,26 +517,54 @@ class RegionDetector:
             # No split happened (all samples identical or too few)
             if verbose:
                 print(f"      Tree did not split (all samples have same target or too few samples)")
-            return []
-
-        # Extract node information for both children
-        children = []
+            return [], False
 
         # Compute all wavelet norms (includes root and both children)
         all_nodes = self.compute_wavelet_norms()
         node_lookup = {node.node_id: node for node in all_nodes}
 
-        for child_id in [left_child_id, right_child_id]:
-            if child_id in node_lookup:
-                child_node = node_lookup[child_id]
-                # Use -2 as special marker for "spawned during training"
-                children.append((child_node, -2))
+        # Get both children
+        left_child = node_lookup.get(left_child_id)
+        right_child = node_lookup.get(right_child_id)
 
-                if verbose:
-                    print(f"      Child {child_id}: bounds {child_node.bounds_lower} -> {child_node.bounds_upper}, "
-                          f"wavelet={child_node.wavelet_norm:.6f}, samples={child_node.n_samples}")
+        if left_child is None or right_child is None:
+            if verbose:
+                print(f"      Cannot spawn children (missing nodes in tree)")
+            return [], False
 
-        return children
+        # All-or-nothing rule:
+        # Spawn BOTH if at least ONE meets threshold
+        left_meets_threshold = (
+            wavelet_threshold is None or
+            left_child.wavelet_norm >= wavelet_threshold
+        )
+        right_meets_threshold = (
+            wavelet_threshold is None or
+            right_child.wavelet_norm >= wavelet_threshold
+        )
+
+        should_spawn = left_meets_threshold or right_meets_threshold
+
+        if verbose:
+            print(f"      Left child:  wavelet={left_child.wavelet_norm:.6f}, "
+                  f"meets_threshold={left_meets_threshold}")
+            print(f"      Right child: wavelet={right_child.wavelet_norm:.6f}, "
+                  f"meets_threshold={right_meets_threshold}")
+            if should_spawn:
+                print(f"      ✓ At least one child meets threshold → SPAWN BOTH")
+            else:
+                print(f"      ✗ Both children below threshold → REJECT BOTH")
+
+        if not should_spawn:
+            return [], False
+
+        # Spawn both children
+        children = [
+            (left_child, -2),   # -2 means "spawned during training"
+            (right_child, -2)
+        ]
+
+        return children, True
 
     def _compute_outside_fraction(
         self, 
