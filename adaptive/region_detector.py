@@ -296,100 +296,237 @@ class RegionDetector:
         
         return all_nodes
     
-    def select_refinement_region(
+    def extract_regions_from_tree(
         self,
-        sibling_regions: Optional[List[RegionDescriptor]] = None,
-        overlap_threshold: float = 0.5,
         wavelet_threshold: Optional[float] = None,
-        spawn_epoch: int = 0,
-        depth: int = 1,
-        parent_idx: int = -1,
         verbose: bool = True
-    ) -> Optional[RegionDescriptor]:
+    ) -> List[Tuple[TreeNodeInfo, int]]:
         """
-        Select the best region for refinement with sibling overlap check.
-        
+        Traverse a single decision tree (BFS) and extract spawnable regions.
+
+        Prerequisites:
+        - fit() must be called first with n_estimators=1
+
         Args:
-            sibling_regions: List of same-parent regions to check overlap against
-            overlap_threshold: Accept region if more than this fraction is outside siblings
-                               (e.g., 0.5 means accept if >50% outside siblings)
-            wavelet_threshold: Minimum wavelet norm to spawn (None = always spawn)
-            spawn_epoch: Current epoch for tracking
-            depth: Depth level for the new expert (1 = child of base)
-            parent_idx: Index of the parent expert (-1 for depth-1 experts)
-            verbose: Print diagnostic information about why regions were rejected
-            
+            wavelet_threshold: Minimum wavelet norm to spawn (None = spawn all non-root)
+            verbose: Print diagnostic information
+
         Returns:
-            RegionDescriptor for the selected region, or None if no suitable region
+            List of (TreeNodeInfo, parent_tree_node_id) tuples in BFS order.
+            parent_tree_node_id is the tree node ID of nearest SPAWNED ancestor,
+            or -1 for base model.
         """
-        nodes = self.compute_wavelet_norms()
-        
-        if not nodes:
+        from collections import deque
+
+        # Validation
+        if self.rf is None:
+            raise RuntimeError("Must call fit() before extract_regions_from_tree()")
+        if self.n_estimators != 1:
+            raise RuntimeError(f"extract_regions_from_tree requires n_estimators=1, got {self.n_estimators}")
+
+        # Get the single tree
+        tree = self.rf.estimators_[0].tree_
+
+        # Compute wavelet norms for all nodes
+        all_nodes = self.compute_wavelet_norms()
+
+        if not all_nodes:
             if verbose:
-                print(f"    [RegionDetector] No nodes computed from RF (RF may have no nodes)")
-            return None
-        
-        # Filter out root nodes (no parent = no wavelet)
-        candidate_nodes = [n for n in nodes if n.parent_prediction is not None]
-        
-        if not candidate_nodes:
-            if verbose:
-                print(f"    [RegionDetector] All {len(nodes)} nodes are root nodes (no parent = no wavelet)")
-            return None
-        
-        # Sort by wavelet norm (highest first)
-        candidate_nodes.sort(key=lambda n: n.wavelet_norm, reverse=True)
-        
+                print(f"    [Traverse] No nodes in tree")
+            return []
+
+        # Build node_id -> TreeNodeInfo lookup
+        node_lookup = {node.node_id: node for node in all_nodes}
+
+        # Result: list of (TreeNodeInfo, nearest_spawned_ancestor_tree_node_id)
+        result = []
+
+        # Tracking structure: maps tree_node_id -> whether it was spawned
+        spawned_nodes = {0: True}  # Root is always considered "spawned" (represents base model)
+
+        # BFS queue initialization
+        queue = deque([(0, -1)])  # (node_id, nearest_spawned_ancestor_id)
+        # -1 means "root" which maps to base model (parent_idx=-1 in RegionDescriptor)
+
+        visited_count = 0
+        spawned_count = 0
+        skipped_count = 0
+
         if verbose:
-            top_norm = candidate_nodes[0].wavelet_norm
-            print(f"    [RegionDetector] {len(candidate_nodes)} candidate nodes (top wavelet_norm={top_norm:.6f})")
-        
-        # Track rejection reasons for diagnostics
-        rejected_by_threshold = 0
-        rejected_by_overlap = 0
-        
-        # Find best region that passes sibling overlap check
-        for node in candidate_nodes:
-            # Check wavelet threshold
-            if wavelet_threshold is not None and node.wavelet_norm < wavelet_threshold:
-                rejected_by_threshold += 1
+            print(f"\n  [Traverse] Starting BFS traversal of tree with {tree.node_count} nodes")
+
+        # Traverse the tree (BFS)
+        while queue:
+            current_id, nearest_spawned_ancestor = queue.popleft()
+            visited_count += 1
+
+            # Skip if node doesn't exist in lookup (too few samples)
+            if current_id not in node_lookup:
                 continue
-            
-            # Check sibling overlap (if siblings exist)
-            if sibling_regions:
-                outside_fraction = self._compute_outside_fraction(node, sibling_regions)
-                if outside_fraction <= overlap_threshold:
-                    # Too much overlap with siblings, skip
-                    rejected_by_overlap += 1
-                    continue
-            
-            # Found a valid region
-            if verbose:
-                print(f"    [RegionDetector] Selected region: wavelet_norm={node.wavelet_norm:.6f}, "
-                      f"samples={node.n_samples}")
-            return RegionDescriptor(
-                bounds_lower=node.bounds_lower,
-                bounds_upper=node.bounds_upper,
-                wavelet_norm=node.wavelet_norm,
-                spawn_epoch=spawn_epoch,
-                depth=depth,
-                parent_idx=parent_idx
-            )
-        
-        # No valid region found - print diagnostics
+
+            node = node_lookup[current_id]
+
+            # Determine if this node should spawn
+            should_spawn = False
+            rejection_reason = None
+
+            if current_id == 0:
+                # Root node: skip (represents base model, not a spawnable expert)
+                should_spawn = False
+                rejection_reason = "root node"
+            elif node.parent_prediction is None:
+                # No parent (shouldn't happen except for root, but defensive)
+                should_spawn = False
+                rejection_reason = "no parent prediction"
+            elif wavelet_threshold is not None and node.wavelet_norm < wavelet_threshold:
+                # Below threshold
+                should_spawn = False
+                rejection_reason = f"wavelet_norm {node.wavelet_norm:.6f} < threshold {wavelet_threshold}"
+            else:
+                # Passes all checks
+                should_spawn = True
+
+            # Update tracking
+            if should_spawn:
+                spawned_nodes[current_id] = True
+                result.append((node, nearest_spawned_ancestor))
+                spawned_count += 1
+
+                if verbose:
+                    parent_str = "Base" if nearest_spawned_ancestor == -1 else f"Node{nearest_spawned_ancestor}"
+                    print(f"    [Traverse] Node {current_id}: SPAWN (parent={parent_str}, "
+                          f"wavelet={node.wavelet_norm:.6f}, samples={node.n_samples})")
+
+                # This node becomes the new nearest spawned ancestor for its children
+                next_nearest_spawned = current_id
+            else:
+                spawned_nodes[current_id] = False
+                skipped_count += 1
+
+                if verbose and rejection_reason:
+                    print(f"    [Traverse] Node {current_id}: SKIP ({rejection_reason})")
+
+                # Children inherit current nearest_spawned_ancestor (pass through)
+                next_nearest_spawned = nearest_spawned_ancestor
+
+            # Add children to queue
+            left_child = tree.children_left[current_id]
+            right_child = tree.children_right[current_id]
+
+            if left_child != -1:  # Not a leaf
+                queue.append((left_child, next_nearest_spawned))
+
+            if right_child != -1:  # Not a leaf
+                queue.append((right_child, next_nearest_spawned))
+
         if verbose:
-            print(f"    [RegionDetector] No suitable region found:")
-            if wavelet_threshold is not None:
-                print(f"      - {rejected_by_threshold}/{len(candidate_nodes)} rejected: "
-                      f"wavelet_norm < threshold ({wavelet_threshold})")
-                if rejected_by_threshold == len(candidate_nodes):
-                    print(f"      - Top 3 wavelet norms: {[f'{n.wavelet_norm:.6f}' for n in candidate_nodes[:3]]}")
-            if sibling_regions:
-                print(f"      - {rejected_by_overlap}/{len(candidate_nodes)} rejected: "
-                      f"overlap with siblings > {1-overlap_threshold:.0%}")
-        
-        return None
-    
+            print(f"\n  [Traverse] Summary:")
+            print(f"    Visited nodes: {visited_count}")
+            print(f"    Spawnable nodes: {spawned_count}")
+            print(f"    Skipped nodes: {skipped_count}")
+
+        return result
+
+    def spawn_children_for_node(
+        self,
+        parent_region: RegionDescriptor,
+        X: np.ndarray,
+        y: np.ndarray,
+        loss_components: Dict,
+        verbose: bool = True
+    ) -> List[Tuple[TreeNodeInfo, int]]:
+        """
+        Spawn children for a single parent node (non-pretrained case).
+
+        Fits a single-split tree (max_depth=1) on the parent's subdomain.
+        Creates 2 children (left/right) and computes their wavelet norms.
+
+        Args:
+            parent_region: The parent node's region descriptor
+            X: (N, n_dims) coordinates (full eval_data)
+            y: (N, output_dim) predictions (global solution)
+            loss_components: Per-sample losses
+            verbose: Print diagnostic info
+
+        Returns:
+            List of (TreeNodeInfo, parent_tree_node_id=-2) tuples for left/right children.
+            parent_tree_node_id=-2 is a special marker meaning "spawned during training".
+            Caller should set proper parent_idx based on parent expert index.
+        """
+        # Filter X, y, loss_components to parent's subdomain
+        # IMPORTANT: X is filtered to subdomain, but y is GLOBAL solution (all experts blended)
+        mask = np.ones(len(X), dtype=bool)
+        for dim in range(len(parent_region.bounds_lower)):
+            mask &= (X[:, dim] >= parent_region.bounds_lower[dim])
+            mask &= (X[:, dim] <= parent_region.bounds_upper[dim])
+
+        X_sub = X[mask]              # Coordinates in subdomain
+        y_sub = y[mask]              # Global predictions at those coordinates
+        loss_sub = {
+            'residual': loss_components['residual'][mask],
+            'ic': loss_components['ic'][mask],
+            'bc': loss_components['bc'][mask],
+            'weights': loss_components['weights']
+        }
+
+        if verbose:
+            print(f"      Subdomain: {parent_region.bounds_lower} -> {parent_region.bounds_upper}")
+            print(f"      Filtered {len(X_sub)} / {len(X)} samples to subdomain")
+
+        # Check if enough samples in subdomain
+        if len(X_sub) < 2 * self.min_samples_leaf:
+            if verbose:
+                print(f"      Not enough samples ({len(X_sub)} < {2 * self.min_samples_leaf}), cannot split")
+            return []
+
+        # Fit single-split tree on subdomain (max_depth=1)
+        # Temporarily store old settings
+        old_max_depth = self.max_depth
+        old_n_estimators = self.n_estimators
+
+        # Set to max_depth=1 for single split
+        self.max_depth = 1
+        self.n_estimators = 1
+
+        try:
+            self.fit(X=X_sub, y=y_sub, loss_components=loss_sub)
+        finally:
+            # Restore settings
+            self.max_depth = old_max_depth
+            self.n_estimators = old_n_estimators
+
+        # Get the tree
+        tree = self.rf.estimators_[0].tree_
+
+        # Root is node 0, check if it has children
+        left_child_id = tree.children_left[0]
+        right_child_id = tree.children_right[0]
+
+        if left_child_id == -1:
+            # No split happened (all samples identical or too few)
+            if verbose:
+                print(f"      Tree did not split (all samples have same target or too few samples)")
+            return []
+
+        # Extract node information for both children
+        children = []
+
+        # Compute all wavelet norms (includes root and both children)
+        all_nodes = self.compute_wavelet_norms()
+        node_lookup = {node.node_id: node for node in all_nodes}
+
+        for child_id in [left_child_id, right_child_id]:
+            if child_id in node_lookup:
+                child_node = node_lookup[child_id]
+                # Use -2 as special marker for "spawned during training"
+                children.append((child_node, -2))
+
+                if verbose:
+                    print(f"      Child {child_id}: bounds {child_node.bounds_lower} -> {child_node.bounds_upper}, "
+                          f"wavelet={child_node.wavelet_norm:.6f}, samples={child_node.n_samples}")
+
+        return children
+
     def _compute_outside_fraction(
         self, 
         node: TreeNodeInfo, 
