@@ -396,143 +396,135 @@ def main():
             print(f"  NCC data found: {ncc_data_path}")
 
     # Run NCC analysis
-    print(f"\n{'8' if not eval_only else '5'}. Running NCC analysis...")
+        adaptive_cfg = config.get('adaptive_pinn', {})
+        inner_metrics_disabled = False
+        if adaptive_cfg.get('enabled', False):
+            inner_metrics_disabled = not adaptive_cfg.get('inner_metrics_calculation', True)
 
-    # Load checkpoint
-    print(f"  Loading checkpoint: {checkpoint_path}")
-    try:
-        # Try loading with default settings (weights_only=True in PyTorch 2.6+)
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
-    except Exception:
-        # Fallback for legacy checkpoints with custom classes
-        print("  Warning: Standard load failed, trying legacy mode...")
-        checkpoint = torch.load(checkpoint_path, map_location='cpu',
-                                weights_only=False)
-        print("  Legacy checkpoint loaded")
-
-    # Build model - check for adaptive PINN
-    adaptive_cfg = config.get('adaptive_pinn', {})
-    is_adaptive = adaptive_cfg.get('enabled', False) or checkpoint.get('is_adaptive', False)
-    
-    if is_adaptive:
-        from models.adaptive_expert_pinn import AdaptiveExpertPINN
-        model = AdaptiveExpertPINN(architecture, activation, config, adaptive_cfg)
-    else:
-        model = FCNet(architecture, activation, config)
-
-    # Load model weights - handle different checkpoint formats
-    if is_adaptive and checkpoint.get('is_adaptive', False):
-        # Load adaptive state including experts and regions
-        model.load_state_dict_extended(checkpoint['adaptive_state'])
-        print(f"  Adaptive model weights loaded ({model.num_experts} experts)")
-    else:
-        if 'model_state_dict' in checkpoint:
-            state_dict = checkpoint['model_state_dict']
-        elif 'model' in checkpoint:
-            state_dict = checkpoint['model']
+        if inner_metrics_disabled:
+            print("\n[Skipping NCC analysis: inner_metrics_calculation is False]")
         else:
-            # Checkpoint might be just the state dict itself
-            state_dict = checkpoint
+            print(f"\n{'8' if not eval_only else '5'}. Running NCC analysis...")
 
-        # Remap keys for legacy checkpoints with different layer naming
-        # Old: layer_1.weight, layer_2.weight, ..., output.weight
-        # New: network.layer_1.weight, ..., network.layer_6.weight
-        remapped_state_dict = {}
-        for key, value in state_dict.items():
-            if key.startswith('layer_') or key.startswith('output.'):
-                # Remap layer_N or output to network.layer_N or network.layer_M
-                if key.startswith('output.'):
-                    # Output layer is the last layer in the new architecture
-                    layer_num = len(architecture) - 1
-                    new_key = key.replace('output.', f'network.layer_{layer_num}.')
-                else:
-                    # Regular hidden layer - add network. prefix
-                    new_key = f'network.{key}'
-                remapped_state_dict[new_key] = value
+            # Load checkpoint
+            print(f"  Loading checkpoint: {checkpoint_path}")
+            try:
+                # Try loading with default settings (weights_only=True in PyTorch 2.6+)
+                checkpoint = torch.load(checkpoint_path, map_location='cpu')
+            except Exception:
+                # Fallback for legacy checkpoints with custom classes
+                print("  Warning: Standard load failed, trying legacy mode...")
+                checkpoint = torch.load(checkpoint_path, map_location='cpu',
+                                        weights_only=False)
+                print("  Legacy checkpoint loaded")
+
+            # Build model - check for adaptive PINN
+            is_adaptive = adaptive_cfg.get('enabled', False) or checkpoint.get('is_adaptive', False)
+            if is_adaptive:
+                from models.adaptive_expert_pinn import AdaptiveExpertPINN
+                model = AdaptiveExpertPINN(architecture, activation, config, adaptive_cfg)
             else:
-                # Already in correct format or doesn't need remapping
-                remapped_state_dict[key] = value
+                model = FCNet(architecture, activation, config)
 
-        # Try loading with remapped keys
-        try:
-            model.load_state_dict(remapped_state_dict)
-            print("  Model weights loaded")
-        except RuntimeError:
-            # If remapping didn't work, try original state dict
-            print("  Warning: Remapped keys didn't match, trying original...")
-            model.load_state_dict(state_dict)
-            print("  Model weights loaded")
+            # Load model weights - handle different checkpoint formats
+            if is_adaptive and checkpoint.get('is_adaptive', False):
+                # Load adaptive state including experts and regions
+                model.load_state_dict_extended(checkpoint['adaptive_state'])
+                print(f"  Adaptive model weights loaded ({model.num_experts} experts)")
+            else:
+                if 'model_state_dict' in checkpoint:
+                    state_dict = checkpoint['model_state_dict']
+                elif 'model' in checkpoint:
+                    state_dict = checkpoint['model']
+                else:
+                    # Checkpoint might be just the state dict itself
+                    state_dict = checkpoint
 
-    # Get NCC data path
-    ncc_data_path = Path("datasets") / problem / "ncc_data.pt"
+                # Remap keys for legacy checkpoints with different layer naming
+                remapped_state_dict = {}
+                for key, value in state_dict.items():
+                    if key.startswith('layer_') or key.startswith('output.'):
+                        if key.startswith('output.'):
+                            layer_num = len(architecture) - 1
+                            new_key = key.replace('output.', f'network.layer_{layer_num}.')
+                        else:
+                            new_key = f'network.{key}'
+                        remapped_state_dict[new_key] = value
+                    else:
+                        remapped_state_dict[key] = value
 
-    # Run NCC
-    ncc_metrics = run_ncc(
-        model=model,
-        eval_data_path=str(ncc_data_path),  # Using stratified NCC dataset
-        cfg=config,
-        run_dir=run_dir
-    )
-    
-    # If there's a history from training, regenerate shaded plots
-    if not eval_only:
-        metrics_path = run_dir / "metrics.json"
-        if metrics_path.exists():
-            import json
-            with open(metrics_path, 'r') as f:
-                metrics = json.load(f)
-            
-            # Add final NCC to history
-            if 'ncc_history' in metrics and metrics['ncc_history']:
-                from ncc.ncc_plotting import plot_ncc_history_shaded
-                # Add the final metrics to the history
-                final_epoch = config.get('epochs', 0)
-                metrics['ncc_history'].append((final_epoch, ncc_metrics))
-                # Regenerate shaded plots
-                history = [(epoch, mets) for epoch, mets in metrics['ncc_history']]
-                plot_ncc_history_shaded(history, run_dir / "ncc_plots")
-                print(f"\n  Shaded NCC plots generated from {len(history)} epochs")
+                try:
+                    model.load_state_dict(remapped_state_dict)
+                    print("  Model weights loaded")
+                except RuntimeError:
+                    print("  Warning: Remapped keys didn't match, trying original...")
+                    model.load_state_dict(state_dict)
+                    print("  Model weights loaded")
 
-    # In eval-only mode, also run problem-specific evaluation visualization
-    if eval_only:
-        print("\nGenerating problem-specific evaluation visualizations...")
+            # Get NCC data path
+            ncc_data_path = Path("datasets") / problem / "ncc_data.pt"
 
-        # Check if eval data exists
-        eval_data_path = Path("datasets") / problem / "eval_data.pt"
-        if not eval_data_path.exists():
-            print("  Eval data not found. Generating...")
-            from utils.dataset_gen import generate_and_save_datasets
-            generate_and_save_datasets(config)
+            # Run NCC
+            ncc_metrics = run_ncc(
+                model=model,
+                eval_data_path=str(ncc_data_path),  # Using stratified NCC dataset
+                cfg=config,
+                run_dir=run_dir
+            )
 
-        try:
-            from utils.problem_specific import get_visualization_module
-            viz_module = get_visualization_module(problem)
-            visualize_evaluation = viz_module[1]  # Second element is visualize_evaluation
-            visualize_evaluation(model, str(eval_data_path), run_dir, config)
-        except ValueError:
-            print(f"  (No custom evaluation visualization for {problem})")
-        except Exception as e:
-            print(f"  Warning: Could not generate evaluation visualization: {e}")
+            # If there's a history from training, regenerate shaded plots
+            if not eval_only:
+                metrics_path = run_dir / "metrics.json"
+                if metrics_path.exists():
+                    import json
+                    with open(metrics_path, 'r') as f:
+                        metrics = json.load(f)
+                    if 'ncc_history' in metrics and metrics['ncc_history']:
+                        from ncc.ncc_plotting import plot_ncc_history_shaded
+                        final_epoch = config.get('epochs', 0)
+                        metrics['ncc_history'].append((final_epoch, ncc_metrics))
+                        history = [(epoch, mets) for epoch, mets in metrics['ncc_history']]
+                        plot_ncc_history_shaded(history, run_dir / "ncc_plots")
+                        print(f"\n  Shaded NCC plots generated from {len(history)} epochs")
 
-    # Final summary
-    print("\n" + "=" * 60)
-    print("Complete!")
-    print("=" * 60)
-    print(f"Output directory: {run_dir}")
-    print(f"  - config_used.yaml")
-    if not eval_only:
-        print(f"  - metrics.json (training)")
-        print(f"  - training_plots/")
-        print(f"  - summary.txt")
-    print(f"  - ncc_plots/ (5 plots)")
-    print(f"  - ncc_metrics.json")
-    print("\nNCC Summary:")
-    print(f"  Classes: {ncc_metrics['num_classes']}")
-    print(f"  Layers analyzed: {ncc_metrics['layers_analyzed']}")
-    print(f"  Layer accuracies:")
-    for layer, acc in ncc_metrics['layer_accuracies'].items():
-        print(f"    {layer}: {acc:.4f}")
-    print("=" * 60)
+            # In eval-only mode, also run problem-specific evaluation visualization
+            if eval_only:
+                print("\nGenerating problem-specific evaluation visualizations...")
+
+                eval_data_path = Path("datasets") / problem / "eval_data.pt"
+                if not eval_data_path.exists():
+                    print("  Eval data not found. Generating...")
+                    from utils.dataset_gen import generate_and_save_datasets
+                    generate_and_save_datasets(config)
+
+                try:
+                    from utils.problem_specific import get_visualization_module
+                    viz_module = get_visualization_module(problem)
+                    visualize_evaluation = viz_module[1]
+                    visualize_evaluation(model, str(eval_data_path), run_dir, config)
+                except ValueError:
+                    print(f"  (No custom evaluation visualization for {problem})")
+                except Exception as e:
+                    print(f"  Warning: Could not generate evaluation visualization: {e}")
+
+            print("\n" + "=" * 60)
+            print("Complete!")
+            print("=" * 60)
+            print(f"Output directory: {run_dir}")
+            print(f"  - config_used.yaml")
+            if not eval_only:
+                print(f"  - metrics.json (training)")
+                print(f"  - training_plots/")
+                print(f"  - summary.txt")
+            print(f"  - ncc_plots/ (5 plots)")
+            print(f"  - ncc_metrics.json")
+            print("\nNCC Summary:")
+            print(f"  Classes: {ncc_metrics['num_classes']}")
+            print(f"  Layers analyzed: {ncc_metrics['layers_analyzed']}")
+            print(f"  Layer accuracies:")
+            for layer, acc in ncc_metrics['layer_accuracies'].items():
+                print(f"    {layer}: {acc:.4f}")
+            print("=" * 60)
 
 
 if __name__ == "__main__":
