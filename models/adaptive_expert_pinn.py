@@ -278,11 +278,14 @@ class AdaptiveExpertPINN(nn.Module):
         # Hook management
         self.activations: Dict[str, torch.Tensor] = {}
         self.hook_handles: List[RemovableHandle] = []
-        
-        # Flag to indicate if base model is frozen (pretrained)
-        # When True, caller should pass precomputed u_base to forward()
-        self._base_frozen = False
-        
+
+        # ============================================================
+        # PRETRAINED CASE - COMMENTED OUT (ANT design uses non-pretrained only)
+        # ============================================================
+        # # Flag to indicate if base model is frozen (pretrained)
+        # # When True, caller should pass precomputed u_base to forward()
+        # self._base_frozen = False
+
         # Optional epoch timer for performance profiling (set by trainer)
         self._timer = None
     
@@ -1341,7 +1344,10 @@ class AdaptiveExpertPINN(nn.Module):
             'config_base_architecture': self.config_base_architecture,
             'activation': self.activation,
             'adaptive_config': self.adaptive_config,
-            'base_frozen': self._base_frozen
+            # ============================================================
+            # PRETRAINED CASE - COMMENTED OUT (ANT design uses non-pretrained only)
+            # ============================================================
+            # 'base_frozen': self._base_frozen
         }
     
     def load_state_dict_extended(self, state_dict: Dict):
@@ -1369,13 +1375,16 @@ class AdaptiveExpertPINN(nn.Module):
             self.base_model = FCNet(saved_base_arch, saved_activation, self.config)
             self.base_model = self.base_model.to(device)
             self.base_architecture = saved_base_arch
-            
-            # If this was a pretrained base (different from config), mark as frozen
-            if saved_base_arch != self.config_base_architecture:
-                self._base_frozen = True
-                for param in self.base_model.parameters():
-                    param.requires_grad = False
-                print(f"  Base model marked as frozen (pretrained architecture)")
+
+            # ============================================================
+            # PRETRAINED CASE - COMMENTED OUT (ANT design uses non-pretrained only)
+            # ============================================================
+            # # If this was a pretrained base (different from config), mark as frozen
+            # if saved_base_arch != self.config_base_architecture:
+            #     self._base_frozen = True
+            #     for param in self.base_model.parameters():
+            #         param.requires_grad = False
+            #     print(f"  Base model marked as frozen (pretrained architecture)")
         
         # Load base model weights
         self.base_model.load_state_dict(state_dict['base_model'])
@@ -1412,14 +1421,17 @@ class AdaptiveExpertPINN(nn.Module):
             if self.blending_mode == 'soft':
                 soft_indicator = SoftIndicator(region, sigma_fraction=self.sigma_fraction)
                 self.soft_indicators.append(soft_indicator)
-        
-        # Restore base frozen state if saved
-        if 'base_frozen' in state_dict:
-            self._base_frozen = state_dict['base_frozen']
-            if self._base_frozen:
-                for param in self.base_model.parameters():
-                    param.requires_grad = False
-        
+
+        # ============================================================
+        # PRETRAINED CASE - COMMENTED OUT (ANT design uses non-pretrained only)
+        # ============================================================
+        # # Restore base frozen state if saved
+        # if 'base_frozen' in state_dict:
+        #     self._base_frozen = state_dict['base_frozen']
+        #     if self._base_frozen:
+        #         for param in self.base_model.parameters():
+        #             param.requires_grad = False
+
         # Sync batched structures
         self.sync_batched_indicators()
         self.sync_batched_models()
