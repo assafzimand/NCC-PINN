@@ -25,27 +25,36 @@ def prepare_ground_truth_grid(
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Prepare ground truth data on a regular grid for visualization.
-    
+
     Args:
         eval_data: Dictionary with 'x', 't', 'h' tensors
         domain_bounds: {'lower': [x_min, t_min], 'upper': [x_max, t_max]}
         resolution: Grid resolution for each dimension
-        
+
     Returns:
         (ground_truth, grid_x, grid_t) or (None, None, None) if preparation fails
     """
+    def _to_numpy(tensor):
+        """Safely convert tensor to numpy, handling any device."""
+        if isinstance(tensor, torch.Tensor):
+            return tensor.detach().cpu().numpy()
+        elif isinstance(tensor, np.ndarray):
+            return tensor
+        else:
+            return np.array(tensor)
+
     try:
         # Extract data (ground truth key can be 'h', 'h_gt', or 'u')
-        x = eval_data['x'].cpu().numpy()
-        t = eval_data['t'].cpu().numpy()
-        
+        x = _to_numpy(eval_data['x'])
+        t = _to_numpy(eval_data['t'])
+
         # Try different keys for ground truth
         if 'h_gt' in eval_data:
-            h = eval_data['h_gt'].cpu().numpy()
+            h = _to_numpy(eval_data['h_gt'])
         elif 'h' in eval_data:
-            h = eval_data['h'].cpu().numpy()
+            h = _to_numpy(eval_data['h'])
         elif 'u' in eval_data:
-            h = eval_data['u'].cpu().numpy()
+            h = _to_numpy(eval_data['u'])
         else:
             print(f"  Warning: No ground truth key found. Available: {list(eval_data.keys())}")
             return None, None, None
