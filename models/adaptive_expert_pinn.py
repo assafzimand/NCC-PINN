@@ -541,7 +541,17 @@ class AdaptiveExpertPINN(nn.Module):
         # Move to same device as base model
         device = next(self.base_model.parameters()).device
         expert = expert.to(device)
-        
+
+        # Zero-initialize final layer for pretrained case (residual learning)
+        if self.adaptive_config.get('pretrained_base_model', False):
+            layer_names = expert.get_layer_names()
+            if layer_names:
+                final_layer = expert.network[layer_names[-1]]
+                nn.init.zeros_(final_layer.weight)
+                if final_layer.bias is not None:
+                    nn.init.zeros_(final_layer.bias)
+                print(f"    Applied zero-initialization to final layer (pretrained residual learning)")
+
         # DIAGNOSTIC: Verify expert is on correct device
         actual_device = next(expert.parameters()).device
         print(f"    Expert created on device: {actual_device}")
