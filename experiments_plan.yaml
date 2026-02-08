@@ -105,7 +105,7 @@ base_config:
     tree_min_samples_leaf: 10      # Min samples in tree leaf node
     enable_timing: true          # Enable epoch timing profiling (can slow down training)
     inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
-    use_torch_compile: true      # Enable torch.compile (PyTorch 2.0+) for performance optimization
+    use_torch_compile: false     # INCOMPATIBLE with PINNs (higher-order derivatives conflict with donated buffers)
 
 # Experiments to run
 experiments:
