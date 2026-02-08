@@ -32,8 +32,8 @@ base_config:
   n_freq_grid: 128
   eval_every: 50  # More frequent monitoring (every 50 epochs)
   print_every: 50
-  save_every: 300  # Adjusted for shorter training
-  inner_metrics_eval_every: 334
+  save_every: 3000 # Adjusted for shorter training
+  inner_metrics_eval_every: 2001
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -114,19 +114,73 @@ experiments:
     problem: schrodinger
     architecture: [2, 70, 2]  # 1 hidden layer, 70 neurons
     adaptive_pinn:
-      max_experts: 30
+      enabled: true                    # Toggle feature on/off (override per experiment)
+      max_experts: 30                 # Maximum number of expert networks
+      spawn_every_epochs: 600     # Check for spawning every N epochs (quick test value)
+      expert_architectures: null        # null = same as base, or list of architectures
+      freeze_mode: none                 # "none" | "previous" | "base_only"
+      blending_mode: soft               # "hard" | "soft"
+      sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
+      base_weight: 1.0                  # Uniform weight for base model (soft blending only)
+      base_everywhere: true             # If false, u_0 has indicator = domain \ experts
+      pretrained_base_model: false # If true, load base from path and freeze, build tree then train experts
+      pretrained_base_path: null  # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
+      wavelet_threshold: 0.0001   # Minimum wavelet norm to spawn (filters low-priority regions)
+      tree_max_depth: 15             # Max depth of decision tree (for pretrained case)
+      tree_min_samples_leaf: 10      # Min samples in tree leaf node
+      enable_timing: false   # Enable epoch timing profiling (can slow down training)
+      inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
+      use_torch_compile: false     # INCOMPATIBLE with PINNs (higher-order derivatives conflict with donated buffers)
+      enable_gradient_diagnostics: false  # Enable detailed gradient flow diagnostics (verbose)
+
 
   - name: "3lyr_30_neurons_14experts"  # Medium depth, medium experts
     problem: schrodinger
     architecture: [2, 30, 30, 30, 2]  # 3 hidden layers, 30 neurons each
     adaptive_pinn:
-      max_experts: 14
+      enabled: true                    # Toggle feature on/off (override per experiment)
+      max_experts: 14                 # Maximum number of expert networks
+      spawn_every_epochs: 600     # Check for spawning every N epochs (quick test value)
+      expert_architectures: null        # null = same as base, or list of architectures
+      freeze_mode: none                 # "none" | "previous" | "base_only"
+      blending_mode: soft               # "hard" | "soft"
+      sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
+      base_weight: 1.0                  # Uniform weight for base model (soft blending only)
+      base_everywhere: true             # If false, u_0 has indicator = domain \ experts
+      pretrained_base_model: false # If true, load base from path and freeze, build tree then train experts
+      pretrained_base_path: null  # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
+      wavelet_threshold: 0.0001   # Minimum wavelet norm to spawn (filters low-priority regions)
+      tree_max_depth: 15             # Max depth of decision tree (for pretrained case)
+      tree_min_samples_leaf: 10      # Min samples in tree leaf node
+      enable_timing: false   # Enable epoch timing profiling (can slow down training)
+      inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
+      use_torch_compile: false     # INCOMPATIBLE with PINNs (higher-order derivatives conflict with donated buffers)
+      enable_gradient_diagnostics: false  # Enable detailed gradient flow diagnostics (verbose)
+
 
   - name: "5lyr_30_neurons_6experts"  # Many layers, few experts
     problem: schrodinger
     architecture: [2, 50, 50, 50, 50, 50, 2]  # 5 hidden layers, 30 neurons each
     adaptive_pinn:
-      max_experts: 6
+      enabled: true                    # Toggle feature on/off (override per experiment)
+      max_experts: 6                 # Maximum number of expert networks
+      spawn_every_epochs: 600     # Check for spawning every N epochs (quick test value)
+      expert_architectures: null        # null = same as base, or list of architectures
+      freeze_mode: none                 # "none" | "previous" | "base_only"
+      blending_mode: soft               # "hard" | "soft"
+      sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
+      base_weight: 1.0                  # Uniform weight for base model (soft blending only)
+      base_everywhere: true             # If false, u_0 has indicator = domain \ experts
+      pretrained_base_model: false # If true, load base from path and freeze, build tree then train experts
+      pretrained_base_path: null  # 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
+      wavelet_threshold: 0.0001   # Minimum wavelet norm to spawn (filters low-priority regions)
+      tree_max_depth: 15             # Max depth of decision tree (for pretrained case)
+      tree_min_samples_leaf: 10      # Min samples in tree leaf node
+      enable_timing: false   # Enable epoch timing profiling (can slow down training)
+      inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
+      use_torch_compile: false     # INCOMPATIBLE with PINNs (higher-order derivatives conflict with donated buffers)
+      enable_gradient_diagnostics: false  # Enable detailed gradient flow diagnostics (verbose)
+
 
   # - name: "2lyr_lr1e-6"
   #   problem: schrodinger
