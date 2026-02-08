@@ -124,7 +124,7 @@ experiments:
 
   - name: "5lyr_30_neurons_6experts"  # Many layers, few experts
     problem: schrodinger
-    architecture: [2, 30, 30, 30, 30, 30, 2]  # 5 hidden layers, 30 neurons each
+    architecture: [2, 50, 50, 50, 50, 50, 2]  # 5 hidden layers, 30 neurons each
     adaptive_pinn:
       max_experts: 6
 

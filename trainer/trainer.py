@@ -863,7 +863,7 @@ def train(
                   f"Eval Inf: {eval_inf_norm:.6f}")
 
             # DIAGNOSTIC: Print expert contributions
-            if model.num_experts > 0 and hasattr(model, '_diag_data') and model._diag_data:
+            if is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0 and hasattr(model, '_diag_data') and model._diag_data:
                 latest_diag = model._diag_data[-1]
                 base_norm = latest_diag['base_norm']
                 total_expert = latest_diag['total_expert_contrib']
@@ -1132,7 +1132,7 @@ def train(
     timer.print_summary()
 
     # Save expert diagnostics to CSV
-    if model.num_experts > 0 and hasattr(model, '_diag_data') and model._diag_data:
+    if is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0 and hasattr(model, '_diag_data') and model._diag_data:
         import pandas as pd
         diag_csv_path = run_dir / "expert_diagnostics.csv"
 
@@ -1250,7 +1250,7 @@ def train(
     _maybe_plot_deriv_history(metrics, run_dir)
 
     # Final adaptive PINN outputs
-    if is_adaptive and model.num_experts > 0:
+    if is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0:
         print("\n" + "=" * 60)
         print("Adaptive PINN Final Summary")
         print("=" * 60)
