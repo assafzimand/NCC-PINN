@@ -174,22 +174,33 @@ class BatchedModels:
             # Single model: direct forward, avoid vmap overhead
             return models[0](x).unsqueeze(0)  # (1, N, output_dim)
         
-        # Ensure all models share the same train/eval mode (required by stack_module_state)
-        is_training = template.training
-        for m in models:
-            m.train(is_training)
-        
-        # Stack parameters from all models in this group
-        params, buffers = stack_module_state(models)
-        
-        # Define single-model forward using functional_call
-        def single_forward(params, buffers, x):
-            return functional_call(template, (params, buffers), (x,))
-        
-        # vmap over model dimension (dim 0 of params/buffers), broadcast input x
-        batched_forward = vmap(single_forward, in_dims=(0, 0, None))
-        
-        return batched_forward(params, buffers, x)  # (K_group, N, output_dim)
+        # TEMPORARY FIX: Use direct loop instead of vmap+functional_call
+        # to preserve gradient flow (functional_call may break gradient connections)
+        outputs_list = []
+        for model in models:
+            out = model(x)  # (N, output_dim)
+            outputs_list.append(out)
+
+        # Stack outputs: (K_group, N, output_dim)
+        return torch.stack(outputs_list, dim=0)
+
+        # # Original vmap+functional_call implementation (has gradient flow issues)
+        # # Ensure all models share the same train/eval mode (required by stack_module_state)
+        # is_training = template.training
+        # for m in models:
+        #     m.train(is_training)
+        #
+        # # Stack parameters from all models in this group
+        # params, buffers = stack_module_state(models)
+        #
+        # # Define single-model forward using functional_call
+        # def single_forward(params, buffers, x):
+        #     return functional_call(template, (params, buffers), (x,))
+        #
+        # # vmap over model dimension (dim 0 of params/buffers), broadcast input x
+        # batched_forward = vmap(single_forward, in_dims=(0, 0, None))
+        #
+        # return batched_forward(params, buffers, x)  # (K_group, N, output_dim)
 
 
 class AdaptiveExpertPINN(nn.Module):
