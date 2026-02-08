@@ -5,7 +5,7 @@ experiment_name: "schrodinger_tests"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 50  # Reduced for faster diagnostics
+  epochs: 1000
   batch_size: 512
   lr: 0.00001
   
@@ -30,8 +30,8 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 5  # Reduced for faster feedback
-  print_every: 5  # Reduced for faster feedback
+  eval_every: 100
+  print_every: 100
   save_every: 500
   inner_metrics_eval_every: 334
   seed: 42
@@ -101,9 +101,9 @@ base_config:
     pretrained_base_model: true  # If true, load base from path and freeze, build tree then train experts
     pretrained_base_path: 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
     wavelet_threshold: 0.0001   # Minimum wavelet norm to spawn (filters low-priority regions)
-    tree_max_depth: 3              # Reduced for faster diagnostics (was 15)
-    tree_min_samples_leaf: 50       # Increased to spawn fewer experts (was 10)
-    enable_timing: false            # Enable epoch timing profiling (can slow down training)
+    tree_max_depth: 15             # Reduced for faster diagnostics (was 15)
+    tree_min_samples_leaf: 10      # Increased to spawn fewer experts (was 10)
+    enable_timing: true          # Enable epoch timing profiling (can slow down training)
     inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
 
 # Experiments to run
