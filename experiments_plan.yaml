@@ -103,16 +103,36 @@ base_config:
     wavelet_threshold: 0.0001   # Minimum wavelet norm to spawn (filters low-priority regions)
     tree_max_depth: 15             # Max depth of decision tree (for pretrained case)
     tree_min_samples_leaf: 10      # Min samples in tree leaf node
-    enable_timing: true          # Enable epoch timing profiling (can slow down training)
+    enable_timing: false   # Enable epoch timing profiling (can slow down training)
     inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
     use_torch_compile: false     # INCOMPATIBLE with PINNs (higher-order derivatives conflict with donated buffers)
+    enable_gradient_diagnostics: false  # Enable detailed gradient flow diagnostics (verbose)
 
 # Experiments to run
 experiments:
-  - name: "optimized_run"  # Optimized training with early LBFGS switch
+  - name: "2lyr_30_neurons"
     problem: schrodinger
     architecture: [2, 30, 30, 2]
-    # lr and optimizer_switch_at inherited from base_config (1e-4, 0.33)
+
+  - name: "2lyr_70_neurons"
+    problem: schrodinger
+    architecture: [2, 70, 70, 2]
+
+  - name: "3lyr_30_neurons"
+    problem: schrodinger
+    architecture: [2, 30, 30, 30, 2]
+
+  - name: "3lyr_70_neurons"
+    problem: schrodinger
+    architecture: [2, 70, 70, 70, 2]
+
+  - name: "5lyr_30_neurons"
+    problem: schrodinger
+    architecture: [2, 30, 30, 30, 30, 30, 2]
+
+  - name: "4lyr_70_neurons"
+    problem: schrodinger
+    architecture: [2, 70, 70, 70, 70, 2]
 
   # - name: "2lyr_lr1e-6"
   #   problem: schrodinger
