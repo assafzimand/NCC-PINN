@@ -460,6 +460,79 @@ def train(
             else:
                 optimizer = _create_adam_optimizer(model, cfg)
                 current_optimizer_name = 'Adam'
+
+            # DIAGNOSTIC: Verify optimizer includes expert parameters
+            print(f"\n{'='*60}")
+            print("DIAGNOSTIC: Optimizer Parameter Check")
+            print(f"{'='*60}")
+
+            # Check base model
+            base_total = sum(p.numel() for p in model.base_model.parameters())
+            base_trainable = sum(p.numel() for p in model.base_model.parameters() if p.requires_grad)
+            print(f"Base model: {base_total} total params, {base_trainable} trainable (should be 0)")
+
+            # Check each expert
+            for i, expert in enumerate(model.experts):
+                expert_total = sum(p.numel() for p in expert.parameters())
+                expert_trainable = sum(p.numel() for p in expert.parameters() if p.requires_grad)
+                print(f"Expert {i}: {expert_total} total params, {expert_trainable} trainable")
+
+                # Check specific layer requires_grad
+                layer_names = expert.get_layer_names()
+                if layer_names:
+                    first_layer = expert.network[layer_names[0]]
+                    final_layer = expert.network[layer_names[-1]]
+                    print(f"  -> First layer weight.requires_grad: {first_layer.weight.requires_grad}")
+                    print(f"  -> Final layer weight.requires_grad: {final_layer.weight.requires_grad}")
+
+            # Check optimizer
+            optimizer_params = sum(p.numel() for g in optimizer.param_groups for p in g['params'])
+            expected_trainable = base_trainable + sum(
+                sum(p.numel() for p in expert.parameters() if p.requires_grad)
+                for expert in model.experts
+            )
+            print(f"\nOptimizer: {optimizer_params} parameters")
+            print(f"Expected: {expected_trainable} parameters (base + experts)")
+
+            if optimizer_params != expected_trainable:
+                print(f"❌ MISMATCH! Optimizer missing {expected_trainable - optimizer_params} parameters!")
+            else:
+                print(f"✓ Optimizer correctly includes all trainable parameters")
+
+            # CRITICAL TEST: Manually check gradient flow
+            print(f"\n{'='*60}")
+            print("DIAGNOSTIC: Manual Gradient Flow Test")
+            print(f"{'='*60}")
+            model.train()
+            with torch.enable_grad():
+                # Get a small batch from eval data
+                test_inputs = torch.cat([eval_data['x'][:10], eval_data['t'][:10]], dim=1).to(device).requires_grad_(True)
+
+                # Forward pass through model
+                output = model(test_inputs)
+
+                # Compute dummy loss (just sum to ensure gradients flow)
+                dummy_loss = output.sum()
+
+                # Backward pass
+                dummy_loss.backward()
+
+                # Check if gradients reached experts
+                print(f"After manual backward pass:")
+                for i, expert in enumerate(model.experts):
+                    layer_names = expert.get_layer_names()
+                    if layer_names:
+                        first_layer = expert.network[layer_names[0]]
+                        final_layer = expert.network[layer_names[-1]]
+                        first_grad = first_layer.weight.grad
+                        final_grad = final_layer.weight.grad
+                        print(f"  Expert {i}: first_layer.grad={'None' if first_grad is None else f'norm={first_grad.norm().item():.8f}'}")
+                        print(f"            final_layer.grad={'None' if final_grad is None else f'norm={final_grad.norm().item():.8f}'}")
+
+                # Clear gradients after test
+                optimizer.zero_grad()
+
+            print(f"{'='*60}\n")
         
         # Import and create region detector (only needed if not pretrained mode)
         if not pretrained_base_model:
@@ -530,6 +603,20 @@ def train(
                 timer.start('train.backward')
                 loss.backward()
                 timer.stop('train.backward')
+
+                # DIAGNOSTIC: Check gradients immediately after backward (early epochs only)
+                if n_train_batches == 0 and model.num_experts > 0 and epoch <= 10:
+                    print(f"\n[DIAG Epoch {epoch}] Checking gradients after backward pass:")
+                    for i, expert in enumerate(model.experts):
+                        layer_names = expert.get_layer_names()
+                        if layer_names:
+                            first_layer = expert.network[layer_names[0]]
+                            final_layer = expert.network[layer_names[-1]]
+                            first_grad = first_layer.weight.grad
+                            final_grad = final_layer.weight.grad
+                            print(f"  Expert {i}: first_layer.grad={'None' if first_grad is None else f'norm={first_grad.norm().item():.6f}'}, "
+                                  f"final_layer.grad={'None' if final_grad is None else f'norm={final_grad.norm().item():.6f}'}")
+
                 timer.start('train.optim_step')
                 optimizer.step()
                 timer.stop('train.optim_step')
