@@ -5,9 +5,9 @@ experiment_name: "schrodinger_tests"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 10000
+  epochs: 1000
   batch_size: 512
-  lr: 0.0001
+  lr: 0.00001
   
   # Optimizer settings
   optimizer_switch_at: 0.9
@@ -108,9 +108,26 @@ base_config:
 
 # Experiments to run
 experiments:  
-  - name: "4k_experts"
+  - name: "2_layers_experts"
     problem: schrodinger
-    architecture: [2, 30, 30, 30, 30, 30, 2]
+    architecture: [2, 30, 30, 2]
+    lr: 0.00001
+    optimizer_switch_at: 0.6
+    lbfgs_lr: 0.1
+
+  - name: "2_layers_experts"
+    problem: schrodinger
+    architecture: [2, 30, 30, 2]
+    lr: 0.000001
+    optimizer_switch_at: 0.6
+    lbfgs_lr: 0.01
+
+  - name: "2_layers_experts"
+    problem: schrodinger
+    architecture: [2, 30, 30, 2]
+    lr: 0.0000001
+    optimizer_switch_at: 0.6
+    lbfgs_lr: 0.001
 
   # - name: "5lyr_40k_Wn_flat"
   #   problem: burgers2d  
