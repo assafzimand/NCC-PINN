@@ -463,7 +463,7 @@ def train(
 
             # DIAGNOSTIC: Verify optimizer includes expert parameters (configurable)
             enable_grad_diag = adaptive_cfg.get('enable_gradient_diagnostics', False)
-            if enable_grad_diag:
+            if enable_grad_diag and hasattr(model, 'base_model') and hasattr(model, 'experts'):
                 print(f"\n{'='*60}")
                 print("DIAGNOSTIC: Optimizer Parameter Check")
                 print(f"{'='*60}")
@@ -600,7 +600,7 @@ def train(
         model._timer = timer
 
     for epoch in range(1, epochs + 1):
-        timer.start_epoch(epoch, num_experts=model.num_experts if is_adaptive else 0)
+        timer.start_epoch(epoch, num_experts=model.num_experts if (is_adaptive and hasattr(model, 'num_experts')) else 0)
 
         # Train phase
         model.train()
@@ -620,7 +620,7 @@ def train(
 
                 # DIAGNOSTIC: Check gradients immediately after backward (early epochs only, configurable)
                 enable_grad_diag = adaptive_cfg.get('enable_gradient_diagnostics', False) if is_adaptive else False
-                if enable_grad_diag and n_train_batches == 0 and model.num_experts > 0 and epoch <= 10:
+                if enable_grad_diag and n_train_batches == 0 and hasattr(model, 'num_experts') and model.num_experts > 0 and epoch <= 10:
                     print(f"\n[DIAG Epoch {epoch}] Checking gradients after backward pass:")
                     for i, expert in enumerate(model.experts):
                         layer_names = expert.get_layer_names()
@@ -920,8 +920,9 @@ def train(
 
         # Adaptive PINN: Hierarchical expert spawning (with cooldown after 0-spawn steps)
         # Disabled if tree was pre-built from pretrained base model
-        spawn_check_triggered = (is_adaptive and 
-                                 epoch % spawn_every == 0 and 
+        spawn_check_triggered = (is_adaptive and
+                                 epoch % spawn_every == 0 and
+                                 hasattr(model, 'num_experts') and
                                  model.num_experts < max_experts and
                                  not disable_spawning_during_training)
         
@@ -934,8 +935,10 @@ def train(
         if spawn_check_triggered:
             print(f"\n{'='*60}")
             print(f"Adaptive PINN: Adding depth level at epoch {epoch}")
-            print(f"  Current experts: {model.num_experts}/{max_experts}")
-            print(f"  Highest depth populated: {model.get_highest_depth()}")
+            if hasattr(model, 'num_experts'):
+                print(f"  Current experts: {model.num_experts}/{max_experts}")
+            if hasattr(model, 'get_highest_depth'):
+                print(f"  Highest depth populated: {model.get_highest_depth()}")
             print(f"{'='*60}")
 
             # Get GLOBAL model predictions on eval_data ONCE (not per parent)
@@ -1003,7 +1006,7 @@ def train(
 
             # For each parent at deepest depth (both spawned and skipped)
             for parent_region, parent_idx in parent_regions_to_process:
-                if model.num_experts >= max_experts:
+                if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
                     print(f"\n  Max experts reached ({max_experts}), stopping spawn process")
                     break
 
@@ -1037,7 +1040,7 @@ def train(
 
                 # For each child, check wavelet threshold and spawn or track as skipped
                 for child_node, _ in children:
-                    if model.num_experts >= max_experts:
+                    if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
                         break
 
                     # Create region descriptor for this child
@@ -1066,14 +1069,16 @@ def train(
                         # Store expert spawn history
                         if 'expert_spawns' not in metrics:
                             metrics['expert_spawns'] = []
-                        metrics['expert_spawns'].append({
+                        spawn_record = {
                             'epoch': epoch,
                             'expert_idx': expert_idx,
                             'region': child_region.to_dict(),
-                            'num_experts': model.num_experts,
                             'depth': deepest_depth + 1,
                             'parent_idx': parent_idx
-                        })
+                        }
+                        if hasattr(model, 'num_experts'):
+                            spawn_record['num_experts'] = model.num_experts
+                        metrics['expert_spawns'].append(spawn_record)
 
             # If any experts were spawned, update optimizer and plot
             if experts_spawned_this_step > 0:
@@ -1090,12 +1095,13 @@ def train(
 
                 # Plot expert regions with depth info
                 problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
+                num_experts_str = f" ({model.num_experts} experts)" if hasattr(model, 'num_experts') else ""
                 plot_expert_regions(
                     regions=model.regions,
                     domain_bounds=domain_bounds,
                     output_path=adaptive_plots_dir / f"expert_regions_epoch_{epoch}.png",
                     problem_type=problem_type,
-                    title=f"Expert Regions at Epoch {epoch} ({model.num_experts} experts)",
+                    title=f"Expert Regions at Epoch {epoch}{num_experts_str}",
                     ground_truth=gt_grid,
                     grid_x=gt_x,
                     grid_t=gt_t
