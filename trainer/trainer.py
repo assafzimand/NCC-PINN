@@ -206,6 +206,20 @@ def _build_expert_tree_from_pretrained(
         output_path=adaptive_plots_dir / "expert_tree_structure.json"
     )
 
+    # DIAGNOSTIC: Verify zero-initialization
+    print(f"\n{'='*60}")
+    print("DIAGNOSTIC: Verifying Expert Initialization")
+    print(f"{'='*60}")
+    with torch.no_grad():
+        sample_inputs = eval_inputs[:100]  # Use eval data sample
+        for i, expert in enumerate(model.experts):
+            out = expert(sample_inputs)
+            out_norm = out.norm().item()
+            out_mean = out.abs().mean().item()
+            out_max = out.abs().max().item()
+            print(f"Expert {i}: norm={out_norm:.8f}, mean={out_mean:.8f}, max={out_max:.8f}")
+    print(f"{'='*60}\n")
+
     return model.num_experts
 
 
@@ -519,9 +533,40 @@ def train(
                 timer.start('train.optim_step')
                 optimizer.step()
                 timer.stop('train.optim_step')
-                
+
                 train_loss += loss.item()
                 n_train_batches += 1
+
+                # DIAGNOSTIC: Track expert gradients and outputs (first batch only per epoch)
+                if n_train_batches == 1 and model.num_experts > 0:
+                    with torch.no_grad():
+                        # Check expert gradients
+                        expert_grad_norms = []
+                        for i, expert in enumerate(model.experts):
+                            layer_names = expert.get_layer_names()
+                            if layer_names and hasattr(expert.network[layer_names[0]], 'weight'):
+                                first_layer = expert.network[layer_names[0]]
+                                if first_layer.weight.grad is not None:
+                                    grad_norm = first_layer.weight.grad.norm().item()
+                                    expert_grad_norms.append(grad_norm)
+
+                        # Check expert outputs vs base
+                        inputs = torch.cat([batch['x'], batch['t']], dim=1)
+                        decomp = model.forward_decomposed(inputs)
+                        base_norm = decomp['base'].norm().item()
+                        expert_norms = [decomp[f'expert_{i}'].norm().item() for i in range(model.num_experts)]
+                        total_expert_contrib = sum(expert_norms)
+
+                        # Store for this epoch
+                        if not hasattr(model, '_diag_data'):
+                            model._diag_data = []
+                        model._diag_data.append({
+                            'epoch': epoch,
+                            'base_norm': base_norm,
+                            'expert_norms': expert_norms,
+                            'expert_grad_norms': expert_grad_norms,
+                            'total_expert_contrib': total_expert_contrib
+                        })
 
         else:
             # LBFGS: Full-batch training with memory error handling
@@ -540,6 +585,37 @@ def train(
                 timer.stop('train.lbfgs_step')
                 train_loss = loss.item()
                 n_train_batches = 1
+
+                # DIAGNOSTIC: Track expert gradients and outputs (LBFGS)
+                if model.num_experts > 0:
+                    with torch.no_grad():
+                        # Check expert gradients
+                        expert_grad_norms = []
+                        for i, expert in enumerate(model.experts):
+                            layer_names = expert.get_layer_names()
+                            if layer_names and hasattr(expert.network[layer_names[0]], 'weight'):
+                                first_layer = expert.network[layer_names[0]]
+                                if first_layer.weight.grad is not None:
+                                    grad_norm = first_layer.weight.grad.norm().item()
+                                    expert_grad_norms.append(grad_norm)
+
+                        # Check expert outputs vs base
+                        inputs = torch.cat([train_data['x'][:512], train_data['t'][:512]], dim=1)  # Sample for speed
+                        decomp = model.forward_decomposed(inputs)
+                        base_norm = decomp['base'].norm().item()
+                        expert_norms = [decomp[f'expert_{i}'].norm().item() for i in range(model.num_experts)]
+                        total_expert_contrib = sum(expert_norms)
+
+                        # Store for this epoch
+                        if not hasattr(model, '_diag_data'):
+                            model._diag_data = []
+                        model._diag_data.append({
+                            'epoch': epoch,
+                            'base_norm': base_norm,
+                            'expert_norms': expert_norms,
+                            'expert_grad_norms': expert_grad_norms,
+                            'total_expert_contrib': total_expert_contrib
+                        })
             
             except RuntimeError as e:
                 if "out of memory" in str(e).lower():
@@ -683,6 +759,19 @@ def train(
                   f"Eval Rel-L2: {eval_rel_l2:.6f} | "
                   f"Train Inf: {train_inf_norm:.6f} | "
                   f"Eval Inf: {eval_inf_norm:.6f}")
+
+            # DIAGNOSTIC: Print expert contributions
+            if model.num_experts > 0 and hasattr(model, '_diag_data') and model._diag_data:
+                latest_diag = model._diag_data[-1]
+                base_norm = latest_diag['base_norm']
+                total_expert = latest_diag['total_expert_contrib']
+                expert_norms = latest_diag['expert_norms']
+                expert_grads = latest_diag['expert_grad_norms']
+
+                print(f"  [DIAG] Base norm: {base_norm:.6f} | Expert contrib: {total_expert:.6f} | Ratio: {total_expert/base_norm if base_norm > 0 else 0:.4f}")
+                print(f"  [DIAG] Expert norms: {[f'{x:.4f}' for x in expert_norms[:5]]}" + ("..." if len(expert_norms) > 5 else ""))
+                if expert_grads:
+                    print(f"  [DIAG] Expert grad norms: {[f'{x:.6f}' for x in expert_grads[:5]]}" + ("..." if len(expert_grads) > 5 else ""))
 
         # Save checkpoint periodically (only when we have eval metrics)
         if epoch % save_every == 0 and eval_loss is not None:
@@ -939,6 +1028,32 @@ def train(
     # Save timing data and print summary
     timer.save(run_dir / "timing.json")
     timer.print_summary()
+
+    # Save expert diagnostics to CSV
+    if model.num_experts > 0 and hasattr(model, '_diag_data') and model._diag_data:
+        import pandas as pd
+        diag_csv_path = run_dir / "expert_diagnostics.csv"
+
+        # Flatten diagnostic data for CSV
+        diag_rows = []
+        for diag in model._diag_data:
+            row = {
+                'epoch': diag['epoch'],
+                'base_norm': diag['base_norm'],
+                'total_expert_contrib': diag['total_expert_contrib'],
+                'ratio_expert_to_base': diag['total_expert_contrib'] / diag['base_norm'] if diag['base_norm'] > 0 else 0
+            }
+            # Add individual expert norms
+            for i, norm in enumerate(diag['expert_norms']):
+                row[f'expert_{i}_norm'] = norm
+            # Add individual expert gradient norms
+            for i, grad_norm in enumerate(diag['expert_grad_norms']):
+                row[f'expert_{i}_grad_norm'] = grad_norm
+            diag_rows.append(row)
+
+        df = pd.DataFrame(diag_rows)
+        df.to_csv(diag_csv_path, index=False)
+        print(f"  Expert diagnostics saved: {diag_csv_path}")
 
     # Plot training curves
     print(f"\nGenerating training plots...")

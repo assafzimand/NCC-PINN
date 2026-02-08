@@ -107,22 +107,22 @@ base_config:
     inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
 
 # Experiments to run
-experiments:  
-  - name: "2_layers_experts"
+experiments:
+  - name: "2lyr_lr1e-5"
     problem: schrodinger
     architecture: [2, 30, 30, 2]
     lr: 0.00001
     optimizer_switch_at: 0.6
     lbfgs_lr: 0.1
 
-  - name: "2_layers_experts"
+  - name: "2lyr_lr1e-6"
     problem: schrodinger
     architecture: [2, 30, 30, 2]
     lr: 0.000001
     optimizer_switch_at: 0.6
     lbfgs_lr: 0.01
 
-  - name: "2_layers_experts"
+  - name: "2lyr_lr1e-7"
     problem: schrodinger
     architecture: [2, 30, 30, 2]
     lr: 0.0000001
