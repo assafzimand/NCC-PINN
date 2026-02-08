@@ -99,7 +99,7 @@ base_config:
     base_weight: 1.0                  # Uniform weight for base model (soft blending only)
     base_everywhere: true             # If false, u_0 has indicator = domain \ experts
     pretrained_base_model: true  # If true, load base from path and freeze, build tree then train experts
-    pretrained_base_path: 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt
+    pretrained_base_path: 'adaptive\pretrained_bases\schrodinger\schrodinger-2-120-120-120-2-tanh\checkpoints\schrodinger-2-120-120-120-2-tanh\final_model.pt'
     wavelet_threshold: 0.0001   # Minimum wavelet norm to spawn (filters low-priority regions)
     tree_max_depth: 15              # Max depth of decision tree (for pretrained case)
     tree_min_samples_leaf: 10       # Min samples in tree leaf node
