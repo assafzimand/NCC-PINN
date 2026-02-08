@@ -110,21 +110,21 @@ base_config:
 
 # Experiments to run
 experiments:
-  - name: "2lyr_30_neurons"
+  - name: "1lyr_70_neurons_30experts"  # Few layers, many experts
     problem: schrodinger
-    architecture: [2, 70, 2]
+    architecture: [2, 70, 2]  # 1 hidden layer, 70 neurons
     adaptive_pinn:
       max_experts: 30
 
-  - name: "3lyr_70_neurons"
+  - name: "3lyr_30_neurons_14experts"  # Medium depth, medium experts
     problem: schrodinger
-    architecture: [2, 30, 30, 30, 2]
+    architecture: [2, 30, 30, 30, 2]  # 3 hidden layers, 30 neurons each
     adaptive_pinn:
       max_experts: 14
 
-  - name: "5lyr_30_neurons"
+  - name: "5lyr_30_neurons_6experts"  # Many layers, few experts
     problem: schrodinger
-    architecture: [2, 30, 30, 30, 30, 30, 2]
+    architecture: [2, 30, 30, 30, 30, 30, 2]  # 5 hidden layers, 30 neurons each
     adaptive_pinn:
       max_experts: 6
 

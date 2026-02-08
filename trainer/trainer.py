@@ -640,7 +640,7 @@ def train(
                 n_train_batches += 1
 
                 # DIAGNOSTIC: Track expert gradients and outputs (first batch only per epoch)
-                if n_train_batches == 1 and model.num_experts > 0:
+                if n_train_batches == 1 and is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0:
                     with torch.no_grad():
                         # Check expert gradients
                         expert_grad_norms = []
@@ -689,7 +689,7 @@ def train(
                 n_train_batches = 1
 
                 # DIAGNOSTIC: Track expert gradients and outputs (LBFGS)
-                if model.num_experts > 0:
+                if is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0:
                     with torch.no_grad():
                         # Check expert gradients
                         expert_grad_norms = []
