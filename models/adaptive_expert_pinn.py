@@ -281,7 +281,21 @@ class AdaptiveExpertPINN(nn.Module):
         )
         # Initial sync with base model only (no experts yet)
         self.batched_models.sync_from_models(self.base_model, self.experts)
-        
+
+        # Optimize with torch.compile (PyTorch 2.0+) for faster forward pass
+        use_compile = adaptive_config.get('use_torch_compile', True)
+        if use_compile:
+            try:
+                import torch
+                if hasattr(torch, 'compile'):  # PyTorch 2.0+
+                    print(f"  Enabling torch.compile for BatchedModels (PyTorch {torch.__version__})")
+                    self.batched_models.forward = torch.compile(
+                        self.batched_models.forward,
+                        mode='reduce-overhead'  # Options: 'default', 'reduce-overhead', 'max-autotune'
+                    )
+            except Exception as e:
+                print(f"  Warning: torch.compile failed ({e}), using uncompiled version")
+
         # Hook management
         self.activations: Dict[str, torch.Tensor] = {}
         self.hook_handles: List[RemovableHandle] = []
