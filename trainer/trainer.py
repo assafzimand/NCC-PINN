@@ -511,6 +511,18 @@ def train(
                 # Forward pass through model
                 output = model(test_inputs)
 
+                # Check intermediate tensors' requires_grad
+                print(f"Checking requires_grad in computation graph:")
+                print(f"  test_inputs.requires_grad: {test_inputs.requires_grad}")
+                print(f"  output.requires_grad: {output.requires_grad}")
+
+                # Call forward_decomposed to check individual expert outputs
+                decomp_with_grad = model.forward_decomposed(test_inputs)
+                print(f"\nExpert outputs (with gradients enabled):")
+                for i in range(min(3, model.num_experts)):  # Check first 3
+                    expert_out = decomp_with_grad[f'expert_{i}']
+                    print(f"  expert_{i}: requires_grad={expert_out.requires_grad}, norm={expert_out.norm().item():.8f}")
+
                 # Compute dummy loss (just sum to ensure gradients flow)
                 dummy_loss = output.sum()
 
@@ -518,7 +530,7 @@ def train(
                 dummy_loss.backward()
 
                 # Check if gradients reached experts
-                print(f"After manual backward pass:")
+                print(f"\nAfter manual backward pass:")
                 for i, expert in enumerate(model.experts):
                     layer_names = expert.get_layer_names()
                     if layer_names:
