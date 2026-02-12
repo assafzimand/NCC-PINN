@@ -977,32 +977,25 @@ def train(
             # Get all nodes at current deepest depth
             deepest_depth = model.get_highest_depth()
 
-            # Build list of parents to process: both spawned experts AND skipped regions
+            # Build list of parents to process
             parent_regions_to_process = []  # List of (region_or_none, parent_idx)
 
             if deepest_depth == 0:
-                # No experts yet - spawn children of base
+                # No experts yet - always try to spawn children of base
                 parent_regions_to_process.append((None, -1))  # (region, parent_idx)
             else:
-                # Add spawned experts at deepest depth
-                spawned_at_depth = model.get_regions_at_depth(deepest_depth)
-                for region in spawned_at_depth:
-                    parent_idx = model.regions.index(region)
-                    parent_regions_to_process.append((region, parent_idx))
+                # Use retry_parents: previously spawned experts + failed parents that need retry
+                if 'retry_parents' not in locals():
+                    retry_parents = {}
+                parents_at_depth = retry_parents.pop(deepest_depth, [])
+                parent_regions_to_process.extend(parents_at_depth)
 
-                # Add skipped regions at deepest depth (tracked from previous iteration)
-                # These are regions that failed wavelet threshold but should still have children checked
-                if 'skipped_regions_at_depth' in locals() and deepest_depth in skipped_regions_at_depth:
-                    for skipped_region, skipped_parent_idx in skipped_regions_at_depth[deepest_depth]:
-                        parent_regions_to_process.append((skipped_region, skipped_parent_idx))
+            # Ensure retry_parents is initialized
+            if 'retry_parents' not in locals():
+                retry_parents = {}
 
             print(f"\n  [Spawning] Adding depth level {deepest_depth + 1}")
             print(f"  [Spawning] Processing {len(parent_regions_to_process)} parents at depth {deepest_depth}")
-
-            # Track skipped regions at next depth for future iterations
-            if 'skipped_regions_at_depth' not in locals():
-                skipped_regions_at_depth = {}
-            skipped_regions_at_depth[deepest_depth + 1] = []
 
             # For each parent at deepest depth (both spawned and skipped)
             for parent_region, parent_idx in parent_regions_to_process:
@@ -1038,7 +1031,28 @@ def train(
                     verbose=True
                 )
 
-                # For each child, check wavelet threshold and spawn or track as skipped
+                # All-or-nothing decision: if ANY child exceeds threshold, spawn ALL children
+                if not children:
+                    print(f"      [Spawning] No children from split, retrying parent next iteration")
+                    if parent_region is not None:
+                        retry_parents.setdefault(deepest_depth, []).append((parent_region, parent_idx))
+                    continue
+
+                # Check if any child is above threshold
+                if wavelet_threshold is not None:
+                    any_above = any(child_node.wavelet_norm >= wavelet_threshold for child_node, _ in children)
+                else:
+                    any_above = True  # No threshold: always spawn
+
+                if not any_above:
+                    norms_str = ', '.join([f'{c.wavelet_norm:.6f}' for c, _ in children])
+                    print(f"      [Spawning] All children below threshold (norms=[{norms_str}] < {wavelet_threshold})")
+                    print(f"                 → Keeping parent as leaf, retrying next iteration")
+                    if parent_region is not None:
+                        retry_parents.setdefault(deepest_depth, []).append((parent_region, parent_idx))
+                    continue
+
+                # Spawn ALL children (all-or-nothing)
                 for child_node, _ in children:
                     if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
                         break
@@ -1053,18 +1067,13 @@ def train(
                         parent_idx=parent_idx
                     )
 
-                    # Check wavelet threshold
-                    if wavelet_threshold is not None and child_node.wavelet_norm < wavelet_threshold:
-                        print(f"      [Spawning] Skip child (wavelet={child_node.wavelet_norm:.6f} < threshold={wavelet_threshold})")
-                        print(f"                 → Will check its children at depth {deepest_depth + 2}")
-                        # Track this skipped region so we can check its children in next depth
-                        skipped_regions_at_depth[deepest_depth + 1].append((child_region, parent_idx))
-                        continue
-
                     # Spawn child
                     expert_idx = model.spawn_expert(child_region)
                     if expert_idx >= 0:
                         experts_spawned_this_step += 1
+
+                        # Register as future parent (so next iteration can try splitting it)
+                        retry_parents.setdefault(deepest_depth + 1, []).append((child_region, expert_idx))
 
                         # Store expert spawn history
                         if 'expert_spawns' not in metrics:
