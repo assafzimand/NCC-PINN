@@ -1,0 +1,378 @@
+"""Regenerate comparison plots for all experiment batches in AToE-New branch."""
+
+import json
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+import torch
+from typing import Dict
+
+# Import the functions we need from run_experiments
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
+
+from utils.comparison_plots import (
+    generate_ncc_classification_plot,
+    generate_ncc_compactness_plot,
+    generate_probe_comparison_plots,
+    generate_derivatives_comparison_plots,
+    generate_frequency_coverage_comparison,
+    plot_spectral_learning_efficiency_comparison
+)
+
+
+def _generate_training_results_plot(parent_dir, df):
+    """Generate training and results comparison table (copied from run_experiments.py)."""
+    from matplotlib.colors import LinearSegmentedColormap
+    import numpy as np
+
+    fig = plt.figure(figsize=(16, 6))
+    ax3 = fig.add_subplot(111)
+    ax3.axis('off')
+
+    # Create colored table
+    table_data = []
+    col_labels = ['Experiment', 'Train Loss', 'Eval Loss', 'Train Rel-L2', 'Train Inf',
+                  'Eval Rel-L2', 'Eval Inf', 'NCC Final Acc', 'Margin SNR',
+                  'Deriv Train Res', 'Deriv Eval Res']
+
+    for _, row in df.iterrows():
+        row_data = [
+            row['experiment'],
+            f"{row['final_train_loss']:.6f}",
+            f"{row['final_eval_loss']:.6f}",
+            f"{row['final_train_rel_l2']:.6f}",
+            f"{row['final_train_inf_norm']:.6f}",
+            f"{row['final_eval_rel_l2']:.6f}",
+            f"{row['final_eval_inf_norm']:.6f}",
+            f"{row['ncc_final_accuracy']:.6f}",
+            f"{row['margin_snr']:.2f}"
+        ]
+        # Add derivatives if available
+        if 'deriv_final_train_residual' in row and not pd.isna(row['deriv_final_train_residual']):
+            row_data.append(f"{row['deriv_final_train_residual']:.2e}")
+        else:
+            row_data.append("N/A")
+        if 'deriv_final_eval_residual' in row and not pd.isna(row['deriv_final_eval_residual']):
+            row_data.append(f"{row['deriv_final_eval_residual']:.2e}")
+        else:
+            row_data.append("N/A")
+        table_data.append(row_data)
+
+    table = ax3.table(cellText=table_data, colLabels=col_labels,
+                     cellLoc='center', loc='center',
+                     bbox=[0.05, 0.1, 0.9, 0.8])
+
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    table.scale(1, 2.0)
+
+    # Create green-to-red colormap
+    cmap = LinearSegmentedColormap.from_list('GreenRed', ['#2ecc71', '#f1c40f', '#e74c3c'])
+
+    # Color coding for each column
+    num_cols = len(col_labels)
+    for col_idx in range(1, min(num_cols, len(df.columns) + 1)):
+        # Check if this column exists in the dataframe
+        if col_idx >= len(df.columns):
+            continue
+
+        col_name = df.columns[col_idx]
+        values = df[col_name].values
+
+        # Skip if all NaN
+        if pd.isna(values).all():
+            continue
+
+        # For losses/errors/residuals, lower is better; for accuracy and margin SNR, higher is better
+        if col_idx == 7 or col_idx == 8:  # NCC accuracy and Margin SNR - higher is better
+            norm_values = 1 - (values - values.min()) / (values.max() - values.min() + 1e-10)
+        else:  # Losses, errors, residuals - lower is better
+            norm_values = (values - values.min()) / (values.max() - values.min() + 1e-10)
+
+        for row_idx, norm_val in enumerate(norm_values):
+            if not pd.isna(norm_val):
+                cell = table[(row_idx + 1, col_idx)]
+                color = cmap(norm_val)
+                cell.set_facecolor(color)
+                cell.set_alpha(0.7)
+
+    # Style header
+    for col_idx in range(num_cols):
+        cell = table[(0, col_idx)]
+        cell.set_facecolor('#34495e')
+        cell.set_text_props(weight='bold', color='white')
+
+    fig.suptitle('Training and Results Comparison', fontsize=16, fontweight='bold', y=0.92)
+
+    plt.savefig(parent_dir / "training_and_results_comparison.png", dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Training and results comparison saved to training_and_results_comparison.png")
+
+
+def generate_comparison_for_batch(batch_dir: Path):
+    """Generate comparison plots for a single experiment batch."""
+    print(f"\n{'='*70}")
+    print(f"Processing batch: {batch_dir.name}")
+    print(f"{'='*70}\n")
+
+    # Find all model directories in this batch
+    model_dirs = [d for d in batch_dir.iterdir() if d.is_dir()]
+
+    if not model_dirs:
+        print(f"  No model directories found in {batch_dir}")
+        return
+
+    print(f"  Found {len(model_dirs)} models: {[d.name for d in model_dirs]}")
+
+    # Build results dict (model_name -> result_path)
+    # Handle structure: batch/model_name/timestamp/metrics.json
+    results = {}
+    for model_dir in model_dirs:
+        # Look for timestamp subdirectories
+        timestamp_dirs = [d for d in model_dir.iterdir() if d.is_dir() and d.name != 'checkpoints']
+        if timestamp_dirs:
+            # Use the most recent timestamp directory
+            latest_timestamp = sorted(timestamp_dirs)[-1]
+            results[model_dir.name] = latest_timestamp
+        else:
+            results[model_dir.name] = model_dir
+
+    # Collect training metrics (same logic as run_experiments.py)
+    metrics_data = []
+    ncc_data = {}
+    probe_data = {}
+    derivatives_data = {}
+    frequency_data = {}
+    expert_regions_data = {}
+
+    for exp_name, result_path in results.items():
+        if result_path is None:
+            continue
+
+        # Load training metrics
+        metrics_file = result_path / "metrics.json"
+        if not metrics_file.exists():
+            print(f"  Warning: No metrics.json found for {exp_name}")
+            continue
+
+        with open(metrics_file) as f:
+            train_metrics = json.load(f)
+
+        # Collect NCC metrics
+        ncc_plots_dir = result_path / "ncc_plots"
+        ncc_epochs = {}
+
+        if ncc_plots_dir.exists():
+            final_ncc_file = ncc_plots_dir / "ncc_metrics.json"
+            if final_ncc_file.exists():
+                with open(final_ncc_file) as f:
+                    ncc_epochs['final'] = json.load(f)
+
+            # Load periodic NCCs
+            for subdir in ncc_plots_dir.iterdir():
+                if subdir.is_dir() and subdir.name.startswith("ncc_plots_epoch_"):
+                    epoch_num = int(subdir.name.split("_")[-1])
+                    epoch_file = subdir / "ncc_metrics.json"
+                    if epoch_file.exists():
+                        with open(epoch_file) as f:
+                            ncc_epochs[epoch_num] = json.load(f)
+
+        # If no NCC data, use defaults
+        if not ncc_epochs:
+            print(f"  Warning: No NCC data found for {exp_name}, using defaults")
+            final_ncc = None
+        else:
+            final_ncc = ncc_epochs.get('final', list(ncc_epochs.values())[-1])
+
+        # Load probe metrics
+        probe_file = result_path / "probe_plots" / "probe_metrics.json"
+        if probe_file.exists():
+            with open(probe_file) as f:
+                probe_metrics = json.load(f)
+                probe_data[exp_name] = probe_metrics
+
+        # Load derivatives metrics
+        deriv_file = result_path / "derivatives_plots" / "derivatives_metrics.json"
+        deriv_metrics = None
+        if deriv_file.exists():
+            with open(deriv_file) as f:
+                deriv_metrics = json.load(f)
+                derivatives_data[exp_name] = deriv_metrics
+
+        # Load frequency metrics
+        freq_file = result_path / "frequency_plots" / "frequency_metrics.json"
+        if freq_file.exists():
+            with open(freq_file) as f:
+                freq_metrics = json.load(f)
+                frequency_data[exp_name] = freq_metrics
+
+        # Load expert regions for adaptive PINN
+        expert_regions_file = result_path / "adaptive_plots" / "expert_regions.json"
+        if expert_regions_file.exists():
+            try:
+                from adaptive.indicators import RegionDescriptor
+                from adaptive.visualization import load_regions_metadata
+                regions = load_regions_metadata(expert_regions_file)
+                if regions:
+                    expert_regions_data[exp_name] = regions
+            except Exception as e:
+                print(f"  Warning: Could not load expert regions for {exp_name}: {e}")
+
+        # Extract margin SNR if NCC data available
+        if final_ncc:
+            final_layer = list(final_ncc['layer_accuracies'].keys())[-1]
+            margin_mean = final_ncc['layer_margins'][final_layer]['mean_margin']
+            margin_std = final_ncc['layer_margins'][final_layer]['std_margin']
+            margin_snr = margin_mean / margin_std if margin_std > 0 else 0
+            ncc_accuracy = final_ncc['layer_accuracies'][final_layer]
+        else:
+            margin_snr = float('nan')
+            ncc_accuracy = float('nan')
+
+        # Build metrics row
+        metrics_row = {
+            'experiment': exp_name,
+            'final_train_loss': train_metrics['train_loss'][-1],
+            'final_eval_loss': train_metrics['eval_loss'][-1],
+            'final_train_rel_l2': train_metrics['train_rel_l2'][-1],
+            'final_train_inf_norm': train_metrics['train_inf_norm'][-1],
+            'final_eval_rel_l2': train_metrics['eval_rel_l2'][-1],
+            'final_eval_inf_norm': train_metrics['eval_inf_norm'][-1],
+            'ncc_final_accuracy': ncc_accuracy,
+            'margin_snr': margin_snr
+        }
+
+        # Add derivatives if available
+        if deriv_metrics:
+            metrics_row['deriv_final_train_residual'] = deriv_metrics['final_layer_train_residual']
+            metrics_row['deriv_final_eval_residual'] = deriv_metrics['final_layer_eval_residual']
+
+        metrics_data.append(metrics_row)
+        if ncc_epochs:
+            ncc_data[exp_name] = ncc_epochs
+
+    if not metrics_data:
+        print(f"  No valid results to compare for batch {batch_dir.name}")
+        return
+
+    # Create comparison table
+    df = pd.DataFrame(metrics_data)
+    df.to_csv(batch_dir / "comparison_summary.csv", index=False)
+    print(f"  Comparison table saved to comparison_summary.csv")
+
+    # Generate plots
+    _generate_training_results_plot(batch_dir, df)
+
+    if ncc_data:
+        generate_ncc_classification_plot(batch_dir, ncc_data)
+        generate_ncc_compactness_plot(batch_dir, ncc_data)
+
+    if probe_data:
+        generate_probe_comparison_plots(batch_dir, probe_data)
+
+    if derivatives_data:
+        generate_derivatives_comparison_plots(batch_dir, derivatives_data)
+
+    if frequency_data:
+        generate_frequency_coverage_comparison(batch_dir, frequency_data)
+        plot_spectral_learning_efficiency_comparison(frequency_data, batch_dir)
+
+    if expert_regions_data:
+        print(f"  Generating expert regions comparison ({len(expert_regions_data)} experiments)...")
+        try:
+            from adaptive.visualization import (
+                plot_expert_regions_comparison, prepare_ground_truth_grid
+            )
+
+            # Get domain bounds from first experiment's config
+            first_result_path = list(results.values())[0]
+            if first_result_path is not None:
+                config_file = first_result_path / "config_used.yaml"
+                if config_file.exists():
+                    import yaml
+                    with open(config_file) as f:
+                        exp_config = yaml.safe_load(f)
+                    problem = exp_config.get('problem', 'burgers1d')
+                    problem_config = exp_config.get(problem, {})
+                    spatial_domain = problem_config.get('spatial_domain', [[-1, 1]])
+                    temporal_domain = problem_config.get('temporal_domain', [0, 1])
+
+                    # Build domain bounds
+                    if len(spatial_domain) == 1:
+                        domain_bounds = {
+                            'lower': [spatial_domain[0][0], temporal_domain[0]],
+                            'upper': [spatial_domain[0][1], temporal_domain[1]]
+                        }
+                        problem_type = '2d'
+                    else:
+                        domain_bounds = {
+                            'lower': [spatial_domain[0][0], spatial_domain[1][0], temporal_domain[0]],
+                            'upper': [spatial_domain[0][1], spatial_domain[1][1], temporal_domain[1]]
+                        }
+                        problem_type = '3d'
+
+                    # Load eval data for ground truth
+                    gt_grid, gt_x, gt_t = None, None, None
+                    if problem_type == '2d':
+                        eval_data_path = Path("datasets") / problem / "eval_data.pt"
+                        if eval_data_path.exists():
+                            try:
+                                eval_data = torch.load(eval_data_path, map_location='cpu')
+                                gt_grid, gt_x, gt_t = prepare_ground_truth_grid(
+                                    eval_data, domain_bounds
+                                )
+                            except Exception as e:
+                                print(f"  Warning: Could not load ground truth: {e}")
+
+                    plot_expert_regions_comparison(
+                        experiment_regions=expert_regions_data,
+                        domain_bounds=domain_bounds,
+                        output_path=batch_dir / "expert_regions_comparison.png",
+                        problem_type=problem_type,
+                        ground_truth=gt_grid,
+                        grid_x=gt_x,
+                        grid_t=gt_t
+                    )
+        except Exception as e:
+            print(f"  Error generating expert regions comparison: {e}")
+
+    print(f"\n  [OK] Comparison plots saved to {batch_dir}")
+
+
+def main():
+    """Main entry point."""
+    experiments_base = Path("outputs/experiments/AToE-New")
+
+    if not experiments_base.exists():
+        print(f"Error: Directory not found: {experiments_base}")
+        return
+
+    # Find all batch directories
+    batch_dirs = [d for d in experiments_base.iterdir() if d.is_dir()]
+
+    if not batch_dirs:
+        print(f"No experiment batches found in {experiments_base}")
+        return
+
+    print(f"Found {len(batch_dirs)} experiment batches:")
+    for batch_dir in sorted(batch_dirs):
+        print(f"  - {batch_dir.name}")
+
+    # Process each batch
+    for batch_dir in sorted(batch_dirs):
+        try:
+            generate_comparison_for_batch(batch_dir)
+        except Exception as e:
+            print(f"\nError processing {batch_dir.name}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+
+    print(f"\n{'='*70}")
+    print("Done! All comparison plots regenerated.")
+    print(f"{'='*70}")
+
+
+if __name__ == "__main__":
+    main()
