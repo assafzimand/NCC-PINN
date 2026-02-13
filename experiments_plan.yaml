@@ -5,7 +5,7 @@ experiment_name: "schrodinger_adptive_large_threshold"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 100
+  epochs: 50
   batch_size: 512
   lr: 0.0001  
 
@@ -30,10 +30,10 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 5
-  print_every: 5
-  save_every: 50
-  inner_metrics_eval_every: 34
+  eval_every: 1
+  print_every: 1
+  save_every: 25
+  inner_metrics_eval_every: 25
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -91,7 +91,7 @@ base_config:
   adaptive_pinn:
     enabled: true                    # Toggle feature on/off (override per experiment)
     max_experts: 20                 # Maximum number of expert networks
-    spawn_every_epochs: 10    # Check for spawning every N epochs (quick test value)
+    spawn_every_epochs: 3    # Check for spawning every N epochs (quick test value)
     expert_architectures: null        # null = same as base, or list of architectures
     freeze_mode: none                 # "none" | "previous" | "base_only"
     blending_mode: soft               # "hard" | "soft"
@@ -106,6 +106,14 @@ base_config:
     enable_timing: true   # Enable epoch timing profiling (can slow down training)
     inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
     enable_gradient_diagnostics: false  # Enable detailed gradient flow diagnostics (verbose)
+    
+    # Sparse Expert Activation (Step 2.1)
+    expert_activation_threshold: 1e-8  # null = disabled, float = only evaluate experts with psi > threshold
+                                        # Recommended: 1e-4 (filters <0.01% contributions)
+                                        # Aggressive: 1e-3, Conservative: 1e-5
+    
+    # Point Bucketing (Step 2.2 - not yet implemented)
+    enable_point_bucketing: false      # Requires expert_activation_threshold to be set
 
 # Experiments to run
 experiments:

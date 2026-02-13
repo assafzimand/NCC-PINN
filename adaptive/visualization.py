@@ -603,7 +603,7 @@ def plot_expert_soft_weights(
     
     # Check if model has soft blending
     if not hasattr(model, 'base_indicator') or model.base_indicator is None:
-        print(f"  Warning: Model does not have soft blending enabled")
+        print(f"  Warning: Base Model does not have soft blending enabled")
         return
     
     # Create evaluation grid
