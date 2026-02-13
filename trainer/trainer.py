@@ -206,19 +206,20 @@ def _build_expert_tree_from_pretrained(
         output_path=adaptive_plots_dir / "expert_tree_structure.json"
     )
 
-    # DIAGNOSTIC: Verify zero-initialization
-    print(f"\n{'='*60}")
-    print("DIAGNOSTIC: Verifying Expert Initialization")
-    print(f"{'='*60}")
-    with torch.no_grad():
-        sample_inputs = eval_inputs[:100]  # Use eval data sample
-        for i, expert in enumerate(model.experts):
-            out = expert(sample_inputs)
-            out_norm = out.norm().item()
-            out_mean = out.abs().mean().item()
-            out_max = out.abs().max().item()
-            print(f"Expert {i}: norm={out_norm:.8f}, mean={out_mean:.8f}, max={out_max:.8f}")
-    print(f"{'='*60}\n")
+    # DIAGNOSTIC: Verify zero-initialization (configurable)
+    if adaptive_cfg.get('enable_gradient_diagnostics', False):
+        print(f"\n{'='*60}")
+        print("DIAGNOSTIC: Verifying Expert Initialization")
+        print(f"{'='*60}")
+        with torch.no_grad():
+            sample_inputs = eval_inputs[:100]  # Use eval data sample
+            for i, expert in enumerate(model.experts):
+                out = expert(sample_inputs)
+                out_norm = out.norm().item()
+                out_mean = out.abs().mean().item()
+                out_max = out.abs().max().item()
+                print(f"Expert {i}: norm={out_norm:.8f}, mean={out_mean:.8f}, max={out_max:.8f}")
+        print(f"{'='*60}\n")
 
     return model.num_experts
 
@@ -306,14 +307,15 @@ def train(
     # Move model to device
     model = model.to(device)
 
-    # DIAGNOSTIC: Verify model is on correct device
-    print(f"\n{'='*40} GPU DIAGNOSTIC {'='*40}")
-    print(f"Target device: {device}")
-    if hasattr(model, 'base_model'):
-        print(f"Base model device: {next(model.base_model.parameters()).device}")
-    else:
-        print(f"Model device: {next(model.parameters()).device}")
-    print(f"{'='*80}\n")
+    # DIAGNOSTIC: Verify model is on correct device (configurable)
+    if cfg.get('adaptive_pinn', {}).get('enable_gradient_diagnostics', False):
+        print(f"\n{'='*40} GPU DIAGNOSTIC {'='*40}")
+        print(f"Target device: {device}")
+        if hasattr(model, 'base_model'):
+            print(f"Base model device: {next(model.base_model.parameters()).device}")
+        else:
+            print(f"Model device: {next(model.parameters()).device}")
+        print(f"{'='*80}\n")
 
     # Load datasets
     print(f"\nLoading datasets...")
@@ -446,12 +448,13 @@ def train(
             model.freeze_base_model()
             model.unfreeze_experts()
             
-            # DIAGNOSTIC: Verify all models on correct device after tree building
-            print(f"\n{'='*40} POST-TREE GPU CHECK {'='*40}")
-            print(f"Base model device: {next(model.base_model.parameters()).device}")
-            for i, expert in enumerate(model.experts):
-                print(f"Expert {i} device: {next(expert.parameters()).device}")
-            print(f"{'='*80}\n")
+            # DIAGNOSTIC: Verify all models on correct device after tree building (configurable)
+            if adaptive_cfg.get('enable_gradient_diagnostics', False):
+                print(f"\n{'='*40} POST-TREE GPU CHECK {'='*40}")
+                print(f"Base model device: {next(model.base_model.parameters()).device}")
+                for i, expert in enumerate(model.experts):
+                    print(f"Expert {i} device: {next(expert.parameters()).device}")
+                print(f"{'='*80}\n")
             
             # Recreate optimizer to include all expert parameters
             if switch_at_fraction == 0.0:
@@ -639,8 +642,9 @@ def train(
                 train_loss += loss.item()
                 n_train_batches += 1
 
-                # DIAGNOSTIC: Track expert gradients and outputs (first batch only per epoch)
-                if n_train_batches == 1 and is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0:
+                # DIAGNOSTIC: Track expert gradients and outputs (first batch only per epoch, configurable)
+                enable_grad_diag = adaptive_cfg.get('enable_gradient_diagnostics', False) if is_adaptive else False
+                if enable_grad_diag and n_train_batches == 1 and is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0:
                     with torch.no_grad():
                         # Check expert gradients
                         expert_grad_norms = []
@@ -688,8 +692,9 @@ def train(
                 train_loss = loss.item()
                 n_train_batches = 1
 
-                # DIAGNOSTIC: Track expert gradients and outputs (LBFGS)
-                if is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0:
+                # DIAGNOSTIC: Track expert gradients and outputs (LBFGS, configurable)
+                enable_grad_diag = adaptive_cfg.get('enable_gradient_diagnostics', False) if is_adaptive else False
+                if enable_grad_diag and is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0:
                     with torch.no_grad():
                         # Check expert gradients
                         expert_grad_norms = []
@@ -862,8 +867,9 @@ def train(
                   f"Train Inf: {train_inf_norm:.6f} | "
                   f"Eval Inf: {eval_inf_norm:.6f}")
 
-            # DIAGNOSTIC: Print expert contributions
-            if is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0 and hasattr(model, '_diag_data') and model._diag_data:
+            # DIAGNOSTIC: Print expert contributions (configurable)
+            enable_grad_diag = adaptive_cfg.get('enable_gradient_diagnostics', False) if is_adaptive else False
+            if enable_grad_diag and is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0 and hasattr(model, '_diag_data') and model._diag_data:
                 latest_diag = model._diag_data[-1]
                 base_norm = latest_diag['base_norm']
                 total_expert = latest_diag['total_expert_contrib']

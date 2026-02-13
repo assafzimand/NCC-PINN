@@ -18,193 +18,49 @@ The composed solution depends on the mode:
     where ψ̃_k = ψ_k / Σ_j ψ_j for j=1..K (experts only)
     Base contributes with ψ_0 = 1 everywhere (not normalized).
 
-**Architecture support:**
-The implementation uses BatchedModels to support heterogeneous architectures
-by grouping models with the same architecture and computing each group in parallel.
 """
 
 import torch
 import torch.nn as nn
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 from torch.utils.hooks import RemovableHandle
-from torch.func import stack_module_state, functional_call, vmap
 from pathlib import Path
 
 from models.fc_model import FCNet
 from adaptive.indicators import (
-    RegionDescriptor, 
-    HardIndicator, 
-    SoftIndicator,
-    UniformIndicator,
+    RegionDescriptor,
     BatchedIndicators
 )
 
 class BatchedModels:
-    """
-    Batched model forward pass using direct calls with torch.stack.
+    """Batched forward pass: loop over [base, *experts], stack results.
 
-    Computes all models (base + experts) in parallel, supporting HETEROGENEOUS
-    architectures by grouping models with the same architecture.
-    Different architecture groups run on separate CUDA streams for concurrent execution.
-
-    The output tensor indexes are: [0] = base, [1..K] = experts
-
-    Note: Uses direct model calls (not functional_call) to preserve gradient flow.
-    torch.compile (PyTorch 2.0+) optimizes the loop to near-vmap performance.
+    Output tensor indices: [:, 0, :] = base, [:, 1:, :] = experts.
+    GPU naturally parallelizes the sequential small model calls.
     """
 
-    def __init__(self, activation_fn: nn.Module, use_compile: bool = True):
-        """
-        Args:
-            activation_fn: Activation function module (e.g., nn.Tanh())
-            use_compile: If True and PyTorch 2.0+, use torch.compile for optimization
-        """
-        self.activation_fn = activation_fn
-        self.use_compile = use_compile
+    def __init__(self):
         self._models: List[nn.Module] = []
-        self._groups: Dict[Tuple[int, ...], Dict] = {}
-        # {arch_tuple: {'indices': [int], 'template': FCNet, 'models': [FCNet]}}
-        self._compiled_forward = None  # Cached compiled version
-    
+
     def sync_from_models(self, base_model: nn.Module, experts: nn.ModuleList) -> None:
-        """
-        Register all models (base + experts) for batched forward pass.
-        
-        Groups models by architecture to support heterogeneous expert architectures.
-        
-        Call this after spawning new experts or loading pretrained base.
-        
-        Args:
-            base_model: Base FCNet model (index 0)
-            experts: ModuleList of expert FCNets (indices 1..K)
-        """
-        # Build unified model list: [base, expert_0, expert_1, ...]
+        """Register all models for batched forward. Call after spawning experts."""
         self._models = [base_model] + list(experts)
-        
-        # Group models by architecture
-        self._groups = {}
-        for idx, model in enumerate(self._models):
-            arch_tuple = tuple(model.layers)
-            if arch_tuple not in self._groups:
-                self._groups[arch_tuple] = {
-                    'indices': [],
-                    'template': model,  # Use first model as functional_call template
-                    'models': []
-                }
-            self._groups[arch_tuple]['indices'].append(idx)
-            self._groups[arch_tuple]['models'].append(model)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Batched forward pass using direct model calls with torch.stack.
-
-        Groups models by architecture and calls them directly to preserve gradients.
-        Different architecture groups run on separate CUDA streams.
+        Forward all models and stack results.
 
         Args:
             x: Input tensor (N, input_dim)
 
         Returns:
-            Output tensor (N, K+1, output_dim) where:
-                - [:, 0, :] is base model output
-                - [:, 1:, :] are expert outputs
+            (N, K+1, output_dim) where K = number of experts
         """
-        if len(self._models) == 0:
+        if not self._models:
             raise RuntimeError("No models registered. Call sync_from_models first.")
-        
-        N = x.shape[0]
-        num_models = len(self._models)
-        output_dim = self._models[0].layers[-1]
-        
-        # Initialize output tensor
-        outputs = torch.zeros((N, num_models, output_dim), device=x.device, dtype=x.dtype)
-        
-        use_streams = (x.is_cuda and len(self._groups) > 1)
-        
-        if use_streams:
-            # Multiple architecture groups on CUDA: run on parallel streams
-            streams = []
-            results = {}
-            
-            for arch_tuple, group in self._groups.items():
-                stream = torch.cuda.Stream(device=x.device)
-                streams.append(stream)
-                with torch.cuda.stream(stream):
-                    results[arch_tuple] = self._forward_group(
-                        x, group['template'], group['models']
-                    )
-            
-            # Synchronize all streams
-            for stream in streams:
-                stream.synchronize()
-            
-            # Scatter results
-            for arch_tuple, group in self._groups.items():
-                group_out = results[arch_tuple]  # (K_group, N, output_dim)
-                for i, model_idx in enumerate(group['indices']):
-                    outputs[:, model_idx, :] = group_out[i]
-        else:
-            # Single group or CPU: no stream overhead
-            for arch_tuple, group in self._groups.items():
-                group_out = self._forward_group(
-                    x, group['template'], group['models']
-                )  # (K_group, N, output_dim)
-                for i, model_idx in enumerate(group['indices']):
-                    outputs[:, model_idx, :] = group_out[i]
-        
-        return outputs  # (N, K+1, output_dim)
-    
-    def _forward_group(
-        self,
-        x: torch.Tensor,
-        template: nn.Module,
-        models: List[nn.Module]
-    ) -> torch.Tensor:
-        """
-        Forward pass for one architecture group.
-
-        Uses direct loop with torch.stack for gradient preservation.
-        torch.compile (PyTorch 2.0+) will optimize this to near-vmap performance.
-
-        Args:
-            x: Input tensor (N, input_dim)
-            template: Template model (unused, kept for API compatibility)
-            models: List of models in this group
-
-        Returns:
-            (K_group, N, output_dim) tensor of outputs
-        """
-        if len(models) == 1:
-            # Single model: direct forward, avoid stack overhead
-            return models[0](x).unsqueeze(0)  # (1, N, output_dim)
-
-        # Direct loop with torch.stack - preserves gradients correctly
-        # PyTorch 2.0+ torch.compile will fuse this loop for performance
-        outputs_list = []
-        for model in models:
-            out = model(x)  # (N, output_dim)
-            outputs_list.append(out)
-
-        # Stack outputs: (K_group, N, output_dim)
-        return torch.stack(outputs_list, dim=0)
-
-        # # Original vmap+functional_call implementation (has gradient flow issues)
-        # # Ensure all models share the same train/eval mode (required by stack_module_state)
-        # is_training = template.training
-        # for m in models:
-        #     m.train(is_training)
-        #
-        # # Stack parameters from all models in this group
-        # params, buffers = stack_module_state(models)
-        #
-        # # Define single-model forward using functional_call
-        # def single_forward(params, buffers, x):
-        #     return functional_call(template, (params, buffers), (x,))
-        #
-        # # vmap over model dimension (dim 0 of params/buffers), broadcast input x
-        # batched_forward = vmap(single_forward, in_dims=(0, 0, None))
-        #
-        # return batched_forward(params, buffers, x)  # (K_group, N, output_dim)
+        if len(self._models) == 1:
+            return self._models[0](x).unsqueeze(1)  # (N, 1, out_dim)
+        return torch.stack([m(x) for m in self._models], dim=1)  # (N, K+1, out_dim)
 
 
 class AdaptiveExpertPINN(nn.Module):
@@ -255,42 +111,16 @@ class AdaptiveExpertPINN(nn.Module):
         # Create base model
         self.base_model = FCNet(base_architecture, activation, config)
         
-        # Create uniform indicator for base model (used in soft blending for partition of unity)
-        self.base_indicator: Optional[UniformIndicator] = None
-        if self.blending_mode == 'soft':
-            self.base_indicator = UniformIndicator(self.base_weight)
-        
         # Expert storage
         self.experts = nn.ModuleList()
         self.regions: List[RegionDescriptor] = []
-        
-        # Indicator storage - always have both for clarity
-        # hard_indicators: used for coverage/overlap checks (always created)
-        # soft_indicators: used for forward pass blending (only created when blending_mode == 'soft')
-        self.hard_indicators: List[HardIndicator] = []
-        self.soft_indicators: List[SoftIndicator] = []
-        
-        # Batched indicators for vectorized computation (GPU optimization)
-        # Computes all K expert masks in a single GPU operation
-        self.batched_indicators = BatchedIndicators(base_weight=self.base_weight)
-        
-        # Batched models for O(1) forward pass (GPU optimization)
-        # Computes all models (base + experts) with support for heterogeneous architectures
-        self.batched_models = BatchedModels(
-            activation_fn=self.base_model.activation
-        )
-        # Initial sync with base model only (no experts yet)
-        self.batched_models.sync_from_models(self.base_model, self.experts)
 
-        # NOTE: torch.compile is INCOMPATIBLE with PINNs due to higher-order derivatives
-        # PINNs use torch.autograd.grad(..., create_graph=True) for computing derivatives
-        # of derivatives (e.g., u_xx), which conflicts with torch.compile's "donated buffers"
-        # Error: "backward function was compiled with non-empty donated buffers"
-        # Workaround (torch._functorch.config.donated_buffer=False) negates performance gains
-        use_compile = adaptive_config.get('use_torch_compile', False)
-        if use_compile:
-            print(f"  Warning: torch.compile incompatible with PINNs (higher-order derivatives)")
-            print(f"           Continuing with uncompiled version")
+        # Batched indicators for vectorized mask computation (broadcasting)
+        self.batched_indicators = BatchedIndicators(base_weight=self.base_weight)
+
+        # Batched models: [base, *experts] with loop + stack forward
+        self.batched_models = BatchedModels()
+        self.batched_models.sync_from_models(self.base_model, self.experts)
 
         # Hook management
         self.activations: Dict[str, torch.Tensor] = {}
@@ -584,16 +414,7 @@ class AdaptiveExpertPINN(nn.Module):
         # Store expert and region
         self.experts.append(expert)
         self.regions.append(region)
-        
-        # Always create hard indicator (used for coverage/overlap checks)
-        hard_indicator = HardIndicator(region)
-        self.hard_indicators.append(hard_indicator)
-        
-        # Create soft indicator only if blending_mode is 'soft' (used for forward pass)
-        if self.blending_mode == 'soft':
-            soft_indicator = SoftIndicator(region, sigma_fraction=self.sigma_fraction)
-            self.soft_indicators.append(soft_indicator)
-        
+
         parent_info = f"Base Model" if region.parent_idx == -1 else f"E{region.parent_idx + 1}"
         print(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
         print(f"    Architecture: {architecture}")
@@ -1198,8 +1019,6 @@ class AdaptiveExpertPINN(nn.Module):
         # Recreate experts and regions
         self.experts = nn.ModuleList()
         self.regions = []
-        self.hard_indicators = []
-        self.soft_indicators = []
         
         for i, (expert_state, region_dict) in enumerate(zip(
             state_dict['experts'], state_dict['regions']
@@ -1218,16 +1037,7 @@ class AdaptiveExpertPINN(nn.Module):
             
             self.experts.append(expert)
             self.regions.append(region)
-            
-            # Always create hard indicator (for coverage checks)
-            hard_indicator = HardIndicator(region)
-            self.hard_indicators.append(hard_indicator)
-            
-            # Create soft indicator only if blending_mode is 'soft'
-            if self.blending_mode == 'soft':
-                soft_indicator = SoftIndicator(region, sigma_fraction=self.sigma_fraction)
-                self.soft_indicators.append(soft_indicator)
-        
+
         # Restore base frozen state if saved
         if 'base_frozen' in state_dict:
             self._base_frozen = state_dict['base_frozen']

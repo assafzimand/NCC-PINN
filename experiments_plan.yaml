@@ -1,16 +1,16 @@
 # Experiment plan configuration
-experiment_name: "schrodinger_adptive_big_norm"
+experiment_name: "schrodinger_adptive_large_threshold"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 10000
+  epochs: 5000
   batch_size: 512
   lr: 0.0001  
 
   # Optimizer settings
-  optimizer_switch_at: 0.9
+  optimizer_switch_at: 0.8
 
   # Adam hyperparameters
   adam_betas: [0.9, 0.999]
@@ -32,8 +32,8 @@ base_config:
   n_freq_grid: 128
   eval_every: 100
   print_every: 100
-  save_every: 5000
-  inner_metrics_eval_every: 3334
+  save_every: 2500
+  inner_metrics_eval_every: 2000
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -90,8 +90,8 @@ base_config:
   # Adaptive Expert PINN configuration (Tree-Based Spawning)
   adaptive_pinn:
     enabled: true                    # Toggle feature on/off (override per experiment)
-    max_experts: 30                 # Maximum number of expert networks
-    spawn_every_epochs: 1000    # Check for spawning every N epochs (quick test value)
+    max_experts: 20                 # Maximum number of expert networks
+    spawn_every_epochs: 500    # Check for spawning every N epochs (quick test value)
     expert_architectures: null        # null = same as base, or list of architectures
     freeze_mode: none                 # "none" | "previous" | "base_only"
     blending_mode: soft               # "hard" | "soft"
@@ -105,70 +105,10 @@ base_config:
     tree_min_samples_leaf: 10      # Min samples in tree leaf node
     enable_timing: false   # Enable epoch timing profiling (can slow down training)
     inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
-    use_torch_compile: false     # INCOMPATIBLE with PINNs (higher-order derivatives conflict with donated buffers)
     enable_gradient_diagnostics: false  # Enable detailed gradient flow diagnostics (verbose)
 
 # Experiments to run
 experiments:
-  - name: "5lyr_30_neurons"
+  - name: "4k_wrights"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
-
-  # - name: "2lyr_lr1e-6"
-  #   problem: schrodinger
-  #   architecture: [2, 30, 30, 2]
-  #   lr: 0.000001
-  #   optimizer_switch_at: 0.6
-  #   lbfgs_lr: 0.01
-
-  # - name: "2lyr_lr1e-7"
-  #   problem: schrodinger
-  #   architecture: [2, 30, 30, 2]
-  #   lr: 0.0000001
-  #   optimizer_switch_at: 0.6
-  #   lbfgs_lr: 0.001
-
-  # - name: "5lyr_40k_Wn_flat"
-  #   problem: burgers2d  
-  #   architecture: [3, 100, 100, 100, 100, 100, 1]
-
-  # - name: "7lyr_40k_Wn_flat"
-  #   problem: burgers2d
-  #   architecture: [3, 80, 80, 80, 80, 80, 80, 80, 1]
-
-  # - name: "3lyr_30k_Wn_flat"
-  #   problem: burgers2d
-  #   architecture: [3, 120, 120, 120, 1]
-
-  # - name: "5lyr_30k_Wn_flat"
-  #   problem: burgers2d
-  #   architecture: [3, 85, 85, 85, 85, 85, 1]
-
-  # - name: "7lyr_30k_Wn_flat"
-  #   problem: burgers2d
-  #   architecture: [3, 70, 70, 70, 70, 70, 70, 70, 1]
-
-  # - name: "3lyr_20k_Wn_flat"
-  #   problem: burgers2d
-  #   architecture: [3, 100, 100, 100, 1]
-
-  # - name: "5lyr_20k_Wn_flat"
-  #   problem: burgers2d
-  #   architecture: [3, 70, 70, 70, 70, 70, 1]
-
-  # - name: "7lyr_20k_Wn_flat"
-  #   problem: burgers2d
-  #   architecture: [3, 58, 58, 58, 58, 58, 58, 58, 1]
-
-  # - name: "3lyr_10k_Wn_flat"
-  #   problem: burgers2d
-  #   architecture: [3, 70, 70, 70, 1]
-
-  # - name: "5lyr_10k_Wn_flat"
-  #   problem: burgers2d
-  #   architecture: [3, 50, 50, 50, 50, 50, 1]
-
-  # - name: "7lyr_10k_Wn_flat"
-  #   problem: burgers2d
-  #   architecture: [3, 40, 40, 40, 40, 40, 40, 40, 1]
-  
