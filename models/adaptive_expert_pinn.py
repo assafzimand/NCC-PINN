@@ -643,6 +643,10 @@ class AdaptiveExpertPINN(nn.Module):
         # Check if sparse expert activation is enabled
         threshold = self.adaptive_config.get('expert_activation_threshold', None)
         
+        # Convert to float if it's a string (from YAML parsing)
+        if threshold is not None:
+            threshold = float(threshold)
+        
         if threshold is not None and len(self.experts) > 0:
             # Use sparse activation (only evaluate experts with psi > threshold)
             if self.blending_mode == 'hard':
