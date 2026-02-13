@@ -12,6 +12,7 @@ where:
 
 import torch
 import torch.nn as nn
+from torch.func import jvp
 from typing import Dict, Callable, Tuple
 import numpy as np
 
@@ -38,7 +39,6 @@ def compute_derivatives(
         - h_x: ∂h/∂x, complex tensor (N,)
         - h_xx: ∂²h/∂x², complex tensor (N,)
     """
-    from torch.func import jvp
     
     # inputs has shape (N, 2) for [x, t]
     # We need to enable gradients on inputs for the computation
@@ -59,7 +59,7 @@ def compute_derivatives(
     # ∂(u,v)/∂x via JVP with tangent v_x
     uv, (du_dx, dv_dx) = jvp(
         func=lambda inp: (model(inp)[:, 0], model(inp)[:, 1]),
-        inputs=(inputs,),
+        primals=(inputs,),
         tangents=(v_x,)
     )
     u, v = uv[0], uv[1]
@@ -69,7 +69,7 @@ def compute_derivatives(
     # ∂(u,v)/∂t via JVP with tangent v_t
     _, (u_t, v_t) = jvp(
         func=lambda inp: (model(inp)[:, 0], model(inp)[:, 1]),
-        inputs=(inputs,),
+        primals=(inputs,),
         tangents=(v_t,)
     )
     
@@ -81,7 +81,7 @@ def compute_derivatives(
         inp_copy = inp.requires_grad_(True)
         _, (du_dx_val,) = jvp(
             func=lambda inp_inner: model(inp_inner)[:, 0],
-            inputs=(inp_copy,),
+            primals=(inp_copy,),
             tangents=(v_x,)
         )
         return du_dx_val
@@ -89,7 +89,7 @@ def compute_derivatives(
     # Compute ∂²u/∂x² = ∂(∂u/∂x)/∂x
     _, (u_xx,) = jvp(
         func=u_x_func,
-        inputs=(inputs,),
+        primals=(inputs,),
         tangents=(v_x,)
     )
     
@@ -98,7 +98,7 @@ def compute_derivatives(
         inp_copy = inp.requires_grad_(True)
         _, (dv_dx_val,) = jvp(
             func=lambda inp_inner: model(inp_inner)[:, 1],
-            inputs=(inp_copy,),
+            primals=(inp_copy,),
             tangents=(v_x,)
         )
         return dv_dx_val
@@ -106,7 +106,7 @@ def compute_derivatives(
     # Compute ∂²v/∂x² = ∂(∂v/∂x)/∂x
     _, (v_xx,) = jvp(
         func=v_x_func,
-        inputs=(inputs,),
+        primals=(inputs,),
         tangents=(v_x,)
     )
     
