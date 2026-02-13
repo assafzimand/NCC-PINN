@@ -58,9 +58,9 @@ def compute_derivatives(
     
     # ∂(u,v)/∂x via JVP with tangent v_x
     uv, (du_dx, dv_dx) = jvp(
-        func=lambda inp: (model(inp)[:, 0], model(inp)[:, 1]),
-        primals=(inputs,),
-        tangents=(v_x,)
+        lambda inp: (model(inp)[:, 0], model(inp)[:, 1]),
+        (inputs,),
+        (v_x,)
     )
     u, v = uv[0], uv[1]
     u_x = du_dx
@@ -68,9 +68,9 @@ def compute_derivatives(
     
     # ∂(u,v)/∂t via JVP with tangent v_t
     _, (u_t, v_t) = jvp(
-        func=lambda inp: (model(inp)[:, 0], model(inp)[:, 1]),
-        primals=(inputs,),
-        tangents=(v_t,)
+        lambda inp: (model(inp)[:, 0], model(inp)[:, 1]),
+        (inputs,),
+        (v_t,)
     )
     
     # === Second derivatives via JVP ===
@@ -80,34 +80,34 @@ def compute_derivatives(
     def u_x_func(inp):
         inp_copy = inp.requires_grad_(True)
         _, (du_dx_val,) = jvp(
-            func=lambda inp_inner: model(inp_inner)[:, 0],
-            primals=(inp_copy,),
-            tangents=(v_x,)
+            lambda inp_inner: model(inp_inner)[:, 0],
+            (inp_copy,),
+            (v_x,)
         )
         return du_dx_val
     
     # Compute ∂²u/∂x² = ∂(∂u/∂x)/∂x
     _, (u_xx,) = jvp(
-        func=u_x_func,
-        primals=(inputs,),
-        tangents=(v_x,)
+        u_x_func,
+        (inputs,),
+        (v_x,)
     )
     
     # Define a function that computes ∂v/∂x
     def v_x_func(inp):
         inp_copy = inp.requires_grad_(True)
         _, (dv_dx_val,) = jvp(
-            func=lambda inp_inner: model(inp_inner)[:, 1],
-            primals=(inp_copy,),
-            tangents=(v_x,)
+            lambda inp_inner: model(inp_inner)[:, 1],
+            (inp_copy,),
+            (v_x,)
         )
         return dv_dx_val
     
     # Compute ∂²v/∂x² = ∂(∂v/∂x)/∂x
     _, (v_xx,) = jvp(
-        func=v_x_func,
-        primals=(inputs,),
-        tangents=(v_x,)
+        v_x_func,
+        (inputs,),
+        (v_x,)
     )
     
     # Pack as complex tensors
