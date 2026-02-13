@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "schrodinger_pretrained_many_architectures"
+experiment_name: "schrodinger_adptive_big_norm"
 
 # Base configuration (will be used for all experiments)
 base_config:
