@@ -640,10 +640,21 @@ class AdaptiveExpertPINN(nn.Module):
         Returns:
             u: (N, output_dim) composed solution
         """
-        if self.blending_mode == 'hard':
-            return self._forward_hard(inputs)
+        # Check if sparse expert activation is enabled
+        threshold = self.adaptive_config.get('expert_activation_threshold', None)
+        
+        if threshold is not None and len(self.experts) > 0:
+            # Use sparse activation (only evaluate experts with psi > threshold)
+            if self.blending_mode == 'hard':
+                return self._forward_hard_sparse(inputs, threshold)
+            else:
+                return self._forward_soft_sparse(inputs, threshold)
         else:
-            return self._forward_soft(inputs)
+            # Use standard dense evaluation (all experts)
+            if self.blending_mode == 'hard':
+                return self._forward_hard(inputs)
+            else:
+                return self._forward_soft(inputs)
     
     def _forward_hard(self, inputs: torch.Tensor) -> torch.Tensor:
         """
@@ -761,6 +772,153 @@ class AdaptiveExpertPINN(nn.Module):
         else:
             # Partition of unity: u = ψ̃_0 · u_base + Σ ψ̃_k · u_k
             u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+        if _t: _t.stop('fwd.blend')
+        
+        return u_total
+    
+    def _forward_hard_sparse(self, inputs: torch.Tensor, threshold: float) -> torch.Tensor:
+        """
+        Sparse hard blending: only evaluate experts with mask == 1.
+        
+        u(x,t) = u_0(x,t) + Σ_{k: mask_k=1} u_k(x,t)
+        
+        For hard blending, masks are binary (0 or 1), so threshold filtering
+        is equivalent to mask > 0. This still provides speedup by avoiding
+        evaluation of experts with mask == 0.
+        
+        Args:
+            inputs: (N, n_dims) input coordinates
+            threshold: Minimum mask value (typically 0 for hard masks)
+        """
+        _t = self._timer
+        N = inputs.shape[0]
+        output_dim = self.base_model.architecture[-1]
+        device = inputs.device
+        
+        # Step 1: Compute masks FIRST (cheap, no model evaluation)
+        if _t: _t.start('fwd.compute_masks')
+        masks = self.batched_indicators.compute_hard_masks_only(inputs)  # (N, K)
+        if _t: _t.stop('fwd.compute_masks')
+        
+        # Step 2: Identify which experts are active for ANY point
+        if _t: _t.start('fwd.sparse_selection')
+        active_experts_any = (masks.sum(dim=0) > 0)  # (K,) - which experts are used anywhere
+        active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]  # indices of active experts
+        num_active = len(active_expert_indices)
+        if _t: _t.stop('fwd.sparse_selection')
+        
+        # Step 3: Always evaluate base model
+        if _t: _t.start('fwd.sparse_eval')
+        u_base = self.base_model(inputs)  # (N, output_dim)
+        
+        if num_active == 0:
+            # No experts are active anywhere - just return base
+            if _t: _t.stop('fwd.sparse_eval')
+            return u_base
+        
+        # Step 4: Evaluate only active experts
+        u_experts_sparse = torch.zeros(N, len(self.experts), output_dim, device=device)  # (N, K, output_dim)
+        
+        for expert_idx in active_expert_indices:
+            expert_idx_item = expert_idx.item()
+            u_experts_sparse[:, expert_idx_item, :] = self.experts[expert_idx_item](inputs)
+        
+        if _t: _t.stop('fwd.sparse_eval')
+        
+        # Step 5: Blend using masks
+        if _t: _t.start('fwd.blend')
+        weighted_experts = masks.unsqueeze(-1) * u_experts_sparse  # (N, K, out_dim)
+        u_total = u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+        if _t: _t.stop('fwd.blend')
+        
+        return u_total
+    
+    def _forward_soft_sparse(self, inputs: torch.Tensor, threshold: float) -> torch.Tensor:
+        """
+        Sparse soft blending: only evaluate experts with psi > threshold.
+        
+        This is where the real speedup happens for soft blending, as we filter
+        experts that contribute negligibly (e.g., psi < 1e-4 means <0.01% contribution).
+        
+        Standard mode:
+            u(x,t) = Σ_{k: ψ_k > threshold} ψ̃_k(x,t) · u_k(x,t)
+            where ψ̃_k = ψ_k / Σ_j ψ_j (normalized among ALL, including filtered)
+        
+        Additive mode:
+            u(x,t) = u_base + Σ_{k: ψ_k > threshold} ψ̃_k(x,t) · u_k(x,t)
+            where ψ̃_k = ψ_k / Σ_j ψ_j (experts only)
+        
+        Args:
+            inputs: (N, n_dims) input coordinates
+            threshold: Minimum psi value to evaluate expert (e.g., 1e-4)
+        """
+        _t = self._timer
+        N = inputs.shape[0]
+        output_dim = self.base_model.architecture[-1]
+        device = inputs.device
+        
+        use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
+        
+        # Step 1: Compute ALL psi weights FIRST (cheap, no model evaluation)
+        if _t: _t.start('fwd.compute_masks')
+        psi_base, psi_experts = self.batched_indicators(inputs)  # psi_base: (N, 1), psi_experts: (N, K)
+        if _t: _t.stop('fwd.compute_masks')
+        
+        # Step 2: Identify which experts have significant weight ANYWHERE
+        if _t: _t.start('fwd.sparse_selection')
+        active_mask = psi_experts > threshold  # (N, K) - boolean mask
+        active_experts_any = active_mask.sum(dim=0) > 0  # (K,) - which experts are used anywhere
+        active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]  # indices
+        num_active = len(active_expert_indices)
+        if _t: _t.stop('fwd.sparse_selection')
+        
+        # Step 3: Always evaluate base model
+        if _t: _t.start('fwd.sparse_eval')
+        u_base = self.base_model(inputs)  # (N, output_dim)
+        
+        if num_active == 0:
+            # No experts are active anywhere
+            if _t: _t.stop('fwd.sparse_eval')
+            if use_additive_mode:
+                # Additive: just return base (no corrections)
+                return u_base
+            else:
+                # Partition: base gets full weight (since no experts contribute)
+                return u_base
+        
+        # Step 4: Evaluate only active experts
+        u_experts_sparse = torch.zeros(N, len(self.experts), output_dim, device=device)  # (N, K, output_dim)
+        psi_experts_filtered = psi_experts.clone()  # Keep all psi values for normalization
+        
+        for expert_idx in active_expert_indices:
+            expert_idx_item = expert_idx.item()
+            u_experts_sparse[:, expert_idx_item, :] = self.experts[expert_idx_item](inputs)
+        
+        # Zero out psi weights below threshold (for proper normalization)
+        psi_experts_filtered = psi_experts_filtered * active_mask.float()  # Zero out below-threshold
+        
+        if _t: _t.stop('fwd.sparse_eval')
+        
+        # Step 5: Normalize weights and blend
+        if _t: _t.start('fwd.blend')
+        if use_additive_mode:
+            # Additive mode: normalize experts among themselves only
+            psi_experts_sum = psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
+            psi_experts_sum = psi_experts_sum.clamp(min=1e-8)
+            psi_experts_norm = psi_experts_filtered / psi_experts_sum  # (N, K)
+            
+            weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts_sparse  # (N, K, out_dim)
+            u_total = u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+        else:
+            # Standard partition of unity: normalize ALL (base + experts)
+            psi_sum = psi_base + psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
+            psi_sum = psi_sum.clamp(min=1e-8)
+            psi_base_norm = psi_base / psi_sum  # (N, 1)
+            psi_experts_norm = psi_experts_filtered / psi_sum  # (N, K)
+            
+            weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts_sparse  # (N, K, out_dim)
+            u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+        
         if _t: _t.stop('fwd.blend')
         
         return u_total
