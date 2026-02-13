@@ -73,47 +73,32 @@ def compute_derivatives(
         (v_t,)
     )
     
-    # === Second derivatives via JVP ===
-    # Compute ∂²(u,v)/∂x² by taking JVP of the first derivative functions
+    # === Second derivatives via reverse-mode ===
+    # Use traditional autograd for u_xx, v_xx (simpler, avoids nested JVP issues)
+    # The first derivatives u_x, v_x have requires_grad from JVP
     
-    # Define a function that computes ∂u/∂x
-    def u_x_func(inp):
-        inp_copy = inp.requires_grad_(True)
-        _, (du_dx_val,) = jvp(
-            lambda inp_inner: model(inp_inner)[:, 0],
-            (inp_copy,),
-            (v_x,)
-        )
-        return du_dx_val
+    ones = torch.ones_like(u_x)
+    u_xx = torch.autograd.grad(
+        outputs=u_x,
+        inputs=inputs,
+        grad_outputs=ones,
+        create_graph=True,
+        retain_graph=True
+    )[0][:, 0]  # Only x-derivative (first column)
     
-    # Compute ∂²u/∂x² = ∂(∂u/∂x)/∂x
-    _, (u_xx,) = jvp(
-        u_x_func,
-        (inputs,),
-        (v_x,)
-    )
-    
-    # Define a function that computes ∂v/∂x
-    def v_x_func(inp):
-        inp_copy = inp.requires_grad_(True)
-        _, (dv_dx_val,) = jvp(
-            lambda inp_inner: model(inp_inner)[:, 1],
-            (inp_copy,),
-            (v_x,)
-        )
-        return dv_dx_val
-    
-    # Compute ∂²v/∂x² = ∂(∂v/∂x)/∂x
-    _, (v_xx,) = jvp(
-        v_x_func,
-        (inputs,),
-        (v_x,)
-    )
+    v_x_rename = v_x  # Avoid name collision
+    v_xx = torch.autograd.grad(
+        outputs=v_x_rename,
+        inputs=inputs,
+        grad_outputs=ones,
+        create_graph=True,
+        retain_graph=True
+    )[0][:, 0]  # Only x-derivative (first column)
     
     # Pack as complex tensors
     h = torch.complex(u, v)
     h_t = torch.complex(u_t, v_t)
-    h_x = torch.complex(u_x, v_x)
+    h_x = torch.complex(u_x, v_x_rename)
     h_xx = torch.complex(u_xx, v_xx)
     
     return h, h_t, h_x, h_xx
