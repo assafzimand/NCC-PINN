@@ -792,7 +792,7 @@ class AdaptiveExpertPINN(nn.Module):
         """
         _t = self._timer
         N = inputs.shape[0]
-        output_dim = self.base_model.architecture[-1]
+        output_dim = self.base_model.layers[-1]
         device = inputs.device
         
         # Step 1: Compute masks FIRST (cheap, no model evaluation)
@@ -854,7 +854,7 @@ class AdaptiveExpertPINN(nn.Module):
         """
         _t = self._timer
         N = inputs.shape[0]
-        output_dim = self.base_model.architecture[-1]
+        output_dim = self.base_model.layers[-1]
         device = inputs.device
         
         use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
