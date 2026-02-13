@@ -17,86 +17,106 @@ import numpy as np
 
 
 def compute_derivatives(
-    u: torch.Tensor,
-    v: torch.Tensor,
-    x: torch.Tensor,
-    t: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    model: torch.nn.Module,
+    inputs: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Compute derivatives of complex field h = u + iv using vectorized autograd.
+    Compute derivatives using forward-mode AD (JVP) for efficiency.
     
-    Optimized to use 4 autograd calls (batched) for efficiency.
-    Computes ∂h/∂t, ∂h/∂x, and ∂²h/∂x² using PyTorch autograd.
-    All operations stay on the same device (GPU if available).
+    Forward-mode is optimal for low-dimensional inputs (x,t are 2D).
+    Computes ∂h/∂t, ∂h/∂x, and ∂²h/∂x² using torch.func.jvp.
+    Significantly faster than reverse-mode autograd.grad for this use case.
     
     Args:
-        u: Real part of field, shape (batch_size,)
-        v: Imaginary part of field, shape (batch_size,)
-        x: Spatial coordinates, shape (batch_size, 1), requires_grad=True
-        t: Temporal coordinates, shape (batch_size, 1), requires_grad=True
+        model: Neural network model that outputs (N, 2) for [u, v]
+        inputs: (N, 2) tensor of [x, t] coordinates
         
     Returns:
-        Tuple of (h_t, h_x, h_xx):
-        - h_t: ∂h/∂t, complex tensor
-        - h_x: ∂h/∂x, complex tensor
-        - h_xx: ∂²h/∂x², complex tensor
+        Tuple of (h, h_t, h_x, h_xx):
+        - h: h = u + iv, complex tensor (N,)
+        - h_t: ∂h/∂t, complex tensor (N,)
+        - h_x: ∂h/∂x, complex tensor (N,)
+        - h_xx: ∂²h/∂x², complex tensor (N,)
     """
+    from torch.func import jvp
     
-    # Create grad_outputs once
-    ones_u = torch.ones_like(u)
-    ones_v = torch.ones_like(v)
+    # inputs has shape (N, 2) for [x, t]
+    # We need to enable gradients on inputs for the computation
+    inputs = inputs.requires_grad_(True)
     
-    # Call 1: Compute u derivatives w.r.t. BOTH x and t in one call
-    u_grads = torch.autograd.grad(
-        outputs=u,
-        inputs=[x, t],
-        grad_outputs=ones_u,
-        create_graph=True,
-        retain_graph=True,
+    # Define tangent vectors for directional derivatives
+    # v_x: direction vector for ∂/∂x (first coordinate)
+    # v_t: direction vector for ∂/∂t (second coordinate)
+    v_x = torch.zeros_like(inputs)
+    v_x[:, 0] = 1.0  # [1, 0]
+    
+    v_t = torch.zeros_like(inputs)
+    v_t[:, 1] = 1.0  # [0, 1]
+    
+    # === First derivatives via JVP ===
+    # Compute u, v and their first derivatives in one pass each
+    
+    # ∂(u,v)/∂x via JVP with tangent v_x
+    uv, (du_dx, dv_dx) = jvp(
+        func=lambda inp: (model(inp)[:, 0], model(inp)[:, 1]),
+        inputs=(inputs,),
+        tangents=(v_x,)
     )
-    u_x = u_grads[0]
-    u_t = u_grads[1]
+    u, v = uv[0], uv[1]
+    u_x = du_dx
+    v_x = dv_dx
     
-    # Call 2: Compute v derivatives w.r.t. BOTH x and t in one call
-    v_grads = torch.autograd.grad(
-        outputs=v,
-        inputs=[x, t],
-        grad_outputs=ones_v,
-        create_graph=True,
-        retain_graph=True,
+    # ∂(u,v)/∂t via JVP with tangent v_t
+    _, (u_t, v_t) = jvp(
+        func=lambda inp: (model(inp)[:, 0], model(inp)[:, 1]),
+        inputs=(inputs,),
+        tangents=(v_t,)
     )
-    v_x = v_grads[0]
-    v_t = v_grads[1]
     
-    # Second derivatives w.r.t space
-    ones_ux = torch.ones_like(u_x)
-    ones_vx = torch.ones_like(v_x)
+    # === Second derivatives via JVP ===
+    # Compute ∂²(u,v)/∂x² by taking JVP of the first derivative functions
     
-    # Call 3: u_xx
-    u_xx = torch.autograd.grad(
-        outputs=u_x,
-        inputs=x,
-        grad_outputs=ones_ux,
-        create_graph=True,
-        retain_graph=True,
-    )[0]
+    # Define a function that computes ∂u/∂x
+    def u_x_func(inp):
+        inp_copy = inp.requires_grad_(True)
+        _, (du_dx_val,) = jvp(
+            func=lambda inp_inner: model(inp_inner)[:, 0],
+            inputs=(inp_copy,),
+            tangents=(v_x,)
+        )
+        return du_dx_val
     
-    # Call 4: v_xx
-    v_xx = torch.autograd.grad(
-        outputs=v_x,
-        inputs=x,
-        grad_outputs=ones_vx,
-        create_graph=True,
-        retain_graph=True,
-    )[0]
+    # Compute ∂²u/∂x² = ∂(∂u/∂x)/∂x
+    _, (u_xx,) = jvp(
+        func=u_x_func,
+        inputs=(inputs,),
+        tangents=(v_x,)
+    )
     
-    # Pack as complex (stays on device)
-    # Use squeeze(-1) to only remove last dimension, preserve batch dimension
-    h_t = torch.complex(u_t, v_t).squeeze(-1)
-    h_x = torch.complex(u_x, v_x).squeeze(-1)
-    h_xx = torch.complex(u_xx, v_xx).squeeze(-1)
+    # Define a function that computes ∂v/∂x
+    def v_x_func(inp):
+        inp_copy = inp.requires_grad_(True)
+        _, (dv_dx_val,) = jvp(
+            func=lambda inp_inner: model(inp_inner)[:, 1],
+            inputs=(inp_copy,),
+            tangents=(v_x,)
+        )
+        return dv_dx_val
     
-    return h_t, h_x, h_xx
+    # Compute ∂²v/∂x² = ∂(∂v/∂x)/∂x
+    _, (v_xx,) = jvp(
+        func=v_x_func,
+        inputs=(inputs,),
+        tangents=(v_x,)
+    )
+    
+    # Pack as complex tensors
+    h = torch.complex(u, v)
+    h_t = torch.complex(u_t, v_t)
+    h_x = torch.complex(u_x, v_x)
+    h_xx = torch.complex(u_xx, v_xx)
+    
+    return h, h_t, h_x, h_xx
 
 
 def pde_residual(
@@ -188,29 +208,17 @@ def build_loss(**cfg) -> Callable:
             x_f = x[masks['residual']].contiguous()  # (N_f, spatial_dim)
             t_f = t[masks['residual']].contiguous()  # (N_f, 1)
             
-            # Enable gradients for autograd
-            x_f = x_f.clone().detach().requires_grad_(True)
-            t_f = t_f.clone().detach().requires_grad_(True)
-            
-            # Model prediction: concatenate x,t -> predict (u,v)
+            # Concatenate x,t -> (N_f, 2) inputs for model
             xt_f = torch.cat([x_f, t_f], dim=1)
-            if _t: _t.start('loss.residual.forward')
-            uv_f = model(xt_f)  # (N_f, 2)
-            if _t: _t.stop('loss.residual.forward')
             
-            # Extract u and v (these should have grad_fn from the model)
-            u_f = uv_f[:, 0]
-            v_f = uv_f[:, 1]
-            
-            
-            # Compute derivatives
+            # Compute derivatives using forward-mode AD (JVP)
+            # This replaces: model forward + 4 autograd.grad calls
+            # with: efficient forward-mode computation
             if _t: _t.start('loss.residual.derivatives')
-            h_t, h_x, h_xx = compute_derivatives(u_f, v_f, x_f, t_f)
+            h_f, h_t, h_x, h_xx = compute_derivatives(model, xt_f)
             if _t: _t.stop('loss.residual.derivatives')
             
             # Compute PDE residual: i*h_t + 0.5*h_xx + |h|²*h
-            # Need h for |h|² term
-            h_f = torch.complex(u_f, v_f)
             residual = pde_residual(h_f, h_t, h_xx)
             
             # Per-sample squared residual
@@ -273,40 +281,21 @@ def build_loss(**cfg) -> Callable:
             x_b_right = x_b[n_b_left:]
             t_b_right = t_b[n_b_left:]
             
-            # Enable gradients for derivative computation
-            x_b_left = x_b_left.clone().detach().requires_grad_(True)
-            t_b_left = t_b_left.clone().detach().requires_grad_(True)
-            x_b_right = x_b_right.clone().detach().requires_grad_(True)
-            t_b_right = t_b_right.clone().detach().requires_grad_(True)
+            # Concatenate into (N, 2) format for model
+            xt_left = torch.cat([x_b_left, t_b_left], dim=1)
+            xt_right = torch.cat([x_b_right, t_b_right], dim=1)
+            xt_stacked = torch.cat([xt_left, xt_right], dim=0)
             
-            # Vectorized: stack left and right, then split back
-            x_stacked = torch.cat([x_b_left, x_b_right], dim=0)
-            t_stacked = torch.cat([t_b_left, t_b_right], dim=0)
-            
-            # Single forward pass for both boundaries
-            xt_stacked = torch.cat([x_stacked, t_stacked], dim=1)
-            if _t: _t.start('loss.bc.forward')
-            uv_stacked = model(xt_stacked)
-            if _t: _t.stop('loss.bc.forward')
-            u_stacked = uv_stacked[:, 0]
-            v_stacked = uv_stacked[:, 1]
-            
-            # Compute spatial derivatives at boundaries
+            # Compute h and h_x using forward-mode AD (JVP)
             if _t: _t.start('loss.bc.derivatives')
-            _, h_x_stacked, _ = compute_derivatives(u_stacked, v_stacked, x_stacked, t_stacked)
+            h_stacked, _, h_x_stacked, _ = compute_derivatives(model, xt_stacked)
             if _t: _t.stop('loss.bc.derivatives')
             
-            # Split predictions and derivatives (use actual sizes, not torch.chunk)
-            u_left = u_stacked[:n_b_left]
-            u_right = u_stacked[n_b_left:]
-            v_left = v_stacked[:n_b_left]
-            v_right = v_stacked[n_b_left:]
+            # Split predictions and derivatives
+            h_left = h_stacked[:n_b_left]
+            h_right = h_stacked[n_b_left:]
             h_x_left = h_x_stacked[:n_b_left]
             h_x_right = h_x_stacked[n_b_left:]
-            
-            # Convert to complex for comparison
-            h_left = torch.complex(u_left, v_left)
-            h_right = torch.complex(u_right, v_right)
             
             # Periodic BC: h(-5,t) = h(5,t) and h_x(-5,t) = h_x(5,t)
             # Only compare paired points (min of left/right counts)
