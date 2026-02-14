@@ -975,7 +975,7 @@ class AdaptiveExpertPINN(nn.Module):
         
         if threshold is not None and K > 0:
             active_mask = psi_experts > threshold  # (N, K)
-            active_experts_any = active_mask.sum(dim=0) > 0  # (K,)
+            active_experts_any = active_mask.sum(dim=0) > 20  # (K,)
             active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]
             # Zero out below-threshold psi values
             psi_experts_filtered = psi_experts * active_mask.float()
