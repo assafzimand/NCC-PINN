@@ -97,7 +97,7 @@ class AdaptiveExpertPINN(nn.Module):
         # Extract adaptive parameters
         self.max_experts = adaptive_config.get('max_experts', 5)
         self.max_depth = adaptive_config.get('max_depth', 5)  # Maximum depth in expert tree
-        self.blending_mode = adaptive_config.get('blending_mode', 'hard')
+        self.blending_mode = adaptive_config.get('blending_mode', 'soft')
         self.sigma_fraction = adaptive_config.get('sigma_fraction', 0.2)  # For soft: sigma = fraction * region_size
         self.base_weight = adaptive_config.get('base_weight', 1.0)  # Uniform weight for base model
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
@@ -806,7 +806,7 @@ class AdaptiveExpertPINN(nn.Module):
         
         # Step 2: Identify which experts are active for ANY point
         if _t: _t.start('fwd.sparse_selection')
-        active_experts_any = (masks.sum(dim=0) > 0)  # (K,) - which experts are used anywhere
+        active_experts_any = (masks.sum(dim=0) > 20)  # (K,) - which experts are used anywhere
         active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]  # indices of active experts
         num_active = len(active_expert_indices)
         if _t: _t.stop('fwd.sparse_selection')
@@ -871,7 +871,7 @@ class AdaptiveExpertPINN(nn.Module):
         # Step 2: Identify which experts have significant weight ANYWHERE
         if _t: _t.start('fwd.sparse_selection')
         active_mask = psi_experts > threshold  # (N, K) - boolean mask
-        active_experts_any = active_mask.sum(dim=0) > 0  # (K,) - which experts are used anywhere
+        active_experts_any = active_mask.sum(dim=0) > 20  # (K,) - which experts are used anywhere
         active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]  # indices
         num_active = len(active_expert_indices)
         if _t: _t.stop('fwd.sparse_selection')

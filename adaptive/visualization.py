@@ -602,7 +602,7 @@ def plot_expert_soft_weights(
         return
     
     # Check if model has soft blending
-    if not hasattr(model, 'base_indicator') or model.base_indicator is None:
+    if not model.blending_mode == 'soft':
         print(f"  Warning: Base Model does not have soft blending enabled")
         return
     
