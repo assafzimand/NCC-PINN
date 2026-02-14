@@ -439,6 +439,11 @@ def train(
         adaptive_plots_dir = run_dir / "adaptive_plots"
         adaptive_plots_dir.mkdir(exist_ok=True)
     
+    # Leaf tracking: every expert starts as a leaf, removed when it gets children.
+    # At each spawn step we try to split ALL current leaves.
+    # Base model (None, -1) is the initial leaf.
+    leaf_nodes = [(None, -1)] if is_adaptive else []  # list of (region_or_None, expert_idx)
+    
     # Training loop
     print(f"\nTraining for {epochs} epochs...")
     start_time = time.time()
@@ -771,8 +776,7 @@ def train(
             if freq_metrics is not None:
                 metrics['freq_history'].append((epoch, freq_metrics))
 
-        # Adaptive PINN: Hierarchical expert spawning (with cooldown after 0-spawn steps)
-        # Disabled if tree was pre-built from pretrained base model
+        # Adaptive PINN: Hierarchical expert spawning from leaf nodes
         spawn_check_triggered = (is_adaptive and
                                  epoch % spawn_every == 0 and
                                  hasattr(model, 'num_experts') and
@@ -780,11 +784,10 @@ def train(
         
         if spawn_check_triggered:
             print(f"\n{'='*60}")
-            print(f"Adaptive PINN: Adding depth level at epoch {epoch}")
+            print(f"Adaptive PINN: Spawning check at epoch {epoch}")
             if hasattr(model, 'num_experts'):
                 print(f"  Current experts: {model.num_experts}/{max_experts}")
-            if hasattr(model, 'get_highest_depth'):
-                print(f"  Highest depth populated: {model.get_highest_depth()}")
+            print(f"  Current leaf nodes: {len(leaf_nodes)}")
             print(f"{'='*60}")
 
             # Get GLOBAL model predictions on eval_data ONCE (not per parent)
@@ -820,47 +823,28 @@ def train(
 
             experts_spawned_this_step = 0
 
-            # Get all nodes at current deepest depth
-            deepest_depth = model.get_highest_depth()
+            # Try to split ALL current leaf nodes
+            parent_regions_to_process = list(leaf_nodes)  # snapshot; we'll modify leaf_nodes in-place
+            
+            print(f"\n  [Spawning] Processing {len(parent_regions_to_process)} leaf nodes")
 
-            # Build list of parents to process
-            parent_regions_to_process = []  # List of (region_or_none, parent_idx)
-
-            if deepest_depth == 0:
-                # No experts yet - always try to spawn children of base
-                parent_regions_to_process.append((None, -1))  # (region, parent_idx)
-            else:
-                # Use retry_parents: previously spawned experts + failed parents that need retry
-                if 'retry_parents' not in locals():
-                    retry_parents = {}
-                parents_at_depth = retry_parents.pop(deepest_depth, [])
-                parent_regions_to_process.extend(parents_at_depth)
-
-            # Ensure retry_parents is initialized
-            if 'retry_parents' not in locals():
-                retry_parents = {}
-
-            print(f"\n  [Spawning] Adding depth level {deepest_depth + 1}")
-            print(f"  [Spawning] Processing {len(parent_regions_to_process)} parents at depth {deepest_depth}")
-
-            # For each parent at deepest depth (both spawned and skipped)
+            # For each leaf node, try to split it
             for parent_region, parent_idx in parent_regions_to_process:
                 if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
                     print(f"\n  Max experts reached ({max_experts}), stopping spawn process")
                     break
 
-                # Determine parent_str for logging
+                # Determine parent info for logging
                 if parent_region is None:
                     parent_str = "Base Model"
-                elif parent_idx >= 0 and parent_idx < len(model.regions):
-                    parent_str = f"Expert {parent_idx+1} (spawned)"
+                    parent_depth = 0
                 else:
-                    parent_str = f"Skipped region (parent={parent_idx})"
+                    parent_str = f"Expert {parent_idx+1}" if parent_idx >= 0 else "Base Model"
+                    parent_depth = parent_region.depth
 
-                print(f"\n    [Spawning] Parent {parent_str} (depth {deepest_depth})")
+                print(f"\n    [Spawning] Leaf: {parent_str} (depth {parent_depth})")
 
-                # Spawn children for this parent
-                # IMPORTANT: X_eval is filtered to subdomain, but y_eval is GLOBAL solution
+                # Spawn children for this leaf
                 children = region_detector.spawn_children_for_node(
                     parent_region=parent_region if parent_region is not None else
                                  RegionDescriptor(
@@ -871,18 +855,16 @@ def train(
                                      depth=0,
                                      parent_idx=-1
                                  ),
-                    X=X_eval,  # Full eval_data coordinates
-                    y=y_eval,  # Global solution predictions
+                    X=X_eval,
+                    y=y_eval,
                     loss_components=loss_components,
                     verbose=True
                 )
 
                 # Selective spawning: spawn ONLY children that exceed threshold
                 if not children:
-                    print(f"      [Spawning] No children from split, retrying parent next iteration")
-                    if parent_region is not None:
-                        retry_parents.setdefault(deepest_depth, []).append((parent_region, parent_idx))
-                    continue
+                    print(f"      [Spawning] No children from split, leaf stays")
+                    continue  # leaf stays in leaf_nodes (unchanged)
 
                 # Filter children by threshold
                 if wavelet_threshold is not None:
@@ -896,13 +878,14 @@ def train(
                 if not children_to_spawn:
                     norms_str = ', '.join([f'{c.wavelet_norm:.6f}' for c, _ in children])
                     print(f"      [Spawning] All children below threshold (norms=[{norms_str}] < {wavelet_threshold})")
-                    print(f"                 → Keeping parent as leaf, retrying next iteration")
-                    if parent_region is not None:
-                        retry_parents.setdefault(deepest_depth, []).append((parent_region, parent_idx))
-                    continue
+                    print(f"                 → Leaf stays for next iteration")
+                    continue  # leaf stays in leaf_nodes (unchanged)
 
-                # Spawn ONLY children above threshold (allows asymmetric tree: 1 or 2 children)
+                # Spawn children above threshold — parent is no longer a leaf
+                leaf_nodes.remove((parent_region, parent_idx))
                 num_spawned_from_parent = 0
+                child_depth = parent_depth + 1
+
                 for child_node, _ in children_to_spawn:
                     if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
                         break
@@ -913,7 +896,7 @@ def train(
                         bounds_upper=child_node.bounds_upper,
                         wavelet_norm=child_node.wavelet_norm,
                         spawn_epoch=epoch,
-                        depth=deepest_depth + 1,
+                        depth=child_depth,
                         parent_idx=parent_idx
                     )
 
@@ -921,9 +904,10 @@ def train(
                     expert_idx = model.spawn_expert(child_region)
                     if expert_idx >= 0:
                         experts_spawned_this_step += 1
+                        num_spawned_from_parent += 1
 
-                        # Register as future parent (so next iteration can try splitting it)
-                        retry_parents.setdefault(deepest_depth + 1, []).append((child_region, expert_idx))
+                        # New child is a leaf
+                        leaf_nodes.append((child_region, expert_idx))
 
                         # Store expert spawn history
                         if 'expert_spawns' not in metrics:
@@ -932,16 +916,15 @@ def train(
                             'epoch': epoch,
                             'expert_idx': expert_idx,
                             'region': child_region.to_dict(),
-                            'depth': deepest_depth + 1,
+                            'depth': child_depth,
                             'parent_idx': parent_idx
                         }
                         if hasattr(model, 'num_experts'):
                             spawn_record['num_experts'] = model.num_experts
                         metrics['expert_spawns'].append(spawn_record)
                 
-                # Print spawning result for this parent
                 if num_spawned_from_parent > 0:
-                    print(f"      [Spawning] Spawned {num_spawned_from_parent} child(ren) from this parent")
+                    print(f"      [Spawning] Spawned {num_spawned_from_parent} child(ren) from {parent_str}")
 
             # If any experts were spawned, update optimizer and plot
             if experts_spawned_this_step > 0:
