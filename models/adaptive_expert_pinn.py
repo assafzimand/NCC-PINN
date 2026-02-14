@@ -392,6 +392,14 @@ class AdaptiveExpertPINN(nn.Module):
         device = next(self.base_model.parameters()).device
         expert = expert.to(device)
 
+        # Zero-initialize final layer so new expert starts with zero output,
+        # preserving the current composed solution at spawn time.
+        layer_names = expert.get_layer_names()
+        if layer_names:
+            final_layer = expert.network[layer_names[-1]]
+            nn.init.zeros_(final_layer.weight)
+            if final_layer.bias is not None:
+                nn.init.zeros_(final_layer.bias)
 
         # DIAGNOSTIC: Verify expert is on correct device
         actual_device = next(expert.parameters()).device
