@@ -146,7 +146,6 @@ def compute_analytical_indicator_derivatives(
     all_sigma = indicator_data['all_sigma']   # (K, D)
     psi_base = indicator_data['psi_base']     # (N, 1)
     psi_experts_filtered = indicator_data['psi_experts_filtered']  # (N, K)
-    use_additive = indicator_data['use_additive_mode']
     
     K_total = psi_experts_filtered.shape[1]
     num_active = len(active_expert_indices)
@@ -195,11 +194,8 @@ def compute_analytical_indicator_derivatives(
     
     # ---- Normalization and quotient rule ----
     # Use psi_experts_filtered (already has threshold zeroing applied)
-    if use_additive:
-        Z = psi_experts_filtered.sum(dim=1, keepdim=True).clamp(min=1e-8)  # (N, 1)
-    else:
-        Z = psi_base + psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
-        Z = Z.clamp(min=1e-8)
+    Z = psi_base + psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
+    Z = Z.clamp(min=1e-8)
     
     # Z derivatives = sum of raw expert derivatives (psi_base is constant → 0)
     # But we must only sum FILTERED experts (threshold-zeroed ones contribute 0)
@@ -216,32 +212,21 @@ def compute_analytical_indicator_derivatives(
     results = {}
     
     # Component 0: Base model
-    if use_additive:
-        # Base has constant weight 1.0 → all derivatives zero
-        results[0] = {
-            'psi_d': torch.ones(N, 1, device=device),
-            'dpsi_dx': torch.zeros(N, 1, device=device),
-        }
-        if need_ht:
-            results[0]['dpsi_dt'] = torch.zeros(N, 1, device=device)
-        if need_hxx:
-            results[0]['d2psi_dx2'] = torch.zeros(N, 1, device=device)
-    else:
-        # ψ̃_base = psi_base / Z
-        psi_norm_base = (psi_base / Z).detach()  # (N, 1)
-        # ψ̃_base_x = (0 - ψ̃_base · Z_x) / Z  (psi_base is constant → dpsi_base/dx = 0)
-        psi_norm_base_x = (-psi_norm_base * Z_x / Z).detach()
-        results[0] = {
-            'psi_d': psi_norm_base,
-            'dpsi_dx': psi_norm_base_x,
-        }
-        if need_ht:
-            results[0]['dpsi_dt'] = (-psi_norm_base * Z_t / Z).detach()
-        if need_hxx:
-            psi_norm_base_xx = (
-                -psi_norm_base * Z_xx - 2 * psi_norm_base_x * Z_x
-            ) / Z
-            results[0]['d2psi_dx2'] = psi_norm_base_xx.detach()
+    # ψ̃_base = psi_base / Z (base has constant unnormalized psi)
+    psi_norm_base = (psi_base / Z).detach()  # (N, 1)
+    # ψ̃_base_x = (0 - ψ̃_base · Z_x) / Z  (psi_base is constant → dpsi_base/dx = 0)
+    psi_norm_base_x = (-psi_norm_base * Z_x / Z).detach()
+    results[0] = {
+        'psi_d': psi_norm_base,
+        'dpsi_dx': psi_norm_base_x,
+    }
+    if need_ht:
+        results[0]['dpsi_dt'] = (-psi_norm_base * Z_t / Z).detach()
+    if need_hxx:
+        psi_norm_base_xx = (
+            -psi_norm_base * Z_xx - 2 * psi_norm_base_x * Z_x
+        ) / Z
+        results[0]['d2psi_dx2'] = psi_norm_base_xx.detach()
     
     # Components 1..num_active: active experts
     for comp_idx, expert_idx in enumerate(active_expert_indices):
