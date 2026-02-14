@@ -90,7 +90,7 @@ base_config:
   # Adaptive Expert PINN configuration (Tree-Based Spawning)
   adaptive_pinn:
     enabled: true                    # Toggle feature on/off (override per experiment)
-    max_experts: 15                 # Maximum number of expert networks
+    max_experts: 20                 # Maximum number of expert networks
     spawn_every_epochs: 300   # Check for spawning every N epochs (quick test value)
     expert_architectures: null        # null = same as base, or list of architectures
     freeze_mode: none                 # "none" | "previous" | "base_only"
