@@ -678,8 +678,6 @@ class AdaptiveExpertPINN(nn.Module):
         output_dim = self.base_model.layers[-1]
         device = inputs.device
         
-        use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
-        
         # Step 1: Compute ALL psi weights FIRST (cheap, no model evaluation)
         if _t: _t.start('fwd.compute_masks')
         psi_base, psi_experts = self.batched_indicators(inputs)  # psi_base: (N, 1), psi_experts: (N, K)
@@ -844,7 +842,6 @@ class AdaptiveExpertPINN(nn.Module):
             'psi_base': psi_base,                             # (N, 1)
             'psi_experts_filtered': psi_experts_filtered,     # (N, K)
             'active_expert_indices': active_expert_indices,   # tensor of active indices
-            'use_additive_mode': False,  # Always partition of unity mode
         }
         
         return {
