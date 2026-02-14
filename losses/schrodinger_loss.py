@@ -99,6 +99,155 @@ def compute_derivatives(
     return h_t, h_x, h_xx
 
 
+def compute_derivatives_decomposed(
+    components: list,
+    x: torch.Tensor,
+    t: torch.Tensor,
+    need_ht: bool = True,
+    need_hxx: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Compute derivatives of complex field h = u + iv via product rule on decomposed
+    expert outputs. Instead of differentiating through the entire composed model
+    (massive graph with all K experts), differentiates each expert independently
+    (K small graphs) and assembles using the product rule.
+    
+    For composed output u(x,t) = Σ_k ψ̃_k · u_k, the product rule gives:
+        u_x  = Σ_k (ψ̃_k_x · u_k  +  ψ̃_k · u_k_x)
+        u_t  = Σ_k (ψ̃_k_t · u_k  +  ψ̃_k · u_k_t)
+        u_xx = Σ_k (ψ̃_k_xx · u_k  +  2·ψ̃_k_x · u_k_x  +  ψ̃_k · u_k_xx)
+    
+    Key optimization: indicator derivatives (ψ̃ terms) are DETACHED since indicators
+    have no learnable parameters. This massively simplifies the backward graph.
+    
+    Args:
+        components: list of dicts from model.forward_for_pde_derivatives(), each with:
+            - 'u': (N, output_dim) model output, on autograd graph
+            - 'psi_norm': (N, 1) normalized weight, on autograd graph
+            - 'constant_psi': bool, True if weight is constant (e.g. base in additive mode)
+        x: spatial coordinates (N, 1), requires_grad=True
+        t: temporal coordinates (N, 1), requires_grad=True
+        need_ht: compute ∂h/∂t (needed for PDE residual, not for BC)
+        need_hxx: compute ∂²h/∂x² (needed for PDE residual, not for BC)
+        
+    Returns:
+        Tuple of (h_t, h_x, h_xx) as complex tensors (squeeze to batch dim).
+        h_t is None if need_ht=False, h_xx is None if need_hxx=False.
+    """
+    N = x.shape[0]
+    device = x.device
+    
+    # Accumulators for assembled derivatives — shape (N, 1)
+    asm_x_real = torch.zeros(N, 1, device=device)
+    asm_x_imag = torch.zeros(N, 1, device=device)
+    asm_t_real = torch.zeros(N, 1, device=device) if need_ht else None
+    asm_t_imag = torch.zeros(N, 1, device=device) if need_ht else None
+    asm_xx_real = torch.zeros(N, 1, device=device) if need_hxx else None
+    asm_xx_imag = torch.zeros(N, 1, device=device) if need_hxx else None
+    
+    for c in components:
+        u_k = c['u']           # (N, output_dim) — on autograd graph
+        psi_k = c['psi_norm']  # (N, 1) — on autograd graph (or constant)
+        is_constant = c.get('constant_psi', False)
+        
+        u_k_real = u_k[:, 0:1]  # (N, 1)
+        u_k_imag = u_k[:, 1:2]  # (N, 1)
+        
+        # ================================================================
+        # Expert output derivatives (create_graph=True — needed for backward)
+        # ================================================================
+        if need_ht:
+            # Batch: grad w.r.t. [x, t] in one call
+            real_grads = torch.autograd.grad(
+                u_k_real.sum(), [x, t], create_graph=True, retain_graph=True)
+            du_real_dx = real_grads[0]  # (N, 1)
+            du_real_dt = real_grads[1]  # (N, 1)
+            
+            imag_grads = torch.autograd.grad(
+                u_k_imag.sum(), [x, t], create_graph=True, retain_graph=True)
+            du_imag_dx = imag_grads[0]
+            du_imag_dt = imag_grads[1]
+        else:
+            # Only need dx (e.g. BC loss needs h_x only)
+            du_real_dx = torch.autograd.grad(
+                u_k_real.sum(), x, create_graph=True, retain_graph=True)[0]
+            du_imag_dx = torch.autograd.grad(
+                u_k_imag.sum(), x, create_graph=True, retain_graph=True)[0]
+        
+        if need_hxx:
+            d2u_real_dx2 = torch.autograd.grad(
+                du_real_dx.sum(), x, create_graph=True, retain_graph=True)[0]
+            d2u_imag_dx2 = torch.autograd.grad(
+                du_imag_dx.sum(), x, create_graph=True, retain_graph=True)[0]
+        
+        # ================================================================
+        # Indicator derivatives (DETACHED — no learnable params)
+        # ================================================================
+        if is_constant:
+            # psi is constant (e.g. base in additive mode) → all derivatives are zero
+            psi_k_d = psi_k.detach()
+            dpsi_dx = torch.zeros(N, 1, device=device)
+            if need_hxx:
+                d2psi_dx2 = torch.zeros(N, 1, device=device)
+            if need_ht:
+                dpsi_dt = torch.zeros(N, 1, device=device)
+        else:
+            # Compute indicator derivatives via autograd, then detach
+            if need_hxx:
+                # Need create_graph=True on first derivative to compute second
+                dpsi_dx = torch.autograd.grad(
+                    psi_k.sum(), x, create_graph=True, retain_graph=True)[0]
+                d2psi_dx2 = torch.autograd.grad(
+                    dpsi_dx.sum(), x, retain_graph=True)[0]
+                dpsi_dx = dpsi_dx.detach()
+                d2psi_dx2 = d2psi_dx2.detach()
+            else:
+                dpsi_dx = torch.autograd.grad(
+                    psi_k.sum(), x, retain_graph=True)[0]
+                dpsi_dx = dpsi_dx.detach()
+            
+            if need_ht:
+                dpsi_dt = torch.autograd.grad(
+                    psi_k.sum(), t, retain_graph=True)[0]
+                dpsi_dt = dpsi_dt.detach()
+            
+            psi_k_d = psi_k.detach()  # (N, 1)
+        
+        # ================================================================
+        # Accumulate product rule: h_x = Σ_k (ψ̃_k_x · u_k + ψ̃_k · u_k_x)
+        # ================================================================
+        asm_x_real = asm_x_real + dpsi_dx * u_k_real + psi_k_d * du_real_dx
+        asm_x_imag = asm_x_imag + dpsi_dx * u_k_imag + psi_k_d * du_imag_dx
+        
+        if need_ht:
+            asm_t_real = asm_t_real + dpsi_dt * u_k_real + psi_k_d * du_real_dt
+            asm_t_imag = asm_t_imag + dpsi_dt * u_k_imag + psi_k_d * du_imag_dt
+        
+        if need_hxx:
+            # h_xx = Σ_k (ψ̃_k_xx · u_k + 2·ψ̃_k_x · u_k_x + ψ̃_k · u_k_xx)
+            asm_xx_real = (asm_xx_real
+                          + d2psi_dx2 * u_k_real
+                          + 2 * dpsi_dx * du_real_dx
+                          + psi_k_d * d2u_real_dx2)
+            asm_xx_imag = (asm_xx_imag
+                          + d2psi_dx2 * u_k_imag
+                          + 2 * dpsi_dx * du_imag_dx
+                          + psi_k_d * d2u_imag_dx2)
+    
+    # Pack as complex, squeeze last dim to match original compute_derivatives output
+    h_x = torch.complex(asm_x_real, asm_x_imag).squeeze(-1)
+    
+    h_t = None
+    if need_ht:
+        h_t = torch.complex(asm_t_real, asm_t_imag).squeeze(-1)
+    
+    h_xx = None
+    if need_hxx:
+        h_xx = torch.complex(asm_xx_real, asm_xx_imag).squeeze(-1)
+    
+    return h_t, h_x, h_xx
+
+
 def pde_residual(
     h: torch.Tensor,
     h_t: torch.Tensor,
@@ -174,6 +323,11 @@ def build_loss(**cfg) -> Callable:
         # Timer (attached to model by trainer)
         _t = getattr(model, '_timer', None)
         
+        # Check if model supports decomposed derivative computation (Step C)
+        # Use decomposed approach when model is adaptive with active experts
+        use_decomposed = (hasattr(model, 'forward_for_pde_derivatives')
+                          and len(getattr(model, 'experts', [])) > 0)
+        
         # Initialize per-sample arrays if needed
         if for_tree_spawning:
             residual_per_sample = torch.zeros(N, device=device)
@@ -194,19 +348,33 @@ def build_loss(**cfg) -> Callable:
             
             # Model prediction: concatenate x,t -> predict (u,v)
             xt_f = torch.cat([x_f, t_f], dim=1)
-            if _t: _t.start('loss.residual.forward')
-            uv_f = model(xt_f)  # (N_f, 2)
-            if _t: _t.stop('loss.residual.forward')
             
-            # Extract u and v (these should have grad_fn from the model)
-            u_f = uv_f[:, 0]
-            v_f = uv_f[:, 1]
-            
-            
-            # Compute derivatives
-            if _t: _t.start('loss.residual.derivatives')
-            h_t, h_x, h_xx = compute_derivatives(u_f, v_f, x_f, t_f)
-            if _t: _t.stop('loss.residual.derivatives')
+            if use_decomposed:
+                # === Decomposed approach (Step C): product rule on per-expert outputs ===
+                if _t: _t.start('loss.residual.forward')
+                decomposed = model.forward_for_pde_derivatives(xt_f)
+                if _t: _t.stop('loss.residual.forward')
+                
+                composed = decomposed['composed']  # (N_f, 2)
+                u_f = composed[:, 0]
+                v_f = composed[:, 1]
+                
+                if _t: _t.start('loss.residual.derivatives')
+                h_t, h_x, h_xx = compute_derivatives_decomposed(
+                    decomposed['components'], x_f, t_f, need_ht=True, need_hxx=True)
+                if _t: _t.stop('loss.residual.derivatives')
+            else:
+                # === Standard approach: differentiate composed output directly ===
+                if _t: _t.start('loss.residual.forward')
+                uv_f = model(xt_f)  # (N_f, 2)
+                if _t: _t.stop('loss.residual.forward')
+                
+                u_f = uv_f[:, 0]
+                v_f = uv_f[:, 1]
+                
+                if _t: _t.start('loss.residual.derivatives')
+                h_t, h_x, h_xx = compute_derivatives(u_f, v_f, x_f, t_f)
+                if _t: _t.stop('loss.residual.derivatives')
             
             # Compute PDE residual: i*h_t + 0.5*h_xx + |h|²*h
             # Need h for |h|² term
@@ -285,16 +453,33 @@ def build_loss(**cfg) -> Callable:
             
             # Single forward pass for both boundaries
             xt_stacked = torch.cat([x_stacked, t_stacked], dim=1)
-            if _t: _t.start('loss.bc.forward')
-            uv_stacked = model(xt_stacked)
-            if _t: _t.stop('loss.bc.forward')
-            u_stacked = uv_stacked[:, 0]
-            v_stacked = uv_stacked[:, 1]
             
-            # Compute spatial derivatives at boundaries
-            if _t: _t.start('loss.bc.derivatives')
-            _, h_x_stacked, _ = compute_derivatives(u_stacked, v_stacked, x_stacked, t_stacked)
-            if _t: _t.stop('loss.bc.derivatives')
+            if use_decomposed:
+                # === Decomposed approach: product rule (only h_x needed for BC) ===
+                if _t: _t.start('loss.bc.forward')
+                decomposed_bc = model.forward_for_pde_derivatives(xt_stacked)
+                if _t: _t.stop('loss.bc.forward')
+                
+                composed_bc = decomposed_bc['composed']
+                u_stacked = composed_bc[:, 0]
+                v_stacked = composed_bc[:, 1]
+                
+                if _t: _t.start('loss.bc.derivatives')
+                _, h_x_stacked, _ = compute_derivatives_decomposed(
+                    decomposed_bc['components'], x_stacked, t_stacked,
+                    need_ht=False, need_hxx=False)
+                if _t: _t.stop('loss.bc.derivatives')
+            else:
+                # === Standard approach ===
+                if _t: _t.start('loss.bc.forward')
+                uv_stacked = model(xt_stacked)
+                if _t: _t.stop('loss.bc.forward')
+                u_stacked = uv_stacked[:, 0]
+                v_stacked = uv_stacked[:, 1]
+                
+                if _t: _t.start('loss.bc.derivatives')
+                _, h_x_stacked, _ = compute_derivatives(u_stacked, v_stacked, x_stacked, t_stacked)
+                if _t: _t.stop('loss.bc.derivatives')
             
             # Split predictions and derivatives (use actual sizes, not torch.chunk)
             u_left = u_stacked[:n_b_left]

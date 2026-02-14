@@ -927,6 +927,124 @@ class AdaptiveExpertPINN(nn.Module):
         
         return u_total
     
+    def forward_for_pde_derivatives(self, inputs: torch.Tensor) -> dict:
+        """
+        Forward pass returning decomposed components for product-rule derivative computation.
+        
+        Instead of returning the composed scalar output, returns individual expert outputs
+        and their normalized weights. The loss function uses these to compute PDE derivatives
+        via the product rule, creating K small autograd graphs instead of one massive one.
+        
+        For partition of unity (non-pretrained):
+            u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t),  k includes base
+            where ψ̃_k = ψ_k / Z, Z = Σ_j ψ_j
+        
+        Product rule gives: u_x = Σ_k (ψ̃_k_x · u_k + ψ̃_k · u_k_x), etc.
+        
+        Args:
+            inputs: (N, n_dims) input coordinates. The x,t components must
+                    have requires_grad=True (set by the loss function).
+        
+        Returns:
+            dict with:
+                - 'components': list of dicts, each with:
+                    - 'u': (N, output_dim) model output, on autograd graph
+                    - 'psi_norm': (N, 1) normalized weight, on autograd graph
+                    - 'constant_psi': bool, True if psi_norm is constant (skip indicator derivatives)
+                - 'composed': (N, output_dim) assembled output (uses detached psi for efficiency)
+        """
+        _t = self._timer
+        N = inputs.shape[0]
+        output_dim = self.base_model.layers[-1]
+        device = inputs.device
+        
+        use_additive_mode = self.adaptive_config.get('pretrained_base_model', False)
+        
+        threshold = self.adaptive_config.get('expert_activation_threshold', None)
+        if threshold is not None:
+            threshold = float(threshold)
+        
+        # Step 1: Compute indicators (on autograd graph since inputs require grad)
+        if _t: _t.start('fwd.compute_masks')
+        psi_base, psi_experts = self.batched_indicators(inputs)  # (N, 1), (N, K)
+        if _t: _t.stop('fwd.compute_masks')
+        
+        # Step 2: Sparse selection (same logic as _forward_soft_sparse)
+        if _t: _t.start('fwd.sparse_selection')
+        K = psi_experts.shape[1]
+        
+        if threshold is not None and K > 0:
+            active_mask = psi_experts > threshold  # (N, K)
+            active_experts_any = active_mask.sum(dim=0) > 0  # (K,)
+            active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]
+            # Zero out below-threshold psi values
+            psi_experts_filtered = psi_experts * active_mask.float()
+        elif K > 0:
+            active_expert_indices = torch.arange(K, device=device)
+            psi_experts_filtered = psi_experts
+        else:
+            active_expert_indices = []
+            psi_experts_filtered = psi_experts  # (N, 0)
+        
+        num_active = len(active_expert_indices)
+        if _t: _t.stop('fwd.sparse_selection')
+        
+        # Step 3: Normalize weights
+        if use_additive_mode:
+            # Additive: experts normalized among themselves, base weight = 1
+            Z_experts = psi_experts_filtered.sum(dim=1, keepdim=True).clamp(min=1e-8)
+            psi_norm_experts = psi_experts_filtered / Z_experts  # (N, K)
+        else:
+            # Partition of unity: normalize all (base + experts)
+            Z = psi_base + psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
+            Z = Z.clamp(min=1e-8)
+            psi_norm_base = psi_base / Z  # (N, 1) — depends on x,t through Z
+            psi_norm_experts = psi_experts_filtered / Z  # (N, K)
+        
+        # Step 4: Build components list and evaluate models
+        if _t: _t.start('fwd.sparse_eval')
+        components = []
+        
+        # Base model
+        u_base = self.base_model(inputs)  # (N, output_dim)
+        if use_additive_mode:
+            # Additive: base contributes with constant weight 1.0
+            components.append({
+                'u': u_base,
+                'psi_norm': torch.ones(N, 1, device=device, dtype=inputs.dtype),
+                'constant_psi': True,
+            })
+        else:
+            # Partition of unity: base has non-constant normalized weight
+            components.append({
+                'u': u_base,
+                'psi_norm': psi_norm_base,
+                'constant_psi': False,
+            })
+        
+        # Active experts
+        for idx in active_expert_indices:
+            k = idx.item() if torch.is_tensor(idx) else idx
+            u_k = self.experts[k](inputs)  # (N, output_dim)
+            components.append({
+                'u': u_k,
+                'psi_norm': psi_norm_experts[:, k:k+1],  # (N, 1)
+                'constant_psi': False,
+            })
+        
+        if _t: _t.stop('fwd.sparse_eval')
+        
+        # Step 5: Composed output (with detached psi for efficiency — correct since
+        # indicators have no learnable params, backward only needs to flow through u_k)
+        composed = torch.zeros(N, output_dim, device=device, dtype=inputs.dtype)
+        for c in components:
+            composed = composed + c['psi_norm'].detach() * c['u']
+        
+        return {
+            'components': components,
+            'composed': composed,
+        }
+    
     def forward_decomposed(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Forward pass returning individual model contributions.
