@@ -1002,15 +1002,20 @@ class AdaptiveExpertPINN(nn.Module):
             psi_norm_experts = psi_experts_filtered / Z  # (N, K)
         
         # Step 4: Build components list and evaluate models
+        # Each expert gets its OWN copy of inputs (detached leaf with requires_grad).
+        # This makes their autograd graphs independent, enabling batched autograd.grad
+        # calls in the loss function (K expert derivatives in 1 call instead of K calls).
         if _t: _t.start('fwd.sparse_eval')
         components = []
         
-        # Base model
-        u_base = self.base_model(inputs)  # (N, output_dim)
+        # Base model — own input copy
+        inputs_base = inputs.detach().clone().requires_grad_(True)
+        u_base = self.base_model(inputs_base)  # (N, output_dim)
         if use_additive_mode:
             # Additive: base contributes with constant weight 1.0
             components.append({
                 'u': u_base,
+                'inputs': inputs_base,
                 'psi_norm': torch.ones(N, 1, device=device, dtype=inputs.dtype),
                 'constant_psi': True,
             })
@@ -1018,16 +1023,19 @@ class AdaptiveExpertPINN(nn.Module):
             # Partition of unity: base has non-constant normalized weight
             components.append({
                 'u': u_base,
+                'inputs': inputs_base,
                 'psi_norm': psi_norm_base,
                 'constant_psi': False,
             })
         
-        # Active experts
+        # Active experts — each gets own input copy
         for idx in active_expert_indices:
             k = idx.item() if torch.is_tensor(idx) else idx
-            u_k = self.experts[k](inputs)  # (N, output_dim)
+            inputs_k = inputs.detach().clone().requires_grad_(True)
+            u_k = self.experts[k](inputs_k)  # (N, output_dim)
             components.append({
                 'u': u_k,
+                'inputs': inputs_k,
                 'psi_norm': psi_norm_experts[:, k:k+1],  # (N, 1)
                 'constant_psi': False,
             })
