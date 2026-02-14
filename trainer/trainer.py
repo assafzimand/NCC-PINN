@@ -861,17 +861,22 @@ def train(
                     verbose=True
                 )
 
-                # Selective spawning: spawn ONLY children that exceed threshold
+                # Spawn both children if one of them is above threshold
                 if not children:
                     print(f"      [Spawning] No children from split, leaf stays")
                     continue  # leaf stays in leaf_nodes (unchanged)
 
                 # Filter children by threshold
                 if wavelet_threshold is not None:
-                    children_to_spawn = [
+                    children_above_threshold = [
                         (child_node, samples) for child_node, samples in children
                         if child_node.wavelet_norm >= wavelet_threshold
                     ]
+                    if len(children_above_threshold) > 0:
+                        children_to_spawn = children
+                    else:
+                        print(f"      [Spawning] No children above threshold, leaf stays")
+                        children_to_spawn = None
                 else:
                     children_to_spawn = children  # No threshold: spawn all
 
