@@ -395,11 +395,6 @@ def train(
     wavelet_threshold = adaptive_cfg.get('wavelet_threshold', None)
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
     
-    # Pretrained base model mode
-    pretrained_base_model = adaptive_cfg.get('pretrained_base_model', False)
-    pretrained_base_path = adaptive_cfg.get('pretrained_base_path', None)
-    disable_spawning_during_training = False  # Will be set to True after tree building
-    
     if is_adaptive:
         # Extract tree-based spawning parameters
         tree_max_depth = adaptive_cfg.get('tree_max_depth', 15)
@@ -551,47 +546,34 @@ def train(
 
                 print(f"{'='*60}\n")
         
-        # Import and create region detector (only needed if not pretrained mode)
-        if not pretrained_base_model:
-            from adaptive.region_detector import RegionDetector
-            from adaptive.visualization import (
-                plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
-                plot_expert_soft_weights
-            )
-            from adaptive.residual_utils import compute_loss_components
-            from adaptive.indicators import RegionDescriptor
+        # Import and create region detector
+        from adaptive.region_detector import RegionDetector
+        from adaptive.visualization import (
+            plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
+            plot_expert_soft_weights
+        )
+        from adaptive.residual_utils import compute_loss_components
+        from adaptive.indicators import RegionDescriptor
 
-            # Get domain bounds
-            domain_bounds = model.get_domain_bounds()
+        # Get domain bounds
+        domain_bounds = model.get_domain_bounds()
 
-            # Prepare ground truth grid for visualization
-            gt_grid, gt_x, gt_t = prepare_ground_truth_grid(eval_data, domain_bounds)
+        # Prepare ground truth grid for visualization
+        gt_grid, gt_x, gt_t = prepare_ground_truth_grid(eval_data, domain_bounds)
 
-            # Create RegionDetector with n_estimators=1 (single tree for each spawn)
-            tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
-            region_detector = RegionDetector(
-                n_estimators=1,  # Single tree for each parent split
-                max_depth=1,     # Single binary split per spawn
-                min_samples_leaf=tree_min_samples_leaf,
-                domain_bounds=domain_bounds
-            )
-        else:
-            # For pretrained mode, still need these imports for final plots
-            from adaptive.visualization import (
-                plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
-                plot_expert_soft_weights
-            )
-            domain_bounds = model.get_domain_bounds()
-            gt_grid, gt_x, gt_t = prepare_ground_truth_grid(eval_data, domain_bounds)
+        # Create RegionDetector with n_estimators=1 (single tree for each spawn)
+        tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
+        region_detector = RegionDetector(
+            n_estimators=1,  # Single tree for each parent split
+            max_depth=1,     # Single binary split per spawn
+            min_samples_leaf=tree_min_samples_leaf,
+            domain_bounds=domain_bounds
+        )
         
         # Create directory for adaptive outputs
         adaptive_plots_dir = run_dir / "adaptive_plots"
         adaptive_plots_dir.mkdir(exist_ok=True)
     
-    # Adaptive spawn cooldown: skip N spawn attempts after finding 0 experts
-    spawn_skip_counter = 0  # When > 0, skip spawn attempts and decrement
-    spawn_cooldown_steps = 3  # How many steps to skip after finding 0 experts
-
     # Training loop
     print(f"\nTraining for {epochs} epochs...")
     start_time = time.time()
@@ -929,14 +911,7 @@ def train(
         spawn_check_triggered = (is_adaptive and
                                  epoch % spawn_every == 0 and
                                  hasattr(model, 'num_experts') and
-                                 model.num_experts < max_experts and
-                                 not disable_spawning_during_training)
-        
-        if spawn_check_triggered and spawn_skip_counter > 0:
-            # In cooldown period - skip this spawn attempt
-            spawn_skip_counter -= 1
-            print(f"\n  [Adaptive] Skipping spawn attempt (cooldown: {spawn_skip_counter} steps remaining)")
-            spawn_check_triggered = False  # Don't proceed with spawn
+                                model.num_experts < max_experts)
         
         if spawn_check_triggered:
             print(f"\n{'='*60}")
@@ -1132,9 +1107,6 @@ def train(
                     )
             else:
                 print(f"\n  [Spawning] No experts spawned this step")
-                # Enter cooldown: skip next N spawn attempts
-                spawn_skip_counter = spawn_cooldown_steps
-                print(f"  Entering spawn cooldown for {spawn_cooldown_steps} steps")
 
             model.train()
 
