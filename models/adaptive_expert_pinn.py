@@ -623,7 +623,7 @@ class AdaptiveExpertPINN(nn.Module):
         
         # Step 2: Identify which experts are active for ANY point
         if _t: _t.start('fwd.sparse_selection')
-        active_experts_any = (masks.sum(dim=0) > 20)  # (K,) - which experts are used anywhere
+        active_experts_any = (masks.sum(dim=0) > 10)  # (K,) - which experts are used anywhere
         active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]  # indices of active experts
         num_active = len(active_expert_indices)
         if _t: _t.stop('fwd.sparse_selection')
@@ -686,7 +686,7 @@ class AdaptiveExpertPINN(nn.Module):
         # Step 2: Identify which experts have significant weight ANYWHERE
         if _t: _t.start('fwd.sparse_selection')
         active_mask = psi_experts > threshold  # (N, K) - boolean mask
-        active_experts_any = active_mask.sum(dim=0) > 20  # (K,) - which experts are used anywhere
+        active_experts_any = active_mask.sum(dim=0) > 10  # (K,) - which experts are used anywhere
         active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]  # indices
         num_active = len(active_expert_indices)
         if _t: _t.stop('fwd.sparse_selection')
@@ -774,7 +774,7 @@ class AdaptiveExpertPINN(nn.Module):
         
         if threshold is not None and K > 0:
             active_mask = psi_experts > threshold  # (N, K)
-            active_experts_any = active_mask.sum(dim=0) > 20  # (K,)
+            active_experts_any = active_mask.sum(dim=0) > 10  # (K,)
             active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]
             # Zero out below-threshold psi values
             psi_experts_filtered = psi_experts * active_mask.float()
