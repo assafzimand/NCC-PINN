@@ -98,7 +98,7 @@ base_config:
     sigma_fraction: 0.2               # For soft: sigma = fraction * region_size (per-dimension)
     base_weight: 1.0                  # Uniform weight for base model (soft blending only)
     base_everywhere: true             # If false, u_0 has indicator = domain \ experts
-    wavelet_threshold: 0.01            # Minimum wavelet norm to spawn (filters low-priority regions)
+    wavelet_threshold: 0.0001            # Minimum wavelet norm to spawn (filters low-priority regions)
     tree_max_depth: 15                # Max depth of decision tree
     tree_min_samples_leaf: 10         # Min samples in tree leaf node
     enable_timing: false              # Enable epoch timing profiling (can slow down training)
