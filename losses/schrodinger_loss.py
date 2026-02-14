@@ -108,25 +108,29 @@ def compute_derivatives_decomposed(
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute derivatives of complex field h = u + iv via product rule on decomposed
-    expert outputs. Instead of differentiating through the entire composed model
-    (massive graph with all K experts), differentiates each expert independently
-    (K small graphs) and assembles using the product rule.
+    expert outputs, using BATCHED autograd for all experts simultaneously.
+    
+    Key optimization: each expert was evaluated with its own input copy (inputs_k),
+    making their autograd graphs independent. This allows batching all K expert
+    derivative computations into a SINGLE autograd.grad call per derivative type
+    (4 calls total for residual, same as baseline) instead of K separate calls.
     
     For composed output u(x,t) = Σ_k ψ̃_k · u_k, the product rule gives:
         u_x  = Σ_k (ψ̃_k_x · u_k  +  ψ̃_k · u_k_x)
         u_t  = Σ_k (ψ̃_k_t · u_k  +  ψ̃_k · u_k_t)
         u_xx = Σ_k (ψ̃_k_xx · u_k  +  2·ψ̃_k_x · u_k_x  +  ψ̃_k · u_k_xx)
     
-    Key optimization: indicator derivatives (ψ̃ terms) are DETACHED since indicators
-    have no learnable parameters. This massively simplifies the backward graph.
+    Indicator derivatives (ψ̃ terms) are computed via autograd on the original
+    shared inputs (x, t), then DETACHED since indicators have no learnable params.
     
     Args:
         components: list of dicts from model.forward_for_pde_derivatives(), each with:
             - 'u': (N, output_dim) model output, on autograd graph
+            - 'inputs': (N, D) per-expert input copy (leaf, requires_grad=True)
             - 'psi_norm': (N, 1) normalized weight, on autograd graph
-            - 'constant_psi': bool, True if weight is constant (e.g. base in additive mode)
-        x: spatial coordinates (N, 1), requires_grad=True
-        t: temporal coordinates (N, 1), requires_grad=True
+            - 'constant_psi': bool, True if weight is constant
+        x: spatial coordinates (N, spatial_dim), requires_grad=True (original, for psi autograd)
+        t: temporal coordinates (N, 1), requires_grad=True (original, for psi autograd)
         need_ht: compute ∂h/∂t (needed for PDE residual, not for BC)
         need_hxx: compute ∂²h/∂x² (needed for PDE residual, not for BC)
         
@@ -136,8 +140,53 @@ def compute_derivatives_decomposed(
     """
     N = x.shape[0]
     device = x.device
+    num_components = len(components)
+    spatial_dim = x.shape[1]  # number of spatial columns in inputs (1 for Schrödinger)
+    t_col = spatial_dim       # time column index in inputs_k
     
-    # Accumulators for assembled derivatives — shape (N, 1)
+    # ====================================================================
+    # BATCHED expert first derivatives (2 autograd calls for ALL experts)
+    # ====================================================================
+    # Collect per-expert inputs for batched autograd
+    all_inputs = [c['inputs'] for c in components]
+    
+    # Sum all expert real/imag outputs into scalars
+    total_real = sum(c['u'][:, 0].sum() for c in components)
+    total_imag = sum(c['u'][:, 1].sum() for c in components)
+    
+    # Call 1: all real first derivatives in one shot
+    # Returns tuple of (N, D) tensors, one per expert
+    # grads[k][:, 0:spatial_dim] = du_k_real/dx, grads[k][:, t_col:] = du_k_real/dt
+    real_grads = torch.autograd.grad(
+        total_real, all_inputs, create_graph=True, retain_graph=True)
+    
+    # Call 2: all imag first derivatives in one shot
+    imag_grads = torch.autograd.grad(
+        total_imag, all_inputs, create_graph=True, retain_graph=True)
+    
+    # ====================================================================
+    # BATCHED expert second derivatives (2 more calls if needed)
+    # ====================================================================
+    d2_real = None
+    d2_imag = None
+    if need_hxx:
+        # Sum the spatial (x) components of first derivatives across all experts
+        total_du_real_dx = sum(
+            real_grads[k][:, 0:spatial_dim].sum() for k in range(num_components))
+        total_du_imag_dx = sum(
+            imag_grads[k][:, 0:spatial_dim].sum() for k in range(num_components))
+        
+        # Call 3: all real second spatial derivatives
+        d2_real = torch.autograd.grad(
+            total_du_real_dx, all_inputs, create_graph=True, retain_graph=True)
+        
+        # Call 4: all imag second spatial derivatives
+        d2_imag = torch.autograd.grad(
+            total_du_imag_dx, all_inputs, create_graph=True, retain_graph=True)
+    
+    # ====================================================================
+    # Per-component: indicator autograd + product rule assembly
+    # ====================================================================
     asm_x_real = torch.zeros(N, 1, device=device)
     asm_x_imag = torch.zeros(N, 1, device=device)
     asm_t_real = torch.zeros(N, 1, device=device) if need_ht else None
@@ -145,46 +194,30 @@ def compute_derivatives_decomposed(
     asm_xx_real = torch.zeros(N, 1, device=device) if need_hxx else None
     asm_xx_imag = torch.zeros(N, 1, device=device) if need_hxx else None
     
-    for c in components:
-        u_k = c['u']           # (N, output_dim) — on autograd graph
-        psi_k = c['psi_norm']  # (N, 1) — on autograd graph (or constant)
+    for k, c in enumerate(components):
+        u_k = c['u']
+        psi_k = c['psi_norm']
         is_constant = c.get('constant_psi', False)
         
         u_k_real = u_k[:, 0:1]  # (N, 1)
         u_k_imag = u_k[:, 1:2]  # (N, 1)
         
-        # ================================================================
-        # Expert output derivatives (create_graph=True — needed for backward)
-        # ================================================================
+        # Extract per-expert derivatives from batched results
+        du_real_dx = real_grads[k][:, 0:spatial_dim]  # (N, spatial_dim)
+        du_imag_dx = imag_grads[k][:, 0:spatial_dim]  # (N, spatial_dim)
+        
         if need_ht:
-            # Batch: grad w.r.t. [x, t] in one call
-            real_grads = torch.autograd.grad(
-                u_k_real.sum(), [x, t], create_graph=True, retain_graph=True)
-            du_real_dx = real_grads[0]  # (N, 1)
-            du_real_dt = real_grads[1]  # (N, 1)
-            
-            imag_grads = torch.autograd.grad(
-                u_k_imag.sum(), [x, t], create_graph=True, retain_graph=True)
-            du_imag_dx = imag_grads[0]
-            du_imag_dt = imag_grads[1]
-        else:
-            # Only need dx (e.g. BC loss needs h_x only)
-            du_real_dx = torch.autograd.grad(
-                u_k_real.sum(), x, create_graph=True, retain_graph=True)[0]
-            du_imag_dx = torch.autograd.grad(
-                u_k_imag.sum(), x, create_graph=True, retain_graph=True)[0]
+            du_real_dt = real_grads[k][:, t_col:t_col+1]  # (N, 1)
+            du_imag_dt = imag_grads[k][:, t_col:t_col+1]  # (N, 1)
         
         if need_hxx:
-            d2u_real_dx2 = torch.autograd.grad(
-                du_real_dx.sum(), x, create_graph=True, retain_graph=True)[0]
-            d2u_imag_dx2 = torch.autograd.grad(
-                du_imag_dx.sum(), x, create_graph=True, retain_graph=True)[0]
+            d2u_real_dx2 = d2_real[k][:, 0:spatial_dim]  # (N, spatial_dim)
+            d2u_imag_dx2 = d2_imag[k][:, 0:spatial_dim]  # (N, spatial_dim)
         
-        # ================================================================
-        # Indicator derivatives (DETACHED — no learnable params)
-        # ================================================================
+        # ============================================================
+        # Indicator derivatives (autograd on ORIGINAL x, t — then detach)
+        # ============================================================
         if is_constant:
-            # psi is constant (e.g. base in additive mode) → all derivatives are zero
             psi_k_d = psi_k.detach()
             dpsi_dx = torch.zeros(N, 1, device=device)
             if need_hxx:
@@ -192,9 +225,7 @@ def compute_derivatives_decomposed(
             if need_ht:
                 dpsi_dt = torch.zeros(N, 1, device=device)
         else:
-            # Compute indicator derivatives via autograd, then detach
             if need_hxx:
-                # Need create_graph=True on first derivative to compute second
                 dpsi_dx = torch.autograd.grad(
                     psi_k.sum(), x, create_graph=True, retain_graph=True)[0]
                 d2psi_dx2 = torch.autograd.grad(
@@ -211,11 +242,11 @@ def compute_derivatives_decomposed(
                     psi_k.sum(), t, retain_graph=True)[0]
                 dpsi_dt = dpsi_dt.detach()
             
-            psi_k_d = psi_k.detach()  # (N, 1)
+            psi_k_d = psi_k.detach()
         
-        # ================================================================
-        # Accumulate product rule: h_x = Σ_k (ψ̃_k_x · u_k + ψ̃_k · u_k_x)
-        # ================================================================
+        # ============================================================
+        # Product rule assembly
+        # ============================================================
         asm_x_real = asm_x_real + dpsi_dx * u_k_real + psi_k_d * du_real_dx
         asm_x_imag = asm_x_imag + dpsi_dx * u_k_imag + psi_k_d * du_imag_dx
         
@@ -224,7 +255,6 @@ def compute_derivatives_decomposed(
             asm_t_imag = asm_t_imag + dpsi_dt * u_k_imag + psi_k_d * du_imag_dt
         
         if need_hxx:
-            # h_xx = Σ_k (ψ̃_k_xx · u_k + 2·ψ̃_k_x · u_k_x + ψ̃_k · u_k_xx)
             asm_xx_real = (asm_xx_real
                           + d2psi_dx2 * u_k_real
                           + 2 * dpsi_dx * du_real_dx
