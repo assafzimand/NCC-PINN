@@ -877,20 +877,23 @@ def train(
                     verbose=True
                 )
 
-                # All-or-nothing decision: if ANY child exceeds threshold, spawn ALL children
+                # Selective spawning: spawn ONLY children that exceed threshold
                 if not children:
                     print(f"      [Spawning] No children from split, retrying parent next iteration")
                     if parent_region is not None:
                         retry_parents.setdefault(deepest_depth, []).append((parent_region, parent_idx))
                     continue
 
-                # Check if any child is above threshold
+                # Filter children by threshold
                 if wavelet_threshold is not None:
-                    any_above = any(child_node.wavelet_norm >= wavelet_threshold for child_node, _ in children)
+                    children_to_spawn = [
+                        (child_node, samples) for child_node, samples in children
+                        if child_node.wavelet_norm >= wavelet_threshold
+                    ]
                 else:
-                    any_above = True  # No threshold: always spawn
+                    children_to_spawn = children  # No threshold: spawn all
 
-                if not any_above:
+                if not children_to_spawn:
                     norms_str = ', '.join([f'{c.wavelet_norm:.6f}' for c, _ in children])
                     print(f"      [Spawning] All children below threshold (norms=[{norms_str}] < {wavelet_threshold})")
                     print(f"                 → Keeping parent as leaf, retrying next iteration")
@@ -898,8 +901,9 @@ def train(
                         retry_parents.setdefault(deepest_depth, []).append((parent_region, parent_idx))
                     continue
 
-                # Spawn ALL children (all-or-nothing)
-                for child_node, _ in children:
+                # Spawn ONLY children above threshold (allows asymmetric tree: 1 or 2 children)
+                num_spawned_from_parent = 0
+                for child_node, _ in children_to_spawn:
                     if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
                         break
 
@@ -934,6 +938,10 @@ def train(
                         if hasattr(model, 'num_experts'):
                             spawn_record['num_experts'] = model.num_experts
                         metrics['expert_spawns'].append(spawn_record)
+                
+                # Print spawning result for this parent
+                if num_spawned_from_parent > 0:
+                    print(f"      [Spawning] Spawned {num_spawned_from_parent} child(ren) from this parent")
 
             # If any experts were spawned, update optimizer and plot
             if experts_spawned_this_step > 0:

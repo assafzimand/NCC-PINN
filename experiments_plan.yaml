@@ -104,6 +104,7 @@ base_config:
     enable_timing: false              # Enable epoch timing profiling (can slow down training)
     inner_metrics_calculation: false  # Disable NCC/probes during training (complex with experts)
     enable_gradient_diagnostics: false  # Enable detailed gradient flow diagnostics (verbose)
+    use_decomposed_derivatives: true
     
     # Sparse Expert Activation (Step 2.1)
     expert_activation_threshold: 1e-8  # null = disabled, float = only evaluate experts with psi > threshold
