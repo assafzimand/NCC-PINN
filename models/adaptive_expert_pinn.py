@@ -1048,9 +1048,23 @@ class AdaptiveExpertPINN(nn.Module):
         for c in components:
             composed = composed + c['psi_norm'].detach() * c['u']
         
+        # Step 6: Pack indicator metadata for analytical derivative computation
+        # The loss function uses bounds/sigma to compute ψ̃ derivatives analytically
+        # instead of using autograd (eliminates ~63 autograd calls at K=20).
+        indicator_data = {
+            'all_lower': self.batched_indicators.all_lower,   # (K, D) or None
+            'all_upper': self.batched_indicators.all_upper,   # (K, D) or None
+            'all_sigma': self.batched_indicators.all_sigma,   # (K, D) or None
+            'psi_base': psi_base,                             # (N, 1)
+            'psi_experts_filtered': psi_experts_filtered,     # (N, K)
+            'active_expert_indices': active_expert_indices,   # tensor of active indices
+            'use_additive_mode': use_additive_mode,
+        }
+        
         return {
             'components': components,
             'composed': composed,
+            'indicator_data': indicator_data,
         }
     
     def forward_decomposed(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:

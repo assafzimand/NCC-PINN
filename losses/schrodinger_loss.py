@@ -99,12 +99,195 @@ def compute_derivatives(
     return h_t, h_x, h_xx
 
 
+def compute_analytical_indicator_derivatives(
+    inputs: torch.Tensor,
+    indicator_data: dict,
+    active_expert_indices,
+    need_ht: bool = True,
+    need_hxx: bool = True,
+) -> dict:
+    """
+    Compute normalized indicator derivatives ANALYTICALLY for all components.
+    
+    Replaces autograd-based indicator derivatives with closed-form sigmoid
+    derivative formulas. All computations are vectorized (N, K) tensor ops.
+    
+    For soft indicator: ψ_k = Π_d σ_L(d) · σ_U(d)
+    where σ_L(d) = sigmoid((x_d - lower_d) / sigma_d)
+          σ_U(d) = sigmoid((upper_d - x_d) / sigma_d)
+    
+    First derivative:  ∂ψ_k/∂x_d = ψ_k · [(1 - σ_L(d)) - (1 - σ_U(d))] / sigma_d
+    Second derivative: ∂²ψ_k/∂x_d² = ψ_k · {f_d² - [σ_L(1-σ_L) + σ_U(1-σ_U)] / sigma_d²}
+        where f_d = [(1-σ_L) - (1-σ_U)] / sigma_d
+    
+    Normalized (quotient rule for ψ̃_k = ψ_k / Z):
+        ψ̃_k_x  = (∂ψ_k/∂x - ψ̃_k · Z_x) / Z
+        ψ̃_k_xx = (∂²ψ_k/∂x² - ψ̃_k · Z_xx - 2·ψ̃_k_x · Z_x) / Z
+        ψ̃_k_t  = (∂ψ_k/∂t - ψ̃_k · Z_t) / Z
+    
+    Args:
+        inputs: (N, D) original input coordinates (used to recompute sigmoids)
+        indicator_data: dict from model with all_lower, all_upper, all_sigma, etc.
+        active_expert_indices: tensor of active expert indices
+        need_ht: whether to compute time derivatives
+        need_hxx: whether to compute second spatial derivatives
+    
+    Returns:
+        dict with keys for each component index (0=base, 1..K=experts):
+            'dpsi_dx': (N, 1) detached, 'dpsi_dt': (N, 1) detached,
+            'd2psi_dx2': (N, 1) detached, 'psi_d': (N, 1) detached psi_norm
+    """
+    N = inputs.shape[0]
+    D = inputs.shape[1]
+    device = inputs.device
+    
+    all_lower = indicator_data['all_lower']   # (K, D)
+    all_upper = indicator_data['all_upper']   # (K, D)
+    all_sigma = indicator_data['all_sigma']   # (K, D)
+    psi_base = indicator_data['psi_base']     # (N, 1)
+    psi_experts_filtered = indicator_data['psi_experts_filtered']  # (N, K)
+    use_additive = indicator_data['use_additive_mode']
+    
+    K_total = psi_experts_filtered.shape[1]
+    num_active = len(active_expert_indices)
+    
+    # Spatial dim = D - 1 (last column is time), x_dim = 0 for 1D spatial
+    spatial_dim = D - 1
+    x_dim = 0   # spatial derivative dimension (column index in inputs)
+    t_dim = D - 1  # time dimension (last column)
+    
+    # ---- Recompute sigmoid intermediates for ALL K experts (vectorized) ----
+    # Only need active experts, but computing all K is cheap and simpler
+    x_inp = inputs.unsqueeze(1)               # (N, 1, D)
+    lower = all_lower.unsqueeze(0)            # (1, K, D)
+    upper = all_upper.unsqueeze(0)            # (1, K, D)
+    sigma = all_sigma.unsqueeze(0)            # (1, K, D)
+    
+    dist_lower = (x_inp - lower) / sigma      # (N, K, D)
+    dist_upper = (upper - x_inp) / sigma      # (N, K, D)
+    
+    sig_L = torch.sigmoid(dist_lower)         # (N, K, D)
+    sig_U = torch.sigmoid(dist_upper)         # (N, K, D)
+    
+    # Raw psi for all experts: product over dimensions
+    # psi_raw[n, k] = Π_d sig_L[n,k,d] · sig_U[n,k,d]
+    psi_raw = (sig_L * sig_U).prod(dim=2)     # (N, K)
+    
+    # ---- Raw indicator first derivatives ----
+    # ∂ψ_k/∂x_d = ψ_k · f_d, where f_d = [(1-σ_L(d)) - (1-σ_U(d))] / σ_d
+    f_x = ((1 - sig_L[:, :, x_dim]) - (1 - sig_U[:, :, x_dim])) / all_sigma[:, x_dim].unsqueeze(0)  # (N, K)
+    dpsi_raw_dx = psi_raw * f_x  # (N, K)
+    
+    if need_ht:
+        f_t = ((1 - sig_L[:, :, t_dim]) - (1 - sig_U[:, :, t_dim])) / all_sigma[:, t_dim].unsqueeze(0)
+        dpsi_raw_dt = psi_raw * f_t  # (N, K)
+    
+    # ---- Raw indicator second spatial derivatives ----
+    if need_hxx:
+        sig_L_x = sig_L[:, :, x_dim]  # (N, K)
+        sig_U_x = sig_U[:, :, x_dim]  # (N, K)
+        sigma_x = all_sigma[:, x_dim].unsqueeze(0)  # (1, K)
+        
+        # ∂²ψ/∂x² = ψ · [f_x² - (σ_L(1-σ_L) + σ_U(1-σ_U)) / σ_x²]
+        d2psi_raw_dx2 = psi_raw * (
+            f_x ** 2 - (sig_L_x * (1 - sig_L_x) + sig_U_x * (1 - sig_U_x)) / sigma_x ** 2
+        )  # (N, K)
+    
+    # ---- Normalization and quotient rule ----
+    # Use psi_experts_filtered (already has threshold zeroing applied)
+    if use_additive:
+        Z = psi_experts_filtered.sum(dim=1, keepdim=True).clamp(min=1e-8)  # (N, 1)
+    else:
+        Z = psi_base + psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
+        Z = Z.clamp(min=1e-8)
+    
+    # Z derivatives = sum of raw expert derivatives (psi_base is constant → 0)
+    # But we must only sum FILTERED experts (threshold-zeroed ones contribute 0)
+    # Use psi_experts_filtered > 0 as mask (same points that were active)
+    filt_mask = (psi_experts_filtered > 0).float()  # (N, K)
+    
+    Z_x = (dpsi_raw_dx * filt_mask).sum(dim=1, keepdim=True)  # (N, 1)
+    if need_ht:
+        Z_t = (dpsi_raw_dt * filt_mask).sum(dim=1, keepdim=True)  # (N, 1)
+    if need_hxx:
+        Z_xx = (d2psi_raw_dx2 * filt_mask).sum(dim=1, keepdim=True)  # (N, 1)
+    
+    # ---- Build per-component results ----
+    results = {}
+    
+    # Component 0: Base model
+    if use_additive:
+        # Base has constant weight 1.0 → all derivatives zero
+        results[0] = {
+            'psi_d': torch.ones(N, 1, device=device),
+            'dpsi_dx': torch.zeros(N, 1, device=device),
+        }
+        if need_ht:
+            results[0]['dpsi_dt'] = torch.zeros(N, 1, device=device)
+        if need_hxx:
+            results[0]['d2psi_dx2'] = torch.zeros(N, 1, device=device)
+    else:
+        # ψ̃_base = psi_base / Z
+        psi_norm_base = (psi_base / Z).detach()  # (N, 1)
+        # ψ̃_base_x = (0 - ψ̃_base · Z_x) / Z  (psi_base is constant → dpsi_base/dx = 0)
+        psi_norm_base_x = (-psi_norm_base * Z_x / Z).detach()
+        results[0] = {
+            'psi_d': psi_norm_base,
+            'dpsi_dx': psi_norm_base_x,
+        }
+        if need_ht:
+            results[0]['dpsi_dt'] = (-psi_norm_base * Z_t / Z).detach()
+        if need_hxx:
+            psi_norm_base_xx = (
+                -psi_norm_base * Z_xx - 2 * psi_norm_base_x * Z_x
+            ) / Z
+            results[0]['d2psi_dx2'] = psi_norm_base_xx.detach()
+    
+    # Components 1..num_active: active experts
+    for comp_idx, expert_idx in enumerate(active_expert_indices):
+        eidx = expert_idx.item() if torch.is_tensor(expert_idx) else expert_idx
+        
+        # Per-point mask: zero derivatives where expert was filtered out (below threshold)
+        # This matches autograd behavior where psi_filtered = psi * mask.float()
+        pt_mask = filt_mask[:, eidx:eidx+1]  # (N, 1) — 1 where active, 0 where filtered
+        
+        # Raw derivatives for this expert (masked to match filtered behavior)
+        dpsi_k_dx = dpsi_raw_dx[:, eidx:eidx+1] * pt_mask  # (N, 1)
+        
+        psi_norm_k = (psi_experts_filtered[:, eidx:eidx+1] / Z).detach()
+        
+        # Quotient rule: ψ̃_k_x = (∂ψ_k/∂x - ψ̃_k · Z_x) / Z
+        psi_norm_k_x = ((dpsi_k_dx - psi_norm_k * Z_x) / Z).detach()
+        
+        result_k = {
+            'psi_d': psi_norm_k,
+            'dpsi_dx': psi_norm_k_x,
+        }
+        
+        if need_ht:
+            dpsi_k_dt = dpsi_raw_dt[:, eidx:eidx+1] * pt_mask
+            psi_norm_k_t = ((dpsi_k_dt - psi_norm_k * Z_t) / Z).detach()
+            result_k['dpsi_dt'] = psi_norm_k_t
+        
+        if need_hxx:
+            d2psi_k_dx2 = d2psi_raw_dx2[:, eidx:eidx+1] * pt_mask
+            psi_norm_k_xx = (
+                (d2psi_k_dx2 - psi_norm_k * Z_xx - 2 * psi_norm_k_x * Z_x) / Z
+            ).detach()
+            result_k['d2psi_dx2'] = psi_norm_k_xx
+        
+        results[comp_idx + 1] = result_k  # +1 because 0 is base
+    
+    return results
+
+
 def compute_derivatives_decomposed(
     components: list,
     x: torch.Tensor,
     t: torch.Tensor,
     need_ht: bool = True,
     need_hxx: bool = True,
+    indicator_data: dict = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute derivatives of complex field h = u + iv via product rule on decomposed
@@ -120,8 +303,9 @@ def compute_derivatives_decomposed(
         u_t  = Σ_k (ψ̃_k_t · u_k  +  ψ̃_k · u_k_t)
         u_xx = Σ_k (ψ̃_k_xx · u_k  +  2·ψ̃_k_x · u_k_x  +  ψ̃_k · u_k_xx)
     
-    Indicator derivatives (ψ̃ terms) are computed via autograd on the original
-    shared inputs (x, t), then DETACHED since indicators have no learnable params.
+    Indicator derivatives (ψ̃ terms) are computed ANALYTICALLY using closed-form
+    sigmoid derivative formulas when indicator_data is provided, eliminating all
+    autograd calls for indicators. Falls back to autograd if indicator_data is None.
     
     Args:
         components: list of dicts from model.forward_for_pde_derivatives(), each with:
@@ -133,6 +317,7 @@ def compute_derivatives_decomposed(
         t: temporal coordinates (N, 1), requires_grad=True (original, for psi autograd)
         need_ht: compute ∂h/∂t (needed for PDE residual, not for BC)
         need_hxx: compute ∂²h/∂x² (needed for PDE residual, not for BC)
+        indicator_data: dict from model with bounds/sigma for analytical derivatives (or None)
         
     Returns:
         Tuple of (h_t, h_x, h_xx) as complex tensors (squeeze to batch dim).
@@ -185,7 +370,21 @@ def compute_derivatives_decomposed(
             total_du_imag_dx, all_inputs, create_graph=True, retain_graph=True)
     
     # ====================================================================
-    # Per-component: indicator autograd + product rule assembly
+    # Indicator derivatives: analytical (C.2) or autograd fallback
+    # ====================================================================
+    use_analytical = (indicator_data is not None 
+                      and indicator_data.get('all_sigma') is not None)
+    
+    if use_analytical:
+        # Compute ALL indicator derivatives analytically in one vectorized call
+        inputs_orig = torch.cat([x, t], dim=1)  # (N, D)
+        active_indices = indicator_data['active_expert_indices']
+        psi_derivs = compute_analytical_indicator_derivatives(
+            inputs_orig, indicator_data, active_indices,
+            need_ht=need_ht, need_hxx=need_hxx)
+    
+    # ====================================================================
+    # Per-component: product rule assembly
     # ====================================================================
     asm_x_real = torch.zeros(N, 1, device=device)
     asm_x_imag = torch.zeros(N, 1, device=device)
@@ -215,9 +414,19 @@ def compute_derivatives_decomposed(
             d2u_imag_dx2 = d2_imag[k][:, 0:spatial_dim]  # (N, spatial_dim)
         
         # ============================================================
-        # Indicator derivatives (autograd on ORIGINAL x, t — then detach)
+        # Indicator derivatives
         # ============================================================
-        if is_constant:
+        if use_analytical:
+            # Use precomputed analytical derivatives (C.2 optimization)
+            psi_info = psi_derivs[k]
+            psi_k_d = psi_info['psi_d']
+            dpsi_dx = psi_info['dpsi_dx']
+            if need_ht:
+                dpsi_dt = psi_info['dpsi_dt']
+            if need_hxx:
+                d2psi_dx2 = psi_info['d2psi_dx2']
+        elif is_constant:
+            # Constant weight (additive base) → zero derivatives
             psi_k_d = psi_k.detach()
             dpsi_dx = torch.zeros(N, 1, device=device)
             if need_hxx:
@@ -225,6 +434,7 @@ def compute_derivatives_decomposed(
             if need_ht:
                 dpsi_dt = torch.zeros(N, 1, device=device)
         else:
+            # Fallback: autograd-based indicator derivatives
             if need_hxx:
                 dpsi_dx = torch.autograd.grad(
                     psi_k.sum(), x, create_graph=True, retain_graph=True)[0]
@@ -391,7 +601,8 @@ def build_loss(**cfg) -> Callable:
                 
                 if _t: _t.start('loss.residual.derivatives')
                 h_t, h_x, h_xx = compute_derivatives_decomposed(
-                    decomposed['components'], x_f, t_f, need_ht=True, need_hxx=True)
+                    decomposed['components'], x_f, t_f, need_ht=True, need_hxx=True,
+                    indicator_data=decomposed.get('indicator_data'))
                 if _t: _t.stop('loss.residual.derivatives')
             else:
                 # === Standard approach: differentiate composed output directly ===
@@ -497,7 +708,8 @@ def build_loss(**cfg) -> Callable:
                 if _t: _t.start('loss.bc.derivatives')
                 _, h_x_stacked, _ = compute_derivatives_decomposed(
                     decomposed_bc['components'], x_stacked, t_stacked,
-                    need_ht=False, need_hxx=False)
+                    need_ht=False, need_hxx=False,
+                    indicator_data=decomposed_bc.get('indicator_data'))
                 if _t: _t.stop('loss.bc.derivatives')
             else:
                 # === Standard approach ===
