@@ -5,7 +5,7 @@ experiment_name: "schrodinger_many_train_params"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 2000
+  epochs: 5000
   batch_size: 512
   lr: 0.0001  
 
