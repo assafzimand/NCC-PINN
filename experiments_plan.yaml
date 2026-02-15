@@ -111,7 +111,7 @@ base_config:
 
 # Experiments to run
 experiments:
-  - name: "5k_epochs_spawn_every_500"
+  - name: "5k_epochs_spawn_every_500_norm_5"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
     epochs: 5000
@@ -136,7 +136,7 @@ experiments:
       expert_activation_threshold: 1e-8  # null = disabled, float = only evaluate experts with psi > threshold
       only_leaves: false                 # If true, only leaf experts (no children) participate in solution
 
-  - name: "5k_epochs_spawn_every_10"
+  - name: "5k_epochs_spawn_every_10_norm_5"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
     epochs: 5000
@@ -161,7 +161,7 @@ experiments:
       expert_activation_threshold: 1e-8  # null = disabled, float = only evaluate experts with psi > threshold
       only_leaves: false                 # If true, only leaf experts (no children) participate in solution
 
-  - name: "2k_epochs_spawn_every_10"
+  - name: "2k_epochs_spawn_every_10_norm_5"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
     epochs: 2000
@@ -186,7 +186,7 @@ experiments:
       expert_activation_threshold: 1e-8  # null = disabled, float = only evaluate experts with psi > threshold
       only_leaves: false                 # If true, only leaf experts (no children) participate in solution
 
-  - name: "4k_epochs_spawn_every_300"
+  - name: "4k_epochs_spawn_every_300_norm_10"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
     epochs: 4000
@@ -201,7 +201,7 @@ experiments:
       sigma_fraction: 0.2                # For soft: sigma = fraction * region_size (per-dimension)
       base_weight: 1.0                   # Uniform weight for base model (soft blending only)
       base_everywhere: true              # If false, u_0 has indicator = domain \ experts
-      wavelet_threshold: 5               # Minimum wavelet norm to spawn (filters low-priority regions)
+      wavelet_threshold: 10               # Minimum wavelet norm to spawn (filters low-priority regions)
       tree_max_depth: 15                 # Max depth of decision tree
       tree_min_samples_leaf: 10          # Min samples in tree leaf node
       enable_timing: false               # Enable epoch timing profiling (can slow down training)
@@ -211,7 +211,7 @@ experiments:
       expert_activation_threshold: 1e-8  # null = disabled, float = only evaluate experts with psi > threshold
       only_leaves: false                 # If true, only leaf experts (no children) participate in solution
 
-  - name: "3k_epochs_spawn_every_100"
+  - name: "3k_epochs_spawn_every_100_norm_10"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
     epochs: 3000
@@ -226,7 +226,7 @@ experiments:
       sigma_fraction: 0.2                # For soft: sigma = fraction * region_size (per-dimension)
       base_weight: 1.0                   # Uniform weight for base model (soft blending only)
       base_everywhere: true              # If false, u_0 has indicator = domain \ experts
-      wavelet_threshold: 5               # Minimum wavelet norm to spawn (filters low-priority regions)
+      wavelet_threshold: 10               # Minimum wavelet norm to spawn (filters low-priority regions)
       tree_max_depth: 15                 # Max depth of decision tree
       tree_min_samples_leaf: 10          # Min samples in tree leaf node
       enable_timing: false               # Enable epoch timing profiling (can slow down training)
