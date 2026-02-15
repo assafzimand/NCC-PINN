@@ -1,16 +1,16 @@
 # Experiment plan configuration
-experiment_name: "schrodinger_test_nor_fail_due_to_only_leaves"
+experiment_name: "schrodinger_2k_epochs_spawn_every_100"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 30
+  epochs: 2000
   batch_size: 512
   lr: 0.0001  
 
   # Optimizer settings
-  optimizer_switch_at: 0.7
+  optimizer_switch_at: 0.5
 
   # Adam hyperparameters
   adam_betas: [0.9, 0.999]
@@ -30,10 +30,10 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 1
-  print_every: 1
-  save_every: 15
-  inner_metrics_eval_every: 10
+  eval_every: 100
+  print_every: 100
+  save_every: 1000
+  inner_metrics_eval_every: 700
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -91,7 +91,7 @@ base_config:
   adaptive_pinn:
     enabled: true                      # Toggle feature on/off (override per experiment)
     max_experts: 20                    # Maximum number of expert networks
-    spawn_every_epochs: 3            # Check for spawning every N epochs (quick test value)
+    spawn_every_epochs: 100            # Check for spawning every N epochs (quick test value)
     expert_architectures: null         # null = same as base, or list of architectures
     freeze_mode: none                  # "none" | "previous" | "base_only"
     blending_mode: soft                # "hard" | "soft"
