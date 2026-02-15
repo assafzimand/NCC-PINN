@@ -3,12 +3,13 @@
 import json
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.patches import Patch
 import numpy as np
 from pathlib import Path
 import sys
 import torch
 from scipy.interpolate import griddata
+
 
 def load_ground_truth(output_dir):
     """Try to load ground truth data for background visualization."""
@@ -48,134 +49,143 @@ def load_ground_truth(output_dir):
     return None, None, None, None
 
 
-def plot_depth_with_spatial(depth, regions_at_depth, norms_at_depth, bins,
-                             color, output_dir, x_data, t_data, h_magnitude):
-    """Create a 2-panel figure for a specific depth with histogram and spatial plot."""
-    fig, (ax_hist, ax_spatial) = plt.subplots(2, 1, figsize=(12, 10))
+def _render_ground_truth_background(ax, x_data, t_data, h_magnitude):
+    """Render ground truth as background on a spatial axis."""
+    if x_data is None or t_data is None or h_magnitude is None:
+        return
 
-    # ===== Top: Histogram =====
-    ax_hist.hist(norms_at_depth, bins=bins, alpha=0.8,
-                 edgecolor='black', linewidth=1.2, color=color)
+    x_min, x_max = x_data.min(), x_data.max()
+    t_min, t_max = t_data.min(), t_data.max()
 
-    mean_val = np.mean(norms_at_depth)
-    median_val = np.median(norms_at_depth)
-    ax_hist.axvline(median_val, color='red', linestyle='--', linewidth=2,
-                    label=f'Median: {median_val:.4f}')
-    ax_hist.axvline(mean_val, color='orange', linestyle=':', linewidth=2,
-                    label=f'Mean: {mean_val:.4f}')
+    resolution = 100
+    grid_x = np.linspace(x_min, x_max, resolution)
+    grid_t = np.linspace(t_min, t_max, resolution)
+    X_grid, T_grid = np.meshgrid(grid_x, grid_t, indexing='ij')
 
-    # Add individual norms to legend (sorted high to low)
-    sorted_norms = sorted(norms_at_depth, reverse=True)
-    norms_text = 'Norms (high→low):\n' + '\n'.join([f'  {n:.6f}' for n in sorted_norms])
+    points = np.column_stack([x_data, t_data])
+    H_grid = griddata(points, h_magnitude, (X_grid, T_grid), method='cubic')
 
-    # Create invisible handle for norms list
-    from matplotlib.patches import Patch
-    norms_patch = Patch(color='none', label=norms_text)
+    im = ax.pcolormesh(grid_x, grid_t, H_grid.T,
+                       shading='auto', cmap='gray',
+                       alpha=0.6, zorder=0)
+    plt.colorbar(im, ax=ax, label='|h|')
 
-    ax_hist.set_xlabel('Wavelet Norm', fontsize=12, fontweight='bold')
-    ax_hist.set_ylabel('Count', fontsize=12, fontweight='bold')
-    ax_hist.set_title(f'Depth {depth} - Norm Distribution (n={len(norms_at_depth)})',
-                      fontsize=14, fontweight='bold')
-    ax_hist.grid(True, alpha=0.3, axis='y')
 
-    # Get existing handles and labels, then add norms
-    handles, labels = ax_hist.get_legend_handles_labels()
-    handles.append(norms_patch)
-    labels.append(norms_text)
-    ax_hist.legend(handles, labels, loc='upper right', fontsize=9,
-                   framealpha=0.95, handlelength=1.5)
+def _plot_regions_on_axis(ax, regions, title_label):
+    """Plot region rectangles on a spatial axis with norm-based coloring."""
+    if not regions:
+        ax.set_title(f'{title_label} (n=0)', fontsize=12, fontweight='bold')
+        ax.text(0.5, 0.5, 'No regions', transform=ax.transAxes,
+                ha='center', va='center', fontsize=14, color='gray')
+        ax.set_xlabel('Space (x)', fontsize=11)
+        ax.set_ylabel('Time (t)', fontsize=11)
+        return
 
-    # ===== Bottom: Spatial plot with expert regions =====
-    # Debug: Verify region filtering
-    print(f"      Depth {depth}: Filtering {len(regions_at_depth)} regions")
-    regions_this_depth_only = [r for r in regions_at_depth if r['depth'] == depth]
-    print(f"      After depth filter: {len(regions_this_depth_only)} regions with depth={depth}")
+    region_norms = [r['wavelet_norm'] for r in regions]
+    norm_min = min(region_norms)
+    norm_max = max(region_norms)
+    norm_range = norm_max - norm_min if norm_max > norm_min else 1.0
 
-    if x_data is not None and t_data is not None and h_magnitude is not None:
-        print(f"      Ground truth data: {len(x_data)} points")
-
-        # Create smooth interpolated grid for background
-        x_min, x_max = x_data.min(), x_data.max()
-        t_min, t_max = t_data.min(), t_data.max()
-        print(f"      Domain: x=[{x_min:.2f}, {x_max:.2f}], t=[{t_min:.2f}, {t_max:.2f}]")
-
-        # Create regular grid for interpolation (like expert_regions_final)
-        resolution = 100
-        grid_x = np.linspace(x_min, x_max, resolution)
-        grid_t = np.linspace(t_min, t_max, resolution)
-        X_grid, T_grid = np.meshgrid(grid_x, grid_t, indexing='ij')
-
-        # Interpolate scattered data onto regular grid
-        points = np.column_stack([x_data, t_data])
-        H_grid = griddata(points, h_magnitude, (X_grid, T_grid), method='cubic')
-
-        # Use pcolormesh for smooth rendering (X=horizontal, T=vertical)
-        im = ax_spatial.pcolormesh(grid_x, grid_t, H_grid.T,
-                                    shading='auto', cmap='gray',
-                                    alpha=0.6, zorder=0)
-        plt.colorbar(im, ax=ax_spatial, label='|h|')
-        print(f"      Successfully rendered smooth background with pcolormesh")
-    else:
-        print(f"      Warning: No ground truth data available")
-
-    # Create colormap for norms: red (low) to green (high)
-    # Use actual norms from regions to ensure correct scaling
-    region_norms = [r['wavelet_norm'] for r in regions_this_depth_only]
-    if len(region_norms) > 0:
-        norm_min = min(region_norms)
-        norm_max = max(region_norms)
-        norm_range = norm_max - norm_min if norm_max > norm_min else 1.0
-        print(f"      Norm range: [{norm_min:.6f}, {norm_max:.6f}]")
-    else:
-        norm_min, norm_max, norm_range = 0, 1, 1
-        print(f"      Warning: No regions with norms found")
-
-    # Plot expert regions as rectangles with filled color for better visibility
-    for i, region in enumerate(regions_this_depth_only):
+    for region in regions:
         x_lower, t_lower = region['bounds_lower']
         x_upper, t_upper = region['bounds_upper']
-        # With x=horizontal and t=vertical:
-        width = x_upper - x_lower  # x extent (horizontal)
-        height = t_upper - t_lower  # t extent (vertical)
+        width = x_upper - x_lower
+        height = t_upper - t_lower
 
-        # Normalize norm to [0, 1] for colormap
         norm_normalized = (region['wavelet_norm'] - norm_min) / norm_range if norm_range > 0 else 0.5
-
-        # Color: red (0) to green (1)
         edge_color = plt.cm.RdYlGn(norm_normalized)
-        # Use semi-transparent fill for better visibility
-        face_color = list(edge_color[:3]) + [0.3]  # RGB + alpha
+        face_color = list(edge_color[:3]) + [0.3]
 
-        # Rectangle: (x_lower, t_lower) is bottom-left corner
         rect = patches.Rectangle((x_lower, t_lower), width, height,
                                  linewidth=3.0, edgecolor=edge_color,
                                  facecolor=face_color, linestyle='-', zorder=10)
-        ax_spatial.add_patch(rect)
+        ax.add_patch(rect)
 
-        # Debug: print first and last few regions
-        if i < 3 or i >= len(regions_this_depth_only) - 3:
-            print(f"        Region {i}: norm={region['wavelet_norm']:.6f}, "
-                  f"normalized={norm_normalized:.3f}, bounds=({x_lower:.2f},{t_lower:.2f})-({x_upper:.2f},{t_upper:.2f})")
+    ax.set_xlabel('Space (x)', fontsize=11)
+    ax.set_ylabel('Time (t)', fontsize=11)
+    ax.set_title(f'{title_label} (n={len(regions)})', fontsize=12, fontweight='bold')
+    ax.grid(True, alpha=0.3, zorder=0)
 
-    ax_spatial.set_xlabel('Space (x)', fontsize=12, fontweight='bold')
-    ax_spatial.set_ylabel('Time (t)', fontsize=12, fontweight='bold')
-    ax_spatial.set_title(f'Depth {depth} - Expert Regions (n={len(regions_this_depth_only)}, borders colored by norm)',
-                         fontsize=14, fontweight='bold')
-    ax_spatial.grid(True, alpha=0.3, zorder=0)
-
-    # Add colorbar for norm-to-color mapping
     sm = plt.cm.ScalarMappable(cmap='RdYlGn',
                                norm=plt.Normalize(vmin=norm_min, vmax=norm_max))
     sm.set_array([])
-    cbar = plt.colorbar(sm, ax=ax_spatial, orientation='vertical', pad=0.02)
+    cbar = plt.colorbar(sm, ax=ax, orientation='vertical', pad=0.02)
     cbar.set_label('Wavelet Norm', fontsize=10)
+
+
+def _plot_histogram_on_axis(ax, norms, bins, color, title_label):
+    """Plot a histogram with stats on an axis."""
+    if not norms:
+        ax.set_title(f'{title_label} (n=0)', fontsize=12, fontweight='bold')
+        ax.text(0.5, 0.5, 'No regions', transform=ax.transAxes,
+                ha='center', va='center', fontsize=14, color='gray')
+        ax.set_xlabel('Wavelet Norm', fontsize=11)
+        ax.set_ylabel('Count', fontsize=11)
+        return
+
+    ax.hist(norms, bins=bins, alpha=0.8,
+            edgecolor='black', linewidth=1.2, color=color)
+
+    mean_val = np.mean(norms)
+    median_val = np.median(norms)
+    ax.axvline(median_val, color='red', linestyle='--', linewidth=2,
+               label=f'Median: {median_val:.4f}')
+    ax.axvline(mean_val, color='orange', linestyle=':', linewidth=2,
+               label=f'Mean: {mean_val:.4f}')
+
+    # Add individual norms to legend (sorted high to low)
+    sorted_norms = sorted(norms, reverse=True)
+    norms_text = 'Norms (high\u2192low):\n' + '\n'.join([f'  {n:.6f}' for n in sorted_norms])
+    norms_patch = Patch(color='none', label=norms_text)
+
+    ax.set_xlabel('Wavelet Norm', fontsize=11)
+    ax.set_ylabel('Count', fontsize=11)
+    ax.set_title(f'{title_label} (n={len(norms)})', fontsize=12, fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y')
+
+    handles, labels = ax.get_legend_handles_labels()
+    handles.append(norms_patch)
+    labels.append(norms_text)
+    ax.legend(handles, labels, loc='upper right', fontsize=9,
+              framealpha=0.95, handlelength=1.5)
+
+
+def plot_depth_with_spatial(depth, spawned_regions, rejected_regions,
+                             spawned_norms, rejected_norms, bins,
+                             color, output_dir, x_data, t_data, h_magnitude):
+    """Create a 2x2 figure for a specific depth: spawned (left) vs rejected (right)."""
+    fig, axes = plt.subplots(2, 2, figsize=(20, 12))
+    fig.suptitle(f'Depth {depth} Analysis', fontsize=16, fontweight='bold', y=0.98)
+
+    # Top-left: Spawned histogram
+    _plot_histogram_on_axis(axes[0, 0], spawned_norms, bins, color,
+                            f'Depth {depth} - Spawned')
+
+    # Top-right: Rejected histogram
+    rejected_color = np.array(color[:3]) * 0.6  # Darker shade for rejected
+    rejected_color = np.clip(rejected_color, 0, 1)
+    _plot_histogram_on_axis(axes[0, 1], rejected_norms, bins, rejected_color,
+                            f'Depth {depth} - Rejected')
+
+    # Bottom-left: Spawned spatial
+    _render_ground_truth_background(axes[1, 0], x_data, t_data, h_magnitude)
+    _plot_regions_on_axis(axes[1, 0], spawned_regions,
+                          f'Depth {depth} - Spawned Regions')
+
+    # Bottom-right: Rejected spatial
+    _render_ground_truth_background(axes[1, 1], x_data, t_data, h_magnitude)
+    _plot_regions_on_axis(axes[1, 1], rejected_regions,
+                          f'Depth {depth} - Rejected Regions')
 
     plt.tight_layout()
 
-    # Save
     output_path = output_dir / f"depth_{depth}_analysis.png"
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
+
+    n_spawned = len(spawned_norms) if spawned_norms else 0
+    n_rejected = len(rejected_norms) if rejected_norms else 0
+    print(f"      Depth {depth}: {n_spawned} spawned, {n_rejected} rejected")
 
     return output_path
 
@@ -187,85 +197,98 @@ def plot_expert_norms_for_model(json_path, output_dir):
 
     regions = data['regions']
 
-    # Extract data
-    norms = [r['wavelet_norm'] for r in regions]
-    depths = [r['depth'] for r in regions]
-    spawn_epochs = [r['spawn_epoch'] for r in regions]
+    # Split into spawned and rejected
+    spawned_regions = [r for r in regions if r.get('spawned', True)]
+    rejected_regions = [r for r in regions if not r.get('spawned', True)]
 
-    # Group by depth and spawn_epoch
-    depth_norms = {}
+    # Group by depth, separately for spawned/rejected
+    spawned_by_depth = {}
+    rejected_by_depth = {}
     epoch_norms = {}
 
-    for r in regions:
-        depth = r['depth']
-        epoch = r['spawn_epoch']
-        norm = r['wavelet_norm']
+    for r in spawned_regions:
+        d = r['depth']
+        spawned_by_depth.setdefault(d, []).append(r)
+        epoch_norms.setdefault(r['spawn_epoch'], []).append(r['wavelet_norm'])
 
-        if depth not in depth_norms:
-            depth_norms[depth] = []
-        depth_norms[depth].append(norm)
+    for r in rejected_regions:
+        d = r['depth']
+        rejected_by_depth.setdefault(d, []).append(r)
 
-        if epoch not in epoch_norms:
-            epoch_norms[epoch] = []
-        epoch_norms[epoch].append(norm)
+    # All depths that appear in either group
+    all_depths = sorted(set(list(spawned_by_depth.keys()) + list(rejected_by_depth.keys())))
+    n_depths = len(all_depths) if all_depths else 1
 
-    # Create figure with main plot + individual depth plots
-    sorted_depths = sorted(depth_norms.keys())
-    n_depths = len(sorted_depths)
-
-    # Create subplot grid: 1 main plot on top, then individual depth plots below
-    fig = plt.figure(figsize=(16, 4 + 3*n_depths))
-    gs = fig.add_gridspec(n_depths + 1, 1, height_ratios=[2] + [1]*n_depths, hspace=0.4)
+    # Determine bin edges based on ALL data (spawned + rejected)
+    all_norms = [r['wavelet_norm'] for r in regions]
+    if not all_norms:
+        print("    No regions found, skipping")
+        return None
+    bins = np.histogram_bin_edges(all_norms, bins=50)
 
     # Define colors for each depth
     colors = plt.cm.viridis(np.linspace(0.2, 0.9, n_depths))
 
-    # Determine bin edges based on all data - use finer bins
-    all_norms = []
-    for depth in sorted_depths:
-        all_norms.extend(depth_norms[depth])
+    # ===== Main plot: Combined bar chart with spawned vs rejected =====
+    fig = plt.figure(figsize=(16, 4 + 3 * n_depths))
+    gs = fig.add_gridspec(n_depths + 1, 1, height_ratios=[2] + [1] * n_depths, hspace=0.4)
 
-    # Use more bins (50) for finer resolution around 0
-    bins = np.histogram_bin_edges(all_norms, bins=50)
-
-    # ===== Main plot: All depths combined =====
     ax_main = fig.add_subplot(gs[0])
 
-    # Plot histogram for each depth with different colors
-    for i, depth in enumerate(sorted_depths):
-        norms_at_depth = depth_norms[depth]
-        ax_main.hist(norms_at_depth, bins=bins, alpha=0.7,
-                     edgecolor='black', linewidth=1.2,
-                     color=colors[i], label=f'Depth {depth} (n={len(norms_at_depth)})')
+    # Plot overlaid histograms: spawned solid, rejected hatched
+    for i, depth in enumerate(all_depths):
+        s_norms = [r['wavelet_norm'] for r in spawned_by_depth.get(depth, [])]
+        r_norms = [r['wavelet_norm'] for r in rejected_by_depth.get(depth, [])]
 
+        if s_norms:
+            ax_main.hist(s_norms, bins=bins, alpha=0.7,
+                         edgecolor='black', linewidth=1.0,
+                         color=colors[i],
+                         label=f'D{depth} spawned (n={len(s_norms)})')
+        if r_norms:
+            ax_main.hist(r_norms, bins=bins, alpha=0.5,
+                         edgecolor='black', linewidth=1.0,
+                         color=colors[i], hatch='///',
+                         label=f'D{depth} rejected (n={len(r_norms)})')
+
+    n_spawned_total = len(spawned_regions)
+    n_rejected_total = len(rejected_regions)
     ax_main.set_xlabel('Wavelet Norm', fontsize=14, fontweight='bold')
     ax_main.set_ylabel('Count', fontsize=14, fontweight='bold')
-    ax_main.set_title(f'Combined Norm Distribution by Depth\n({len(norms)} total experts)',
-                      fontsize=15, fontweight='bold')
+    ax_main.set_title(
+        f'Combined Norm Distribution by Depth\n'
+        f'({n_spawned_total} spawned, {n_rejected_total} rejected)',
+        fontsize=15, fontweight='bold')
     ax_main.grid(True, alpha=0.3, axis='y')
-    ax_main.legend(loc='upper right', fontsize=11, framealpha=0.9)
+    ax_main.legend(loc='upper right', fontsize=9, framealpha=0.9, ncol=2)
 
-    # ===== Individual depth plots =====
-    for i, depth in enumerate(sorted_depths):
+    # ===== Individual depth plots (spawned only in the combined figure) =====
+    for i, depth in enumerate(all_depths):
         ax = fig.add_subplot(gs[i + 1])
-        norms_at_depth = depth_norms[depth]
+        s_norms = [r['wavelet_norm'] for r in spawned_by_depth.get(depth, [])]
+        r_norms = [r['wavelet_norm'] for r in rejected_by_depth.get(depth, [])]
 
-        # Use same bins for consistency
-        ax.hist(norms_at_depth, bins=bins, alpha=0.8,
-                edgecolor='black', linewidth=1.2, color=colors[i])
+        if s_norms:
+            ax.hist(s_norms, bins=bins, alpha=0.8,
+                    edgecolor='black', linewidth=1.2, color=colors[i],
+                    label=f'Spawned (n={len(s_norms)})')
+        if r_norms:
+            ax.hist(r_norms, bins=bins, alpha=0.5,
+                    edgecolor='black', linewidth=1.2, color=colors[i],
+                    hatch='///', label=f'Rejected (n={len(r_norms)})')
 
-        # Add statistics
-        mean_val = np.mean(norms_at_depth)
-        median_val = np.median(norms_at_depth)
-        ax.axvline(median_val, color='red', linestyle='--', linewidth=2,
-                   label=f'Median: {median_val:.4f}')
-        ax.axvline(mean_val, color='orange', linestyle=':', linewidth=2,
-                   label=f'Mean: {mean_val:.4f}')
+        combined = s_norms + r_norms
+        if combined:
+            mean_val = np.mean(combined)
+            median_val = np.median(combined)
+            ax.axvline(median_val, color='red', linestyle='--', linewidth=2,
+                       label=f'Median: {median_val:.4f}')
+            ax.axvline(mean_val, color='orange', linestyle=':', linewidth=2,
+                       label=f'Mean: {mean_val:.4f}')
 
         ax.set_xlabel('Wavelet Norm', fontsize=11)
         ax.set_ylabel('Count', fontsize=11)
-        ax.set_title(f'Depth {depth} Distribution (n={len(norms_at_depth)})',
-                     fontsize=12, fontweight='bold')
+        ax.set_title(f'Depth {depth} Distribution', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3, axis='y')
         ax.legend(loc='upper right', fontsize=9)
 
@@ -274,25 +297,21 @@ def plot_expert_norms_for_model(json_path, output_dir):
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
 
-    # ===== Generate individual depth analysis plots =====
+    # ===== Generate individual 2x2 depth analysis plots =====
     print(f"    Generating individual depth analysis plots...")
 
     # Load ground truth for spatial visualization
     x_data, t_data, h_magnitude, _ = load_ground_truth(output_dir)
 
-    # Group regions by depth
-    regions_by_depth = {}
-    for region in regions:
-        depth = region['depth']
-        if depth not in regions_by_depth:
-            regions_by_depth[depth] = []
-        regions_by_depth[depth].append(region)
+    for i, depth in enumerate(all_depths):
+        s_regions = spawned_by_depth.get(depth, [])
+        r_regions = rejected_by_depth.get(depth, [])
+        s_norms = [r['wavelet_norm'] for r in s_regions]
+        r_norms = [r['wavelet_norm'] for r in r_regions]
 
-    # Generate plot for each depth
-    for i, depth in enumerate(sorted_depths):
-        regions_at_depth = regions_by_depth.get(depth, [])
         depth_output = plot_depth_with_spatial(
-            depth, regions_at_depth, depth_norms[depth],
+            depth, s_regions, r_regions,
+            s_norms, r_norms,
             bins, colors[i], output_dir,
             x_data, t_data, h_magnitude
         )
@@ -302,22 +321,38 @@ def plot_expert_norms_for_model(json_path, output_dir):
     print(f"\n{'='*60}")
     print("Expert Norm Statistics")
     print(f"{'='*60}")
-    print(f"Total experts: {len(norms)}")
-    print(f"Overall: mean={np.mean(norms):.4f}, median={np.median(norms):.4f}, "
-          f"std={np.std(norms):.4f}")
-    print(f"Min: {np.min(norms):.4f}, Max: {np.max(norms):.4f}")
+    print(f"Total spawned: {n_spawned_total}, Total rejected: {n_rejected_total}")
+
+    spawned_norms_all = [r['wavelet_norm'] for r in spawned_regions]
+    if spawned_norms_all:
+        print(f"Spawned: mean={np.mean(spawned_norms_all):.4f}, "
+              f"median={np.median(spawned_norms_all):.4f}, "
+              f"std={np.std(spawned_norms_all):.4f}")
+        print(f"  Min: {np.min(spawned_norms_all):.4f}, Max: {np.max(spawned_norms_all):.4f}")
+
+    rejected_norms_all = [r['wavelet_norm'] for r in rejected_regions]
+    if rejected_norms_all:
+        print(f"Rejected: mean={np.mean(rejected_norms_all):.4f}, "
+              f"median={np.median(rejected_norms_all):.4f}, "
+              f"std={np.std(rejected_norms_all):.4f}")
+        print(f"  Min: {np.min(rejected_norms_all):.4f}, Max: {np.max(rejected_norms_all):.4f}")
+
     print(f"\nBy Depth:")
-    for depth in sorted_depths:
-        norms_d = depth_norms[depth]
-        print(f"  Depth {depth}: n={len(norms_d)}, mean={np.mean(norms_d):.4f}, "
-              f"median={np.median(norms_d):.4f}")
+    for depth in all_depths:
+        s_n = [r['wavelet_norm'] for r in spawned_by_depth.get(depth, [])]
+        r_n = [r['wavelet_norm'] for r in rejected_by_depth.get(depth, [])]
+        s_str = f"mean={np.mean(s_n):.4f}" if s_n else "none"
+        r_str = f"mean={np.mean(r_n):.4f}" if r_n else "none"
+        print(f"  Depth {depth}: spawned={len(s_n)} ({s_str}), "
+              f"rejected={len(r_n)} ({r_str})")
 
     sorted_epochs = sorted(epoch_norms.keys())
-    print(f"\nBy Spawn Epoch:")
-    for epoch in sorted_epochs:
-        norms_e = epoch_norms[epoch]
-        print(f"  Epoch {epoch}: n={len(norms_e)}, mean={np.mean(norms_e):.4f}, "
-              f"median={np.median(norms_e):.4f}")
+    if sorted_epochs:
+        print(f"\nBy Spawn Epoch (spawned only):")
+        for epoch in sorted_epochs:
+            norms_e = epoch_norms[epoch]
+            print(f"  Epoch {epoch}: n={len(norms_e)}, mean={np.mean(norms_e):.4f}, "
+                  f"median={np.median(norms_e):.4f}")
 
     return output_path
 

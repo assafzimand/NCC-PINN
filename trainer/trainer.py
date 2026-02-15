@@ -443,6 +443,7 @@ def train(
     # At each spawn step we try to split ALL current leaves.
     # Base model (None, -1) is the initial leaf.
     leaf_nodes = [(None, -1)] if is_adaptive else []  # list of (region_or_None, expert_idx)
+    rejected_regions = []  # Regions that were considered but didn't pass threshold
     
     # Training loop
     print(f"\nTraining for {epochs} epochs...")
@@ -884,6 +885,17 @@ def train(
                     norms_str = ', '.join([f'{c.wavelet_norm:.6f}' for c, _ in children])
                     print(f"      [Spawning] All children below threshold (norms=[{norms_str}] < {wavelet_threshold})")
                     print(f"                 → Leaf stays for next iteration")
+                    # Track rejected children for diagnostics
+                    child_depth = parent_depth + 1
+                    for child_node, _ in children:
+                        rejected_regions.append(RegionDescriptor(
+                            bounds_lower=child_node.bounds_lower,
+                            bounds_upper=child_node.bounds_upper,
+                            wavelet_norm=child_node.wavelet_norm,
+                            spawn_epoch=epoch,
+                            depth=child_depth,
+                            parent_idx=parent_idx
+                        ))
                     continue  # leaf stays in leaf_nodes (unchanged)
 
                 # Spawn children above threshold — parent is no longer a leaf
@@ -1132,10 +1144,11 @@ def train(
                 title_prefix="Final: "
             )
         
-        # Save regions metadata
+        # Save regions metadata (including rejected candidates)
         save_regions_metadata(
             regions=model.regions,
-            output_path=adaptive_plots_dir / "expert_regions.json"
+            output_path=adaptive_plots_dir / "expert_regions.json",
+            rejected_regions=rejected_regions
         )
         
         # Store final regions in metrics

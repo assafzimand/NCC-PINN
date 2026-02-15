@@ -342,20 +342,47 @@ def generate_comparison_for_batch(batch_dir: Path):
 
 def main():
     """Main entry point."""
-    experiments_base = Path("outputs/experiments/AToE-New")
+    if len(sys.argv) > 1:
+        target_path = Path(sys.argv[1])
+    else:
+        target_path = Path("outputs/experiments/AToE-New")
 
-    if not experiments_base.exists():
-        print(f"Error: Directory not found: {experiments_base}")
+    if not target_path.exists():
+        print(f"Error: Directory not found: {target_path}")
         return
 
-    # Find all batch directories
-    batch_dirs = [d for d in experiments_base.iterdir() if d.is_dir()]
+    # Check if target is a single batch dir (has model subdirs with timestamps)
+    # or a parent dir containing multiple batches
+    has_model_subdirs = any(
+        (d / next(d.iterdir(), Path("__none__"))).is_dir()
+        for d in target_path.iterdir()
+        if d.is_dir()
+    ) if any(target_path.iterdir()) else False
+
+    # Heuristic: if any child dir contains a metrics.json (directly or in a timestamp subdir),
+    # treat target_path as a single batch
+    is_single_batch = False
+    for child in target_path.iterdir():
+        if not child.is_dir():
+            continue
+        # Check for timestamp subdirs containing metrics.json
+        for subdir in child.iterdir():
+            if subdir.is_dir() and (subdir / "metrics.json").exists():
+                is_single_batch = True
+                break
+        if is_single_batch:
+            break
+
+    if is_single_batch:
+        batch_dirs = [target_path]
+    else:
+        batch_dirs = [d for d in target_path.iterdir() if d.is_dir()]
 
     if not batch_dirs:
-        print(f"No experiment batches found in {experiments_base}")
+        print(f"No experiment batches found in {target_path}")
         return
 
-    print(f"Found {len(batch_dirs)} experiment batches:")
+    print(f"Found {len(batch_dirs)} experiment batch(es):")
     for batch_dir in sorted(batch_dirs):
         print(f"  - {batch_dir.name}")
 
