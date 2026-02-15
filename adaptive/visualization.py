@@ -523,47 +523,83 @@ def plot_expert_regions_comparison(
 
 def save_regions_metadata(
     regions: List[RegionDescriptor],
-    output_path: Union[str, Path]
+    output_path: Union[str, Path],
+    rejected_regions: Optional[List[RegionDescriptor]] = None
 ) -> None:
     """
     Save expert regions metadata to JSON file.
-    
+
+    Includes both spawned experts and rejected candidate regions
+    (children that didn't pass the wavelet threshold).
+
     Args:
-        regions: List of RegionDescriptor
+        regions: List of RegionDescriptor (spawned experts)
         output_path: Path to save JSON file
+        rejected_regions: List of RegionDescriptor for rejected candidates
     """
     import json
-    
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
+    # Build region entries with spawned flag
+    all_regions = []
+    for r in regions:
+        entry = r.to_dict()
+        entry['spawned'] = True
+        all_regions.append(entry)
+
+    if rejected_regions:
+        for r in rejected_regions:
+            entry = r.to_dict()
+            entry['spawned'] = False
+            all_regions.append(entry)
+
     data = {
         'n_experts': len(regions),
-        'regions': [r.to_dict() for r in regions]
+        'n_rejected': len(rejected_regions) if rejected_regions else 0,
+        'regions': all_regions
     }
-    
+
     with open(output_path, 'w') as f:
         json.dump(data, f, indent=2)
-    
-    print(f"  Expert regions metadata saved to {output_path}")
+
+    n_rejected = len(rejected_regions) if rejected_regions else 0
+    print(f"  Expert regions metadata saved to {output_path} ({len(regions)} spawned, {n_rejected} rejected)")
 
 
-def load_regions_metadata(input_path: Union[str, Path]) -> List[RegionDescriptor]:
+def load_regions_metadata(
+    input_path: Union[str, Path],
+    include_rejected: bool = False
+) -> Union[List[RegionDescriptor], Tuple[List[RegionDescriptor], List[RegionDescriptor]]]:
     """
     Load expert regions metadata from JSON file.
-    
+
     Args:
         input_path: Path to JSON file
-        
+        include_rejected: If True, return (spawned, rejected) tuple
+
     Returns:
-        List of RegionDescriptor
+        If include_rejected=False: List of spawned RegionDescriptors
+        If include_rejected=True: (spawned, rejected) tuple of lists
     """
     import json
-    
+
     with open(input_path, 'r') as f:
         data = json.load(f)
-    
-    return [RegionDescriptor.from_dict(r) for r in data['regions']]
+
+    spawned = []
+    rejected = []
+    for r in data['regions']:
+        rd = RegionDescriptor.from_dict(r)
+        if r.get('spawned', True):
+            spawned.append(rd)
+        else:
+            rejected.append(rd)
+
+    if include_rejected:
+        return spawned, rejected
+    return spawned
 
 
 def plot_expert_soft_weights(

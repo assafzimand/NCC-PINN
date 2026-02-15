@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "schrodinger_4k_epochs_0.1_norm_10_min_for_active_experts"
+experiment_name: "schrodinger_no_loss_norm"
 
 # Base configuration (will be used for all experiments)
 base_config:
