@@ -18,7 +18,7 @@ The composed solution depends on the mode:
 
 import torch
 import torch.nn as nn
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 from torch.utils.hooks import RemovableHandle
 from pathlib import Path
 
@@ -99,7 +99,11 @@ class AdaptiveExpertPINN(nn.Module):
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
         self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
         self.expert_architectures = adaptive_config.get('expert_architectures', None)
-        
+        self.only_leaves = adaptive_config.get('only_leaves', False)
+
+        # Leaf tracking for only_leaves mode (-1 = base model is a leaf)
+        self.leaf_indices: Set[int] = {-1} if self.only_leaves else set()
+
         # Store config architectures (before any pretrained loading)
         # This is used to determine expert architecture when pretrained base is loaded
         self.config_base_architecture = base_architecture
@@ -368,46 +372,54 @@ class AdaptiveExpertPINN(nn.Module):
         """
         self.batched_models.sync_from_models(self.base_model, self.experts)
     
-    def spawn_expert(self, region: RegionDescriptor) -> int:
+    def spawn_expert(self, region: RegionDescriptor, copy_from_idx: Optional[int] = None) -> int:
         """
         Spawn a new expert PINN for the given region.
-        
+
         Args:
             region: RegionDescriptor defining the expert's domain (includes depth)
-            
+            copy_from_idx: If provided, copy weights from this expert index
+                           (-1 = copy from base model). If None, zero-init final layer.
+
         Returns:
             Index of the new expert
         """
         if len(self.experts) >= self.max_experts:
             print(f"  Cannot spawn more experts: max_experts={self.max_experts} reached")
             return -1
-        
+
         expert_idx = len(self.experts)
         architecture = self.get_expert_architecture(expert_idx)
-        
-        # Create new expert FCNet
-        expert = FCNet(architecture, self.activation, self.config)
-        
-        # Move to same device as base model
         device = next(self.base_model.parameters()).device
-        expert = expert.to(device)
 
-        # Zero-initialize final layer so new expert starts with zero output,
-        # preserving the current composed solution at spawn time.
-        layer_names = expert.get_layer_names()
-        if layer_names:
-            final_layer = expert.network[layer_names[-1]]
-            nn.init.zeros_(final_layer.weight)
-            if final_layer.bias is not None:
-                nn.init.zeros_(final_layer.bias)
+        if copy_from_idx is not None:
+            # Copy weights from parent (only_leaves mode)
+            if copy_from_idx == -1:
+                source = self.base_model
+            else:
+                source = self.experts[copy_from_idx]
+            expert = FCNet(architecture, self.activation, self.config)
+            expert.load_state_dict(source.state_dict())
+            expert = expert.to(device)
+            print(f"    Expert copied from {'Base Model' if copy_from_idx == -1 else f'E{copy_from_idx + 1}'}")
+        else:
+            # Standard: create fresh expert with zero-init final layer
+            expert = FCNet(architecture, self.activation, self.config)
+            expert = expert.to(device)
+            layer_names = expert.get_layer_names()
+            if layer_names:
+                final_layer = expert.network[layer_names[-1]]
+                nn.init.zeros_(final_layer.weight)
+                if final_layer.bias is not None:
+                    nn.init.zeros_(final_layer.bias)
 
-        # DIAGNOSTIC: Verify expert is on correct device
-        actual_device = next(expert.parameters()).device
-        print(f"    Expert created on device: {actual_device}")
-        
         # Store expert and region
         self.experts.append(expert)
         self.regions.append(region)
+
+        # Track leaf in only_leaves mode
+        if self.only_leaves:
+            self.leaf_indices.add(expert_idx)
 
         parent_info = f"Base Model" if region.parent_idx == -1 else f"E{region.parent_idx + 1}"
         print(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
@@ -415,22 +427,22 @@ class AdaptiveExpertPINN(nn.Module):
         print(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
         print(f"    Residual-weighted wavelet norm: {region.wavelet_norm:.6f}")
         print(f"    Spawn epoch: {region.spawn_epoch}")
-        
+
         # Sync batched structures for vectorized forward pass
         self.sync_batched_indicators()
         self.sync_batched_models()
-        
+
         return expert_idx
     
     def freeze_models(self, mode: Optional[str] = None):
         """
         Apply freezing strategy to models.
-        
+
         Args:
             mode: 'none', 'previous', or 'base_only' (uses self.freeze_mode if None)
         """
         mode = mode or self.freeze_mode
-        
+
         if mode == 'none':
             # Unfreeze all
             for param in self.base_model.parameters():
@@ -438,7 +450,7 @@ class AdaptiveExpertPINN(nn.Module):
             for expert in self.experts:
                 for param in expert.parameters():
                     param.requires_grad = True
-                    
+
         elif mode == 'base_only':
             # Freeze base, train experts
             for param in self.base_model.parameters():
@@ -446,7 +458,7 @@ class AdaptiveExpertPINN(nn.Module):
             for expert in self.experts:
                 for param in expert.parameters():
                     param.requires_grad = True
-                    
+
         elif mode == 'previous':
             # Freeze base and all but last expert
             for param in self.base_model.parameters():
@@ -457,6 +469,15 @@ class AdaptiveExpertPINN(nn.Module):
                     param.requires_grad = is_last
         else:
             raise ValueError(f"Unknown freeze_mode: {mode}")
+
+        # In only_leaves mode: override to freeze base (if not leaf) and non-leaf experts
+        if self.only_leaves:
+            if -1 not in self.leaf_indices:
+                for param in self.base_model.parameters():
+                    param.requires_grad = False
+            for i, expert in enumerate(self.experts):
+                for param in expert.parameters():
+                    param.requires_grad = (i in self.leaf_indices)
     
     def freeze_base_model(self) -> None:
         """Freeze base model weights (convenience method)."""
@@ -493,11 +514,16 @@ class AdaptiveExpertPINN(nn.Module):
         """
         # Check if sparse expert activation is enabled
         threshold = self.adaptive_config.get('expert_activation_threshold', None)
-        
-        # Convert to float if it's a string (from YAML parsing)
         if threshold is not None:
             threshold = float(threshold)
-        
+
+        # Only-leaves mode: only leaf experts participate
+        if self.only_leaves:
+            if threshold is not None and len(self.leaf_indices - {-1}) > 0:
+                return self._forward_soft_sparse_only_leaves(inputs, threshold)
+            else:
+                return self._forward_soft_only_leaves(inputs)
+
         if threshold is not None and len(self.experts) > 0:
             # Use sparse activation (only evaluate experts with psi > threshold)
             if self.blending_mode == 'hard':
@@ -735,23 +761,80 @@ class AdaptiveExpertPINN(nn.Module):
         
         return u_total
     
+    def _forward_soft_only_leaves(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Soft blending using only leaf experts (no base, no non-leaf experts).
+
+        u(x,t) = Σ_{j ∈ leaves} ψ̃_j · u_j
+        where ψ̃_j = ψ_j / Σ_{k ∈ leaves} ψ_k
+        """
+        if -1 in self.leaf_indices:
+            return self.base_model(inputs)
+
+        leaf_list = sorted(self.leaf_indices)
+        _, psi_experts = self.batched_indicators(inputs)  # (N, K)
+        psi_leaves = psi_experts[:, leaf_list]  # (N, L)
+        psi_norm = psi_leaves / psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        u_leaves = torch.stack([self.experts[i](inputs) for i in leaf_list], dim=1)
+        return (psi_norm.unsqueeze(-1) * u_leaves).sum(dim=1)
+
+    def _forward_soft_sparse_only_leaves(self, inputs: torch.Tensor, threshold: float) -> torch.Tensor:
+        """
+        Sparse soft blending using only leaf experts.
+
+        Same as _forward_soft_only_leaves but skips leaf experts whose
+        psi < threshold for all points.
+        """
+        if -1 in self.leaf_indices:
+            return self.base_model(inputs)
+
+        leaf_list = sorted(self.leaf_indices)
+        _, psi_experts = self.batched_indicators(inputs)  # (N, K)
+        psi_leaves = psi_experts[:, leaf_list]  # (N, L)
+
+        # Filter by activation threshold within leaves
+        active_mask = psi_leaves > threshold  # (N, L)
+        active_any = active_mask.sum(dim=0) > 0  # (L,)
+        active_local_indices = torch.nonzero(active_any, as_tuple=True)[0]
+
+        if len(active_local_indices) == 0:
+            # Fallback: no leaf above threshold, use all leaves
+            psi_norm = psi_leaves / psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
+            u_leaves = torch.stack([self.experts[i](inputs) for i in leaf_list], dim=1)
+            return (psi_norm.unsqueeze(-1) * u_leaves).sum(dim=1)
+
+        # Zero out sub-threshold psi
+        psi_filtered = psi_leaves * active_mask.float()
+        psi_norm = psi_filtered / psi_filtered.sum(dim=1, keepdim=True).clamp(min=1e-8)
+
+        # Only evaluate active leaf experts
+        N = inputs.shape[0]
+        output_dim = self.base_model.layers[-1]
+        device = inputs.device
+        u_leaves = torch.zeros(N, len(leaf_list), output_dim, device=device, dtype=inputs.dtype)
+        for local_idx in active_local_indices:
+            expert_idx = leaf_list[local_idx.item()]
+            u_leaves[:, local_idx.item(), :] = self.experts[expert_idx](inputs)
+
+        return (psi_norm.unsqueeze(-1) * u_leaves).sum(dim=1)
+
     def forward_for_pde_derivatives(self, inputs: torch.Tensor) -> dict:
         """
         Forward pass returning decomposed components for product-rule derivative computation.
-        
+
         Instead of returning the composed scalar output, returns individual expert outputs
         and their normalized weights. The loss function uses these to compute PDE derivatives
         via the product rule, creating K small autograd graphs instead of one massive one.
-        
+
         u(x,t) = Σ_k ψ̃_k(x,t) · u_k(x,t),  k includes base
         where ψ̃_k = ψ_k / Z, Z = Σ_j ψ_j
-        
+
         Product rule gives: u_x = Σ_k (ψ̃_k_x · u_k + ψ̃_k · u_k_x), etc.
-        
+
         Args:
             inputs: (N, n_dims) input coordinates. The x,t components must
                     have requires_grad=True (set by the loss function).
-        
+
         Returns:
             dict with:
                 - 'components': list of dicts, each with:
@@ -762,24 +845,27 @@ class AdaptiveExpertPINN(nn.Module):
                 - 'composed': (N, output_dim) assembled output (uses detached psi for efficiency)
                 - 'indicator_data': dict with bounds/sigma for analytical derivatives
         """
+        if self.only_leaves:
+            return self._forward_for_pde_derivatives_only_leaves(inputs)
+
         _t = self._timer
         N = inputs.shape[0]
         output_dim = self.base_model.layers[-1]
         device = inputs.device
-        
+
         threshold = self.adaptive_config.get('expert_activation_threshold', None)
         if threshold is not None:
             threshold = float(threshold)
-        
+
         # Step 1: Compute indicators (on autograd graph since inputs require grad)
         if _t: _t.start('fwd.compute_masks')
         psi_base, psi_experts = self.batched_indicators(inputs)  # (N, 1), (N, K)
         if _t: _t.stop('fwd.compute_masks')
-        
+
         # Step 2: Sparse selection (same logic as _forward_soft_sparse)
         if _t: _t.start('fwd.sparse_selection')
         K = psi_experts.shape[1]
-        
+
         if threshold is not None and K > 0:
             active_mask = psi_experts > threshold  # (N, K)
             active_experts_any = active_mask.sum(dim=0) > 20  # (K,)
@@ -792,23 +878,23 @@ class AdaptiveExpertPINN(nn.Module):
         else:
             active_expert_indices = []
             psi_experts_filtered = psi_experts  # (N, 0)
-        
+
         num_active = len(active_expert_indices)
         if _t: _t.stop('fwd.sparse_selection')
-        
+
         # Step 3: Normalize weights (partition of unity)
         Z = psi_base + psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
         Z = Z.clamp(min=1e-8)
         psi_norm_base = psi_base / Z  # (N, 1)
         psi_norm_experts = psi_experts_filtered / Z  # (N, K)
-        
+
         # Step 4: Build components list and evaluate models
         # Each expert gets its OWN copy of inputs (detached leaf with requires_grad).
         # This makes their autograd graphs independent, enabling batched autograd.grad
         # calls in the loss function (K expert derivatives in 1 call instead of K calls).
         if _t: _t.start('fwd.sparse_eval')
         components = []
-        
+
         # Base model — own input copy
         # Base has constant unnormalized psi, but psi_norm depends on x,t via Z
         inputs_base = inputs.detach().clone().requires_grad_(True)
@@ -819,7 +905,7 @@ class AdaptiveExpertPINN(nn.Module):
             'psi_norm': psi_norm_base,
             'constant_psi': False,  # psi_norm depends on x,t through Z
         })
-        
+
         # Active experts — each gets own input copy
         for idx in active_expert_indices:
             k = idx.item() if torch.is_tensor(idx) else idx
@@ -858,18 +944,111 @@ class AdaptiveExpertPINN(nn.Module):
             'indicator_data': indicator_data,
         }
     
+    def _forward_for_pde_derivatives_only_leaves(self, inputs: torch.Tensor) -> dict:
+        """
+        PDE derivatives forward using only leaf experts.
+
+        u(x,t) = Σ_{j ∈ leaves} ψ̃_j · u_j, normalized over leaves only.
+        """
+        _t = self._timer
+        N = inputs.shape[0]
+        output_dim = self.base_model.layers[-1]
+        device = inputs.device
+
+        # Base is still the only leaf — single component
+        if -1 in self.leaf_indices:
+            inputs_base = inputs.detach().clone().requires_grad_(True)
+            u_base = self.base_model(inputs_base)
+            components = [{
+                'u': u_base,
+                'inputs': inputs_base,
+                'psi_norm': torch.ones(N, 1, device=device, dtype=inputs.dtype),
+                'constant_psi': True,
+            }]
+            return {
+                'components': components,
+                'composed': u_base,
+                'indicator_data': {
+                    'all_lower': None, 'all_upper': None, 'all_sigma': None,
+                    'psi_base': torch.ones(N, 1, device=device),
+                    'psi_experts_filtered': torch.zeros(N, 0, device=device),
+                    'active_expert_indices': [],
+                },
+            }
+
+        leaf_list = sorted(self.leaf_indices)
+
+        # Compute all indicators
+        if _t: _t.start('fwd.compute_masks')
+        _, psi_experts = self.batched_indicators(inputs)  # (N, K)
+        if _t: _t.stop('fwd.compute_masks')
+
+        # Select leaf psi and normalize over leaves only
+        psi_leaves = psi_experts[:, leaf_list]  # (N, L)
+
+        threshold = self.adaptive_config.get('expert_activation_threshold', None)
+        if threshold is not None:
+            threshold = float(threshold)
+            active_mask = psi_leaves > threshold  # (N, L)
+            psi_leaves = psi_leaves * active_mask.float()
+
+        Z = psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)  # (N, 1)
+        psi_norm_leaves = psi_leaves / Z  # (N, L)
+
+        # Build components — each leaf gets own input copy
+        if _t: _t.start('fwd.sparse_eval')
+        components = []
+        for local_idx, expert_idx in enumerate(leaf_list):
+            inputs_k = inputs.detach().clone().requires_grad_(True)
+            u_k = self.experts[expert_idx](inputs_k)
+            components.append({
+                'u': u_k,
+                'inputs': inputs_k,
+                'psi_norm': psi_norm_leaves[:, local_idx:local_idx+1],
+                'constant_psi': False,
+            })
+        if _t: _t.stop('fwd.sparse_eval')
+
+        # Composed output
+        composed = torch.zeros(N, output_dim, device=device, dtype=inputs.dtype)
+        for c in components:
+            composed = composed + c['psi_norm'].detach() * c['u']
+
+        # Pack indicator data (leaf indices mapped to global expert indices)
+        active_expert_indices = torch.tensor(leaf_list, device=device)
+
+        # Build filtered psi tensor: zeros for non-leaves, actual psi for leaves
+        psi_experts_filtered = torch.zeros_like(psi_experts)
+        for local_idx, expert_idx in enumerate(leaf_list):
+            psi_experts_filtered[:, expert_idx] = psi_leaves[:, local_idx]
+
+        indicator_data = {
+            'all_lower': self.batched_indicators.all_lower,
+            'all_upper': self.batched_indicators.all_upper,
+            'all_sigma': self.batched_indicators.all_sigma,
+            'psi_base': torch.zeros(N, 1, device=device),  # base not in the sum
+            'psi_experts_filtered': psi_experts_filtered,
+            'active_expert_indices': active_expert_indices,
+        }
+
+        return {
+            'components': components,
+            'composed': composed,
+            'indicator_data': indicator_data,
+        }
+
     def forward_decomposed(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Forward pass returning individual model contributions.
-        
+
         Useful for analysis and debugging.
-        
+
         For hard blending: Uses efficient filtering (only compute for inside points)
         For soft blending: Returns unnormalized masks and normalized weights
-        
+
         Args:
             inputs: (N, n_dims) tensor of coordinates
-            
+
         Returns:
             Dict with:
                 - 'base': base model output (N, output_dim)
@@ -878,7 +1057,9 @@ class AdaptiveExpertPINN(nn.Module):
                 - 'masks': dict of unnormalized masks per expert
                 - 'weights_normalized': (soft only) dict of normalized weights per model
         """
-        if self.blending_mode == 'hard':
+        if self.only_leaves:
+            return self._forward_decomposed_soft_only_leaves(inputs)
+        elif self.blending_mode == 'hard':
             return self._forward_decomposed_hard(inputs)
         else:
             return self._forward_decomposed_soft(inputs)
@@ -957,7 +1138,44 @@ class AdaptiveExpertPINN(nn.Module):
         
         result['composed'] = u_total
         return result
-    
+
+    def _forward_decomposed_soft_only_leaves(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Decomposed forward using only leaf experts."""
+        result = {}
+        N = inputs.shape[0]
+        output_dim = self.base_model.layers[-1]
+        device = inputs.device
+
+        if -1 in self.leaf_indices:
+            u_base = self.base_model(inputs)
+            result['base'] = u_base
+            result['composed'] = u_base
+            result['masks'] = {}
+            result['weights_normalized'] = {'base': torch.ones(N, 1, device=device)}
+            result['blending_mode_info'] = 'only_leaves'
+            return result
+
+        leaf_list = sorted(self.leaf_indices)
+        _, psi_experts = self.batched_indicators(inputs)  # (N, K)
+        psi_leaves = psi_experts[:, leaf_list]  # (N, L)
+        psi_sum = psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        psi_norm = psi_leaves / psi_sum
+
+        result['masks'] = {}
+        result['weights_normalized'] = {}
+        result['blending_mode_info'] = 'only_leaves'
+
+        u_total = torch.zeros(N, output_dim, device=device, dtype=inputs.dtype)
+        for local_idx, expert_idx in enumerate(leaf_list):
+            u_k = self.experts[expert_idx](inputs)
+            result[f'expert_{expert_idx}'] = u_k
+            result['masks'][f'expert_{expert_idx}'] = psi_leaves[:, local_idx:local_idx+1]
+            result['weights_normalized'][f'expert_{expert_idx}'] = psi_norm[:, local_idx:local_idx+1]
+            u_total = u_total + psi_norm[:, local_idx:local_idx+1] * u_k
+
+        result['composed'] = u_total
+        return result
+
     def get_layer_names(self) -> List[str]:
         """Get layer names from base model (for tracker compatibility)."""
         return self.base_model.get_layer_names()
@@ -1044,7 +1262,8 @@ class AdaptiveExpertPINN(nn.Module):
             'config_base_architecture': self.config_base_architecture,
             'activation': self.activation,
             'adaptive_config': self.adaptive_config,
-            'base_frozen': self._base_frozen
+            'base_frozen': self._base_frozen,
+            'leaf_indices': sorted(self.leaf_indices),
         }
     
     def load_state_dict_extended(self, state_dict: Dict):
@@ -1111,10 +1330,18 @@ class AdaptiveExpertPINN(nn.Module):
             if self._base_frozen:
                 for param in self.base_model.parameters():
                     param.requires_grad = False
-        
+
+        # Restore leaf indices
+        if 'leaf_indices' in state_dict:
+            self.leaf_indices = set(state_dict['leaf_indices'])
+
         # Sync batched structures
         self.sync_batched_indicators()
         self.sync_batched_models()
+
+        # Apply freeze (respects only_leaves leaf_indices)
+        if self.only_leaves:
+            self.freeze_models()
     
     def __repr__(self) -> str:
         """String representation."""
