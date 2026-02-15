@@ -610,15 +610,16 @@ def plot_expert_soft_weights(
     ground_truth: Optional[np.ndarray] = None,
     grid_x: Optional[np.ndarray] = None,
     grid_t: Optional[np.ndarray] = None,
-    title_prefix: str = ""
+    title_prefix: str = "",
+    leaf_indices: Optional[set] = None
 ) -> None:
     """
     Plot heatmaps of soft blending weights (partition of unity) for each expert.
-    
+
     Uses a red colormap where:
     - Darker red = higher weight (more influence)
     - Lighter/white = lower weight (less influence)
-    
+
     Args:
         model: AdaptiveExpertPINN instance with soft blending enabled
         domain_bounds: {'lower': [x_min, t_min], 'upper': [x_max, t_max]}
@@ -628,6 +629,7 @@ def plot_expert_soft_weights(
         grid_x: Optional x grid for ground truth
         grid_t: Optional t grid for ground truth
         title_prefix: Optional prefix for plot title
+        leaf_indices: If provided, only show these expert indices (set with -1 for base)
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -660,28 +662,45 @@ def plot_expert_soft_weights(
     
     # Compute normalized weights
     with torch.no_grad():
-        # Get decomposed output with weights
         decomposed = model.forward_decomposed(inputs)
         weights_norm = decomposed.get('weights_normalized', {})
-        
+
         if not weights_norm:
             print(f"  Warning: No normalized weights available (model may use hard blending)")
             return
-        
+
+        # Determine which experts to plot
+        show_base = leaf_indices is None or -1 in leaf_indices
+        if leaf_indices is not None:
+            expert_ids_to_plot = sorted(i for i in leaf_indices if i >= 0)
+        else:
+            expert_ids_to_plot = list(range(model.num_experts))
+
         # Extract weights and reshape to grid
-        psi_base_norm = weights_norm['base'].cpu().numpy().reshape(X.shape)
-        psi_experts_norm = []
-        for i in range(model.num_experts):
+        plot_data = []  # list of (label, weight_grid, region_or_None)
+
+        if show_base and 'base' in weights_norm:
+            psi_base_grid = weights_norm['base'].cpu().numpy().reshape(X.shape)
+            plot_data.append(('Base Model Weight (\u03c8\u0303\u2080)', psi_base_grid, None))
+
+        for i in expert_ids_to_plot:
             key = f'expert_{i}'
             if key in weights_norm:
-                psi_k_norm = weights_norm[key].cpu().numpy().reshape(X.shape)
-                psi_experts_norm.append(psi_k_norm)
-    
-    # Create subplots: base + each expert
-    n_plots = 1 + len(psi_experts_norm)
+                psi_grid = weights_norm[key].cpu().numpy().reshape(X.shape)
+                region = model.regions[i] if i < len(model.regions) else None
+                depth_str = f', depth={region.depth}' if region else ''
+                label = f'Expert {i+1} Weight{depth_str}'
+                plot_data.append((label, psi_grid, region))
+
+    # Create subplots
+    n_plots = len(plot_data)
+    if n_plots == 0:
+        print(f"  Warning: No weights to plot")
+        return
+
     n_cols = min(3, n_plots)
     n_rows = (n_plots + n_cols - 1) // n_cols
-    
+
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
     if n_plots == 1:
         axes = np.array([[axes]])
@@ -690,46 +709,27 @@ def plot_expert_soft_weights(
     elif n_cols == 1:
         axes = axes.reshape(-1, 1)
     axes = axes.flatten()
-    
-    # Red colormap (darker = higher weight)
+
     cmap = plt.cm.Reds
-    
-    # Plot base model weight
-    im = axes[0].pcolormesh(eval_grid_x, eval_grid_t, psi_base_norm.T,
-                            cmap=cmap, vmin=0, vmax=1, shading='auto')
-    axes[0].set_title('Base Model Weight (ψ̃₀)', fontsize=11)
-    axes[0].set_xlabel('x', fontsize=10)
-    axes[0].set_ylabel('t', fontsize=10)
-    plt.colorbar(im, ax=axes[0], label='Normalized Weight')
-    axes[0].grid(True, alpha=0.3)
-    
-    # Plot expert weights
-    for i, psi_norm in enumerate(psi_experts_norm):
-        ax = axes[i + 1]
-        im = ax.pcolormesh(eval_grid_x, eval_grid_t, psi_norm.T,
+
+    for idx, (label, psi_grid, region) in enumerate(plot_data):
+        ax = axes[idx]
+        im = ax.pcolormesh(eval_grid_x, eval_grid_t, psi_grid.T,
                           cmap=cmap, vmin=0, vmax=1, shading='auto')
-        
-        # Get region info for title
-        if i < len(model.regions):
-            region = model.regions[i]
-            depth = region.depth
-            ax.set_title(f'Expert {i+1} Weight (ψ̃_{i+1}, depth={depth})', fontsize=11)
-            
-            # Draw region boundary as dashed black line
+        ax.set_title(label, fontsize=11)
+        ax.set_xlabel('x', fontsize=10)
+        ax.set_ylabel('t', fontsize=10)
+        plt.colorbar(im, ax=ax, label='Normalized Weight')
+        ax.grid(True, alpha=0.3)
+
+        if region is not None:
             lo, hi = region.bounds_lower, region.bounds_upper
             rect = patches.Rectangle(
                 (lo[0], lo[1]), hi[0] - lo[0], hi[1] - lo[1],
                 linewidth=2, edgecolor='black', facecolor='none', linestyle='--'
             )
             ax.add_patch(rect)
-        else:
-            ax.set_title(f'Expert {i+1} Weight (ψ̃_{i+1})', fontsize=11)
-        
-        ax.set_xlabel('x', fontsize=10)
-        ax.set_ylabel('t', fontsize=10)
-        plt.colorbar(im, ax=ax, label='Normalized Weight')
-        ax.grid(True, alpha=0.3)
-    
+
     # Hide unused axes
     for j in range(n_plots, len(axes)):
         axes[j].set_visible(False)

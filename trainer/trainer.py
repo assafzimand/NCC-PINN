@@ -394,7 +394,8 @@ def train(
     max_experts = adaptive_cfg.get('max_experts', 5)
     wavelet_threshold = adaptive_cfg.get('wavelet_threshold', None)
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
-    
+    only_leaves = adaptive_cfg.get('only_leaves', False)
+
     if is_adaptive:
         # Extract tree-based spawning parameters
         tree_max_depth = adaptive_cfg.get('tree_max_depth', 15)
@@ -408,6 +409,7 @@ def train(
         print(f"  Tree min samples leaf: {tree_min_samples_leaf}")
         print(f"  Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
         print(f"  Freeze mode: {adaptive_cfg.get('freeze_mode', 'none')}")
+        print(f"  Only leaves: {only_leaves}")
         enable_timing_cfg = adaptive_cfg.get('enable_timing', False)
         print(f"  Timing profiling: {'enabled' if enable_timing_cfg else 'disabled'}")
         
@@ -917,8 +919,9 @@ def train(
                         parent_idx=parent_idx
                     )
 
-                    # Spawn child
-                    expert_idx = model.spawn_expert(child_region)
+                    # Spawn child (copy parent weights in only_leaves mode)
+                    copy_from = parent_idx if only_leaves else None
+                    expert_idx = model.spawn_expert(child_region, copy_from_idx=copy_from)
                     if expert_idx >= 0:
                         experts_spawned_this_step += 1
                         num_spawned_from_parent += 1
@@ -939,8 +942,11 @@ def train(
                         if hasattr(model, 'num_experts'):
                             spawn_record['num_experts'] = model.num_experts
                         metrics['expert_spawns'].append(spawn_record)
-                
+
+                # Remove parent from leaf set in only_leaves mode
                 if num_spawned_from_parent > 0:
+                    if only_leaves:
+                        model.leaf_indices.discard(parent_idx)
                     print(f"      [Spawning] Spawned {num_spawned_from_parent} child(ren) from {parent_str}")
 
             # If any experts were spawned, update optimizer and plot
@@ -959,8 +965,12 @@ def train(
                 # Plot expert regions with depth info
                 problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
                 num_experts_str = f" ({model.num_experts} experts)" if hasattr(model, 'num_experts') else ""
+                regions_to_plot = (
+                    [model.regions[i] for i in sorted(model.leaf_indices) if i >= 0]
+                    if only_leaves else model.regions
+                )
                 plot_expert_regions(
-                    regions=model.regions,
+                    regions=regions_to_plot,
                     domain_bounds=domain_bounds,
                     output_path=adaptive_plots_dir / f"expert_regions_epoch_{epoch}.png",
                     problem_type=problem_type,
@@ -976,7 +986,8 @@ def train(
                         model=model,
                         domain_bounds=domain_bounds,
                         output_path=adaptive_plots_dir / f"soft_weights_epoch_{epoch}.png",
-                        title_prefix=f"Epoch {epoch}: "
+                        title_prefix=f"Epoch {epoch}: ",
+                        leaf_indices=model.leaf_indices if only_leaves else None
                     )
             else:
                 print(f"\n  [Spawning] No experts spawned this step")
@@ -1124,24 +1135,29 @@ def train(
         
         # Final expert regions plot
         problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
+        regions_to_plot = (
+            [model.regions[i] for i in sorted(model.leaf_indices) if i >= 0]
+            if only_leaves else model.regions
+        )
         plot_expert_regions(
-            regions=model.regions,
+            regions=regions_to_plot,
             domain_bounds=domain_bounds,
             output_path=adaptive_plots_dir / "expert_regions_final.png",
             problem_type=problem_type,
-            title=f"Final Expert Regions ({model.num_experts} experts)",
+            title=f"Final Expert Regions ({len(regions_to_plot)} {'leaves' if only_leaves else 'experts'})",
             ground_truth=gt_grid,
             grid_x=gt_x,
             grid_t=gt_t
         )
-        
+
         # Final soft blending weights plot if using soft blending mode
         if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
             plot_expert_soft_weights(
                 model=model,
                 domain_bounds=domain_bounds,
                 output_path=adaptive_plots_dir / "soft_weights_final.png",
-                title_prefix="Final: "
+                title_prefix="Final: ",
+                leaf_indices=model.leaf_indices if only_leaves else None
             )
         
         # Save regions metadata (including rejected candidates)
