@@ -99,11 +99,17 @@ class AToE(nn.Module):
         self.base_weight = adaptive_config.get('base_weight', 1.0)
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
         self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
-        atoe_arch_ratio = adaptive_config.get('AToE_architecture_norm_ratio', None)
-        if atoe_arch_ratio is not None:
-            raise NotImplementedError(
-                "AToE_architecture_norm_ratio is not yet implemented. "
-                "Set to null to use base architecture for all experts."
+
+        self.atoe_threshold_capacity = adaptive_config.get(
+            'AToE_threshold_capacity', None
+        )
+        problem = config['problem']
+        problem_config = config[problem]
+        self.input_dim = base_architecture[0]
+        self.output_dim = problem_config.get('output_dim', 2)
+        if self.atoe_threshold_capacity is not None:
+            self.wavelet_threshold = problem_config.get(
+                'wavelet_threshold', 1.0
             )
 
         self.config_base_architecture = base_architecture
@@ -310,9 +316,17 @@ class AToE(nn.Module):
 
         return covered / parent_count
 
-    def get_expert_architecture(self, expert_idx: int) -> List[int]:
-        """Get architecture for a new expert."""
-        return self.config_base_architecture
+    def get_expert_architecture(self, region: RegionDescriptor) -> List[int]:
+        """Get architecture for a new expert based on region norm."""
+        if self.atoe_threshold_capacity is None:
+            return self.config_base_architecture
+
+        from models.architecture_bank import get_architecture_for_capacity
+        ratio = max(region.wavelet_norm / self.wavelet_threshold, 1.0)
+        target_capacity = self.atoe_threshold_capacity * ratio
+        return get_architecture_for_capacity(
+            target_capacity, self.input_dim, self.output_dim
+        )
 
     def sync_batched_indicators(self) -> None:
         """Synchronize batched indicators with current regions.
@@ -354,7 +368,7 @@ class AToE(nn.Module):
             return -1
 
         expert_idx = len(self.experts)
-        architecture = self.get_expert_architecture(expert_idx)
+        architecture = self.get_expert_architecture(region)
         device = next(self.base_model.parameters()).device
 
         expert = FCNet(architecture, self.activation, self.config)

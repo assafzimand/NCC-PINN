@@ -55,20 +55,24 @@ class ANT(nn.Module):
         self.freeze_mode = adaptive_config.get(
             'freeze_mode', 'none'
         )
-        ant_layer_ratio = adaptive_config.get(
-            'ANT_layer_size_norm_ratio', [30]
+        self.default_hidden_layers = adaptive_config.get(
+            'ANT_default_hidden_layers', [70]
         )
-        if isinstance(ant_layer_ratio, float):
-            raise NotImplementedError(
-                "ANT_layer_size_norm_ratio as a float ratio is not yet "
-                "implemented. Provide a list of hidden layer sizes instead."
-            )
-        self.expert_hidden_layers = ant_layer_ratio
+        ant_thresh_arch = adaptive_config.get(
+            'ANT_threshold_architecture', None
+        )
+        self.ant_threshold_architecture = (
+            ant_thresh_arch if isinstance(ant_thresh_arch, list)
+            else None
+        )
 
         problem = config['problem']
         problem_config = config[problem]
         self.output_dim = problem_config.get(
             'output_dim', 2
+        )
+        self.wavelet_threshold = problem_config.get(
+            'wavelet_threshold', 1.0
         )
 
         self.base_model = FCNet(
@@ -183,9 +187,22 @@ class ANT(nn.Module):
             parent_model = self.experts[parent_idx]
 
         parent_act_dim = parent_model.get_activation_dim()
+
+        if self.ant_threshold_architecture is not None:
+            ratio = max(
+                region.wavelet_norm / self.wavelet_threshold,
+                1.0,
+            )
+            hidden_layers = [
+                max(1, round(h * ratio))
+                for h in self.ant_threshold_architecture
+            ]
+        else:
+            hidden_layers = list(self.default_hidden_layers)
+
         architecture = (
             [parent_act_dim]
-            + self.expert_hidden_layers
+            + hidden_layers
             + [self.output_dim]
         )
 
@@ -197,13 +214,6 @@ class ANT(nn.Module):
             is_base=False,
         )
         expert = expert.to(device)
-
-        layer_names = expert.get_layer_names()
-        if layer_names:
-            final_layer = expert.network[layer_names[-1]]
-            nn.init.zeros_(final_layer.weight)
-            if final_layer.bias is not None:
-                nn.init.zeros_(final_layer.bias)
 
         self.experts.append(expert)
         self.regions.append(region)

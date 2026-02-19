@@ -9,8 +9,9 @@ adaptive_pinn:
   sigma_fraction: 0.2              # For soft: sigma = fraction * region_size (per-dimension)
   base_weight: 1.0                 # Uniform weight for base model (soft blending only)
   enabled: true
-  AToE_architecture_norm_ratio: null
-  ANT_layer_size_norm_ratio: [30]
+  AToE_threshold_capacity: null
+  ANT_threshold_architecture: null
+  ANT_default_hidden_layers: [70]
   freeze_mode: none
   inner_metrics_calculation: false
   max_experts: 10
