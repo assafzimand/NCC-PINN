@@ -43,7 +43,7 @@ base_config:
     output_dim: 2  # Complex-valued: h = [u, v]
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 1.5707963267948966]
-    wavelet_threshold: 10
+    wavelet_threshold: 0.0001
     loss_weights:
       residual: 1.0
       ic: 1.0
