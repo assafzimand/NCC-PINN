@@ -548,9 +548,8 @@ def build_loss(**cfg) -> Callable:
         # Timer (attached to model by trainer)
         _t = getattr(model, '_timer', None)
         
-        # Check if model supports decomposed derivative computation (Step C)
-        # Use decomposed approach when model is adaptive with active experts
         use_decomposed = (cfg.get('use_decomposed_derivatives', False)
+                          and getattr(model, 'supports_decomposed', False)
                           and len(getattr(model, 'experts', [])) > 0)
         
         # Initialize per-sample arrays if needed

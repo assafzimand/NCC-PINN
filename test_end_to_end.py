@@ -106,7 +106,7 @@ try:
     print("=" * 70)
 
     problem = test_config['problem']
-    architecture = test_config['architecture']
+    architecture = test_config['base_architecture']
     activation = test_config['activation']
     layers_str = "-".join(map(str, architecture))
     run_dir = Path("outputs") / f"{problem}-{layers_str}-{activation}"

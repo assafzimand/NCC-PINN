@@ -78,7 +78,7 @@ def test_trainer_small_run():
 
     # Build model
     print("  Building model...")
-    model = FCNet(config['architecture'], config['activation'], config)
+    model = FCNet(config['base_architecture'], config['activation'], config)
 
     # Build loss
     print("  Building loss...")

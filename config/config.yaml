@@ -9,7 +9,8 @@ adaptive_pinn:
   sigma_fraction: 0.2              # For soft: sigma = fraction * region_size (per-dimension)
   base_weight: 1.0                 # Uniform weight for base model (soft blending only)
   enabled: true
-  expert_architectures: null
+  AToE_architecture_norm_ratio: null
+  ANT_layer_size_norm_ratio: [30]
   freeze_mode: none
   inner_metrics_calculation: false
   max_experts: 10
@@ -22,7 +23,7 @@ adaptive_pinn:
   rf_n_estimators: 100
   spawn_every_epochs: 1000
   wavelet_threshold: 0.1
-architecture:
+base_architecture:
 - 2
 - 70
 - 70
@@ -61,6 +62,7 @@ burgers2d:
   - 0.0
   - 2.0
 cuda: true
+model: AToE
 epochs: 10000
 eval_every: 200
 eval_only: false

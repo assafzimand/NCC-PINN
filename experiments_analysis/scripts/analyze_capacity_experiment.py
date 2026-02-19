@@ -324,8 +324,8 @@ def load_experiment_plan(experiment_path: Path) -> Optional[Dict[str, Any]]:
     name_to_arch = {}
     if 'experiments' in plan:
         for exp in plan['experiments']:
-            if 'name' in exp and 'architecture' in exp:
-                name_to_arch[exp['name']] = exp['architecture']
+            if 'name' in exp and 'base_architecture' in exp:
+                name_to_arch[exp['name']] = exp['base_architecture']
     
     return name_to_arch
 
@@ -1205,7 +1205,7 @@ def group_models_by_attribute(
                     arch_to_weight[arch_tuple] = weight_str
         
         for model_name, data in models_data.items():
-            model_arch = data['architecture']
+            model_arch = data['base_architecture']
             arch_tuple = tuple(model_arch)
             weight_count = arch_to_weight.get(arch_tuple)
             if weight_count:
@@ -2191,7 +2191,7 @@ def generate_overlay_for_model(
     
     # problem_config already loaded above for spatial_dim check
     config = {
-        'architecture': architecture,
+        'base_architecture': architecture,
         'activation': activation,
         'cuda': torch.cuda.is_available(),
         'problem': problem,
