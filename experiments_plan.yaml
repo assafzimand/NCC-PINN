@@ -5,7 +5,7 @@ experiment_name: "schrodinger_leaves_and_norm_10_test"
 base_config:
   problem: schrodinger
   activation: tanh
-  epochs: 10
+  epochs: 5000
   batch_size: 512
   lr: 0.0001  
 
@@ -30,10 +30,10 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 1
-  print_every: 1
-  save_every: 1
-  inner_metrics_eval_every: 1
+  eval_every: 100
+  print_every: 100
+  save_every: 2500
+  inner_metrics_eval_every: 2000
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -91,14 +91,14 @@ base_config:
   adaptive_pinn:
     enabled: true                      # Toggle feature on/off (override per experiment)
     max_experts: 20                    # Maximum number of expert networks
-    spawn_every_epochs: 1           # Check for spawning every N epochs (quick test value)
+    spawn_every_epochs: 200           # Check for spawning every N epochs (quick test value)
     expert_architectures: null         # null = same as base, or list of architectures
     freeze_mode: none                  # "none" | "previous" | "base_only"
     blending_mode: soft                # "hard" | "soft"
     sigma_fraction: 0.2                # For soft: sigma = fraction * region_size (per-dimension)
     base_weight: 1.0                   # Uniform weight for base model (soft blending only)
     base_everywhere: true              # If false, u_0 has indicator = domain \ experts
-    wavelet_threshold: 1               # Minimum wavelet norm to spawn (filters low-priority regions)
+    wavelet_threshold: 10               # Minimum wavelet norm to spawn (filters low-priority regions)
     tree_max_depth: 15                 # Max depth of decision tree
     tree_min_samples_leaf: 10          # Min samples in tree leaf node
     enable_timing: false               # Enable epoch timing profiling (can slow down training)
@@ -111,6 +111,48 @@ base_config:
 
 # Experiments to run
 experiments:
-  - name: "5k_epochs_spawn_every_500_norm_5"
+  - name: "5k_epochs_leaves_and_norm_10"
     problem: schrodinger
     architecture: [2, 30, 30, 30, 30, 30, 2]
+    adaptive_pinn:
+      enabled: true                      # Toggle feature on/off (override per experiment)
+      max_experts: 20                    # Maximum number of expert networks
+      spawn_every_epochs: 200           # Check for spawning every N epochs (quick test value)
+      expert_architectures: null         # null = same as base, or list of architectures
+      freeze_mode: none                  # "none" | "previous" | "base_only"
+      blending_mode: soft                # "hard" | "soft"
+      sigma_fraction: 0.2                # For soft: sigma = fraction * region_size (per-dimension)
+      base_weight: 1.0                   # Uniform weight for base model (soft blending only)
+      base_everywhere: true              # If false, u_0 has indicator = domain \ experts
+      wavelet_threshold: 10               # Minimum wavelet norm to spawn (filters low-priority regions)
+      tree_max_depth: 15                 # Max depth of decision tree
+      tree_min_samples_leaf: 10          # Min samples in tree leaf node
+      enable_timing: false               # Enable epoch timing profiling (can slow down training)
+      inner_metrics_calculation: false   # Disable NCC/probes during training (complex with experts)
+      enable_gradient_diagnostics: false # Enable detailed gradient flow diagnostics (verbose)
+      use_decomposed_derivatives: true
+      expert_activation_threshold: 1e-8  # null = disabled, float = only evaluate experts with psi > threshold
+      only_leaves: true                 # If true, only leaf experts (no children) participate in solution
+
+  - name: "5k_epochs_and_norm_10"
+    problem: schrodinger
+    architecture: [2, 30, 30, 30, 30, 30, 2]
+    adaptive_pinn:
+      enabled: true                      # Toggle feature on/off (override per experiment)
+      max_experts: 20                    # Maximum number of expert networks
+      spawn_every_epochs: 200           # Check for spawning every N epochs (quick test value)
+      expert_architectures: null         # null = same as base, or list of architectures
+      freeze_mode: none                  # "none" | "previous" | "base_only"
+      blending_mode: soft                # "hard" | "soft"
+      sigma_fraction: 0.2                # For soft: sigma = fraction * region_size (per-dimension)
+      base_weight: 1.0                   # Uniform weight for base model (soft blending only)
+      base_everywhere: true              # If false, u_0 has indicator = domain \ experts
+      wavelet_threshold: 10               # Minimum wavelet norm to spawn (filters low-priority regions)
+      tree_max_depth: 15                 # Max depth of decision tree
+      tree_min_samples_leaf: 10          # Min samples in tree leaf node
+      enable_timing: false               # Enable epoch timing profiling (can slow down training)
+      inner_metrics_calculation: false   # Disable NCC/probes during training (complex with experts)
+      enable_gradient_diagnostics: false # Enable detailed gradient flow diagnostics (verbose)
+      use_decomposed_derivatives: true
+      expert_activation_threshold: 1e-8  # null = disabled, float = only evaluate experts with psi > threshold
+      only_leaves: false                 # If true, only leaf experts (no children) participate in solution
