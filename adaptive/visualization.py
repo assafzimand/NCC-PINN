@@ -264,10 +264,11 @@ def _plot_expert_regions_3d(
     _draw_box_3d(ax, [x_min, y_min, t_min], [x_max, y_max, t_max],
                  color='black', alpha=0.3, linewidth=1, label='Domain')
     
-    # Draw expert regions as simple black wireframes (no color, no legend)
-    for region in regions:
-        _draw_box_3d(ax, region.bounds_lower, region.bounds_upper,
-                     color='black', alpha=1.0, linewidth=1.5, label=None)
+    # Draw expert regions as corner markers + thin edges
+    colors = plt.cm.tab10(np.linspace(0, 1, max(len(regions), 1)))
+    for i, region in enumerate(regions):
+        _draw_box_corners_3d(ax, region.bounds_lower, region.bounds_upper,
+                             color=colors[i % len(colors)], marker_size=30)
     
     # Add depth summary to title
     max_depth = max((getattr(r, 'depth', 1) for r in regions), default=0) if regions else 0
@@ -319,6 +320,27 @@ def _draw_box_3d(ax, lower, upper, color='blue', alpha=0.3, linewidth=1, label=N
     # Add a dummy line for the legend
     if label:
         ax.plot([], [], [], color=color, linewidth=2, label=label)
+
+
+def _draw_box_corners_3d(ax, lower, upper, color='blue', marker_size=30):
+    """Draw only the 8 corners and 12 edges of a 3D box (no filled faces)."""
+    x0, y0, z0 = lower
+    x1, y1, z1 = upper
+
+    corners = np.array([
+        [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+        [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
+    ])
+    ax.scatter(corners[:, 0], corners[:, 1], corners[:, 2],
+               c=[color], s=marker_size, marker='o', zorder=10)
+
+    edges = [
+        (0,1),(1,2),(2,3),(3,0),
+        (4,5),(5,6),(6,7),(7,4),
+        (0,4),(1,5),(2,6),(3,7),
+    ]
+    for i, j in edges:
+        ax.plot3D(*zip(corners[i], corners[j]), color=color, linewidth=0.8, alpha=0.6)
 
 
 def plot_expert_regions_comparison(

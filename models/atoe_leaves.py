@@ -45,6 +45,7 @@ class AToELeaves(nn.Module):
         self.base_weight = adaptive_config.get('base_weight', 1.0)
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
         self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
+        self.blending_mode = 'soft'
         atoe_arch_ratio = adaptive_config.get('AToE_architecture_norm_ratio', None)
         if atoe_arch_ratio is not None:
             raise NotImplementedError(

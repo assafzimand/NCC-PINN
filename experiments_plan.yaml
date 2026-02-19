@@ -1,17 +1,17 @@
 # Experiment plan configuration
-experiment_name: "schrodinger_leaves_and_norm_10_test"
+experiment_name: "2k_epochs_wavelet_norms_search"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
   model: AToE  # 'AToE' | 'AToELeaves' | 'ANT'
   activation: tanh
-  epochs: 5000
+  epochs: 2000
   batch_size: 512
   lr: 0.0001  
 
   # Optimizer settings
-  optimizer_switch_at: 0.8
+  optimizer_switch_at: 1.0
 
   # Adam hyperparameters
   adam_betas: [0.9, 0.999]
@@ -33,8 +33,8 @@ base_config:
   n_freq_grid: 128
   eval_every: 100
   print_every: 100
-  save_every: 2500
-  inner_metrics_eval_every: 2000
+  save_every: 1000
+  inner_metrics_eval_every: 700
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -43,6 +43,7 @@ base_config:
     output_dim: 2  # Complex-valued: h = [u, v]
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 1.5707963267948966]
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -53,6 +54,7 @@ base_config:
     output_dim: 1  # Real-valued: h is scalar
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 6.283185307179586]  # 2π
+    wavelet_threshold: 0.0001
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -64,6 +66,7 @@ base_config:
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     nu: 0.01  # Viscosity coefficient
+    wavelet_threshold: 0.0001
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -75,6 +78,7 @@ base_config:
     spatial_domain: [[0.0, 1.0], [0.0, 1.0]]
     temporal_domain: [0.0, 2.0]
     nu: 0.1  # Viscosity coefficient
+    wavelet_threshold: 0.0001
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -94,13 +98,12 @@ base_config:
     max_experts: 20                    # Maximum number of expert networks
     spawn_every_epochs: 200           # Check for spawning every N epochs (quick test value)
     AToE_architecture_norm_ratio: null  # null = same as base, float = ratio (not yet implemented)
-    ANT_layer_size_norm_ratio: [30]    # list of hidden layer sizes, or float ratio (not yet implemented)
+    ANT_layer_size_norm_ratio: [70]    # list of hidden layer sizes, or float ratio (not yet implemented)
     freeze_mode: none                  # "none" | "previous" | "base_only"
     blending_mode: soft                # "hard" | "soft"
     sigma_fraction: 0.2                # For soft: sigma = fraction * region_size (per-dimension)
     base_weight: 1.0                   # Uniform weight for base model (soft blending only)
     base_everywhere: true              # If false, u_0 has indicator = domain \ experts
-    wavelet_threshold: 10               # Minimum wavelet norm to spawn (filters low-priority regions)
     tree_max_depth: 15                 # Max depth of decision tree
     tree_min_samples_leaf: 10          # Min samples in tree leaf node
     enable_timing: false               # Enable epoch timing profiling (can slow down training)
@@ -112,50 +115,63 @@ base_config:
 
 # Experiments to run
 experiments:
-  - name: "5k_epochs_leaves_and_norm_10"
+  - name: "AToELeaves_schrodinger"
     problem: schrodinger
     model: AToELeaves
     base_architecture: [2, 30, 30, 30, 30, 30, 2]
-    adaptive_pinn:
-      enabled: true
-      max_experts: 20
-      spawn_every_epochs: 200
-      AToE_architecture_norm_ratio: null
-      ANT_layer_size_norm_ratio: [30]
-      freeze_mode: none
-      blending_mode: soft
-      sigma_fraction: 0.2
-      base_weight: 1.0
-      base_everywhere: true
-      wavelet_threshold: 10
-      tree_max_depth: 15
-      tree_min_samples_leaf: 10
-      enable_timing: false
-      inner_metrics_calculation: false
-      enable_gradient_diagnostics: false
-      use_decomposed_derivatives: true
-      expert_activation_threshold: 1e-8
 
-  - name: "5k_epochs_and_norm_10"
+  - name: "AToE_schrodinger"
     problem: schrodinger
     model: AToE
     base_architecture: [2, 30, 30, 30, 30, 30, 2]
-    adaptive_pinn:
-      enabled: true
-      max_experts: 20
-      spawn_every_epochs: 200
-      AToE_architecture_norm_ratio: null
-      ANT_layer_size_norm_ratio: [30]
-      freeze_mode: none
-      blending_mode: soft
-      sigma_fraction: 0.2
-      base_weight: 1.0
-      base_everywhere: true
-      wavelet_threshold: 10
-      tree_max_depth: 15
-      tree_min_samples_leaf: 10
-      enable_timing: false
-      inner_metrics_calculation: false
-      enable_gradient_diagnostics: false
-      use_decomposed_derivatives: true
-      expert_activation_threshold: 1e-8
+
+  - name: "ANT_schrodinger"
+    problem: schrodinger
+    model: ANT
+    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+
+  - name: "AToELeaves_wave1d"
+    problem: wave1d
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+
+  - name: "AToE_wave1d"
+    problem: wave1d
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+
+  - name: "ANT_wave1d"
+    problem: wave1d
+    model: ANT
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+
+  - name: "AToELeaves_burgers1d"
+    problem: burgers1d
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+
+  - name: "AToE_burgers1d"
+    problem: burgers1d
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+
+  - name: "ANT_burgers1d"
+    problem: burgers1d
+    model: ANT
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+
+  - name: "AToELeaves_burgers2d"
+    problem: burgers2d
+    model: AToELeaves
+    base_architecture: [3, 30, 30, 30, 30, 30, 1]
+
+  - name: "AToE_burgers2d"
+    problem: burgers2d
+    model: AToE
+    base_architecture: [3, 30, 30, 30, 30, 30, 1]
+
+  - name: "ANT_burgers2d"
+    problem: burgers2d
+    model: ANT
+    base_architecture: [3, 30, 30, 30, 30, 30, 1]
+
