@@ -245,9 +245,9 @@ def load_experiment_plan(experiment_path: Path) -> Optional[Dict[str, Any]]:
     
     if 'experiments' in plan:
         for exp in plan['experiments']:
-            if 'name' in exp and 'architecture' in exp:
+            if 'name' in exp and 'base_architecture' in exp:
                 exp_name = exp['name']
-                arch = exp['architecture']
+                arch = exp['base_architecture']
                 name_to_arch[exp_name] = arch
                 
                 weight_label = extract_weight_from_experiment_name(exp_name)

@@ -35,14 +35,14 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
     """Run one experiment."""
     print(f"\n{'='*70}")
     print(f"Running Experiment: {exp_name}")
-    print(f"Architecture: {exp_config['architecture']}")
+    print(f"Architecture: {exp_config['base_architecture']}")
     print(f"{'='*70}\n")
     
     # Merge configs
     config = {**base_config, **exp_config}
     
     # Generate architecture-based folder name (aligned with make_run_dir)
-    layers_str = "-".join(map(str, config['architecture']))
+    layers_str = "-".join(map(str, config['base_architecture']))
     arch_folder_name = f"{config['problem']}-{layers_str}-{config['activation']}"
     exp_output_dir = parent_dir / arch_folder_name
     
@@ -152,7 +152,7 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
         outputs_root = Path("outputs")
         if outputs_root.exists():
             # Build pattern to match architecture folder
-            layers_str = "-".join(map(str, config['architecture']))
+            layers_str = "-".join(map(str, config['base_architecture']))
             arch_folder_name = f"{config['problem']}-{layers_str}-{config['activation']}"
             arch_dir = outputs_root / arch_folder_name
             

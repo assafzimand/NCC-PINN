@@ -16,7 +16,8 @@ class FCNet(nn.Module):
     - Configurable architecture and activation function
     """
 
-    def __init__(self, layers: List[int], activation: str, config: Dict):
+    def __init__(self, layers: List[int], activation: str, config: Dict,
+                 is_base: bool = True):
         """
         Initialize FCNet.
 
@@ -24,27 +25,32 @@ class FCNet(nn.Module):
             layers: List of layer sizes [input_dim, hidden1, ..., output_dim]
             activation: Activation function name ('tanh', 'relu', 'sigmoid')
             config: Configuration dict for verification
+            is_base: If True (default), assert input_dim == spatial_dim + 1.
+                     Set to False for expert networks whose input_dim differs
+                     (e.g., ANT experts that take parent activations as input).
 
         Example:
-            layers = [2, 50, 100, 50, 2]
-            Creates: input(2) -> hidden(50) -> hidden(100) ->
-                     hidden(50) -> output(2)
+            Base:   layers = [2, 50, 100, 50, 2]  (input = [x, t])
+            Expert: layers = [50, 30, 30, 2]       (input = parent activation)
         """
         super().__init__()
+
+        self.is_base = is_base
 
         # Verify architecture matches problem configuration
         problem = config['problem']
         problem_config = config[problem]
         spatial_dim = problem_config['spatial_dim']
         output_dim = problem_config.get('output_dim', 2)  # Default to 2 for legacy
-        expected_input_dim = spatial_dim + 1  # x + t
 
-        assert layers[0] == expected_input_dim, (
-            f"Architecture input dimension {layers[0]} does not match "
-            f"expected dimension {expected_input_dim} "
-            f"(spatial_dim={spatial_dim} + 1 for time)"
-        )
-        
+        if is_base:
+            expected_input_dim = spatial_dim + 1  # x + t
+            assert layers[0] == expected_input_dim, (
+                f"Architecture input dimension {layers[0]} does not match "
+                f"expected dimension {expected_input_dim} "
+                f"(spatial_dim={spatial_dim} + 1 for time)"
+            )
+
         assert layers[-1] == output_dim, (
             f"Architecture output dimension {layers[-1]} does not match "
             f"expected dimension {output_dim} (problem={problem})"
@@ -89,16 +95,22 @@ class FCNet(nn.Module):
 
         return activations[activation.lower()]
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_activation: bool = False):
         """
         Forward pass through the network.
 
         Args:
-            x: Input tensor of shape (N, input_dim) where
-               input_dim = spatial_dim + 1 (concatenated [x, t])
+            x: Input tensor of shape (N, input_dim).
+               For base models: input_dim = spatial_dim + 1 (concatenated [x, t]).
+               For experts: input_dim = parent's activation dim.
+            return_activation: If True, also return the last hidden layer
+                activation (before the output layer). Used by ANT to feed
+                child experts.
 
         Returns:
-            Output tensor of shape (N, output_dim)
+            If return_activation is False: (N, output_dim) tensor.
+            If return_activation is True:  tuple of (output, activation)
+                where activation is (N, last_hidden_dim).
         """
         out = x
 
@@ -108,10 +120,18 @@ class FCNet(nn.Module):
             out = self.network[layer_name](out)
             out = self.activation(out)
 
+        last_hidden = out
+
         # Last layer (no activation)
         out = self.network[layer_names[-1]](out)
 
+        if return_activation:
+            return out, last_hidden
         return out
+
+    def get_activation_dim(self) -> int:
+        """Size of the last hidden layer (used by ANT to determine child input dim)."""
+        return self.layers[-2]
 
     def register_ncc_hooks(
         self,

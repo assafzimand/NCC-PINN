@@ -74,7 +74,7 @@ def test_training_orchestrator():
         print("\n  Verifying outputs...")
 
         # Check run directory exists
-        architecture = test_config['architecture']
+        architecture = test_config['base_architecture']
         activation = test_config['activation']
         layers_str = "-".join(map(str, architecture))
         run_dir_name = f"{problem}_layers-{layers_str}_act-{activation}"
@@ -178,11 +178,11 @@ def test_eval_only_mode():
 
     generate_and_save_datasets(test_config)
 
-    model = FCNet(test_config['architecture'],
+    model = FCNet(test_config['base_architecture'],
                   test_config['activation'], test_config)
     loss_fn = build_loss(**test_config)
 
-    run_dir = make_run_dir(problem, test_config['architecture'],
+    run_dir = make_run_dir(problem, test_config['base_architecture'],
                           test_config['activation'])
 
     checkpoint_path = train(
@@ -218,7 +218,7 @@ def test_eval_only_mode():
         run_training.main()
 
         # The run_dir will be the same as before (using make_run_dir)
-        architecture = test_config['architecture']
+        architecture = test_config['base_architecture']
         activation = test_config['activation']
         layers_str = "-".join(map(str, architecture))
         eval_run_dir = Path("outputs") / f"{problem}_layers-{layers_str}_act-{activation}"

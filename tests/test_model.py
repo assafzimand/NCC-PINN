@@ -16,7 +16,7 @@ def test_model_construction():
     print("Testing model construction...")
 
     config = load_config()
-    architecture = config['architecture']
+    architecture = config['base_architecture']
     activation = config['activation']
 
     # Test successful construction
@@ -45,7 +45,7 @@ def test_model_forward():
     print(f"  Device: {device}")
 
     # Build model
-    architecture = config['architecture']
+    architecture = config['base_architecture']
     activation = config['activation']
     model = FCNet(architecture, activation, config).to(device)
 
@@ -86,7 +86,7 @@ def test_model_hooks():
                           torch.cuda.is_available() else 'cpu')
 
     # Build model
-    architecture = config['architecture']
+    architecture = config['base_architecture']
     activation = config['activation']
     model = FCNet(architecture, activation, config).to(device)
 
@@ -176,7 +176,7 @@ def test_gradients_flow():
                           torch.cuda.is_available() else 'cpu')
 
     # Build model
-    architecture = config['architecture']
+    architecture = config['base_architecture']
     activation = config['activation']
     model = FCNet(architecture, activation, config).to(device)
 

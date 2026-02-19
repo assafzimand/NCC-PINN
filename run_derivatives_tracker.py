@@ -21,7 +21,7 @@ def main():
     print("\n1. Loading configuration...")
     config = load_config()
     problem = config['problem']
-    architecture = config['architecture']
+    architecture = config['base_architecture']
     activation = config['activation']
     eval_only = config['eval_only']
     resume_from = config['resume_from']

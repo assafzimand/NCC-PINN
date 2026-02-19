@@ -73,7 +73,8 @@ def run_multi_eval(checkpoints_dict, config, run_dir):
         # Extract architecture and activation from checkpoint config if available
         if 'config' in checkpoint:
             checkpoint_config = checkpoint['config']
-            architecture = checkpoint_config.get('architecture', config['architecture'])
+            architecture = checkpoint_config.get('base_architecture',
+                            checkpoint_config.get('architecture', config['base_architecture']))
             activation = checkpoint_config.get('activation', config['activation'])
             print(f"  Loaded architecture from checkpoint: {architecture}")
         elif 'architecture' in checkpoint:
@@ -82,13 +83,13 @@ def run_multi_eval(checkpoints_dict, config, run_dir):
             print(f"  Loaded architecture from checkpoint: {architecture}")
         else:
             # Fallback: use from config (might not match)
-            architecture = config['architecture']
+            architecture = config['base_architecture']
             activation = config['activation']
             print(f"  Warning: Architecture not in checkpoint, using config: {architecture}")
         
         # Build model
         model_config = config.copy()
-        model_config['architecture'] = architecture
+        model_config['base_architecture'] = architecture
         model_config['activation'] = activation
         model = FCNet(architecture, activation, model_config)
         
@@ -183,7 +184,7 @@ def main():
     print("\n1. Loading configuration...")
     config = load_config()
     problem = config['problem']
-    architecture = config['architecture']
+    architecture = config['base_architecture']
     activation = config['activation']
     eval_only = config['eval_only']
     resume_from = config['resume_from']

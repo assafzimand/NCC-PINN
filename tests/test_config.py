@@ -21,7 +21,7 @@ def test_config_loading():
     
     # Required keys from PRD
     required_keys = [
-        'problem', 'architecture', 'activation', 'epochs', 'batch_size', 
+        'problem', 'base_architecture', 'activation', 'epochs', 'batch_size', 
         'lr', 'cuda', 'eval_only', 'resume_from', 'bins', 'seed',
         'n_residual_train', 'n_initial_train', 'n_boundary_train',
         'n_residual_eval', 'n_initial_eval', 'n_boundary_eval'
@@ -36,7 +36,7 @@ def test_config_loading():
     
     # Check types
     assert isinstance(config['problem'], str), "problem should be a string"
-    assert isinstance(config['architecture'], list), "architecture should be a list"
+    assert isinstance(config['base_architecture'], list), "base_architecture should be a list"
     assert isinstance(config['activation'], str), "activation should be a string"
     assert isinstance(config['epochs'], int), "epochs should be an integer"
     assert isinstance(config['batch_size'], int), "batch_size should be an integer"
@@ -69,7 +69,7 @@ def test_config_loading():
     
     print("✓ Config loaded successfully")
     print(f"✓ Problem: {config['problem']}")
-    print(f"✓ Architecture: {config['architecture']}")
+    print(f"✓ Architecture: {config['base_architecture']}")
     print(f"✓ Activation: {config['activation']}")
     print(f"✓ All {len(required_keys)} required keys present with correct types")
     print(f"✓ Problem-specific config validated: spatial_dim={problem_config['spatial_dim']}, "
@@ -86,7 +86,7 @@ def test_run_dir_creation():
     # Create run directory
     run_dir = make_run_dir(
         problem=config['problem'],
-        layers=config['architecture'],
+        layers=config['base_architecture'],
         act=config['activation']
     )
     

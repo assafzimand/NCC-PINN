@@ -28,7 +28,7 @@ def test_ncc_runner():
     activation = 'tanh'
 
     test_config = config.copy()
-    test_config['architecture'] = architecture
+    test_config['base_architecture'] = architecture
     test_config['problem'] = 'schrodinger'
 
     model = FCNet(architecture, activation, test_config)
@@ -149,7 +149,7 @@ def test_ncc_with_different_bins():
 
         architecture = [2, 15, 15, 2]
         test_config = config.copy()
-        test_config['architecture'] = architecture
+        test_config['base_architecture'] = architecture
         test_config['bins'] = bins
         test_config['problem'] = 'schrodinger'
 

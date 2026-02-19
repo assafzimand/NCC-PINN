@@ -12,6 +12,9 @@ import numpy as np
 from trainer.plotting import plot_training_curves, plot_final_comparison
 from trainer.utils import compute_relative_l2_error, compute_infinity_norm_error
 from trainer.timing import EpochTimer
+from models.atoe import AToE
+from models.atoe_leaves import AToELeaves
+from models.ant import ANT
 
 
 def _build_expert_tree_from_pretrained(
@@ -83,21 +86,9 @@ def _build_expert_tree_from_pretrained(
     with torch.no_grad():
         u_pred_base = model.base_model(eval_inputs)  # Base only (pretrained, frozen)
 
-    # Compute per-sample loss components for total loss weighting
-    problem = cfg.get('problem', 'schrodinger')
-    loss_components = compute_loss_components(
-        model=model.base_model,  # Use base model directly for loss components
-        x=eval_data['x'],
-        t=eval_data['t'],
-        target=eval_data.get('h_gt', eval_data.get('u_gt')),
-        masks=eval_data['mask'],
-        loss_fn=loss_fn,
-        weights={
-            'residual': cfg[problem]['loss_weights']['residual'],
-            'ic': cfg[problem]['loss_weights']['ic'],
-            'bc': cfg[problem]['loss_weights']['bc']
-        }
-    )
+    # loss_components no longer needed: wavelet norm is
+    # l2_norm_squared * n_samples (loss weighting was removed).
+    loss_components = None
 
     # Convert to numpy for RF
     X_eval = eval_inputs.cpu().numpy()
@@ -378,7 +369,7 @@ def train(
     best_checkpoint_path = None
 
     # Create checkpoint directory (aligned with outputs naming: <problem>-<layers>-<act>)
-    architecture_str = "-".join(map(str, cfg['architecture']))
+    architecture_str = "-".join(map(str, cfg['base_architecture']))
     checkpoint_dir = Path("checkpoints") / cfg['problem'] / f"{cfg['problem']}-{architecture_str}-{cfg['activation']}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
@@ -394,7 +385,6 @@ def train(
     max_experts = adaptive_cfg.get('max_experts', 5)
     wavelet_threshold = adaptive_cfg.get('wavelet_threshold', None)
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
-    only_leaves = adaptive_cfg.get('only_leaves', False)
 
     if is_adaptive:
         # Extract tree-based spawning parameters
@@ -409,7 +399,7 @@ def train(
         print(f"  Tree min samples leaf: {tree_min_samples_leaf}")
         print(f"  Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
         print(f"  Freeze mode: {adaptive_cfg.get('freeze_mode', 'none')}")
-        print(f"  Only leaves: {only_leaves}")
+        print(f"  Model type: {type(model).__name__}")
         enable_timing_cfg = adaptive_cfg.get('enable_timing', False)
         print(f"  Timing profiling: {'enabled' if enable_timing_cfg else 'disabled'}")
         
@@ -441,11 +431,7 @@ def train(
         adaptive_plots_dir = run_dir / "adaptive_plots"
         adaptive_plots_dir.mkdir(exist_ok=True)
     
-    # Leaf tracking: every expert starts as a leaf, removed when it gets children.
-    # At each spawn step we try to split ALL current leaves.
-    # Base model (None, -1) is the initial leaf.
-    leaf_nodes = [(None, -1)] if is_adaptive else []  # list of (region_or_None, expert_idx)
-    rejected_regions = []  # Regions that were considered but didn't pass threshold
+    rejected_regions = []
     
     # Training loop
     print(f"\nTraining for {epochs} epochs...")
@@ -790,54 +776,39 @@ def train(
             print(f"Adaptive PINN: Spawning check at epoch {epoch}")
             if hasattr(model, 'num_experts'):
                 print(f"  Current experts: {model.num_experts}/{max_experts}")
+            leaf_nodes = model.get_leaf_info()
             print(f"  Current leaf nodes: {len(leaf_nodes)}")
             print(f"{'='*60}")
 
-            # Get GLOBAL model predictions on eval_data ONCE (not per parent)
-            # CRITICAL: eval_data is the fixed evaluation dataset, not training batch
             model.eval()
             with torch.no_grad():
                 eval_inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
-                u_pred = model(eval_inputs)  # Global blended solution (all experts)
+                u_pred = model(eval_inputs)
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
 
-            # Compute per-sample loss components on global solution
-            problem = cfg.get('problem', 'schrodinger')
-            loss_components = compute_loss_components(
-                model=model,
-                x=eval_data['x'],
-                t=eval_data['t'],
-                target=eval_data.get('h_gt', eval_data.get('u_gt')),
-                masks=eval_data['mask'],
-                loss_fn=loss_fn,
-                weights={
-                    'residual': cfg[problem]['loss_weights']['residual'],
-                    'ic': cfg[problem]['loss_weights']['ic'],
-                    'bc': cfg[problem]['loss_weights']['bc']
-                }
-            )
+            # loss_components no longer needed: wavelet norm uses
+            # l2_norm_squared * n_samples (loss weighting was removed).
+            # Passing None lets fit() fall back to uniform weighting.
+            loss_components = None
 
-            # Convert to numpy ONCE
             X_eval = eval_inputs.cpu().numpy()
-            y_eval = u_pred.cpu().numpy()  # Global predictions
+            y_eval = u_pred.cpu().numpy()
 
             experts_spawned_this_step = 0
-
-            # Try to split ALL current leaf nodes
-            parent_regions_to_process = list(leaf_nodes)  # snapshot; we'll modify leaf_nodes in-place
+            parent_regions_to_process = list(leaf_nodes)
             
             print(f"\n  [Spawning] Processing {len(parent_regions_to_process)} leaf nodes")
 
-            # For each leaf node, try to split it
+            is_copy_spawn = isinstance(model, AToELeaves)
+
             for parent_region, parent_idx in parent_regions_to_process:
                 if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
                     print(f"\n  Max experts reached ({max_experts}), stopping spawn process")
                     break
 
-                # Determine parent info for logging
                 if parent_region is None:
                     parent_str = "Base Model"
                     parent_depth = 0
@@ -847,7 +818,6 @@ def train(
 
                 print(f"\n    [Spawning] Leaf: {parent_str} (depth {parent_depth})")
 
-                # Spawn children for this leaf
                 children = region_detector.spawn_children_for_node(
                     parent_region=parent_region if parent_region is not None else
                                  RegionDescriptor(
@@ -864,12 +834,10 @@ def train(
                     verbose=True
                 )
 
-                # Spawn both children if one of them is above threshold
                 if not children:
                     print(f"      [Spawning] No children from split, leaf stays")
-                    continue  # leaf stays in leaf_nodes (unchanged)
+                    continue
 
-                # Filter children by threshold
                 if wavelet_threshold is not None:
                     children_above_threshold = [
                         (child_node, samples) for child_node, samples in children
@@ -878,16 +846,13 @@ def train(
                     if len(children_above_threshold) > 0:
                         children_to_spawn = children
                     else:
-                        print(f"      [Spawning] No children above threshold, leaf stays")
                         children_to_spawn = None
                 else:
-                    children_to_spawn = children  # No threshold: spawn all
+                    children_to_spawn = children
 
                 if not children_to_spawn:
                     norms_str = ', '.join([f'{c.wavelet_norm:.6f}' for c, _ in children])
                     print(f"      [Spawning] All children below threshold (norms=[{norms_str}] < {wavelet_threshold})")
-                    print(f"                 → Leaf stays for next iteration")
-                    # Track rejected children for diagnostics
                     child_depth = parent_depth + 1
                     for child_node, _ in children:
                         rejected_regions.append(RegionDescriptor(
@@ -898,10 +863,8 @@ def train(
                             depth=child_depth,
                             parent_idx=parent_idx
                         ))
-                    continue  # leaf stays in leaf_nodes (unchanged)
+                    continue
 
-                # Spawn children above threshold — parent is no longer a leaf
-                leaf_nodes.remove((parent_region, parent_idx))
                 num_spawned_from_parent = 0
                 child_depth = parent_depth + 1
 
@@ -909,7 +872,6 @@ def train(
                     if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
                         break
 
-                    # Create region descriptor for this child
                     child_region = RegionDescriptor(
                         bounds_lower=child_node.bounds_lower,
                         bounds_upper=child_node.bounds_upper,
@@ -919,17 +881,14 @@ def train(
                         parent_idx=parent_idx
                     )
 
-                    # Spawn child (copy parent weights in only_leaves mode)
-                    copy_from = parent_idx if only_leaves else None
-                    expert_idx = model.spawn_expert(child_region, copy_from_idx=copy_from)
+                    if is_copy_spawn:
+                        expert_idx = model.spawn_expert(child_region, copy_from_idx=parent_idx)
+                    else:
+                        expert_idx = model.spawn_expert(child_region)
                     if expert_idx >= 0:
                         experts_spawned_this_step += 1
                         num_spawned_from_parent += 1
 
-                        # New child is a leaf
-                        leaf_nodes.append((child_region, expert_idx))
-
-                        # Store expert spawn history
                         if 'expert_spawns' not in metrics:
                             metrics['expert_spawns'] = []
                         spawn_record = {
@@ -943,31 +902,26 @@ def train(
                             spawn_record['num_experts'] = model.num_experts
                         metrics['expert_spawns'].append(spawn_record)
 
-                # Remove parent from leaf set in only_leaves mode
                 if num_spawned_from_parent > 0:
-                    if only_leaves:
-                        model.leaf_indices.discard(parent_idx)
                     print(f"      [Spawning] Spawned {num_spawned_from_parent} child(ren) from {parent_str}")
 
-            # If any experts were spawned, update optimizer and plot
             if experts_spawned_this_step > 0:
                 print(f"\n  [Spawning] Spawned {experts_spawned_this_step} experts in this step")
 
-                # Recreate optimizer to include new expert parameters
                 if current_optimizer_name == 'Adam':
                     optimizer = _create_adam_optimizer(model, cfg)
                 else:
                     optimizer = _create_lbfgs_optimizer(model, cfg)
 
-                # Apply freezing strategy
                 model.freeze_models()
 
-                # Plot expert regions with depth info
                 problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
                 num_experts_str = f" ({model.num_experts} experts)" if hasattr(model, 'num_experts') else ""
+                leaf_info = model.get_leaf_info()
+                leaf_expert_indices = [idx for _, idx in leaf_info if idx >= 0]
                 regions_to_plot = (
-                    [model.regions[i] for i in sorted(model.leaf_indices) if i >= 0]
-                    if only_leaves else model.regions
+                    [model.regions[i] for i in leaf_expert_indices]
+                    if isinstance(model, (AToELeaves, ANT)) else model.regions
                 )
                 plot_expert_regions(
                     regions=regions_to_plot,
@@ -980,14 +934,16 @@ def train(
                     grid_t=gt_t
                 )
 
-                # Plot soft blending weights if using soft blending mode
                 if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
+                    leaf_indices_set = (
+                        set(leaf_expert_indices) if isinstance(model, (AToELeaves, ANT)) else None
+                    )
                     plot_expert_soft_weights(
                         model=model,
                         domain_bounds=domain_bounds,
                         output_path=adaptive_plots_dir / f"soft_weights_epoch_{epoch}.png",
                         title_prefix=f"Epoch {epoch}: ",
-                        leaf_indices=model.leaf_indices if only_leaves else None
+                        leaf_indices=leaf_indices_set
                     )
             else:
                 print(f"\n  [Spawning] No experts spawned this step")
@@ -1133,41 +1089,42 @@ def train(
         print("=" * 60)
         print(f"  Total experts spawned: {model.num_experts}")
         
-        # Final expert regions plot
         problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
+        is_leaves_model = isinstance(model, (AToELeaves, ANT))
+        leaf_info = model.get_leaf_info()
+        leaf_expert_indices = [idx for _, idx in leaf_info if idx >= 0]
         regions_to_plot = (
-            [model.regions[i] for i in sorted(model.leaf_indices) if i >= 0]
-            if only_leaves else model.regions
+            [model.regions[i] for i in leaf_expert_indices]
+            if is_leaves_model else model.regions
         )
+        label = 'leaves' if is_leaves_model else 'experts'
         plot_expert_regions(
             regions=regions_to_plot,
             domain_bounds=domain_bounds,
             output_path=adaptive_plots_dir / "expert_regions_final.png",
             problem_type=problem_type,
-            title=f"Final Expert Regions ({len(regions_to_plot)} {'leaves' if only_leaves else 'experts'})",
+            title=f"Final Expert Regions ({len(regions_to_plot)} {label})",
             ground_truth=gt_grid,
             grid_x=gt_x,
             grid_t=gt_t
         )
 
-        # Final soft blending weights plot if using soft blending mode
         if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
+            leaf_indices_set = set(leaf_expert_indices) if is_leaves_model else None
             plot_expert_soft_weights(
                 model=model,
                 domain_bounds=domain_bounds,
                 output_path=adaptive_plots_dir / "soft_weights_final.png",
                 title_prefix="Final: ",
-                leaf_indices=model.leaf_indices if only_leaves else None
+                leaf_indices=leaf_indices_set
             )
         
-        # Save regions metadata (including rejected candidates)
         save_regions_metadata(
             regions=model.regions,
             output_path=adaptive_plots_dir / "expert_regions.json",
             rejected_regions=rejected_regions
         )
         
-        # Store final regions in metrics
         metrics['adaptive_pinn'] = {
             'num_experts': model.num_experts,
             'max_experts': max_experts,
@@ -1186,7 +1143,7 @@ def train(
         f.write("Training Summary\n")
         f.write("=" * 60 + "\n\n")
         f.write(f"Problem: {cfg['problem']}\n")
-        f.write(f"Architecture: {cfg['architecture']}\n")
+        f.write(f"Architecture: {cfg['base_architecture']}\n")
         f.write(f"Activation: {cfg['activation']}\n")
         f.write(f"Epochs: {epochs}\n")
         f.write(f"Batch size: {cfg['batch_size']}\n")
