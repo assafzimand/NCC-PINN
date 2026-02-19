@@ -46,11 +46,17 @@ class AToELeaves(nn.Module):
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
         self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
         self.blending_mode = 'soft'
-        atoe_arch_ratio = adaptive_config.get('AToE_architecture_norm_ratio', None)
-        if atoe_arch_ratio is not None:
-            raise NotImplementedError(
-                "AToE_architecture_norm_ratio is not yet implemented. "
-                "Set to null to use base architecture for all experts."
+
+        self.atoe_threshold_capacity = adaptive_config.get(
+            'AToE_threshold_capacity', None
+        )
+        problem = config['problem']
+        problem_config = config[problem]
+        self.input_dim = base_architecture[0]
+        self.output_dim = problem_config.get('output_dim', 2)
+        if self.atoe_threshold_capacity is not None:
+            self.wavelet_threshold = problem_config.get(
+                'wavelet_threshold', 1.0
             )
 
         self.leaf_indices: Set[int] = {-1}
@@ -184,8 +190,16 @@ class AToELeaves(nn.Module):
 
         return covered / parent_count
 
-    def get_expert_architecture(self, expert_idx: int) -> List[int]:
-        return self.config_base_architecture
+    def get_expert_architecture(self, region: RegionDescriptor) -> List[int]:
+        if self.atoe_threshold_capacity is None:
+            return self.config_base_architecture
+
+        from models.architecture_bank import get_architecture_for_capacity
+        ratio = max(region.wavelet_norm / self.wavelet_threshold, 1.0)
+        target_capacity = self.atoe_threshold_capacity * ratio
+        return get_architecture_for_capacity(
+            target_capacity, self.input_dim, self.output_dim
+        )
 
     def sync_batched_indicators(self) -> None:
         if not self.regions:
@@ -205,10 +219,10 @@ class AToELeaves(nn.Module):
             return -1
 
         expert_idx = len(self.experts)
-        architecture = self.get_expert_architecture(expert_idx)
+        architecture = self.get_expert_architecture(region)
         device = next(self.base_model.parameters()).device
 
-        if copy_from_idx is not None:
+        if copy_from_idx is not None and self.atoe_threshold_capacity is None:
             if copy_from_idx == -1:
                 source = self.base_model
             else:
@@ -220,12 +234,6 @@ class AToELeaves(nn.Module):
         else:
             expert = FCNet(architecture, self.activation, self.config)
             expert = expert.to(device)
-            layer_names = expert.get_layer_names()
-            if layer_names:
-                final_layer = expert.network[layer_names[-1]]
-                nn.init.zeros_(final_layer.weight)
-                if final_layer.bias is not None:
-                    nn.init.zeros_(final_layer.bias)
 
         self.experts.append(expert)
         self.regions.append(region)

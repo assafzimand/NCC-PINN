@@ -11,7 +11,7 @@ base_config:
   lr: 0.0001  
 
   # Optimizer settings
-  optimizer_switch_at: 1.0
+  optimizer_switch_at: 0.9
 
   # Adam hyperparameters
   adam_betas: [0.9, 0.999]
@@ -97,8 +97,9 @@ base_config:
     enabled: true                      # Toggle feature on/off (override per experiment)
     max_experts: 20                    # Maximum number of expert networks
     spawn_every_epochs: 200           # Check for spawning every N epochs (quick test value)
-    AToE_architecture_norm_ratio: null  # null = same as base, float = ratio (not yet implemented)
-    ANT_layer_size_norm_ratio: [70]    # list of hidden layer sizes, or float ratio (not yet implemented)
+    AToE_threshold_capacity: null        # null = same as base, int = base capacity at threshold norm
+    ANT_threshold_architecture: null     # null = uses ANT_default_hidden_layers, list = threshold arch with scaling
+    ANT_default_hidden_layers: [70]      # fixed hidden layers for ANT experts when no scaling
     freeze_mode: none                  # "none" | "previous" | "base_only"
     blending_mode: soft                # "hard" | "soft"
     sigma_fraction: 0.2                # For soft: sigma = fraction * region_size (per-dimension)
@@ -115,63 +116,63 @@ base_config:
 
 # Experiments to run
 experiments:
-  - name: "AToELeaves_schrodinger"
-    problem: schrodinger
-    model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  # - name: "AToELeaves_schrodinger"
+  #   problem: schrodinger
+  #   model: AToELeaves
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
 
   - name: "AToE_schrodinger"
     problem: schrodinger
     model: AToE
     base_architecture: [2, 30, 30, 30, 30, 30, 2]
 
-  - name: "ANT_schrodinger"
-    problem: schrodinger
-    model: ANT
-    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  # - name: "ANT_schrodinger"
+  #   problem: schrodinger
+  #   model: ANT
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
 
-  - name: "AToELeaves_wave1d"
-    problem: wave1d
-    model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  # - name: "AToELeaves_wave1d"
+  #   problem: wave1d
+  #   model: AToELeaves
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
   - name: "AToE_wave1d"
     problem: wave1d
     model: AToE
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  - name: "ANT_wave1d"
-    problem: wave1d
-    model: ANT
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  # - name: "ANT_wave1d"
+  #   problem: wave1d
+  #   model: ANT
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  - name: "AToELeaves_burgers1d"
-    problem: burgers1d
-    model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  # - name: "AToELeaves_burgers1d"
+  #   problem: burgers1d
+  #   model: AToELeaves
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
   - name: "AToE_burgers1d"
     problem: burgers1d
     model: AToE
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  - name: "ANT_burgers1d"
-    problem: burgers1d
-    model: ANT
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  # - name: "ANT_burgers1d"
+  #   problem: burgers1d
+  #   model: ANT
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  - name: "AToELeaves_burgers2d"
-    problem: burgers2d
-    model: AToELeaves
-    base_architecture: [3, 30, 30, 30, 30, 30, 1]
+  # - name: "AToELeaves_burgers2d"
+  #   problem: burgers2d
+  #   model: AToELeaves
+  #   base_architecture: [3, 30, 30, 30, 30, 30, 1]
 
   - name: "AToE_burgers2d"
     problem: burgers2d
     model: AToE
     base_architecture: [3, 30, 30, 30, 30, 30, 1]
 
-  - name: "ANT_burgers2d"
-    problem: burgers2d
-    model: ANT
-    base_architecture: [3, 30, 30, 30, 30, 30, 1]
+  # - name: "ANT_burgers2d"
+  #   problem: burgers2d
+  #   model: ANT
+  #   base_architecture: [3, 30, 30, 30, 30, 30, 1]
 
