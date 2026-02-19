@@ -190,7 +190,157 @@ def plot_depth_with_spatial(depth, spawned_regions, rejected_regions,
     return output_path
 
 
-def plot_expert_norms_for_model(json_path, output_dir):
+def _plot_spawn_epoch_page(page_epochs, epoch_regions, train_loss_at_epoch,
+                           eval_loss_at_epoch, all_bins, all_colors,
+                           color_offset, output_dir, output_path):
+    """Render one page of spawn epoch analysis (max ~8 columns)."""
+    n_cols = len(page_epochs)
+    fig, axes = plt.subplots(3, n_cols, figsize=(5 * n_cols, 12), squeeze=False)
+    fig.suptitle('Spawn Epoch Analysis: Norms, Loss & Expert Regions', fontsize=16, fontweight='bold')
+
+    for col, epoch in enumerate(page_epochs):
+        ep_regions = epoch_regions[epoch]
+        spawned = [r for r in ep_regions if r.get('spawned', True)]
+        rejected = [r for r in ep_regions if not r.get('spawned', True)]
+        s_norms = [r['wavelet_norm'] for r in spawned]
+        r_norms = [r['wavelet_norm'] for r in rejected]
+        color = all_colors[color_offset + col]
+
+        # ===== Row 1: norm distribution =====
+        ax_hist = axes[0, col]
+        if s_norms:
+            ax_hist.hist(s_norms, bins=all_bins, alpha=0.8, color=color,
+                         edgecolor='black', linewidth=0.8, label=f'Spawned ({len(s_norms)})')
+        if r_norms:
+            ax_hist.hist(r_norms, bins=all_bins, alpha=0.5, color=color,
+                         edgecolor='black', linewidth=0.8, hatch='///',
+                         label=f'Rejected ({len(r_norms)})')
+        ax_hist.set_title(f'Epoch {epoch}', fontsize=12, fontweight='bold')
+        ax_hist.set_xlabel('Wavelet Norm', fontsize=10)
+        ax_hist.set_ylabel('Count', fontsize=10)
+        ax_hist.legend(fontsize=8)
+        ax_hist.grid(True, alpha=0.3, axis='y')
+
+        combined = s_norms + r_norms
+        if combined and len(combined) <= 10:
+            norms_text = '\n'.join([f'{n:.4f}' for n in sorted(combined, reverse=True)])
+            ax_hist.text(0.98, 0.98, norms_text, transform=ax_hist.transAxes,
+                         fontsize=7, verticalalignment='top', horizontalalignment='right',
+                         fontfamily='monospace',
+                         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+
+        # ===== Row 2: loss context =====
+        ax_loss = axes[1, col]
+        train_ep_list = sorted(train_loss_at_epoch.keys())
+        if train_ep_list:
+            train_x = np.array(train_ep_list)
+            train_y = np.array([train_loss_at_epoch[e] for e in train_ep_list])
+            ax_loss.plot(train_x, train_y, 'b-', alpha=0.4, linewidth=0.5, label='Train loss')
+
+        eval_ep_list = sorted(eval_loss_at_epoch.keys())
+        if eval_ep_list:
+            eval_x = np.array(eval_ep_list)
+            eval_y = np.array([eval_loss_at_epoch[e] for e in eval_ep_list])
+            ax_loss.plot(eval_x, eval_y, 'r-o', markersize=3, linewidth=1.2, label='Eval loss')
+
+        ax_loss.axvline(epoch, color='green', linestyle='--', linewidth=2, label=f'Spawn @ {epoch}')
+
+        if epoch in train_loss_at_epoch:
+            loss_val = train_loss_at_epoch[epoch]
+            ax_loss.plot(epoch, loss_val, 'g*', markersize=12, zorder=5)
+            ax_loss.annotate(f'{loss_val:.4f}', (epoch, loss_val),
+                           textcoords="offset points", xytext=(5, 10),
+                           fontsize=8, fontweight='bold', color='green')
+
+        ax_loss.set_xlabel('Epoch', fontsize=10)
+        ax_loss.set_ylabel('Loss', fontsize=10)
+        ax_loss.set_yscale('log')
+        ax_loss.legend(fontsize=7, loc='upper right')
+        ax_loss.grid(True, alpha=0.3)
+        ax_loss.set_title(f'Loss at Epoch {epoch}', fontsize=11)
+
+        # ===== Row 3: expert regions image =====
+        ax_img = axes[2, col]
+        img_path = output_dir / f"expert_regions_epoch_{epoch}.png"
+        if img_path.exists():
+            img = plt.imread(str(img_path))
+            # Downsample large images to avoid memory issues
+            max_dim = 800
+            h, w = img.shape[:2]
+            if h > max_dim or w > max_dim:
+                step = max(h // max_dim, w // max_dim, 1)
+                img = img[::step, ::step]
+            ax_img.imshow(img)
+            ax_img.set_title(f'Regions at Epoch {epoch}', fontsize=11)
+        else:
+            ax_img.text(0.5, 0.5, f'No image\nepoch {epoch}',
+                       transform=ax_img.transAxes, ha='center', va='center',
+                       fontsize=12, color='gray')
+            ax_img.set_title(f'Regions at Epoch {epoch} (missing)', fontsize=11)
+        ax_img.set_axis_off()
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def plot_spawn_epoch_analysis(regions, metrics_path, output_dir, max_cols_per_page=8):
+    """Plot norm distributions, loss, and expert region images at each spawn epoch.
+
+    Paginates into multiple files if there are more than max_cols_per_page spawn epochs.
+    """
+    # Group ALL regions (spawned + rejected) by spawn_epoch
+    epoch_regions = {}
+    for r in regions:
+        ep = r['spawn_epoch']
+        epoch_regions.setdefault(ep, []).append(r)
+
+    sorted_epochs = sorted(epoch_regions.keys())
+    n_epochs = len(sorted_epochs)
+    if n_epochs == 0:
+        return
+
+    # Load loss data from metrics.json
+    train_loss_at_epoch = {}
+    eval_loss_at_epoch = {}
+    if metrics_path and metrics_path.exists():
+        with open(metrics_path) as f:
+            metrics = json.load(f)
+        train_epochs = metrics.get('train_loss_epochs', [])
+        train_losses = metrics.get('train_loss', [])
+        for ep, loss in zip(train_epochs, train_losses):
+            train_loss_at_epoch[ep] = loss
+        eval_epochs = metrics.get('epochs', [])
+        eval_losses = metrics.get('eval_loss', [])
+        for ep, loss in zip(eval_epochs, eval_losses):
+            eval_loss_at_epoch[ep] = loss
+
+    all_norms = [r['wavelet_norm'] for r in regions]
+    bins = np.histogram_bin_edges(all_norms, bins=30) if all_norms else 10
+    colors = plt.cm.viridis(np.linspace(0.2, 0.9, n_epochs))
+
+    # Split into pages
+    pages = [sorted_epochs[i:i + max_cols_per_page]
+             for i in range(0, n_epochs, max_cols_per_page)]
+
+    output_paths = []
+    for page_idx, page_epochs in enumerate(pages):
+        if len(pages) == 1:
+            out_path = output_dir / "spawn_epoch_analysis.png"
+        else:
+            out_path = output_dir / f"spawn_epoch_analysis_p{page_idx + 1}.png"
+
+        color_offset = page_idx * max_cols_per_page
+        _plot_spawn_epoch_page(page_epochs, epoch_regions,
+                               train_loss_at_epoch, eval_loss_at_epoch,
+                               bins, colors, color_offset, output_dir, out_path)
+        output_paths.append(out_path)
+        print(f"    Spawn epoch analysis saved: {out_path.name}")
+
+    return output_paths[0] if output_paths else None
+
+
+def plot_expert_norms_for_model(json_path, output_dir, metrics_path=None):
     """Generate norm distribution plots for a single model."""
     with open(json_path) as f:
         data = json.load(f)
@@ -354,7 +504,46 @@ def plot_expert_norms_for_model(json_path, output_dir):
             print(f"  Epoch {epoch}: n={len(norms_e)}, mean={np.mean(norms_e):.4f}, "
                   f"median={np.median(norms_e):.4f}")
 
+    # ===== Spawn epoch analysis (norms + loss per spawn step) =====
+    plot_spawn_epoch_analysis(regions, metrics_path, output_dir)
+
     return output_path
+
+
+def _find_run_dirs(batch_path):
+    """Find all (label, timestamp_dir) pairs in a batch directory.
+
+    Handles two layouts:
+      1. Multiple architectures: batch/arch_a/timestamp/, batch/arch_b/timestamp/
+         → picks latest timestamp per architecture, label = arch name
+      2. Single architecture with many runs: batch/arch/ts1/, batch/arch/ts2/
+         → expands each timestamp, label = timestamp name
+    """
+    model_dirs = sorted(
+        d for d in batch_path.iterdir()
+        if d.is_dir() and d.suffix not in ('.png', '.csv', '.yaml')
+    )
+    if not model_dirs:
+        return []
+
+    runs = []
+    for model_dir in model_dirs:
+        ts_dirs = sorted(
+            d for d in model_dir.iterdir()
+            if d.is_dir() and d.name != 'checkpoints'
+        )
+        if not ts_dirs:
+            continue
+
+        # Single architecture with multiple runs → expand all
+        if len(model_dirs) == 1 and len(ts_dirs) > 1:
+            for ts_dir in ts_dirs:
+                runs.append((ts_dir.name, ts_dir))
+        else:
+            # Multiple architectures → latest timestamp per architecture
+            runs.append((model_dir.name, ts_dirs[-1]))
+
+    return runs
 
 
 def process_batch(batch_dir):
@@ -369,43 +558,27 @@ def process_batch(batch_dir):
     print(f"Processing batch: {batch_path.name}")
     print(f"{'='*70}")
 
-    # Find all model directories
-    model_dirs = [d for d in batch_path.iterdir()
-                  if d.is_dir() and not d.name.endswith('.png')
-                  and not d.name.endswith('.csv')
-                  and not d.name.endswith('.yaml')]
-
-    if not model_dirs:
-        print(f"  No model directories found in {batch_path}")
+    runs = _find_run_dirs(batch_path)
+    if not runs:
+        print(f"  No model runs found in {batch_path}")
         return
 
-    print(f"  Found {len(model_dirs)} models")
+    print(f"  Found {len(runs)} run(s)")
 
-    # Process each model
-    for model_dir in sorted(model_dirs):
-        print(f"\n  Processing: {model_dir.name}")
+    for label, ts_dir in runs:
+        print(f"\n  Processing: {label}")
 
-        # Find timestamp subdirectory
-        timestamp_dirs = [d for d in model_dir.iterdir()
-                          if d.is_dir() and d.name != 'checkpoints']
-
-        if not timestamp_dirs:
-            print(f"    No timestamp directory found, skipping")
-            continue
-
-        # Use most recent timestamp
-        latest_timestamp = sorted(timestamp_dirs)[-1]
-
-        # Look for expert_regions.json
-        json_path = latest_timestamp / "adaptive_plots" / "expert_regions.json"
-
+        json_path = ts_dir / "adaptive_plots" / "expert_regions.json"
         if not json_path.exists():
             print(f"    No expert_regions.json found, skipping")
             continue
 
-        # Generate plots
+        metrics_path = ts_dir / "metrics.json"
+        if not metrics_path.exists():
+            metrics_path = None
+
         output_dir = json_path.parent
-        output_path = plot_expert_norms_for_model(json_path, output_dir)
+        output_path = plot_expert_norms_for_model(json_path, output_dir, metrics_path)
         print(f"    Plot saved to: {output_path}")
 
     print(f"\n{'='*70}")
