@@ -283,9 +283,17 @@ def main():
         is_adaptive = adaptive_cfg.get('enabled', False)
         
         if is_adaptive:
-            from models.adaptive_expert_pinn import AdaptiveExpertPINN
-            model = AdaptiveExpertPINN(architecture, activation, config, adaptive_cfg)
-            print(f"  Adaptive Expert PINN created: {len(model.get_layer_names())} base layers")
+            model_type = config.get('model', 'AToE')
+            if model_type == 'ANT':
+                from models.ant import ANT
+                model = ANT(architecture, activation, config, adaptive_cfg)
+            elif model_type == 'AToELeaves':
+                from models.atoe_leaves import AToELeaves
+                model = AToELeaves(architecture, activation, config, adaptive_cfg)
+            else:
+                from models.atoe import AToE
+                model = AToE(architecture, activation, config, adaptive_cfg)
+            print(f"  {type(model).__name__} created: {len(model.get_layer_names())} base layers")
         else:
             model = FCNet(architecture, activation, config)
             print(f"  Model created: {len(model.get_layer_names())} layers")
@@ -422,8 +430,16 @@ def main():
             # Build model - check for adaptive PINN
             is_adaptive = adaptive_cfg.get('enabled', False) or checkpoint.get('is_adaptive', False)
             if is_adaptive:
-                from models.adaptive_expert_pinn import AdaptiveExpertPINN
-                model = AdaptiveExpertPINN(architecture, activation, config, adaptive_cfg)
+                model_type = config.get('model', 'AToE')
+                if model_type == 'ANT':
+                    from models.ant import ANT
+                    model = ANT(architecture, activation, config, adaptive_cfg)
+                elif model_type == 'AToELeaves':
+                    from models.atoe_leaves import AToELeaves
+                    model = AToELeaves(architecture, activation, config, adaptive_cfg)
+                else:
+                    from models.atoe import AToE
+                    model = AToE(architecture, activation, config, adaptive_cfg)
             else:
                 model = FCNet(architecture, activation, config)
 

@@ -22,7 +22,6 @@ adaptive_pinn:
   rf_min_samples_leaf: 10
   rf_n_estimators: 100
   spawn_every_epochs: 1000
-  wavelet_threshold: 0.1
 base_architecture:
 - 2
 - 70
@@ -39,6 +38,7 @@ burgers1d:
   nu: 0.01
   output_dim: 1
   spatial_dim: 1
+  wavelet_threshold: 10
   spatial_domain:
   - - -1.0
     - 1.0
@@ -53,6 +53,7 @@ burgers2d:
   nu: 0.1
   output_dim: 1
   spatial_dim: 2
+  wavelet_threshold: 10
   spatial_domain:
   - - 0.0
     - 1.0
@@ -95,6 +96,7 @@ schrodinger:
     residual: 1.0
   output_dim: 2
   spatial_dim: 1
+  wavelet_threshold: 10
   spatial_domain:
   - - -5.0
     - 5.0
@@ -109,6 +111,7 @@ wave1d:
     residual: 1.0
   output_dim: 1
   spatial_dim: 1
+  wavelet_threshold: 10
   spatial_domain:
   - - -5.0
     - 5.0

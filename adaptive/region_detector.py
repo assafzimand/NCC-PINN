@@ -464,12 +464,15 @@ class RegionDetector:
 
         X_sub = X[mask]              # Coordinates in subdomain
         y_sub = y[mask]              # Global predictions at those coordinates
-        loss_sub = {
-            'residual': loss_components['residual'][mask],
-            'ic': loss_components['ic'][mask],
-            'bc': loss_components['bc'][mask],
-            'weights': loss_components['weights']
-        }
+        if loss_components is not None:
+            loss_sub = {
+                'residual': loss_components['residual'][mask],
+                'ic': loss_components['ic'][mask],
+                'bc': loss_components['bc'][mask],
+                'weights': loss_components['weights']
+            }
+        else:
+            loss_sub = None
 
         if verbose:
             print(f"      Subdomain: {parent_region.bounds_lower} -> {parent_region.bounds_upper}")

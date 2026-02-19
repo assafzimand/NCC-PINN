@@ -47,7 +47,8 @@ def _build_expert_tree_from_pretrained(
 
     adaptive_cfg = cfg.get('adaptive_pinn', {})
     max_experts = adaptive_cfg.get('max_experts', 5)
-    wavelet_threshold = adaptive_cfg.get('wavelet_threshold', None)
+    problem_config = cfg.get(cfg['problem'], {})
+    wavelet_threshold = problem_config.get('wavelet_threshold', None)
     tree_max_depth = adaptive_cfg.get('tree_max_depth', 15)
     tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
 
@@ -383,7 +384,8 @@ def train(
     region_detector = None
     spawn_every = adaptive_cfg.get('spawn_every_epochs', 2000)
     max_experts = adaptive_cfg.get('max_experts', 5)
-    wavelet_threshold = adaptive_cfg.get('wavelet_threshold', None)
+    problem_cfg = cfg.get(cfg['problem'], {})
+    wavelet_threshold = problem_cfg.get('wavelet_threshold', None)
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
 
     if is_adaptive:

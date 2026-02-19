@@ -51,7 +51,8 @@ def _build_run_name(ts_dir: Path) -> str:
             spawn = adaptive.get('spawn_every_epochs')
             if spawn is not None:
                 parts.append(f"sp{spawn}")
-            wt = adaptive.get('wavelet_threshold')
+            problem_cfg = cfg.get(cfg.get('problem', ''), {})
+            wt = problem_cfg.get('wavelet_threshold')
             if wt is not None:
                 parts.append(f"wt{wt}")
             if adaptive.get('only_leaves', False):
