@@ -21,6 +21,56 @@ from utils.comparison_plots import (
 )
 
 
+def _build_run_name(ts_dir: Path) -> str:
+    """Build a descriptive experiment name from a timestamp run directory.
+
+    Reads config_used.yaml and extracts key training parameters to
+    differentiate runs of the same architecture.
+    Falls back to the timestamp folder name if config is unavailable.
+    """
+    config_file = ts_dir / "config_used.yaml"
+    if not config_file.exists():
+        return ts_dir.name
+
+    try:
+        import yaml
+        with open(config_file) as f:
+            cfg = yaml.safe_load(f)
+
+        parts = []
+
+        # Training params
+        parts.append(f"ep{cfg.get('epochs', '?')}")
+        lr = cfg.get('lr', None)
+        if lr is not None:
+            parts.append(f"lr{lr}")
+
+        # Adaptive params (if present)
+        adaptive = cfg.get('adaptive_pinn', {})
+        if adaptive.get('enabled', False):
+            spawn = adaptive.get('spawn_every_epochs')
+            if spawn is not None:
+                parts.append(f"sp{spawn}")
+            wt = adaptive.get('wavelet_threshold')
+            if wt is not None:
+                parts.append(f"wt{wt}")
+            if adaptive.get('only_leaves', False):
+                parts.append("leaves")
+
+        # Optimizer switch
+        switch = cfg.get('optimizer_switch_fraction')
+        if switch is not None:
+            parts.append(f"sw{switch}")
+
+        name = "_".join(str(p) for p in parts)
+        # Append short timestamp to guarantee uniqueness
+        name += f"_{ts_dir.name[-6:]}"
+        return name
+
+    except Exception:
+        return ts_dir.name
+
+
 def _generate_training_results_plot(parent_dir, df):
     """Generate training and results comparison table (copied from run_experiments.py)."""
     from matplotlib.colors import LinearSegmentedColormap
@@ -116,27 +166,38 @@ def generate_comparison_for_batch(batch_dir: Path):
     print(f"Processing batch: {batch_dir.name}")
     print(f"{'='*70}\n")
 
-    # Find all model directories in this batch
+    # Find all model directories in this batch (architecture dirs)
     model_dirs = [d for d in batch_dir.iterdir() if d.is_dir()]
 
     if not model_dirs:
         print(f"  No model directories found in {batch_dir}")
         return
 
-    print(f"  Found {len(model_dirs)} models: {[d.name for d in model_dirs]}")
+    print(f"  Found {len(model_dirs)} architecture dirs: {[d.name for d in model_dirs]}")
 
-    # Build results dict (model_name -> result_path)
-    # Handle structure: batch/model_name/timestamp/metrics.json
+    # Build results dict (experiment_name -> result_path)
+    # Two modes:
+    #   1. Multiple architectures → pick latest timestamp per architecture
+    #   2. Single architecture with multiple timestamps → compare all runs
     results = {}
     for model_dir in model_dirs:
-        # Look for timestamp subdirectories
-        timestamp_dirs = [d for d in model_dir.iterdir() if d.is_dir() and d.name != 'checkpoints']
-        if timestamp_dirs:
-            # Use the most recent timestamp directory
-            latest_timestamp = sorted(timestamp_dirs)[-1]
-            results[model_dir.name] = latest_timestamp
-        else:
+        timestamp_dirs = sorted(
+            [d for d in model_dir.iterdir() if d.is_dir() and d.name != 'checkpoints']
+        )
+        if not timestamp_dirs:
             results[model_dir.name] = model_dir
+            continue
+
+        # Single architecture with multiple runs → expand each timestamp
+        if len(model_dirs) == 1 and len(timestamp_dirs) > 1:
+            print(f"  Single architecture with {len(timestamp_dirs)} runs — comparing all")
+            for ts_dir in timestamp_dirs:
+                # Try to build a descriptive name from config differences
+                exp_name = _build_run_name(ts_dir)
+                results[exp_name] = ts_dir
+        else:
+            # Multiple architectures → pick latest timestamp each
+            results[model_dir.name] = timestamp_dirs[-1]
 
     # Collect training metrics (same logic as run_experiments.py)
     metrics_data = []
