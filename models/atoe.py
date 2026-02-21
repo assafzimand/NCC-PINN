@@ -368,10 +368,6 @@ class AToE(nn.Module):
         Returns:
             Index of the new expert
         """
-        if len(self.experts) >= self.max_experts:
-            print(f"  Cannot spawn more experts: max_experts={self.max_experts} reached")
-            return -1
-
         expert_idx = len(self.experts)
         architecture = self.get_expert_architecture(region)
         device = next(self.base_model.parameters()).device

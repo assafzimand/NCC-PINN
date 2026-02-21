@@ -871,9 +871,6 @@ def train(
                 child_depth = parent_depth + 1
 
                 for child_node, _ in children_to_spawn:
-                    if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
-                        break
-
                     child_region = RegionDescriptor(
                         bounds_lower=child_node.bounds_lower,
                         bounds_upper=child_node.bounds_upper,
