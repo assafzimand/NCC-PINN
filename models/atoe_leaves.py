@@ -239,6 +239,7 @@ class AToELeaves(nn.Module):
         self.regions.append(region)
 
         self.leaf_indices.add(expert_idx)
+        self.leaf_indices.discard(region.parent_idx)
 
         parent_info = f"Base Model" if region.parent_idx == -1 else f"E{region.parent_idx + 1}"
         print(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
@@ -325,8 +326,8 @@ class AToELeaves(nn.Module):
         """
         Sparse soft blending using only leaf experts.
 
-        Same as _forward_soft_only_leaves but skips leaf experts whose
-        psi < threshold for all points.
+        Normalization uses the full set of leaves (same as non-sparse).
+        Inactive leaves contribute 0 to the output (their u_k is not evaluated).
         """
         if -1 in self.leaf_indices:
             return self.base_model(inputs)
@@ -339,13 +340,12 @@ class AToELeaves(nn.Module):
         active_any = active_mask.sum(dim=0) > 0  # (L,)
         active_local_indices = torch.nonzero(active_any, as_tuple=True)[0]
 
+        psi_sum = psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        psi_norm = psi_leaves / psi_sum
+
         if len(active_local_indices) == 0:
-            psi_norm = psi_leaves / psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
             u_leaves = torch.stack([self.experts[i](inputs) for i in leaf_list], dim=1)
             return (psi_norm.unsqueeze(-1) * u_leaves).sum(dim=1)
-
-        psi_filtered = psi_leaves * active_mask.float()
-        psi_norm = psi_filtered / psi_filtered.sum(dim=1, keepdim=True).clamp(min=1e-8)
 
         N = inputs.shape[0]
         output_dim = self.base_model.layers[-1]
@@ -398,12 +398,6 @@ class AToELeaves(nn.Module):
         if _t: _t.stop('fwd.compute_masks')
 
         psi_leaves = psi_experts[:, leaf_list]  # (N, L)
-
-        threshold = self.adaptive_config.get('expert_activation_threshold', None)
-        if threshold is not None:
-            threshold = float(threshold)
-            active_mask = psi_leaves > threshold  # (N, L)
-            psi_leaves = psi_leaves * active_mask.float()
 
         Z = psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)  # (N, 1)
         psi_norm_leaves = psi_leaves / Z  # (N, L)
