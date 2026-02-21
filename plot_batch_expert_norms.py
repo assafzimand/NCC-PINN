@@ -11,21 +11,36 @@ import torch
 from scipy.interpolate import griddata
 
 
-def load_ground_truth(output_dir):
-    """Try to load ground truth data for background visualization."""
+def _detect_problem_from_label(label: str) -> str:
+    """Infer the problem name from a run directory label."""
+    known = ['schrodinger', 'burgers2d', 'burgers1d', 'wave1d']
+    for p in known:
+        if p in label.lower():
+            return p
+    return 'schrodinger'
+
+
+def load_ground_truth(output_dir, problem=None):
+    """Try to load ground truth data for background visualization.
+
+    Only works for 2D problems (1 spatial + time). Returns None
+    for higher-dimensional problems like burgers2d.
+    """
+    if problem is None:
+        problem = _detect_problem_from_label(str(output_dir))
+
     try:
-        # Try to find eval_data.pt in the standard location
-        problem = 'schrodinger'  # Default, could be read from config
         eval_data_path = Path("datasets") / problem / "eval_data.pt"
 
         if eval_data_path.exists():
-            eval_data = torch.load(eval_data_path, map_location='cpu')
+            eval_data = torch.load(
+                eval_data_path, map_location='cpu')
 
-            # Extract spatial and temporal coordinates
             x_data = eval_data['x'].numpy()
+            if x_data.ndim == 2 and x_data.shape[1] > 1:
+                return None, None, None, None
             t_data = eval_data['t'].numpy()
 
-            # Get ground truth (try different keys)
             if 'h_gt' in eval_data:
                 h_data = eval_data['h_gt'].numpy()
             elif 'h' in eval_data:
@@ -35,9 +50,9 @@ def load_ground_truth(output_dir):
             else:
                 return None, None, None, None
 
-            # For complex-valued, use magnitude
-            if h_data.shape[1] == 2:  # [u, v] components
-                h_magnitude = np.sqrt(h_data[:, 0]**2 + h_data[:, 1]**2)
+            if h_data.shape[1] == 2:
+                h_magnitude = np.sqrt(
+                    h_data[:, 0]**2 + h_data[:, 1]**2)
             else:
                 h_magnitude = h_data[:, 0]
 
@@ -86,30 +101,55 @@ def _plot_regions_on_axis(ax, regions, title_label):
     norm_max = max(region_norms)
     norm_range = norm_max - norm_min if norm_max > norm_min else 1.0
 
+    all_x_lo = []
+    all_x_hi = []
+    all_t_lo = []
+    all_t_hi = []
+
     for region in regions:
         x_lower, t_lower = region['bounds_lower']
         x_upper, t_upper = region['bounds_upper']
+        all_x_lo.append(x_lower)
+        all_x_hi.append(x_upper)
+        all_t_lo.append(t_lower)
+        all_t_hi.append(t_upper)
+
         width = x_upper - x_lower
         height = t_upper - t_lower
 
-        norm_normalized = (region['wavelet_norm'] - norm_min) / norm_range if norm_range > 0 else 0.5
+        norm_val = region['wavelet_norm']
+        norm_normalized = (
+            (norm_val - norm_min) / norm_range
+            if norm_range > 0 else 0.5)
         edge_color = plt.cm.RdYlGn(norm_normalized)
         face_color = list(edge_color[:3]) + [0.3]
 
-        rect = patches.Rectangle((x_lower, t_lower), width, height,
-                                 linewidth=3.0, edgecolor=edge_color,
-                                 facecolor=face_color, linestyle='-', zorder=10)
+        rect = patches.Rectangle(
+            (x_lower, t_lower), width, height,
+            linewidth=3.0, edgecolor=edge_color,
+            facecolor=face_color, linestyle='-', zorder=10)
         ax.add_patch(rect)
+
+    x_margin = (max(all_x_hi) - min(all_x_lo)) * 0.05
+    t_margin = (max(all_t_hi) - min(all_t_lo)) * 0.05
+    ax.set_xlim(min(all_x_lo) - x_margin,
+                max(all_x_hi) + x_margin)
+    ax.set_ylim(min(all_t_lo) - t_margin,
+                max(all_t_hi) + t_margin)
 
     ax.set_xlabel('Space (x)', fontsize=11)
     ax.set_ylabel('Time (t)', fontsize=11)
-    ax.set_title(f'{title_label} (n={len(regions)})', fontsize=12, fontweight='bold')
+    ax.set_title(
+        f'{title_label} (n={len(regions)})',
+        fontsize=12, fontweight='bold')
     ax.grid(True, alpha=0.3, zorder=0)
 
-    sm = plt.cm.ScalarMappable(cmap='RdYlGn',
-                               norm=plt.Normalize(vmin=norm_min, vmax=norm_max))
+    sm = plt.cm.ScalarMappable(
+        cmap='RdYlGn',
+        norm=plt.Normalize(vmin=norm_min, vmax=norm_max))
     sm.set_array([])
-    cbar = plt.colorbar(sm, ax=ax, orientation='vertical', pad=0.02)
+    cbar = plt.colorbar(
+        sm, ax=ax, orientation='vertical', pad=0.02)
     cbar.set_label('Wavelet Norm', fontsize=10)
 
 
@@ -150,32 +190,115 @@ def _plot_histogram_on_axis(ax, norms, bins, color, title_label):
               framealpha=0.95, handlelength=1.5)
 
 
+def _plot_regions_3d(ax, regions, title_label):
+    """Plot 3D wireframe boxes colored by wavelet norm (RdYlGn)."""
+    if not regions:
+        ax.set_title(
+            f'{title_label} (n=0)',
+            fontsize=12, fontweight='bold')
+        ax.text2D(0.5, 0.5, 'No regions',
+                  transform=ax.transAxes,
+                  ha='center', va='center',
+                  fontsize=14, color='gray')
+        return
+
+    norms = [r['wavelet_norm'] for r in regions]
+    norm_min, norm_max = min(norms), max(norms)
+    norm_range = norm_max - norm_min if norm_max > norm_min else 1.0
+
+    edges = [
+        (0, 1), (0, 2), (0, 4), (1, 3),
+        (1, 5), (2, 3), (2, 6), (3, 7),
+        (4, 5), (4, 6), (5, 7), (6, 7),
+    ]
+
+    for region in regions:
+        lo = region['bounds_lower']
+        hi = region['bounds_upper']
+        corners = np.array([
+            [lo[0], lo[1], lo[2]],
+            [hi[0], lo[1], lo[2]],
+            [lo[0], hi[1], lo[2]],
+            [hi[0], hi[1], lo[2]],
+            [lo[0], lo[1], hi[2]],
+            [hi[0], lo[1], hi[2]],
+            [lo[0], hi[1], hi[2]],
+            [hi[0], hi[1], hi[2]],
+        ])
+        nv = (region['wavelet_norm'] - norm_min) / norm_range \
+            if norm_range > 0 else 0.5
+        c = plt.cm.RdYlGn(nv)
+        for i, j in edges:
+            ax.plot3D(
+                *zip(corners[i], corners[j]),
+                color=c, linewidth=1.5, alpha=0.8)
+        ax.scatter(
+            *corners.T, color=c, s=12, alpha=0.9)
+
+    ax.set_xlabel('x0', fontsize=9)
+    ax.set_ylabel('x1', fontsize=9)
+    ax.set_zlabel('t', fontsize=9)
+    ax.set_title(
+        f'{title_label} (n={len(regions)})',
+        fontsize=12, fontweight='bold')
+
+    sm = plt.cm.ScalarMappable(
+        cmap='RdYlGn',
+        norm=plt.Normalize(vmin=norm_min, vmax=norm_max))
+    sm.set_array([])
+    plt.colorbar(sm, ax=ax, shrink=0.6, pad=0.1,
+                 label='Wavelet Norm')
+
+
 def plot_depth_with_spatial(depth, spawned_regions, rejected_regions,
                              spawned_norms, rejected_norms, bins,
                              color, output_dir, x_data, t_data, h_magnitude):
     """Create a 2x2 figure for a specific depth: spawned (left) vs rejected (right)."""
-    fig, axes = plt.subplots(2, 2, figsize=(20, 12))
-    fig.suptitle(f'Depth {depth} Analysis', fontsize=16, fontweight='bold', y=0.98)
+    all_regions = spawned_regions + rejected_regions
+    input_dim = (len(all_regions[0]['bounds_lower'])
+                 if all_regions else 2)
+    is_3d = input_dim > 2
 
-    # Top-left: Spawned histogram
-    _plot_histogram_on_axis(axes[0, 0], spawned_norms, bins, color,
+    if is_3d:
+        fig = plt.figure(figsize=(20, 12))
+        fig.suptitle(
+            f'Depth {depth} Analysis',
+            fontsize=16, fontweight='bold', y=0.98)
+        ax_h0 = fig.add_subplot(2, 2, 1)
+        ax_h1 = fig.add_subplot(2, 2, 2)
+        ax_s0 = fig.add_subplot(2, 2, 3, projection='3d')
+        ax_s1 = fig.add_subplot(2, 2, 4, projection='3d')
+    else:
+        fig, axes = plt.subplots(2, 2, figsize=(20, 12))
+        fig.suptitle(
+            f'Depth {depth} Analysis',
+            fontsize=16, fontweight='bold', y=0.98)
+        ax_h0, ax_h1 = axes[0, 0], axes[0, 1]
+        ax_s0, ax_s1 = axes[1, 0], axes[1, 1]
+
+    _plot_histogram_on_axis(ax_h0, spawned_norms, bins, color,
                             f'Depth {depth} - Spawned')
 
-    # Top-right: Rejected histogram
-    rejected_color = np.array(color[:3]) * 0.6  # Darker shade for rejected
+    rejected_color = np.array(color[:3]) * 0.6
     rejected_color = np.clip(rejected_color, 0, 1)
-    _plot_histogram_on_axis(axes[0, 1], rejected_norms, bins, rejected_color,
+    _plot_histogram_on_axis(ax_h1, rejected_norms, bins,
+                            rejected_color,
                             f'Depth {depth} - Rejected')
 
-    # Bottom-left: Spawned spatial
-    _render_ground_truth_background(axes[1, 0], x_data, t_data, h_magnitude)
-    _plot_regions_on_axis(axes[1, 0], spawned_regions,
-                          f'Depth {depth} - Spawned Regions')
-
-    # Bottom-right: Rejected spatial
-    _render_ground_truth_background(axes[1, 1], x_data, t_data, h_magnitude)
-    _plot_regions_on_axis(axes[1, 1], rejected_regions,
-                          f'Depth {depth} - Rejected Regions')
+    if is_3d:
+        _plot_regions_3d(ax_s0, spawned_regions,
+                         f'Depth {depth} - Spawned Regions')
+        _plot_regions_3d(ax_s1, rejected_regions,
+                         f'Depth {depth} - Rejected Regions')
+    else:
+        _render_ground_truth_background(
+            ax_s0, x_data, t_data, h_magnitude)
+        _plot_regions_on_axis(ax_s0, spawned_regions,
+                              f'Depth {depth} - Spawned Regions')
+        _render_ground_truth_background(
+            ax_s1, x_data, t_data, h_magnitude)
+        _plot_regions_on_axis(ax_s1, rejected_regions,
+                              f'Depth {depth} - Rejected Regions')
 
     plt.tight_layout()
 

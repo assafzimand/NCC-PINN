@@ -18,7 +18,7 @@ The composed solution depends on the mode:
 
 import torch
 import torch.nn as nn
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 from torch.utils.hooks import RemovableHandle
 
 from models.fc_model import FCNet
@@ -119,6 +119,8 @@ class AToE(nn.Module):
         self.experts = nn.ModuleList()
         self.regions: List[RegionDescriptor] = []
 
+        self.leaf_indices: Set[int] = {-1}
+
         self.batched_indicators = BatchedIndicators(base_weight=self.base_weight)
 
         self.batched_models = BatchedModels()
@@ -135,10 +137,13 @@ class AToE(nn.Module):
         return len(self.experts)
 
     def get_leaf_info(self):
-        """Return (region_or_None, expert_idx) for all nodes the trainer should try to split."""
-        result = [(None, -1)]  # base model
-        for i, region in enumerate(self.regions):
-            result.append((region, i))
+        """Return (region_or_None, expert_idx) for leaf nodes the trainer should try to split."""
+        result = []
+        if -1 in self.leaf_indices:
+            result.append((None, -1))
+        for i in sorted(self.leaf_indices):
+            if i >= 0:
+                result.append((self.regions[i], i))
         return result
 
     def get_regions_at_depth(self, depth: int, before_epoch: int = None) -> List[RegionDescriptor]:
@@ -383,6 +388,9 @@ class AToE(nn.Module):
         self.experts.append(expert)
         self.regions.append(region)
 
+        self.leaf_indices.add(expert_idx)
+        self.leaf_indices.discard(region.parent_idx)
+
         parent_info = "Base Model" if region.parent_idx == -1 else f"E{region.parent_idx + 1}"
         print(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
         print(f"    Architecture: {architecture}")
@@ -566,7 +574,7 @@ class AToE(nn.Module):
         if _t: _t.stop('fwd.compute_masks')
 
         if _t: _t.start('fwd.sparse_selection')
-        active_experts_any = (masks.sum(dim=0) > 20)  # (K,)
+        active_experts_any = (masks.sum(dim=0) > 0)  # (K,)
         active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]
         num_active = len(active_expert_indices)
         if _t: _t.stop('fwd.sparse_selection')
@@ -597,8 +605,8 @@ class AToE(nn.Module):
         """
         Sparse soft blending: only evaluate experts with psi > threshold.
 
-        u(x,t) = Σ_{k: ψ_k > threshold} ψ̃_k(x,t) · u_k(x,t)
-        where ψ̃_k = ψ_k / Σ_j ψ_j (normalized among ALL, including filtered)
+        Normalization uses the full set of experts (same as non-sparse).
+        Inactive experts contribute 0 to the output (their u_k is not evaluated).
 
         Args:
             inputs: (N, n_dims) input coordinates
@@ -615,7 +623,7 @@ class AToE(nn.Module):
 
         if _t: _t.start('fwd.sparse_selection')
         active_mask = psi_experts > threshold  # (N, K)
-        active_experts_any = active_mask.sum(dim=0) > 20  # (K,)
+        active_experts_any = active_mask.sum(dim=0) > 0  # (K,)
         active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]
         num_active = len(active_expert_indices)
         if _t: _t.stop('fwd.sparse_selection')
@@ -628,21 +636,18 @@ class AToE(nn.Module):
             return u_base
 
         u_experts_sparse = torch.zeros(N, len(self.experts), output_dim, device=device)
-        psi_experts_filtered = psi_experts.clone()
 
         for expert_idx in active_expert_indices:
             expert_idx_item = expert_idx.item()
             u_experts_sparse[:, expert_idx_item, :] = self.experts[expert_idx_item](inputs)
 
-        psi_experts_filtered = psi_experts_filtered * active_mask.float()
-
         if _t: _t.stop('fwd.sparse_eval')
 
         if _t: _t.start('fwd.blend')
-        psi_sum = psi_base + psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
+        psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
         psi_sum = psi_sum.clamp(min=1e-8)
         psi_base_norm = psi_base / psi_sum  # (N, 1)
-        psi_experts_norm = psi_experts_filtered / psi_sum  # (N, K)
+        psi_experts_norm = psi_experts / psi_sum  # (N, K)
 
         weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts_sparse  # (N, K, out_dim)
         u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
@@ -696,22 +701,19 @@ class AToE(nn.Module):
 
         if threshold is not None and K > 0:
             active_mask = psi_experts > threshold  # (N, K)
-            active_experts_any = active_mask.sum(dim=0) > 20  # (K,)
+            active_experts_any = active_mask.sum(dim=0) > 0  # (K,)
             active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]
-            psi_experts_filtered = psi_experts * active_mask.float()
         elif K > 0:
             active_expert_indices = torch.arange(K, device=device)
-            psi_experts_filtered = psi_experts
         else:
             active_expert_indices = []
-            psi_experts_filtered = psi_experts  # (N, 0)
 
         if _t: _t.stop('fwd.sparse_selection')
 
-        Z = psi_base + psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
+        Z = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
         Z = Z.clamp(min=1e-8)
         psi_norm_base = psi_base / Z  # (N, 1)
-        psi_norm_experts = psi_experts_filtered / Z  # (N, K)
+        psi_norm_experts = psi_experts / Z  # (N, K)
 
         if _t: _t.start('fwd.sparse_eval')
         components = []
@@ -747,7 +749,7 @@ class AToE(nn.Module):
             'all_upper': self.batched_indicators.all_upper,   # (K, D) or None
             'all_sigma': self.batched_indicators.all_sigma,   # (K, D) or None
             'psi_base': psi_base,                             # (N, 1)
-            'psi_experts_filtered': psi_experts_filtered,     # (N, K)
+            'psi_experts_filtered': psi_experts,              # (N, K) full psi for normalization
             'active_expert_indices': active_expert_indices,   # tensor of active indices
         }
 

@@ -302,15 +302,13 @@ class ANT(nn.Module):
 
         if threshold is not None and num_leaves > 1:
             active_mask = psi_raw > threshold
-            active_any = active_mask.sum(dim=0) > 20
+            active_any = active_mask.sum(dim=0) > 0
             active_leaf_local = torch.nonzero(
                 active_any, as_tuple=True
             )[0].tolist()
 
             if len(active_leaf_local) == 0:
                 active_leaf_local = list(range(num_leaves))
-            else:
-                psi_raw = psi_raw * active_mask.float()
         else:
             active_leaf_local = list(range(num_leaves))
 
@@ -501,14 +499,6 @@ class ANT(nn.Module):
             raise ValueError(
                 f"Unknown freeze_mode: {mode}"
             )
-
-        if not self.base_is_leaf:
-            for p in self.base_model.parameters():
-                p.requires_grad = False
-        for i, expert in enumerate(self.experts):
-            if not self.leaf_status[i]:
-                for p in expert.parameters():
-                    p.requires_grad = False
 
     def get_domain_bounds(
         self,
