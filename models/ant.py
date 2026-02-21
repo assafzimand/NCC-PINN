@@ -170,13 +170,6 @@ class ANT(nn.Module):
     def spawn_expert(
         self, region: RegionDescriptor
     ) -> int:
-        if len(self.experts) >= self.max_experts:
-            print(
-                f"  Cannot spawn more experts: "
-                f"max_experts={self.max_experts} reached"
-            )
-            return -1
-
         expert_idx = len(self.experts)
         parent_idx = region.parent_idx
         depth = region.depth
