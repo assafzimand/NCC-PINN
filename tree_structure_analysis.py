@@ -1,4 +1,4 @@
-"""Visualize expert region norm distributions for all models in a batch."""
+"""Tree structure analysis: expert norm distributions and leaf loss history."""
 
 import json
 import matplotlib.pyplot as plt
@@ -463,18 +463,151 @@ def plot_spawn_epoch_analysis(regions, metrics_path, output_dir, max_cols_per_pa
     return output_paths[0] if output_paths else None
 
 
+def plot_leaf_loss_history(leaf_loss_history, output_dir):
+    """Plot leaf mean-loss distributions at each spawn epoch.
+
+    For each spawn epoch a grouped bar chart shows the mean loss of every leaf.
+    The worst (tallest) bar is highlighted in red. A second figure shows all
+    epochs overlaid so the loss evolution is visible at a glance.
+    """
+    if not leaf_loss_history:
+        return None
+
+    n_epochs = len(leaf_loss_history)
+    colors_epoch = plt.cm.viridis(np.linspace(0.2, 0.9, n_epochs))
+
+    # --- Per-epoch bar charts (paginated, max 6 per page) ---
+    max_per_page = 6
+    pages = [leaf_loss_history[i:i + max_per_page]
+             for i in range(0, n_epochs, max_per_page)]
+
+    saved_paths = []
+    for page_idx, page in enumerate(pages):
+        n_cols = len(page)
+        fig, axes = plt.subplots(1, n_cols, figsize=(5 * n_cols, 5),
+                                 squeeze=False)
+        fig.suptitle('Leaf Mean Loss at Each Spawn Step',
+                     fontsize=15, fontweight='bold')
+
+        for col, entry in enumerate(page):
+            ax = axes[0, col]
+            epoch = entry['epoch']
+            leaves = entry['leaves']
+            if not leaves:
+                ax.set_title(f'Epoch {epoch} (no leaves)')
+                continue
+
+            labels = [f"E{l['leaf_idx']+1}" if l['leaf_idx'] >= 0
+                      else 'Base' for l in leaves]
+            losses = [l['mean_loss'] for l in leaves]
+            worst_idx = int(np.argmax(losses))
+
+            bar_colors = [colors_epoch[page_idx * max_per_page + col]] * len(losses)
+            bar_colors[worst_idx] = 'crimson'
+
+            bars = ax.bar(labels, losses, color=bar_colors, edgecolor='black',
+                          linewidth=0.8)
+            for i_b, bar in enumerate(bars):
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                        f'{losses[i_b]:.4f}', ha='center', va='bottom',
+                        fontsize=7, rotation=45)
+
+            ax.set_title(f'Epoch {epoch}', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Mean Loss', fontsize=10)
+            ax.set_xlabel('Leaf', fontsize=10)
+            ax.grid(True, alpha=0.3, axis='y')
+
+        plt.tight_layout()
+        suffix = f'_p{page_idx + 1}' if len(pages) > 1 else ''
+        out_path = output_dir / f'leaf_loss_bars{suffix}.png'
+        plt.savefig(out_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        saved_paths.append(out_path)
+        print(f"    Leaf loss bars saved: {out_path.name}")
+
+    # --- Summary: all epochs overlaid as grouped bars ---
+    fig, ax = plt.subplots(figsize=(max(10, 2 * n_epochs), 6))
+    fig.suptitle('Leaf Mean Loss Across Spawn Steps',
+                 fontsize=15, fontweight='bold')
+
+    all_leaf_ids = sorted({
+        l['leaf_idx'] for entry in leaf_loss_history for l in entry['leaves']
+    })
+    id_to_label = {lid: (f'E{lid+1}' if lid >= 0 else 'Base')
+                   for lid in all_leaf_ids}
+    x_ticks = [f"Ep {e['epoch']}" for e in leaf_loss_history]
+    x = np.arange(n_epochs)
+    n_leaves_max = max(len(e['leaves']) for e in leaf_loss_history)
+    bar_width = 0.8 / max(n_leaves_max, 1)
+
+    legend_handles = {}
+    for entry_idx, entry in enumerate(leaf_loss_history):
+        leaves = entry['leaves']
+        worst_idx = int(np.argmax([l['mean_loss'] for l in leaves])) if leaves else -1
+        for li, leaf in enumerate(leaves):
+            lid = leaf['leaf_idx']
+            label = id_to_label[lid]
+            offset = (li - len(leaves) / 2 + 0.5) * bar_width
+            is_worst = (li == worst_idx)
+            c = 'crimson' if is_worst else colors_epoch[entry_idx]
+            bar = ax.bar(x[entry_idx] + offset, leaf['mean_loss'],
+                         bar_width, color=c, edgecolor='black',
+                         linewidth=0.5)
+            if label not in legend_handles and not is_worst:
+                legend_handles[label] = bar[0]
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_ticks, fontsize=9)
+    ax.set_ylabel('Mean Loss', fontsize=12)
+    ax.set_xlabel('Spawn Step', fontsize=12)
+    ax.grid(True, alpha=0.3, axis='y')
+
+    from matplotlib.patches import Patch as LegPatch
+    handles = list(legend_handles.values()) + [LegPatch(facecolor='crimson', edgecolor='black', label='Worst (split)')]
+    labels_leg = list(legend_handles.keys()) + ['Worst (split)']
+    ax.legend(handles, labels_leg, fontsize=8, loc='upper right')
+
+    plt.tight_layout()
+    summary_path = output_dir / 'leaf_loss_summary.png'
+    plt.savefig(summary_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"    Leaf loss summary saved: {summary_path.name}")
+
+    return saved_paths[0] if saved_paths else summary_path
+
+
 def plot_expert_norms_for_model(json_path, output_dir, metrics_path=None):
-    """Generate norm distribution plots for a single model."""
+    """Generate tree structure analysis plots for a single model.
+
+    Produces norm distribution plots if non-trivial wavelet norms exist,
+    and leaf loss distribution plots if leaf_loss_history is present.
+    """
     with open(json_path) as f:
         data = json.load(f)
 
     regions = data['regions']
+    leaf_loss_history = data.get('leaf_loss_history', None)
+
+    if not regions and not leaf_loss_history:
+        print("    No regions or loss history found, skipping")
+        return None
+
+    # --- Leaf loss distribution plots ---
+    if leaf_loss_history:
+        print("    Generating leaf loss distribution plots...")
+        plot_leaf_loss_history(leaf_loss_history, output_dir)
+
+    # --- Norm distribution plots (only if non-trivial norms exist) ---
+    all_norms = [r['wavelet_norm'] for r in regions]
+    has_norms = any(n > 0 for n in all_norms)
+    if not has_norms:
+        print("    No non-zero wavelet norms, skipping norm plots")
+        return None
 
     # Split into spawned and rejected
     spawned_regions = [r for r in regions if r.get('spawned', True)]
     rejected_regions = [r for r in regions if not r.get('spawned', True)]
 
-    # Group by depth, separately for spawned/rejected
     spawned_by_depth = {}
     rejected_by_depth = {}
     epoch_norms = {}
@@ -488,15 +621,9 @@ def plot_expert_norms_for_model(json_path, output_dir, metrics_path=None):
         d = r['depth']
         rejected_by_depth.setdefault(d, []).append(r)
 
-    # All depths that appear in either group
     all_depths = sorted(set(list(spawned_by_depth.keys()) + list(rejected_by_depth.keys())))
     n_depths = len(all_depths) if all_depths else 1
 
-    # Determine bin edges based on ALL data (spawned + rejected)
-    all_norms = [r['wavelet_norm'] for r in regions]
-    if not all_norms:
-        print("    No regions found, skipping")
-        return None
     bins = np.histogram_bin_edges(all_norms, bins=50)
 
     # Define colors for each depth
@@ -636,21 +763,47 @@ def plot_expert_norms_for_model(json_path, output_dir, metrics_path=None):
 def _find_run_dirs(batch_path):
     """Find all (label, timestamp_dir) pairs in a batch directory.
 
-    Handles two layouts:
-      1. Multiple architectures: batch/arch_a/timestamp/, batch/arch_b/timestamp/
+    Handles three layouts:
+      1. Flat / multi-PDE: batch/YYYYMMDD_HHMMSS/ dirs with metrics.json
+         → each timestamp is a run, label from config's model field
+      2. Multiple architectures: batch/arch_a/timestamp/, batch/arch_b/timestamp/
          → picks latest timestamp per architecture, label = arch name
-      2. Single architecture with many runs: batch/arch/ts1/, batch/arch/ts2/
+      3. Single architecture with many runs: batch/arch/ts1/, batch/arch/ts2/
          → expands each timestamp, label = timestamp name
     """
-    model_dirs = sorted(
+    import re
+    import yaml
+    _TS_RE = re.compile(r'\d{8}_\d{6}$')
+
+    child_dirs = sorted(
         d for d in batch_path.iterdir()
-        if d.is_dir() and d.suffix not in ('.png', '.csv', '.yaml')
+        if d.is_dir() and d.name != 'checkpoints'
     )
-    if not model_dirs:
+    if not child_dirs:
         return []
 
+    # Detect flat structure: children are timestamp dirs with metrics.json
+    flat_ts = [d for d in child_dirs
+               if _TS_RE.match(d.name) and (d / 'metrics.json').exists()]
+    if flat_ts:
+        runs = []
+        for ts_dir in flat_ts:
+            cfg_file = ts_dir / 'config_used.yaml'
+            if cfg_file.exists():
+                try:
+                    with open(cfg_file) as f:
+                        cfg = yaml.safe_load(f)
+                    label = cfg.get('model', ts_dir.name)
+                except Exception:
+                    label = ts_dir.name
+            else:
+                label = ts_dir.name
+            runs.append((label, ts_dir))
+        return runs
+
+    # Nested structure
     runs = []
-    for model_dir in model_dirs:
+    for model_dir in child_dirs:
         ts_dirs = sorted(
             d for d in model_dir.iterdir()
             if d.is_dir() and d.name != 'checkpoints'
@@ -658,12 +811,10 @@ def _find_run_dirs(batch_path):
         if not ts_dirs:
             continue
 
-        # Single architecture with multiple runs → expand all
-        if len(model_dirs) == 1 and len(ts_dirs) > 1:
+        if len(child_dirs) == 1 and len(ts_dirs) > 1:
             for ts_dir in ts_dirs:
                 runs.append((ts_dir.name, ts_dir))
         else:
-            # Multiple architectures → latest timestamp per architecture
             runs.append((model_dir.name, ts_dirs[-1]))
 
     return runs

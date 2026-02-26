@@ -546,25 +546,24 @@ def plot_expert_regions_comparison(
 def save_regions_metadata(
     regions: List[RegionDescriptor],
     output_path: Union[str, Path],
-    rejected_regions: Optional[List[RegionDescriptor]] = None
+    rejected_regions: Optional[List[RegionDescriptor]] = None,
+    leaf_loss_history: Optional[list] = None
 ) -> None:
     """
     Save expert regions metadata to JSON file.
-
-    Includes both spawned experts and rejected candidate regions
-    (children that didn't pass the wavelet threshold).
 
     Args:
         regions: List of RegionDescriptor (spawned experts)
         output_path: Path to save JSON file
         rejected_regions: List of RegionDescriptor for rejected candidates
+        leaf_loss_history: Per-spawn-epoch list of dicts with leaf mean losses.
+            Each entry: {'epoch': int, 'leaves': [{'leaf_idx', 'mean_loss', ...}]}
     """
     import json
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Build region entries with spawned flag
     all_regions = []
     for r in regions:
         entry = r.to_dict()
@@ -582,6 +581,9 @@ def save_regions_metadata(
         'n_rejected': len(rejected_regions) if rejected_regions else 0,
         'regions': all_regions
     }
+
+    if leaf_loss_history:
+        data['leaf_loss_history'] = leaf_loss_history
 
     with open(output_path, 'w') as f:
         json.dump(data, f, indent=2)

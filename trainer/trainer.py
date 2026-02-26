@@ -434,6 +434,7 @@ def train(
         adaptive_plots_dir.mkdir(exist_ok=True)
     
     rejected_regions = []
+    leaf_loss_history = []
     
     # Training loop
     print(f"\nTraining for {epochs} epochs...")
@@ -840,6 +841,20 @@ def train(
                 leaf_str = f"Expert {leaf_idx+1}" if leaf_idx >= 0 else "Base Model"
                 print(f"    Leaf {leaf_str}: mean_loss={mean_loss:.6f} ({n_in_region} samples)")
 
+            leaf_loss_history.append({
+                'epoch': epoch,
+                'leaves': [
+                    {
+                        'leaf_idx': idx,
+                        'mean_loss': ml,
+                        'n_samples': int(n),
+                        'bounds_lower': list(reg.bounds_lower) if reg is not None else list(domain_bounds['lower']),
+                        'bounds_upper': list(reg.bounds_upper) if reg is not None else list(domain_bounds['upper']),
+                    }
+                    for ml, reg, idx, n in leaf_mean_losses
+                ]
+            })
+
             leaf_mean_losses.sort(key=lambda x: x[0], reverse=True)
             worst_loss, worst_region, worst_idx, worst_n = leaf_mean_losses[0]
             worst_str = f"Expert {worst_idx+1}" if worst_idx >= 0 else "Base Model"
@@ -1147,7 +1162,8 @@ def train(
         save_regions_metadata(
             regions=model.regions,
             output_path=adaptive_plots_dir / "expert_regions.json",
-            rejected_regions=rejected_regions
+            rejected_regions=rejected_regions,
+            leaf_loss_history=leaf_loss_history
         )
         
         metrics['adaptive_pinn'] = {
