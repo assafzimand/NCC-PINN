@@ -1160,6 +1160,8 @@ def train(
     print(f"  Summary saved to {summary_path}")
 
     # Save config used
+    from utils.io import get_git_info
+    cfg['git'] = get_git_info()
     config_path = run_dir / "config_used.yaml"
     import yaml
     with open(config_path, 'w') as f:

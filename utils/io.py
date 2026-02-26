@@ -1,8 +1,9 @@
-﻿"""IO utilities for configuration and directory management."""
+"""IO utilities for configuration and directory management."""
 
 from pathlib import Path
 from typing import Dict, Any
 from datetime import datetime
+import subprocess
 import yaml
 
 
@@ -24,6 +25,31 @@ def load_config(path: str = "config/config.yaml") -> Dict[str, Any]:
         config = yaml.safe_load(f)
 
     return config
+
+
+def get_git_info() -> Dict[str, Any]:
+    """Capture current git branch, commit hash, and dirty-tree status.
+
+    Returns an empty dict if git is unavailable or the cwd is not a repo.
+    """
+    info: Dict[str, Any] = {}
+    try:
+        info['git_branch'] = subprocess.check_output(
+            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        info['git_commit'] = subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        dirty = subprocess.check_output(
+            ['git', 'status', '--porcelain'],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        info['git_dirty'] = len(dirty) > 0
+    except Exception:
+        pass
+    return info
 
 
 def make_run_dir(problem: str, layers: list, act: str) -> Path:
