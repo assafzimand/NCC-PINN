@@ -1,12 +1,12 @@
 # Experiment plan configuration
-experiment_name: "5k_epochs_across_PDEs_and_models"
+experiment_name: "loss_based_spawning_test"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
   model: AToE  # 'AToE' | 'AToELeaves' | 'ANT'
   activation: tanh
-  epochs: 10
+  epochs: 5000
   batch_size: 512
   lr: 0.0001  
 
@@ -31,10 +31,10 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 1
-  print_every: 1
-  save_every: 5
-  inner_metrics_eval_every: 4
+  eval_every: 100
+  print_every: 100
+  save_every: 2500
+  inner_metrics_eval_every: 2000
   seed: 42
   
   # Problem-specific domains and loss weights
@@ -95,8 +95,8 @@ base_config:
   # Adaptive Expert PINN configuration (Tree-Based Spawning)
   adaptive_pinn:
     enabled: true                      # Toggle feature on/off (override per experiment)
-    max_experts: 20                    # Maximum number of expert networks
-    spawn_every_epochs: 2          # Check for spawning every N epochs (quick test value)
+    max_experts: 40                    # Maximum number of expert networks
+    spawn_every_epochs: 100          # Check for spawning every N epochs (quick test value)
     AToE_threshold_capacity: null        # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null     # null = uses ANT_default_hidden_layers, list = threshold arch with scaling
     ANT_default_hidden_layers: [70]      # fixed hidden layers for ANT experts when no scaling
