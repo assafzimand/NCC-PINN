@@ -39,7 +39,7 @@ burgers1d:
   nu: 0.01
   output_dim: 1
   spatial_dim: 1
-  wavelet_threshold: 10
+  # wavelet_threshold: 10  # OLD METHOD: no longer used
   spatial_domain:
   - - -1.0
     - 1.0
@@ -54,7 +54,7 @@ burgers2d:
   nu: 0.1
   output_dim: 1
   spatial_dim: 2
-  wavelet_threshold: 10
+  # wavelet_threshold: 10  # OLD METHOD: no longer used
   spatial_domain:
   - - 0.0
     - 1.0
@@ -97,7 +97,7 @@ schrodinger:
     residual: 1.0
   output_dim: 2
   spatial_dim: 1
-  wavelet_threshold: 10
+  # wavelet_threshold: 10  # OLD METHOD: no longer used
   spatial_domain:
   - - -5.0
     - 5.0
@@ -112,7 +112,7 @@ wave1d:
     residual: 1.0
   output_dim: 1
   spatial_dim: 1
-  wavelet_threshold: 10
+  # wavelet_threshold: 10  # OLD METHOD: no longer used
   spatial_domain:
   - - -5.0
     - 5.0

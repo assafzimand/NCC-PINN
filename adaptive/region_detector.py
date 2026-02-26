@@ -250,37 +250,22 @@ class RegionDetector:
                 if parent_id is not None:
                     parent_prediction = tree.value[parent_id, :, 0].copy()  # Shape (d,)
                 
-                # Compute wavelet norm: ||ψ||² = ||Q_child - Q_parent||² × total_loss(ω_i) × |ω_i|
-                # Weights by total loss AND region size — larger high-error regions get priority
+                # OLD METHOD: wavelet norm computation (no longer used for spawn decisions).
+                # Spawning now uses mean-loss leaf selection in the trainer instead.
+                #
+                # wavelet_norm = 0.0
+                # if parent_prediction is not None and len(sample_indices) > 0:
+                #     diff = prediction - parent_prediction
+                #     l2_norm_squared = float(np.sum(diff ** 2))
+                #     # Full version with loss weighting:
+                #     # total_loss(ω) = w_res·mean(res[ω]) + w_ic·mean(ic[ω]) + w_bc·mean(bc[ω])
+                #     # wavelet_norm = l2_norm_squared * total_loss(ω) * n_samples
+                #     # Simplified version (loss weighting removed):
+                #     # wavelet_norm = l2_norm_squared * n_samples
+
                 wavelet_norm = 0.0
-#                total_loss_omega = 0.0
-                sum_residuals = 0.0  # DEPRECATED: kept for backward compatibility
-                
-                if parent_prediction is not None and len(sample_indices) > 0:
-                    diff = prediction - parent_prediction  # Shape (d,)
-                    # L2 norm squared of the difference
-                    l2_norm_squared = float(np.sum(diff ** 2))
-                    
-                    # Compute total_loss(ω_i) over this region
-                    # total_loss(ω_i) = w_res·mean(res[ω]) + w_ic·mean(ic[ω]) + w_bc·mean(bc[ω])
-#                   mean_residual = float(self._residual_losses[sample_indices].mean())
-#                    mean_ic = float(self._ic_losses[sample_indices].mean())
-#                    mean_bc = float(self._bc_losses[sample_indices].mean())
-                    
-                    # Weighted sum (same as training loss)
-#                    total_loss_omega = (
-#                        self._loss_weights['residual'] * mean_residual +
-#                        self._loss_weights['ic'] * mean_ic +
-#                        self._loss_weights['bc'] * mean_bc
-#                    )
-                    
-                    # Wavelet norm = ||Q_child - Q_parent||² × total_loss(ω_i) × |ω_i|
-#                    wavelet_norm = l2_norm_squared * total_loss_omega * n_samples
-                    wavelet_norm = l2_norm_squared * n_samples
-                    
-                    # For backward compatibility
-                    sum_residuals = float(self._residual_losses[sample_indices].sum())
-                
+                sum_residuals = 0.0
+
                 all_nodes.append(TreeNodeInfo(
                     node_id=node_id,
                     tree_idx=tree_idx,
@@ -291,7 +276,6 @@ class RegionDetector:
                     prediction=prediction,
                     parent_prediction=parent_prediction,
                     wavelet_norm=wavelet_norm,
-#                    total_loss_omega=total_loss_omega,
                     total_loss_omega=0.0,
                     sum_residuals=sum_residuals
                 ))
