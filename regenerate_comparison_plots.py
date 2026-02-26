@@ -1,13 +1,18 @@
-"""Regenerate comparison plots for all experiment batches in AToE-New branch."""
+"""Regenerate comparison plots for experiment batches.
+
+Supports two directory structures:
+  1. Multi-PDE batch: root → PDE dirs → timestamp dirs (each with a different model)
+  2. Single batch:    root → architecture dirs → timestamp dirs
+"""
 
 import json
+import re
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 import torch
 from typing import Dict
 
-# Import the functions we need from run_experiments
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -19,6 +24,26 @@ from utils.comparison_plots import (
     generate_frequency_coverage_comparison,
     plot_spectral_learning_efficiency_comparison
 )
+
+_TIMESTAMP_RE = re.compile(r'\d{8}_\d{6}$')
+
+
+def _is_timestamp_dir(d: Path) -> bool:
+    return d.is_dir() and bool(_TIMESTAMP_RE.match(d.name))
+
+
+def _get_model_name(ts_dir: Path) -> str:
+    """Extract model name from config_used.yaml."""
+    config_file = ts_dir / "config_used.yaml"
+    if config_file.exists():
+        try:
+            import yaml
+            with open(config_file) as f:
+                cfg = yaml.safe_load(f)
+            return cfg.get('model', ts_dir.name)
+        except Exception:
+            pass
+    return ts_dir.name
 
 
 def _build_run_name(ts_dir: Path) -> str:
@@ -161,44 +186,57 @@ def _generate_training_results_plot(parent_dir, df):
     print(f"  Training and results comparison saved to training_and_results_comparison.png")
 
 
-def generate_comparison_for_batch(batch_dir: Path):
-    """Generate comparison plots for a single experiment batch."""
+def generate_comparison_for_batch(batch_dir: Path, label: str = None):
+    """Generate comparison plots for a single experiment batch.
+
+    Handles two layouts:
+      Flat   – batch_dir contains timestamp dirs directly (e.g. per-PDE dir
+               where each timestamp is a different model).
+      Nested – batch_dir contains architecture dirs, each with timestamp subdirs.
+    """
+    display_name = label or batch_dir.name
     print(f"\n{'='*70}")
-    print(f"Processing batch: {batch_dir.name}")
+    print(f"Processing: {display_name}")
     print(f"{'='*70}\n")
 
-    # Find all model directories in this batch (architecture dirs)
-    model_dirs = [d for d in batch_dir.iterdir() if d.is_dir()]
+    child_dirs = sorted([d for d in batch_dir.iterdir()
+                         if d.is_dir() and d.name != 'checkpoints'])
 
-    if not model_dirs:
-        print(f"  No model directories found in {batch_dir}")
+    if not child_dirs:
+        print(f"  No subdirectories found in {batch_dir}")
         return
 
-    print(f"  Found {len(model_dirs)} architecture dirs: {[d.name for d in model_dirs]}")
+    # --- Detect flat structure (timestamps directly under batch_dir) ---
+    direct_ts_dirs = [d for d in child_dirs
+                      if _is_timestamp_dir(d) and (d / 'metrics.json').exists()]
 
-    # Build results dict (experiment_name -> result_path)
-    # Two modes:
-    #   1. Multiple architectures → pick latest timestamp per architecture
-    #   2. Single architecture with multiple timestamps → compare all runs
     results = {}
-    for model_dir in model_dirs:
-        timestamp_dirs = sorted(
-            [d for d in model_dir.iterdir() if d.is_dir() and d.name != 'checkpoints']
-        )
-        if not timestamp_dirs:
-            results[model_dir.name] = model_dir
-            continue
+    if direct_ts_dirs:
+        print(f"  Found {len(direct_ts_dirs)} experiment runs (flat / per-PDE structure)")
+        for ts_dir in direct_ts_dirs:
+            exp_name = _get_model_name(ts_dir)
+            results[exp_name] = ts_dir
+    else:
+        # --- Nested structure (architecture dirs → timestamp subdirs) ---
+        model_dirs = child_dirs
+        print(f"  Found {len(model_dirs)} architecture dirs: {[d.name for d in model_dirs]}")
 
-        # Single architecture with multiple runs → expand each timestamp
-        if len(model_dirs) == 1 and len(timestamp_dirs) > 1:
-            print(f"  Single architecture with {len(timestamp_dirs)} runs — comparing all")
-            for ts_dir in timestamp_dirs:
-                # Try to build a descriptive name from config differences
-                exp_name = _build_run_name(ts_dir)
-                results[exp_name] = ts_dir
-        else:
-            # Multiple architectures → pick latest timestamp each
-            results[model_dir.name] = timestamp_dirs[-1]
+        for model_dir in model_dirs:
+            timestamp_dirs = sorted(
+                [d for d in model_dir.iterdir()
+                 if d.is_dir() and d.name != 'checkpoints']
+            )
+            if not timestamp_dirs:
+                results[model_dir.name] = model_dir
+                continue
+
+            if len(model_dirs) == 1 and len(timestamp_dirs) > 1:
+                print(f"  Single architecture with {len(timestamp_dirs)} runs — comparing all")
+                for ts_dir in timestamp_dirs:
+                    exp_name = _build_run_name(ts_dir)
+                    results[exp_name] = ts_dir
+            else:
+                results[model_dir.name] = timestamp_dirs[-1]
 
     # Collect training metrics (same logic as run_experiments.py)
     metrics_data = []
@@ -402,6 +440,40 @@ def generate_comparison_for_batch(batch_dir: Path):
     print(f"\n  [OK] Comparison plots saved to {batch_dir}")
 
 
+def _detect_structure(target_path: Path):
+    """Detect the directory layout.
+
+    Returns one of:
+      'multi_pde'   – target has PDE child dirs, each with timestamp subdirs
+      'single_batch'– target is a single batch (arch dirs → timestamp subdirs,
+                       or flat timestamps)
+      'multi_batch' – target contains multiple independent batch dirs
+    """
+    child_dirs = [d for d in target_path.iterdir() if d.is_dir()]
+    if not child_dirs:
+        return 'multi_batch'
+
+    # Multi-PDE: each child dir has ≥2 timestamp subdirs with metrics.json
+    pde_like = 0
+    for cd in child_dirs:
+        ts_dirs = [d for d in cd.iterdir()
+                   if _is_timestamp_dir(d) and (d / 'metrics.json').exists()]
+        if len(ts_dirs) >= 2:
+            pde_like += 1
+    if pde_like >= 2:
+        return 'multi_pde'
+
+    # Single batch: any child (or grandchild) has metrics.json
+    for cd in child_dirs:
+        if (cd / 'metrics.json').exists():
+            return 'single_batch'
+        for sub in cd.iterdir():
+            if sub.is_dir() and (sub / 'metrics.json').exists():
+                return 'single_batch'
+
+    return 'multi_batch'
+
+
 def main():
     """Main entry point."""
     if len(sys.argv) > 1:
@@ -413,50 +485,44 @@ def main():
         print(f"Error: Directory not found: {target_path}")
         return
 
-    # Check if target is a single batch dir (has model subdirs with timestamps)
-    # or a parent dir containing multiple batches
-    has_model_subdirs = any(
-        (d / next(d.iterdir(), Path("__none__"))).is_dir()
-        for d in target_path.iterdir()
-        if d.is_dir()
-    ) if any(target_path.iterdir()) else False
+    structure = _detect_structure(target_path)
+    print(f"Detected structure: {structure}")
 
-    # Heuristic: if any child dir contains a metrics.json (directly or in a timestamp subdir),
-    # treat target_path as a single batch
-    is_single_batch = False
-    for child in target_path.iterdir():
-        if not child.is_dir():
-            continue
-        # Check for timestamp subdirs containing metrics.json
-        for subdir in child.iterdir():
-            if subdir.is_dir() and (subdir / "metrics.json").exists():
-                is_single_batch = True
-                break
-        if is_single_batch:
-            break
+    if structure == 'multi_pde':
+        pde_dirs = sorted([d for d in target_path.iterdir() if d.is_dir()])
+        print(f"Found {len(pde_dirs)} PDE group(s):")
+        for pd_dir in pde_dirs:
+            pde_label = pd_dir.name.split('-')[0]
+            print(f"  - {pde_label} ({pd_dir.name})")
 
-    if is_single_batch:
-        batch_dirs = [target_path]
+        for pd_dir in pde_dirs:
+            pde_label = pd_dir.name.split('-')[0]
+            try:
+                generate_comparison_for_batch(
+                    pd_dir, label=f"{pde_label} ({pd_dir.name})")
+            except Exception as e:
+                print(f"\nError processing {pd_dir.name}: {e}")
+                import traceback
+                traceback.print_exc()
+
+    elif structure == 'single_batch':
+        generate_comparison_for_batch(target_path)
+
     else:
-        batch_dirs = [d for d in target_path.iterdir() if d.is_dir()]
-
-    if not batch_dirs:
-        print(f"No experiment batches found in {target_path}")
-        return
-
-    print(f"Found {len(batch_dirs)} experiment batch(es):")
-    for batch_dir in sorted(batch_dirs):
-        print(f"  - {batch_dir.name}")
-
-    # Process each batch
-    for batch_dir in sorted(batch_dirs):
-        try:
-            generate_comparison_for_batch(batch_dir)
-        except Exception as e:
-            print(f"\nError processing {batch_dir.name}: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
+        batch_dirs = sorted([d for d in target_path.iterdir() if d.is_dir()])
+        if not batch_dirs:
+            print(f"No experiment batches found in {target_path}")
+            return
+        print(f"Found {len(batch_dirs)} experiment batch(es):")
+        for bd in batch_dirs:
+            print(f"  - {bd.name}")
+        for bd in batch_dirs:
+            try:
+                generate_comparison_for_batch(bd)
+            except Exception as e:
+                print(f"\nError processing {bd.name}: {e}")
+                import traceback
+                traceback.print_exc()
 
     print(f"\n{'='*70}")
     print("Done! All comparison plots regenerated.")

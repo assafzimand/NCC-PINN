@@ -218,6 +218,8 @@ def main():
 
     # Save config to run directory
     import yaml
+    from utils.io import get_git_info
+    config['git'] = get_git_info()
     config_path = run_dir / "config_used.yaml"
     with open(config_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False)

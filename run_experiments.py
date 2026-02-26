@@ -606,8 +606,11 @@ def main():
     plan = load_experiment_plan()
     parent_dir = create_experiment_dir(plan)
     
-    # Save experiment plan
-    shutil.copy("experiments_plan.yaml", parent_dir / "experiments_plan.yaml")
+    # Save experiment plan with git info
+    from utils.io import get_git_info
+    plan['git'] = get_git_info()
+    with open(parent_dir / "experiments_plan.yaml", 'w') as f:
+        yaml.dump(plan, f, default_flow_style=False)
     
     print(f"\nExperiment Directory: {parent_dir}")
     print(f"Total Experiments: {len(plan['experiments'])}\n")
