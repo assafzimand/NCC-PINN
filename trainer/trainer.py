@@ -385,7 +385,8 @@ def train(
     spawn_every = adaptive_cfg.get('spawn_every_epochs', 2000)
     max_experts = adaptive_cfg.get('max_experts', 5)
     problem_cfg = cfg.get(cfg['problem'], {})
-    wavelet_threshold = problem_cfg.get('wavelet_threshold', None)
+    # OLD METHOD: wavelet_threshold no longer used; spawning uses mean-loss leaf selection.
+    # wavelet_threshold = problem_cfg.get('wavelet_threshold', None)
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
 
     if is_adaptive:
@@ -393,10 +394,9 @@ def train(
         tree_max_depth = adaptive_cfg.get('tree_max_depth', 15)
         tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
 
-        print(f"\nAdaptive PINN enabled (Tree-Based Spawning):")
+        print(f"\nAdaptive PINN enabled (Mean-Loss Leaf Selection):")
         print(f"  Max experts: {max_experts}")
         print(f"  Spawn every: {spawn_every} epochs")
-        print(f"  Wavelet threshold: {wavelet_threshold}")
         print(f"  Tree max depth: {tree_max_depth}")
         print(f"  Tree min samples leaf: {tree_min_samples_leaf}")
         print(f"  Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
@@ -791,86 +791,88 @@ def train(
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
 
-            # loss_components no longer needed: wavelet norm uses
-            # l2_norm_squared * n_samples (loss weighting was removed).
-            # Passing None lets fit() fall back to uniform weighting.
-            loss_components = None
+            # Compute per-sample loss components for mean-loss leaf selection
+            problem = cfg.get('problem', 'schrodinger')
+            loss_weights = cfg[problem].get('loss_weights', {})
+            loss_components = compute_loss_components(
+                model=model,
+                x=eval_data['x'],
+                t=eval_data['t'],
+                target=eval_data.get('h_gt', eval_data.get('u_gt')),
+                masks=eval_data['mask'],
+                loss_fn=loss_fn,
+                weights={
+                    'residual': loss_weights.get('residual', 1.0),
+                    'ic': loss_weights.get('ic', 1.0),
+                    'bc': loss_weights.get('bc', 1.0),
+                }
+            )
 
             X_eval = eval_inputs.cpu().numpy()
             y_eval = u_pred.cpu().numpy()
 
-            experts_spawned_this_step = 0
-            parent_regions_to_process = list(leaf_nodes)
-            
-            print(f"\n  [Spawning] Processing {len(parent_regions_to_process)} leaf nodes")
+            # -----------------------------------------------------------
+            # New spawning: pick the single leaf with highest mean loss
+            # -----------------------------------------------------------
+            import numpy as np
+            w_res = loss_components['weights'].get('residual', 1.0)
+            w_ic  = loss_components['weights'].get('ic', 1.0)
+            w_bc  = loss_components['weights'].get('bc', 1.0)
+            per_sample_total = (w_res * loss_components['residual']
+                                + w_ic * loss_components['ic']
+                                + w_bc * loss_components['bc'])
+
+            leaf_mean_losses = []
+            for leaf_region, leaf_idx in leaf_nodes:
+                if leaf_region is None:
+                    mask = np.ones(len(X_eval), dtype=bool)
+                else:
+                    mask = np.ones(len(X_eval), dtype=bool)
+                    for dim in range(len(leaf_region.bounds_lower)):
+                        mask &= (X_eval[:, dim] >= leaf_region.bounds_lower[dim])
+                        mask &= (X_eval[:, dim] <= leaf_region.bounds_upper[dim])
+                n_in_region = mask.sum()
+                if n_in_region > 0:
+                    mean_loss = float(per_sample_total[mask].mean())
+                else:
+                    mean_loss = 0.0
+                leaf_mean_losses.append((mean_loss, leaf_region, leaf_idx, n_in_region))
+                leaf_str = f"Expert {leaf_idx+1}" if leaf_idx >= 0 else "Base Model"
+                print(f"    Leaf {leaf_str}: mean_loss={mean_loss:.6f} ({n_in_region} samples)")
+
+            leaf_mean_losses.sort(key=lambda x: x[0], reverse=True)
+            worst_loss, worst_region, worst_idx, worst_n = leaf_mean_losses[0]
+            worst_str = f"Expert {worst_idx+1}" if worst_idx >= 0 else "Base Model"
+            print(f"\n  [Spawning] Worst leaf: {worst_str} (mean_loss={worst_loss:.6f}, {worst_n} samples)")
 
             is_copy_spawn = isinstance(model, AToELeaves)
+            experts_spawned_this_step = 0
 
-            for parent_region, parent_idx in parent_regions_to_process:
-                if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
-                    print(f"\n  Max experts reached ({max_experts}), stopping spawn process")
-                    break
+            parent_region = worst_region
+            parent_idx = worst_idx
+            parent_depth = 0 if parent_region is None else parent_region.depth
 
-                if parent_region is None:
-                    parent_str = "Base Model"
-                    parent_depth = 0
-                else:
-                    parent_str = f"Expert {parent_idx+1}" if parent_idx >= 0 else "Base Model"
-                    parent_depth = parent_region.depth
+            children = region_detector.spawn_children_for_node(
+                parent_region=parent_region if parent_region is not None else
+                             RegionDescriptor(
+                                 bounds_lower=list(domain_bounds['lower']),
+                                 bounds_upper=list(domain_bounds['upper']),
+                                 wavelet_norm=0.0,
+                                 spawn_epoch=0,
+                                 depth=0,
+                                 parent_idx=-1
+                             ),
+                X=X_eval,
+                y=y_eval,
+                loss_components=loss_components,
+                verbose=True
+            )
 
-                print(f"\n    [Spawning] Leaf: {parent_str} (depth {parent_depth})")
-
-                children = region_detector.spawn_children_for_node(
-                    parent_region=parent_region if parent_region is not None else
-                                 RegionDescriptor(
-                                     bounds_lower=list(domain_bounds['lower']),
-                                     bounds_upper=list(domain_bounds['upper']),
-                                     wavelet_norm=0.0,
-                                     spawn_epoch=0,
-                                     depth=0,
-                                     parent_idx=-1
-                                 ),
-                    X=X_eval,
-                    y=y_eval,
-                    loss_components=loss_components,
-                    verbose=True
-                )
-
-                if not children:
-                    print(f"      [Spawning] No children from split, leaf stays")
-                    continue
-
-                if wavelet_threshold is not None:
-                    children_above_threshold = [
-                        (child_node, samples) for child_node, samples in children
-                        if child_node.wavelet_norm >= wavelet_threshold
-                    ]
-                    if len(children_above_threshold) > 0:
-                        children_to_spawn = children
-                    else:
-                        children_to_spawn = None
-                else:
-                    children_to_spawn = children
-
-                if not children_to_spawn:
-                    norms_str = ', '.join([f'{c.wavelet_norm:.6f}' for c, _ in children])
-                    print(f"      [Spawning] All children below threshold (norms=[{norms_str}] < {wavelet_threshold})")
-                    child_depth = parent_depth + 1
-                    for child_node, _ in children:
-                        rejected_regions.append(RegionDescriptor(
-                            bounds_lower=child_node.bounds_lower,
-                            bounds_upper=child_node.bounds_upper,
-                            wavelet_norm=child_node.wavelet_norm,
-                            spawn_epoch=epoch,
-                            depth=child_depth,
-                            parent_idx=parent_idx
-                        ))
-                    continue
-
-                num_spawned_from_parent = 0
+            if not children:
+                print(f"      [Spawning] No children from split (too few samples?), leaf stays")
+            else:
                 child_depth = parent_depth + 1
-
-                for child_node, _ in children_to_spawn:
+                for child_node, _ in children:
                     child_region = RegionDescriptor(
                         bounds_lower=child_node.bounds_lower,
                         bounds_upper=child_node.bounds_upper,
@@ -886,7 +888,6 @@ def train(
                         expert_idx = model.spawn_expert(child_region)
                     if expert_idx >= 0:
                         experts_spawned_this_step += 1
-                        num_spawned_from_parent += 1
 
                         if 'expert_spawns' not in metrics:
                             metrics['expert_spawns'] = []
@@ -901,8 +902,33 @@ def train(
                             spawn_record['num_experts'] = model.num_experts
                         metrics['expert_spawns'].append(spawn_record)
 
-                if num_spawned_from_parent > 0:
-                    print(f"      [Spawning] Spawned {num_spawned_from_parent} child(ren) from {parent_str}")
+                if experts_spawned_this_step > 0:
+                    print(f"      [Spawning] Spawned {experts_spawned_this_step} children from {worst_str}")
+
+            # ---------------------------------------------------------------
+            # OLD METHOD (wavelet-norm threshold on all leaves):
+            #
+            # for parent_region, parent_idx in parent_regions_to_process:
+            #     if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
+            #         break
+            #     children = region_detector.spawn_children_for_node(...)
+            #     if wavelet_threshold is not None:
+            #         children_above_threshold = [
+            #             (c, s) for c, s in children
+            #             if c.wavelet_norm >= wavelet_threshold
+            #         ]
+            #         if len(children_above_threshold) > 0:
+            #             children_to_spawn = children
+            #         else:
+            #             children_to_spawn = None
+            #     else:
+            #         children_to_spawn = children
+            #     if not children_to_spawn:
+            #         ... rejected_regions ...
+            #         continue
+            #     for child_node, _ in children_to_spawn:
+            #         model.spawn_expert(child_region)
+            # ---------------------------------------------------------------
 
             if experts_spawned_this_step > 0:
                 print(f"\n  [Spawning] Spawned {experts_spawned_this_step} experts in this step")
