@@ -856,36 +856,40 @@ def train(
             })
 
             leaf_mean_losses.sort(key=lambda x: x[0], reverse=True)
-            worst_loss, worst_region, worst_idx, worst_n = leaf_mean_losses[0]
-            worst_str = f"Expert {worst_idx+1}" if worst_idx >= 0 else "Base Model"
-            print(f"\n  [Spawning] Worst leaf: {worst_str} (mean_loss={worst_loss:.6f}, {worst_n} samples)")
 
             is_copy_spawn = isinstance(model, AToELeaves)
             experts_spawned_this_step = 0
 
-            parent_region = worst_region
-            parent_idx = worst_idx
-            parent_depth = 0 if parent_region is None else parent_region.depth
+            for candidate_loss, candidate_region, candidate_idx, candidate_n in leaf_mean_losses:
+                candidate_str = f"Expert {candidate_idx+1}" if candidate_idx >= 0 else "Base Model"
+                print(f"\n  [Spawning] Trying leaf: {candidate_str} "
+                      f"(mean_loss={candidate_loss:.6f}, {candidate_n} samples)")
 
-            children = region_detector.spawn_children_for_node(
-                parent_region=parent_region if parent_region is not None else
-                             RegionDescriptor(
-                                 bounds_lower=list(domain_bounds['lower']),
-                                 bounds_upper=list(domain_bounds['upper']),
-                                 wavelet_norm=0.0,
-                                 spawn_epoch=0,
-                                 depth=0,
-                                 parent_idx=-1
-                             ),
-                X=X_eval,
-                y=y_eval,
-                loss_components=loss_components,
-                verbose=True
-            )
+                parent_region = candidate_region
+                parent_idx = candidate_idx
+                parent_depth = 0 if parent_region is None else parent_region.depth
 
-            if not children:
-                print(f"      [Spawning] No children from split (too few samples?), leaf stays")
-            else:
+                children = region_detector.spawn_children_for_node(
+                    parent_region=parent_region if parent_region is not None else
+                                 RegionDescriptor(
+                                     bounds_lower=list(domain_bounds['lower']),
+                                     bounds_upper=list(domain_bounds['upper']),
+                                     wavelet_norm=0.0,
+                                     spawn_epoch=0,
+                                     depth=0,
+                                     parent_idx=-1
+                                 ),
+                    X=X_eval,
+                    y=y_eval,
+                    loss_components=loss_components,
+                    verbose=True
+                )
+
+                if not children:
+                    print(f"      [Spawning] Could not split {candidate_str} "
+                          f"(too few samples?), trying next leaf...")
+                    continue
+
                 child_depth = parent_depth + 1
                 for child_node, _ in children:
                     child_region = RegionDescriptor(
@@ -918,7 +922,8 @@ def train(
                         metrics['expert_spawns'].append(spawn_record)
 
                 if experts_spawned_this_step > 0:
-                    print(f"      [Spawning] Spawned {experts_spawned_this_step} children from {worst_str}")
+                    print(f"      [Spawning] Spawned {experts_spawned_this_step} children from {candidate_str}")
+                break
 
             # ---------------------------------------------------------------
             # OLD METHOD (wavelet-norm threshold on all leaves):
