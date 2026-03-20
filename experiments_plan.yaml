@@ -65,7 +65,7 @@ base_config:
     output_dim: 1  # Real-valued: h is scalar
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
-    nu: 0.01  # Viscosity coefficient
+    nu: 0.003141592653589793  # Viscosity coefficient (effective viscosity = nu/pi = 1/1000, "hard" benchmark)
     # wavelet_threshold: 10  # OLD METHOD: no longer used; spawning uses mean-loss leaf selection
     loss_weights:
       residual: 1.0
@@ -79,6 +79,52 @@ base_config:
     temporal_domain: [0.0, 2.0]
     nu: 0.1  # Viscosity coefficient
     # wavelet_threshold: 10  # OLD METHOD: no longer used; spawning uses mean-loss leaf selection
+    loss_weights:
+      residual: 1.0
+      ic: 1.0
+      bc: 1.0
+
+  allen_cahn:
+    spatial_dim: 1
+    output_dim: 1
+    spatial_domain: [[-1.0, 1.0]]
+    temporal_domain: [0.0, 1.0]
+    D: 0.001
+    loss_weights:
+      residual: 1.0
+      ic: 1.0
+      bc: 1.0
+
+  kdv:
+    spatial_dim: 1
+    output_dim: 1
+    spatial_domain: [[0.0, 1.0]]
+    temporal_domain: [0.0, 1.0]
+    mu: 0.0025
+    loss_weights:
+      residual: 1.0
+      ic: 1.0
+      bc: 1.0
+
+  fisher_kpp:
+    spatial_dim: 1
+    output_dim: 1
+    spatial_domain: [[0.0, 1.0]]
+    temporal_domain: [0.0, 1.0]
+    D: 1.0
+    kappa: 25.0
+    loss_weights:
+      residual: 1.0
+      ic: 1.0
+      bc: 1.0
+
+  conv_diff:
+    spatial_dim: 1
+    output_dim: 1
+    spatial_domain: [[-1.0, 1.0]]
+    temporal_domain: [0.0, 1.0]
+    beta: 1.0
+    epsilon: 0.01
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -121,10 +167,10 @@ experiments:
   #   model: AToELeaves
   #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
 
-  - name: "AToE_schrodinger"
-    problem: schrodinger
-    model: AToE
-    base_architecture: [2, 30, 30, 30, 2]
+  # - name: "AToE_schrodinger"
+  #   problem: schrodinger
+  #   model: AToE
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
 
   # - name: "ANT_schrodinger"
   #   problem: schrodinger
@@ -175,3 +221,112 @@ experiments:
   #   problem: burgers2d
   #   model: ANT
   #   base_architecture: [3, 30, 30, 30, 30, 30, 1]
+
+  # ===== Smoke-test experiments for new PDEs =====
+  - name: "AToE_allen_cahn_smoke"
+    problem: allen_cahn
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 1]
+    epochs: 5
+    eval_every: 1
+    print_every: 1
+    adaptive_pinn:
+      enabled: true
+      max_experts: 10
+      spawn_every_epochs: 2
+      AToE_threshold_capacity: null
+      ANT_threshold_architecture: null
+      ANT_default_hidden_layers: [70]
+      freeze_mode: none
+      blending_mode: soft
+      sigma_fraction: 0.2
+      base_weight: 1.0
+      base_everywhere: true
+      tree_max_depth: 15
+      tree_min_samples_leaf: 20
+      enable_timing: false
+      inner_metrics_calculation: false
+      enable_gradient_diagnostics: false
+      use_decomposed_derivatives: true
+      expert_activation_threshold: 1e-9
+
+  - name: "AToE_kdv_smoke"
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 1]
+    epochs: 5
+    eval_every: 1
+    print_every: 1
+    adaptive_pinn:
+      enabled: true
+      max_experts: 10
+      spawn_every_epochs: 2
+      AToE_threshold_capacity: null
+      ANT_threshold_architecture: null
+      ANT_default_hidden_layers: [70]
+      freeze_mode: none
+      blending_mode: soft
+      sigma_fraction: 0.2
+      base_weight: 1.0
+      base_everywhere: true
+      tree_max_depth: 15
+      tree_min_samples_leaf: 20
+      enable_timing: false
+      inner_metrics_calculation: false
+      enable_gradient_diagnostics: false
+      use_decomposed_derivatives: true
+      expert_activation_threshold: 1e-9
+
+  - name: "AToE_fisher_kpp_smoke"
+    problem: fisher_kpp
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 1]
+    epochs: 5
+    eval_every: 1
+    print_every: 1
+    adaptive_pinn:
+      enabled: true
+      max_experts: 10
+      spawn_every_epochs: 2
+      AToE_threshold_capacity: null
+      ANT_threshold_architecture: null
+      ANT_default_hidden_layers: [70]
+      freeze_mode: none
+      blending_mode: soft
+      sigma_fraction: 0.2
+      base_weight: 1.0
+      base_everywhere: true
+      tree_max_depth: 15
+      tree_min_samples_leaf: 20
+      enable_timing: false
+      inner_metrics_calculation: false
+      enable_gradient_diagnostics: false
+      use_decomposed_derivatives: true
+      expert_activation_threshold: 1e-9
+
+  - name: "AToE_conv_diff_smoke"
+    problem: conv_diff
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 1]
+    epochs: 5
+    eval_every: 1
+    print_every: 1
+    adaptive_pinn:
+      enabled: true
+      max_experts: 10
+      spawn_every_epochs: 2
+      AToE_threshold_capacity: null
+      ANT_threshold_architecture: null
+      ANT_default_hidden_layers: [70]
+      freeze_mode: none
+      blending_mode: soft
+      sigma_fraction: 0.2
+      base_weight: 1.0
+      base_everywhere: true
+      tree_max_depth: 15
+      tree_min_samples_leaf: 20
+      enable_timing: false
+      inner_metrics_calculation: false
+      enable_gradient_diagnostics: false
+      use_decomposed_derivatives: true
+      expert_activation_threshold: 1e-9
