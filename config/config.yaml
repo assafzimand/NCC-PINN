@@ -115,12 +115,28 @@ kdv:
     bc: 1.0
     ic: 1.0
     residual: 1.0
-  mu: 0.0025
+  mu: 0.000484
+  output_dim: 1
+  spatial_dim: 1
+  spatial_domain:
+  - - -1.0
+    - 1.0
+  temporal_domain:
+  - 0.0
+  - 1.0
+ks:
+  alpha: 6.25
+  beta: 0.390625
+  gamma: 0.00152587890625
+  loss_weights:
+    bc: 1.0
+    ic: 1.0
+    residual: 1.0
   output_dim: 1
   spatial_dim: 1
   spatial_domain:
   - - 0.0
-    - 1.0
+    - 6.283185307179586
   temporal_domain:
   - 0.0
   - 1.0

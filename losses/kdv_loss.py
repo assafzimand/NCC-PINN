@@ -6,8 +6,8 @@ Implements the three-component loss:
 
 where:
 - MSE_f: PDE residual loss (h_t + h*h_x + mu*h_xxx = 0)
-- MSE_0: Initial condition loss (h(x,0) = cos(2*pi*x))
-- MSE_b: Boundary condition loss (periodic: h(0,t)=h(1,t), h_x(0,t)=h_x(1,t))
+- MSE_0: Initial condition loss (h(x,0) = cos(pi*x))
+- MSE_b: Boundary condition loss (periodic: h(-1,t)=h(1,t), h_x(-1,t)=h_x(1,t))
 """
 
 import torch
@@ -76,19 +76,20 @@ def pde_residual(
     h_t: torch.Tensor,
     h_x: torch.Tensor,
     h_xxx: torch.Tensor,
-    mu: float = 0.0025,
+    mu: float = 0.000484,
 ) -> torch.Tensor:
     """
     Compute the PDE residual: h_t + h*h_x + mu*h_xxx.
     
     For the KdV equation: h_t + h*h_x + mu*h_xxx = 0
+    where mu = 0.022^2 = 0.000484 (Zabusky & Kruskal, 1965).
     
     Args:
         h: Solution field h
         h_t: Time derivative dh/dt
         h_x: Spatial derivative dh/dx
         h_xxx: Third spatial derivative d³h/dx³
-        mu: Dispersion coefficient (default 0.0025)
+        mu: Dispersion coefficient (default 0.000484 = 0.022^2)
         
     Returns:
         Residual tensor
@@ -464,7 +465,7 @@ def build_loss(**cfg) -> Callable:
     weight_ic = loss_weights.get('ic', 1.0)
     weight_bc = loss_weights.get('bc', 1.0)
 
-    mu = problem_config.get('mu', 0.0025)
+    mu = problem_config.get('mu', 0.000484)
 
     def loss_fn(model: nn.Module, batch: Dict[str, torch.Tensor],
                 for_tree_spawning: bool = False):
@@ -556,7 +557,7 @@ def build_loss(**cfg) -> Callable:
 
         # ============================================================
         # MSE_0: Initial Condition Loss
-        # h(x, 0) = cos(2*pi*x) -- from dataset
+        # h(x, 0) = cos(pi*x) -- from dataset
         # ============================================================
         if masks['IC'].sum() > 0:
             x_0 = x[masks['IC']].contiguous()
@@ -580,7 +581,7 @@ def build_loss(**cfg) -> Callable:
 
         # ============================================================
         # MSE_b: Boundary Condition Loss (Periodic)
-        # h(0,t) = h(1,t) and h_x(0,t) = h_x(1,t)
+        # h(-1,t) = h(1,t) and h_x(-1,t) = h_x(1,t)
         # ============================================================
         if masks['BC'].sum() > 0:
             x_b = x[masks['BC']].contiguous()  # (N_b, spatial_dim)
