@@ -13,9 +13,10 @@ All PDEs implemented in this project with their mathematical formulation, domain
 | 3 | Wave 1D | $h_{tt} - h_{xx} = 0$ | $x \in [-5,5],\; t \in [0,2\pi]$ | — | 1 |
 | 4 | Burgers 2D | $h_t + h(h_{x_0} + h_{x_1}) - \nu(h_{x_0 x_0} + h_{x_1 x_1}) = 0$ | $(x_0,x_1) \in [0,1]^2,\; t \in [0,2]$ | $\nu = 0.1$ | 1 |
 | 5 | Allen-Cahn | $h_t - D h_{xx} - 5(h - h^3) = 0$ | $x \in [-1,1],\; t \in [0,1]$ | $D = 0.001$ | 1 |
-| 6 | KdV | $h_t + h h_x + \mu h_{xxx} = 0$ | $x \in [0,1],\; t \in [0,1]$ | $\mu = 0.0025$ | 1 |
+| 6 | KdV | $h_t + h h_x + \mu^2 h_{xxx} = 0$ | $x \in [-1,1],\; t \in [0,1]$ | $\mu = 0.022$ ($\mu^2 = 4.84 \times 10^{-4}$) | 1 |
 | 7 | Fisher-KPP | $h_t - D h_{xx} - \kappa h(1-h) = 0$ | $x \in [0,1],\; t \in [0,1]$ | $D=1,\; \kappa=25$ | 1 |
 | 8 | Convection-Diffusion | $h_t + \beta h_x - \varepsilon h_{xx} = 0$ | $x \in [-1,1],\; t \in [0,1]$ | $\beta=1,\; \varepsilon=0.01$ | 1 |
+| 9 | Kuramoto-Sivashinsky | $h_t + \alpha h h_x + \beta h_{xx} + \gamma h_{xxxx} = 0$ | $x \in [0,2\pi],\; t \in [0,1]$ | $\alpha=100/16,\; \beta=100/16^2,\; \gamma=100/16^4$ | 1 |
 
 ---
 
@@ -148,15 +149,15 @@ $$h_t - D\, h_{xx} - 5(h - h^3) = 0$$
 
 ### 6. Korteweg-de Vries (KdV)
 
-$$h_t + h\, h_x + \mu\, h_{xxx} = 0$$
+$$h_t + \eta\, h\, h_x + \mu^2\, h_{xxx} = 0$$
 
 | Property | Value |
 |----------|-------|
-| **Spatial domain** | $x \in [0, 1]$ |
+| **Spatial domain** | $x \in [-1, 1]$ |
 | **Temporal domain** | $t \in [0, 1]$ |
-| **Parameters** | $\mu = 0.0025$ |
-| **Initial condition** | $h(x, 0) = \cos(2\pi x)$ |
-| **Boundary conditions** | Periodic: $h(0,t) = h(1,t)$, $h_x(0,t) = h_x(1,t)$ |
+| **Parameters** | $\eta = 1$, $\mu = 0.022$ (so $\mu^2 = 4.84 \times 10^{-4}$); classical Zabusky & Kruskal (1965) values |
+| **Initial condition** | $h(x, 0) = \cos(\pi x)$ |
+| **Boundary conditions** | Periodic: $h(-1,t) = h(1,t)$ |
 | **Character** | Nonlinear dispersive; initial cosine breaks into multi-soliton train with sharp localized peaks on flat background |
 
 **PINN Benchmark Results (Rel. L₂ Error):**
@@ -217,6 +218,31 @@ $$h_t + \beta\, h_x - \varepsilon\, h_{xx} = 0$$
 | Specialized loss functionals | 2024 | 17% L² error reduction vs vanilla for convection-dominated problems | [Brüning et al., J. Numer. Math., 2024](https://link.springer.com/article/10.1007/s42967-024-00433-7) |
 
 > Note: Convection-diffusion with $Pe = 100$ is convection-dominated, producing sharp layers. This makes it a natural test case for adaptive expert methods even though it is linear.
+
+---
+
+### 9. Kuramoto-Sivashinsky (KS)
+
+$$h_t + \alpha\, h\, h_x + \beta\, h_{xx} + \gamma\, h_{xxxx} = 0$$
+
+| Property | Value |
+|----------|-------|
+| **Spatial domain** | $x \in [0, 2\pi]$ |
+| **Temporal domain** | $t \in [0, 1]$ |
+| **Parameters** | $\alpha = 100/16 = 6.25$, $\beta = 100/16^2 = 0.390625$, $\gamma = 100/16^4 \approx 1.526 \times 10^{-3}$ |
+| **Initial condition** | $h(x, 0) = \cos(x)(1 + \sin(x))$ |
+| **Boundary conditions** | Periodic: $h(0,t) = h(2\pi,t)$, $h_x(0,t) = h_x(2\pi,t)$ |
+| **Character** | Nonlinear, chaotic; anti-diffusion ($\beta h_{xx}$) drives instability, hyper-diffusion ($\gamma h_{xxxx}$) stabilizes short wavelengths, nonlinear convection ($\alpha h h_x$) transfers energy. Exhibits complex spatiotemporal patterns with sharp features |
+
+**PINN Benchmark Results (Rel. L₂ Error):**
+
+| Method | Year | Optimizer | Rel. L₂ | Reference |
+|--------|------|-----------|---------|-----------|
+| PirateNet + FF + WF + CS + NTK | 2024 | Adam | **1.42 × 10⁻⁴** | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| PirateNet + FF + WF + CS + LRA | 2025 | SOAP | ~10⁻⁴ range | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
+| BRDR + FF + mMLP | 2025 | Adam | tested | [Kim & Perdikaris, 2025](https://www.nature.com/articles/s44387-026-00084-4#ref-CR16) |
+
+> Note: KS is one of the most challenging 1D PINN benchmarks due to its chaotic dynamics and 4th-order spatial derivative. The PirateNet benchmark above uses the same domain and parameter configuration as our implementation.
 
 ---
 
