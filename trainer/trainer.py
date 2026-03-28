@@ -17,6 +17,20 @@ from models.atoe_leaves import AToELeaves
 from models.ant import ANT
 
 
+class _NumpySafeEncoder(json.JSONEncoder):
+    """Handles numpy scalars that stdlib json cannot serialize."""
+    def default(self, obj):
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+
 def _build_expert_tree_from_pretrained(
     model: nn.Module,
     eval_data: Dict,
@@ -1007,7 +1021,7 @@ def train(
                             'n_samples': c.n_samples,
                             'bounds_lower': c.bounds_lower,
                             'bounds_upper': c.bounds_upper,
-                            'is_leaf': c.is_leaf,
+                            'is_leaf': bool(c.is_leaf),
                         }
                         for c, _ in children
                     ]
@@ -1063,13 +1077,14 @@ def train(
                 # One-shot: fit full tree, prune bottom-up, spawn all accepted
                 print(f"  [FullTree] Fitting full tree (max_depth={region_detector.max_depth}, "
                       f"min_samples_leaf={region_detector.min_samples_leaf})...")
-                accepted_nodes = region_detector.fit_full_tree_and_prune(
-                    X=X_eval,
-                    y=y_eval,
-                    loss_components=loss_components,
-                    wavelet_threshold=wavelet_threshold,
-                    verbose=True,
-                )
+                accepted_nodes, prune_depth_stats = \
+                    region_detector.fit_full_tree_and_prune(
+                        X=X_eval,
+                        y=y_eval,
+                        loss_components=loss_components,
+                        wavelet_threshold=wavelet_threshold,
+                        verbose=True,
+                    )
 
                 # Determine which nodes to spawn based on model type
                 tree = region_detector.rf.estimators_[0].tree_
@@ -1146,20 +1161,29 @@ def train(
                         'node_id': nd.node_id,
                         'wavelet_norm': nd.wavelet_norm,
                         'n_samples': nd.n_samples,
-                        'is_leaf': nd.is_leaf,
+                        'is_leaf': bool(nd.is_leaf),
                         'bounds_lower': nd.bounds_lower,
                         'bounds_upper': nd.bounds_upper,
-                        'accepted': nd.node_id in accepted_ids_diag,
-                        'spawned_as_expert': nd.node_id in spawned_ids_diag,
-                        'tree_depth': _node_tree_depth.get(nd.node_id, -1),
+                        'accepted': bool(
+                            nd.node_id in accepted_ids_diag),
+                        'spawned_as_expert': bool(
+                            nd.node_id in spawned_ids_diag),
+                        'tree_depth': _node_tree_depth.get(
+                            nd.node_id, -1),
                     })
+                # Convert depth_stats keys to strings for JSON
+                depth_stats_json = {
+                    str(k): v for k, v in
+                    prune_depth_stats.items()
+                }
                 metrics['spawning_diagnostics'].append({
                     'epoch': epoch,
                     'method': 'full_tree_by_norm',
                     'wavelet_threshold': wavelet_threshold,
-                    'total_tree_nodes': tree.node_count,
+                    'total_tree_nodes': int(tree.node_count),
                     'accepted_count': len(accepted_ids_diag),
                     'spawned_count': len(spawned_ids_diag),
+                    'depth_stats': depth_stats_json,
                     'nodes': tree_diag_nodes,
                 })
 
@@ -1398,7 +1422,7 @@ def train(
     # Save metrics to JSON
     metrics_path = run_dir / "metrics.json"
     with open(metrics_path, 'w') as f:
-        json.dump(metrics, f, indent=2)
+        json.dump(metrics, f, indent=2, cls=_NumpySafeEncoder)
     print(f"  Metrics saved to {metrics_path}")
 
     # Save summary
