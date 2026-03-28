@@ -142,7 +142,7 @@ base_config:
     alpha: 6.25           # 100/16
     beta: 0.390625        # 100/16^2
     gamma: 0.00152587890625  # 100/16^4
-    wavelet_threshold: 10
+    wavelet_threshold: 1
     loss_weights:
       residual: 0.1
       ic: 1.0
