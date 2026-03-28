@@ -15,6 +15,7 @@ from typing import List, Dict, Optional, Set
 from torch.utils.hooks import RemovableHandle
 
 from models.fc_model import FCNet
+from models.network_factory import create_network
 from adaptive.indicators import (
     RegionDescriptor,
     BatchedIndicators
@@ -45,6 +46,7 @@ class AToELeaves(nn.Module):
         self.base_weight = adaptive_config.get('base_weight', 1.0)
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
         self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
+        self.expert_type = adaptive_config.get('expert_type', 'mlp')
         self.blending_mode = 'soft'
 
         self.atoe_threshold_capacity = adaptive_config.get(
@@ -63,7 +65,10 @@ class AToELeaves(nn.Module):
 
         self.config_base_architecture = base_architecture
 
-        self.base_model = FCNet(base_architecture, activation, config)
+        self.base_model = create_network(
+            base_architecture, activation, config,
+            is_base=True, expert_type=self.expert_type
+        )
 
         self.experts = nn.ModuleList()
         self.regions: List[RegionDescriptor] = []
@@ -223,12 +228,18 @@ class AToELeaves(nn.Module):
                 source = self.base_model
             else:
                 source = self.experts[copy_from_idx]
-            expert = FCNet(architecture, self.activation, self.config)
+            expert = create_network(
+                architecture, self.activation, self.config,
+                is_base=True, expert_type=self.expert_type
+            )
             expert.load_state_dict(source.state_dict())
             expert = expert.to(device)
             print(f"    Expert copied from {'Base Model' if copy_from_idx == -1 else f'E{copy_from_idx + 1}'}")
         else:
-            expert = FCNet(architecture, self.activation, self.config)
+            expert = create_network(
+                architecture, self.activation, self.config,
+                is_base=True, expert_type=self.expert_type
+            )
             expert = expert.to(device)
 
         self.experts.append(expert)
@@ -534,6 +545,7 @@ class AToELeaves(nn.Module):
         return {
             'base_model': self.base_model.state_dict(),
             'experts': [expert.state_dict() for expert in self.experts],
+            'expert_architectures': [e.layers for e in self.experts],
             'regions': [r.to_dict() for r in self.regions],
             'num_experts': len(self.experts),
             'base_architecture': self.base_architecture,
@@ -546,6 +558,8 @@ class AToELeaves(nn.Module):
     def load_state_dict_extended(self, state_dict: Dict):
         saved_base_arch = state_dict.get('base_architecture')
         saved_activation = state_dict.get('activation', self.activation)
+        saved_adaptive = state_dict.get('adaptive_config', {})
+        saved_expert_type = saved_adaptive.get('expert_type', 'mlp')
 
         if saved_base_arch is None:
             saved_base_arch = self._infer_architecture_from_state_dict(state_dict['base_model'])
@@ -553,7 +567,10 @@ class AToELeaves(nn.Module):
         if saved_base_arch != self.base_architecture:
             print(f"  Recreating base model: {self.base_architecture} -> {saved_base_arch}")
             device = next(self.base_model.parameters()).device
-            self.base_model = FCNet(saved_base_arch, saved_activation, self.config)
+            self.base_model = create_network(
+                saved_base_arch, saved_activation, self.config,
+                is_base=True, expert_type=saved_expert_type
+            )
             self.base_model = self.base_model.to(device)
             self.base_architecture = saved_base_arch
 
@@ -561,15 +578,24 @@ class AToELeaves(nn.Module):
 
         self.experts = nn.ModuleList()
         self.regions = []
+        saved_expert_archs = state_dict.get(
+            'expert_architectures', None
+        )
 
         for i, (expert_state, region_dict) in enumerate(zip(
             state_dict['experts'], state_dict['regions']
         )):
             region = RegionDescriptor.from_dict(region_dict)
 
-            expert_arch = self._infer_architecture_from_state_dict(expert_state)
+            if saved_expert_archs is not None:
+                expert_arch = saved_expert_archs[i]
+            else:
+                expert_arch = self._infer_architecture_from_state_dict(expert_state)
 
-            expert = FCNet(expert_arch, self.activation, self.config)
+            expert = create_network(
+                expert_arch, self.activation, self.config,
+                is_base=True, expert_type=saved_expert_type
+            )
             expert.load_state_dict(expert_state)
 
             device = next(self.base_model.parameters()).device

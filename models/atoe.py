@@ -22,6 +22,7 @@ from typing import List, Dict, Optional, Set
 from torch.utils.hooks import RemovableHandle
 
 from models.fc_model import FCNet
+from models.network_factory import create_network
 from adaptive.indicators import (
     RegionDescriptor,
     BatchedIndicators
@@ -99,6 +100,7 @@ class AToE(nn.Module):
         self.base_weight = adaptive_config.get('base_weight', 1.0)
         self.base_everywhere = adaptive_config.get('base_everywhere', True)
         self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
+        self.expert_type = adaptive_config.get('expert_type', 'mlp')
 
         self.atoe_threshold_capacity = adaptive_config.get(
             'AToE_threshold_capacity', None
@@ -114,7 +116,10 @@ class AToE(nn.Module):
 
         self.config_base_architecture = base_architecture
 
-        self.base_model = FCNet(base_architecture, activation, config)
+        self.base_model = create_network(
+            base_architecture, activation, config,
+            is_base=True, expert_type=self.expert_type
+        )
 
         self.experts = nn.ModuleList()
         self.regions: List[RegionDescriptor] = []
@@ -372,14 +377,22 @@ class AToE(nn.Module):
         architecture = self.get_expert_architecture(region)
         device = next(self.base_model.parameters()).device
 
-        expert = FCNet(architecture, self.activation, self.config)
+        expert = create_network(
+            architecture, self.activation, self.config,
+            is_base=True, expert_type=self.expert_type
+        )
         expert = expert.to(device)
-        layer_names = expert.get_layer_names()
-        if layer_names:
-            final_layer = expert.network[layer_names[-1]]
-            nn.init.zeros_(final_layer.weight)
-            if final_layer.bias is not None:
-                nn.init.zeros_(final_layer.bias)
+        if self.expert_type == 'resnet':
+            nn.init.zeros_(expert.output_proj.weight)
+            if expert.output_proj.bias is not None:
+                nn.init.zeros_(expert.output_proj.bias)
+        else:
+            layer_names = expert.get_layer_names()
+            if layer_names:
+                final_layer = expert.network[layer_names[-1]]
+                nn.init.zeros_(final_layer.weight)
+                if final_layer.bias is not None:
+                    nn.init.zeros_(final_layer.bias)
 
         self.experts.append(expert)
         self.regions.append(region)
@@ -919,6 +932,7 @@ class AToE(nn.Module):
         return {
             'base_model': self.base_model.state_dict(),
             'experts': [expert.state_dict() for expert in self.experts],
+            'expert_architectures': [e.layers for e in self.experts],
             'regions': [r.to_dict() for r in self.regions],
             'num_experts': len(self.experts),
             'base_architecture': self.base_architecture,
@@ -957,10 +971,16 @@ class AToE(nn.Module):
         if saved_base_arch is None:
             saved_base_arch = self._infer_architecture_from_state_dict(state_dict['base_model'])
 
+        saved_adaptive = state_dict.get('adaptive_config', {})
+        saved_expert_type = saved_adaptive.get('expert_type', 'mlp')
+
         if saved_base_arch != self.base_architecture:
             print(f"  Recreating base model: {self.base_architecture} -> {saved_base_arch}")
             device = next(self.base_model.parameters()).device
-            self.base_model = FCNet(saved_base_arch, saved_activation, self.config)
+            self.base_model = create_network(
+                saved_base_arch, saved_activation, self.config,
+                is_base=True, expert_type=saved_expert_type
+            )
             self.base_model = self.base_model.to(device)
             self.base_architecture = saved_base_arch
 
@@ -968,15 +988,24 @@ class AToE(nn.Module):
 
         self.experts = nn.ModuleList()
         self.regions = []
+        saved_expert_archs = state_dict.get(
+            'expert_architectures', None
+        )
 
         for i, (expert_state, region_dict) in enumerate(zip(
             state_dict['experts'], state_dict['regions']
         )):
             region = RegionDescriptor.from_dict(region_dict)
 
-            expert_arch = self._infer_architecture_from_state_dict(expert_state)
+            if saved_expert_archs is not None:
+                expert_arch = saved_expert_archs[i]
+            else:
+                expert_arch = self._infer_architecture_from_state_dict(expert_state)
 
-            expert = FCNet(expert_arch, self.activation, self.config)
+            expert = create_network(
+                expert_arch, self.activation, self.config,
+                is_base=True, expert_type=saved_expert_type
+            )
             expert.load_state_dict(expert_state)
 
             device = next(self.base_model.parameters()).device

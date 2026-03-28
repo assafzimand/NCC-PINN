@@ -8,6 +8,7 @@ from pathlib import Path
 
 from utils.io import load_config, make_run_dir
 from models.fc_model import FCNet
+from models.network_factory import create_network
 from ncc.ncc_runner import run_ncc
 from trainer.trainer import train
 
@@ -91,7 +92,9 @@ def run_multi_eval(checkpoints_dict, config, run_dir):
         model_config = config.copy()
         model_config['base_architecture'] = architecture
         model_config['activation'] = activation
-        model = FCNet(architecture, activation, model_config)
+        et = config.get('adaptive_pinn', {}).get('expert_type', 'mlp')
+        model = create_network(architecture, activation, model_config,
+                               is_base=True, expert_type=et)
         
         # Load model weights
         if 'model_state_dict' in checkpoint:
@@ -297,7 +300,9 @@ def main():
                 model = AToE(architecture, activation, config, adaptive_cfg)
             print(f"  {type(model).__name__} created: {len(model.get_layer_names())} base layers")
         else:
-            model = FCNet(architecture, activation, config)
+            expert_type = adaptive_cfg.get('expert_type', 'mlp')
+            model = create_network(architecture, activation, config,
+                                   is_base=True, expert_type=expert_type)
             print(f"  Model created: {len(model.get_layer_names())} layers")
 
         # Load checkpoint if resume_from is specified
@@ -443,7 +448,9 @@ def main():
                     from models.atoe import AToE
                     model = AToE(architecture, activation, config, adaptive_cfg)
             else:
-                model = FCNet(architecture, activation, config)
+                et = adaptive_cfg.get('expert_type', 'mlp')
+                model = create_network(architecture, activation, config,
+                                       is_base=True, expert_type=et)
 
             # Load model weights - handle different checkpoint formats
             if is_adaptive and checkpoint.get('is_adaptive', False):

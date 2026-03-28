@@ -162,8 +162,9 @@ base_config:
     max_experts: 150                    # Maximum number of expert networks
     spawn_every_epochs: 2000          # Check for spawning every N epochs (quick test value)
     AToE_threshold_capacity: null        # null = same as base, int = base capacity at threshold norm
-    ANT_threshold_architecture: null     # null = uses ANT_default_hidden_layers, list = threshold arch with scaling
-    ANT_default_hidden_layers: [70]      # fixed hidden layers for ANT experts when no scaling
+    ANT_threshold_architecture: null     # null = uses ANT_default_hidden_layers, int = threshold width with scaling
+    ANT_default_hidden_layers: 70        # neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
+    expert_type: mlp                     # 'mlp' or 'resnet'
     freeze_mode: none                  # "none" | "previous" | "base_only"
     blending_mode: soft                # "hard" | "soft"
     sigma_fraction: 0.2                # For soft: sigma = fraction * region_size (per-dimension)

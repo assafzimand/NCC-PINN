@@ -4,11 +4,11 @@ adam_betas:
 - 0.999
 adam_eps: 1.0e-08
 adaptive_pinn:
-  ANT_default_hidden_layers:
-  - 70
+  ANT_default_hidden_layers: 70
   ANT_threshold_architecture: null
   AToE_threshold_capacity: null
   base_everywhere: true
+  expert_type: mlp
   base_weight: 1.0
   blending_mode: soft
   enable_gradient_diagnostics: false

@@ -13,6 +13,7 @@ from collections import defaultdict
 from torch.utils.hooks import RemovableHandle
 
 from models.fc_model import FCNet
+from models.network_factory import create_network
 from adaptive.indicators import (
     RegionDescriptor,
     BatchedIndicators,
@@ -55,16 +56,36 @@ class ANT(nn.Module):
         self.freeze_mode = adaptive_config.get(
             'freeze_mode', 'none'
         )
-        self.default_hidden_layers = adaptive_config.get(
-            'ANT_default_hidden_layers', [70]
+        self.expert_type = adaptive_config.get(
+            'expert_type', 'mlp'
         )
-        ant_thresh_arch = adaptive_config.get(
+
+        raw_hidden = adaptive_config.get(
+            'ANT_default_hidden_layers', 70
+        )
+        if isinstance(raw_hidden, list):
+            if len(set(raw_hidden)) != 1:
+                raise ValueError(
+                    f"ANT_default_hidden_layers list must have "
+                    f"uniform widths, got {raw_hidden}"
+                )
+            raw_hidden = raw_hidden[0]
+        self.default_hidden_width = int(raw_hidden)
+
+        raw_thresh = adaptive_config.get(
             'ANT_threshold_architecture', None
         )
-        self.ant_threshold_architecture = (
-            ant_thresh_arch if isinstance(ant_thresh_arch, list)
-            else None
-        )
+        if raw_thresh is not None:
+            if isinstance(raw_thresh, list):
+                if len(set(raw_thresh)) != 1:
+                    raise ValueError(
+                        f"ANT_threshold_architecture list must "
+                        f"have uniform widths, got {raw_thresh}"
+                    )
+                raw_thresh = raw_thresh[0]
+            self.ant_threshold_width = int(raw_thresh)
+        else:
+            self.ant_threshold_width = None
 
         problem = config['problem']
         problem_config = config[problem]
@@ -75,9 +96,9 @@ class ANT(nn.Module):
             'wavelet_threshold', 1.0
         )
 
-        self.base_model = FCNet(
+        self.base_model = create_network(
             base_architecture, activation, config,
-            is_base=True,
+            is_base=True, expert_type=self.expert_type,
         )
 
         self.experts = nn.ModuleList()
@@ -181,17 +202,21 @@ class ANT(nn.Module):
 
         parent_act_dim = parent_model.get_activation_dim()
 
-        if self.ant_threshold_architecture is not None:
+        if self.ant_threshold_width is not None:
             ratio = max(
                 region.wavelet_norm / self.wavelet_threshold,
                 1.0,
             )
-            hidden_layers = [
-                max(1, round(h * ratio))
-                for h in self.ant_threshold_architecture
-            ]
+            base_w = max(1, round(
+                self.ant_threshold_width * ratio
+            ))
         else:
-            hidden_layers = list(self.default_hidden_layers)
+            base_w = self.default_hidden_width
+
+        if self.expert_type == 'resnet':
+            hidden_layers = [base_w, base_w]
+        else:
+            hidden_layers = [base_w]
 
         architecture = (
             [parent_act_dim]
@@ -202,9 +227,9 @@ class ANT(nn.Module):
         device = next(
             self.base_model.parameters()
         ).device
-        expert = FCNet(
+        expert = create_network(
             architecture, self.activation, self.config,
-            is_base=False,
+            is_base=False, expert_type=self.expert_type,
         )
         expert = expert.to(device)
 
@@ -671,6 +696,9 @@ class ANT(nn.Module):
             'experts': [
                 e.state_dict() for e in self.experts
             ],
+            'expert_architectures': [
+                e.layers for e in self.experts
+            ],
             'regions': [
                 r.to_dict() for r in self.regions
             ],
@@ -696,6 +724,12 @@ class ANT(nn.Module):
         saved_activation = state_dict.get(
             'activation', self.activation
         )
+        saved_adaptive = state_dict.get(
+            'adaptive_config', {}
+        )
+        saved_expert_type = saved_adaptive.get(
+            'expert_type', 'mlp'
+        )
 
         if saved_base_arch is None:
             saved_base_arch = (
@@ -713,9 +747,10 @@ class ANT(nn.Module):
             device = next(
                 self.base_model.parameters()
             ).device
-            self.base_model = FCNet(
+            self.base_model = create_network(
                 saved_base_arch, saved_activation,
                 self.config, is_base=True,
+                expert_type=saved_expert_type,
             )
             self.base_model = self.base_model.to(device)
             self.base_architecture = saved_base_arch
@@ -747,6 +782,9 @@ class ANT(nn.Module):
         device = next(
             self.base_model.parameters()
         ).device
+        saved_expert_archs = state_dict.get(
+            'expert_architectures', None
+        )
 
         for i, (expert_state, region_dict) in enumerate(
             zip(
@@ -757,14 +795,18 @@ class ANT(nn.Module):
             region = RegionDescriptor.from_dict(
                 region_dict
             )
-            expert_arch = (
-                self._infer_architecture_from_state_dict(
-                    expert_state
+            if saved_expert_archs is not None:
+                expert_arch = saved_expert_archs[i]
+            else:
+                expert_arch = (
+                    self._infer_architecture_from_state_dict(
+                        expert_state
+                    )
                 )
-            )
-            expert = FCNet(
+            expert = create_network(
                 expert_arch, self.activation,
                 self.config, is_base=False,
+                expert_type=saved_expert_type,
             )
             expert.load_state_dict(expert_state)
             expert = expert.to(device)
