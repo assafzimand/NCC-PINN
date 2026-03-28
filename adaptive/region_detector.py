@@ -1,10 +1,10 @@
 """Region detection using Random Forest geometric wavelets.
 
-Implements the algorithm to detect high-error regions for spawning expert PINNs:
+Implements the algorithm to detect high-variation regions for spawning expert PINNs:
 1. Fit a Random Forest regressor to the current solution
 2. Compute geometric wavelets at each tree node (Q_child - Q_parent for d-dim output)
-3. Compute residual-weighted L2 norm of wavelet (prioritizes high-error regions)
-4. Select the region with highest weighted norm for refinement
+3. Compute wavelet norm: ||Q_child - Q_parent||^2 * n_samples
+4. Select / prune regions based on norm threshold
 """
 
 import numpy as np
@@ -26,9 +26,7 @@ class TreeNodeInfo:
     bounds_upper: List[float]
     prediction: np.ndarray  # Q_Ω(x) - local mean value, shape (d,) for d-dim output
     parent_prediction: Optional[np.ndarray]  # Q_Ω_parent(x), shape (d,) or None
-    wavelet_norm: float = 0.0  # ||ψ||² = ||Q_child - Q_parent||² × total_loss(ω_i) × |ω_i|
-    total_loss_omega: float = 0.0  # Total weighted loss in this region
-    sum_residuals: float = 0.0  # DEPRECATED: Sum of residuals (for backward compat)
+    wavelet_norm: float = 0.0  # ||Q_child - Q_parent||^2 * n_samples
 
 
 class RegionDetector:
@@ -37,8 +35,8 @@ class RegionDetector:
     Algorithm:
     1. Fit RF to current PINN solution: f_RF(x,t) ≈ u(x,t)
     2. For each tree node, compute geometric wavelet: ψ = Q_child - Q_parent
-    3. Compute residual-weighted L2 norm: ||ψ||² × Σ residuals
-    4. Return region with highest norm for refinement
+    3. Compute wavelet norm: ||ψ||^2 * n_samples
+    4. Return regions that pass the threshold
     
     Supports multi-dimensional output (e.g., Schrödinger's [u, v]).
     """
@@ -63,75 +61,29 @@ class RegionDetector:
         self.domain_bounds = domain_bounds
         
         self.rf: Optional[RandomForestRegressor] = None
-        self._X: Optional[np.ndarray] = None
-        self._y: Optional[np.ndarray] = None
-        self._residuals: Optional[np.ndarray] = None  # DEPRECATED: kept for backward compatibility
-        self._residual_losses: Optional[np.ndarray] = None  # Per-sample residual losses
-        self._ic_losses: Optional[np.ndarray] = None  # Per-sample IC losses
-        self._bc_losses: Optional[np.ndarray] = None  # Per-sample BC losses
-        self._loss_weights: Optional[Dict[str, float]] = None  # Loss weights dict
     
     def fit(
-        self, 
-        X: np.ndarray, 
+        self,
+        X: np.ndarray,
         y: np.ndarray,
-        loss_components: Optional[Dict[str, np.ndarray]] = None,
-        residuals: Optional[np.ndarray] = None
+        **kwargs,
     ) -> 'RegionDetector':
         """
         Fit Random Forest to the data.
         
         Args:
             X: (N, n_dims) array of coordinates [x, t] or [x, y, t]
-            y: (N,) or (N, output_dim) array of solution values
-               Multi-output is supported - RF fits on d-dimensional y,
-               and wavelet norm is computed as ||Q_child - Q_parent||²
-            loss_components: Dict with 'residual', 'ic', 'bc' arrays and 'weights'
-                (new tree spawning approach using total loss)
-            residuals: DEPRECATED - (N,) array of PDE residuals (for backward compatibility)
+            y: (N,) or (N, output_dim) array of solution values.
+               Multi-output is supported (RF multi-output regression).
+            **kwargs: Accepted for backward compatibility (loss_components,
+                      residuals) but no longer used.
             
         Returns:
             self for chaining
         """
-        # Keep y in original dimension (d-dim for multi-output like Schrödinger)
-        # RF supports multi-output regression: y can be (N,) or (N, d)
-        # Only flatten if it's (N, 1) -> (N,)
         if y.ndim > 1 and y.shape[1] == 1:
             y = y.ravel()
-        
-        self._X = X
-        self._y = y
-        
-        # Store loss components (new approach)
-        if loss_components is not None:
-            self._residual_losses = loss_components['residual']
-            self._ic_losses = loss_components['ic']
-            self._bc_losses = loss_components['bc']
-            self._loss_weights = loss_components['weights']
-            # For backward compatibility with diagnostic code
-            self._residuals = loss_components['residual'].copy()
-        elif residuals is not None:
-            # Fallback to old residual-only approach
-            if residuals.ndim > 1:
-                residuals = residuals.ravel()
-            self._residuals = np.abs(residuals)
-            # Fill loss components with residuals for compatibility
-            self._residual_losses = self._residuals.copy()
-            self._ic_losses = np.zeros_like(self._residuals)
-            self._bc_losses = np.zeros_like(self._residuals)
-            self._loss_weights = {'residual': 1.0, 'ic': 0.0, 'bc': 0.0}
-        else:
-            # Fallback: uniform weighting (equivalent to n_samples)
-            n = len(y) if y.ndim == 1 else y.shape[0]
-            self._residuals = np.ones(n)
-            self._residual_losses = np.ones(n)
-            self._ic_losses = np.zeros(n)
-            self._bc_losses = np.zeros(n)
-            self._loss_weights = {'residual': 1.0, 'ic': 0.0, 'bc': 0.0}
-        
-        # ALWAYS update domain bounds from the data being fitted
-        # This is critical when fitting on filtered subdomains - the bounds
-        # must match the actual search domain, not the global domain
+
         self.domain_bounds = {
             'lower': X.min(axis=0).tolist(),
             'upper': X.max(axis=0).tolist()
@@ -141,7 +93,7 @@ class RegionDetector:
             n_estimators=self.n_estimators,
             max_depth=self.max_depth,
             min_samples_leaf=self.min_samples_leaf,
-            bootstrap=False,  # Use ALL data for each tree (no bootstrap sampling)
+            bootstrap=False,
             random_state=42,
             n_jobs=-1
         )
@@ -199,21 +151,13 @@ class RegionDetector:
         
         return bounds_lower, bounds_upper
     
-    def _get_samples_in_node(self, tree, node_id: int) -> np.ndarray:
-        """Get indices of samples that fall into this node."""
-        # Use decision_path to find which samples reach this node
-        decision_paths = tree.decision_path(self._X)
-        # decision_paths is sparse matrix (n_samples, n_nodes)
-        node_mask = np.array(decision_paths[:, node_id].todense()).ravel() > 0
-        return np.where(node_mask)[0]
-    
     def compute_wavelet_norms(self) -> List[TreeNodeInfo]:
         """
         Compute geometric wavelet norms for all tree nodes.
         
         Uses RF's internal node values (tree.value) as Q_Ω for each node.
         Supports multi-dimensional output (d > 1): Q is d-dimensional vector.
-        Wavelet norm = ||Q_child - Q_parent||² × Σ residuals
+        Wavelet norm = ||Q_child - Q_parent||^2 * n_samples
         
         Returns:
             List of TreeNodeInfo with wavelet norms
@@ -229,9 +173,7 @@ class RegionDetector:
             for node_id in range(tree.node_count):
                 is_leaf = tree.children_left[node_id] == -1
                 
-                # Get samples in this node (for residual weighting)
-                sample_indices = self._get_samples_in_node(tree, node_id)
-                n_samples = len(sample_indices)
+                n_samples = int(tree.n_node_samples[node_id])
                 
                 if n_samples < self.min_samples_leaf:
                     continue
@@ -251,8 +193,7 @@ class RegionDetector:
                     parent_prediction = tree.value[parent_id, :, 0].copy()  # Shape (d,)
                 
                 wavelet_norm = 0.0
-                sum_residuals = 0.0
-                if parent_prediction is not None and len(sample_indices) > 0:
+                if parent_prediction is not None and n_samples > 0:
                     diff = prediction - parent_prediction
                     l2_norm_squared = float(np.sum(diff ** 2))
                     wavelet_norm = l2_norm_squared * n_samples
@@ -267,8 +208,6 @@ class RegionDetector:
                     prediction=prediction,
                     parent_prediction=parent_prediction,
                     wavelet_norm=wavelet_norm,
-                    total_loss_omega=0.0,
-                    sum_residuals=sum_residuals
                 ))
         
         return all_nodes
@@ -409,11 +348,11 @@ class RegionDetector:
         parent_region: RegionDescriptor,
         X: np.ndarray,
         y: np.ndarray,
-        loss_components: Dict,
-        verbose: bool = True
+        verbose: bool = True,
+        **kwargs,
     ) -> List[Tuple[TreeNodeInfo, int]]:
         """
-        Spawn children for a single parent node (non-pretrained case).
+        Spawn children for a single parent node.
 
         Fits a single-split tree (max_depth=1) on the parent's subdomain.
         Creates 2 children (left/right) and computes their wavelet norms.
@@ -422,32 +361,19 @@ class RegionDetector:
             parent_region: The parent node's region descriptor
             X: (N, n_dims) coordinates (full eval_data)
             y: (N, output_dim) predictions (global solution)
-            loss_components: Per-sample losses
             verbose: Print diagnostic info
+            **kwargs: Accepted for backward compat (loss_components) but unused.
 
         Returns:
-            List of (TreeNodeInfo, parent_tree_node_id=-2) tuples for left/right children.
-            parent_tree_node_id=-2 is a special marker meaning "spawned during training".
-            Caller should set proper parent_idx based on parent expert index.
+            List of (TreeNodeInfo, parent_tree_node_id=-2) tuples.
         """
-        # Filter X, y, loss_components to parent's subdomain
-        # IMPORTANT: X is filtered to subdomain, but y is GLOBAL solution (all experts blended)
         mask = np.ones(len(X), dtype=bool)
         for dim in range(len(parent_region.bounds_lower)):
             mask &= (X[:, dim] >= parent_region.bounds_lower[dim])
             mask &= (X[:, dim] <= parent_region.bounds_upper[dim])
 
-        X_sub = X[mask]              # Coordinates in subdomain
-        y_sub = y[mask]              # Global predictions at those coordinates
-        if loss_components is not None:
-            loss_sub = {
-                'residual': loss_components['residual'][mask],
-                'ic': loss_components['ic'][mask],
-                'bc': loss_components['bc'][mask],
-                'weights': loss_components['weights']
-            }
-        else:
-            loss_sub = None
+        X_sub = X[mask]
+        y_sub = y[mask]
 
         if verbose:
             print(f"      Subdomain: {parent_region.bounds_lower} -> {parent_region.bounds_upper}")
@@ -469,7 +395,7 @@ class RegionDetector:
         self.n_estimators = 1
 
         try:
-            self.fit(X=X_sub, y=y_sub, loss_components=loss_sub)
+            self.fit(X=X_sub, y=y_sub)
         finally:
             # Restore settings
             self.max_depth = old_max_depth
@@ -511,9 +437,9 @@ class RegionDetector:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        loss_components: Optional[Dict] = None,
         wavelet_threshold: float = 0.0,
         verbose: bool = True,
+        **kwargs,
     ) -> Tuple[List[Tuple[TreeNodeInfo, int]], Dict]:
         """
         Fit a full decision tree on the entire domain and prune via
@@ -531,9 +457,9 @@ class RegionDetector:
         Args:
             X: (N, n_dims) coordinates
             y: (N,) or (N, output_dim) predictions
-            loss_components: per-sample losses (passed to fit)
             wavelet_threshold: minimum wavelet norm to accept a sibling pair
             verbose: print diagnostics
+            **kwargs: Accepted for backward compat (loss_components) but unused.
 
         Returns:
             Tuple of:
@@ -547,7 +473,7 @@ class RegionDetector:
         old_n_estimators = self.n_estimators
         self.n_estimators = 1
         try:
-            self.fit(X=X, y=y, loss_components=loss_components)
+            self.fit(X=X, y=y)
         finally:
             self.n_estimators = old_n_estimators
 

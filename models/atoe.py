@@ -404,7 +404,7 @@ class AToE(nn.Module):
         print(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
         print(f"    Architecture: {architecture}")
         print(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
-        print(f"    Residual-weighted wavelet norm: {region.wavelet_norm:.6f}")
+        print(f"    Wavelet norm: {region.wavelet_norm:.6f}")
         print(f"    Spawn epoch: {region.spawn_epoch}")
 
         self.sync_batched_indicators()

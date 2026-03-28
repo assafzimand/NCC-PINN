@@ -263,7 +263,7 @@ class ANT(nn.Module):
             f"{region.bounds_upper}"
         )
         print(
-            f"    Residual-weighted wavelet norm: "
+            f"    Wavelet norm: "
             f"{region.wavelet_norm:.6f}"
         )
         print(f"    Spawn epoch: {region.spawn_epoch}")
