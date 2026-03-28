@@ -1,17 +1,17 @@
 # Experiment plan configuration
-experiment_name: "loss_based_spawning_150_experts"
+experiment_name: "full_tree_by_norm_spawning_test"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
   model: AToE  # 'AToE' | 'AToELeaves' | 'ANT'
   activation: tanh
-  epochs: 10000
+  epochs: 101
   batch_size: 512
   lr: 0.0001  
 
   # Optimizer settings
-  optimizer_switch_at: 0.8
+  optimizer_switch_at: 1.0
 
   # Adam hyperparameters
   adam_betas: [0.9, 0.999]
@@ -175,97 +175,41 @@ base_config:
     inner_metrics_calculation: false   # Disable NCC/probes during training (complex with experts)
     enable_gradient_diagnostics: false # Enable detailed gradient flow diagnostics (verbose)
     use_decomposed_derivatives: true
-    expert_activation_threshold: 1e-9  # null = disabled, float = only evaluate experts with psi > threshold
+    expert_activation_threshold: 0  # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0  # min samples in batch for expert to be considered "active"
-    spawning_method: by_mean_loss  # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm"
+    spawning_method: full_tree_by_norm  # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm"
 
 
 # Experiments to run
 # ===== Full-tree-by-norm spawning test on all PDEs =====
-# 101 epochs of Adam (no LBFGS switch), spawn once at epoch 100
+# 101 epochs of Adam (no LBFGS), spawn once at epoch 100
 experiments:
   - name: "FullTree_schrodinger"
     problem: schrodinger
-    model: AToE
     base_architecture: [2, 30, 30, 30, 30, 30, 2]
-    epochs: 101
-    optimizer_switch_at: 1.0
-    eval_every: 10
-    print_every: 10
-    adaptive_pinn:
-      spawning_method: full_tree_by_norm
-      spawn_every_epochs: 100
 
   - name: "FullTree_wave1d"
     problem: wave1d
-    model: AToE
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
-    epochs: 101
-    optimizer_switch_at: 1.0
-    eval_every: 10
-    print_every: 10
-    adaptive_pinn:
-      spawning_method: full_tree_by_norm
-      spawn_every_epochs: 100
 
   - name: "FullTree_burgers1d"
     problem: burgers1d
-    model: AToE
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
-    epochs: 101
-    optimizer_switch_at: 1.0
-    eval_every: 10
-    print_every: 10
-    adaptive_pinn:
-      spawning_method: full_tree_by_norm
-      spawn_every_epochs: 100
 
   - name: "FullTree_burgers2d"
     problem: burgers2d
-    model: AToE
     base_architecture: [3, 30, 30, 30, 30, 30, 1]
-    epochs: 101
-    optimizer_switch_at: 1.0
-    eval_every: 10
-    print_every: 10
-    adaptive_pinn:
-      spawning_method: full_tree_by_norm
-      spawn_every_epochs: 100
 
   - name: "FullTree_allen_cahn"
     problem: allen_cahn
-    model: AToE
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
-    epochs: 101
-    optimizer_switch_at: 1.0
-    eval_every: 10
-    print_every: 10
-    adaptive_pinn:
-      spawning_method: full_tree_by_norm
-      spawn_every_epochs: 100
 
   - name: "FullTree_kdv"
     problem: kdv
-    model: AToE
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
-    epochs: 101
-    optimizer_switch_at: 1.0
-    eval_every: 10
-    print_every: 10
-    adaptive_pinn:
-      spawning_method: full_tree_by_norm
-      spawn_every_epochs: 100
 
   - name: "FullTree_ks"
     problem: ks
-    model: AToE
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
-    epochs: 101
-    optimizer_switch_at: 1.0
-    eval_every: 10
-    print_every: 10
     lbfgs_lr: 0.1
     lbfgs_max_iter: 5
-    adaptive_pinn:
-      spawning_method: full_tree_by_norm
-      spawn_every_epochs: 100
