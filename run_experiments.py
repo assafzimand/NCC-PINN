@@ -31,6 +31,17 @@ def create_experiment_dir(plan):
     return parent_dir
 
 
+def _deep_merge(base, override):
+    """Deep-merge override into base: nested dicts are merged, not replaced."""
+    merged = base.copy()
+    for key, val in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(val, dict):
+            merged[key] = _deep_merge(merged[key], val)
+        else:
+            merged[key] = val
+    return merged
+
+
 def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
     """Run one experiment."""
     print(f"\n{'='*70}")
@@ -38,8 +49,8 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
     print(f"Architecture: {exp_config['base_architecture']}")
     print(f"{'='*70}\n")
     
-    # Merge configs
-    config = {**base_config, **exp_config}
+    # Deep-merge so nested dicts (adaptive_pinn, etc.) are merged, not replaced
+    config = _deep_merge(base_config, exp_config)
     
     # Generate architecture-based folder name (aligned with make_run_dir)
     layers_str = "-".join(map(str, config['base_architecture']))

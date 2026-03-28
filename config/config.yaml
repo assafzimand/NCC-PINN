@@ -4,8 +4,27 @@ adam_betas:
 - 0.999
 adam_eps: 1.0e-08
 adaptive_pinn:
-  spawn_every_epochs: 100
-  spawning_method: full_tree_by_norm
+  ANT_default_hidden_layers:
+  - 70
+  ANT_threshold_architecture: null
+  AToE_threshold_capacity: null
+  base_everywhere: true
+  base_weight: 1.0
+  blending_mode: soft
+  enable_gradient_diagnostics: false
+  enable_timing: false
+  enabled: true
+  expert_activation_threshold: 1e-9
+  freeze_mode: none
+  inner_metrics_calculation: false
+  max_experts: 10
+  sigma_fraction: 0.2
+  spawn_every_epochs: 2
+  tree_max_depth: 15
+  tree_min_samples_leaf: 20
+  use_decomposed_derivatives: true
+  relevant_samples_to_activate_expert: 0
+  spawning_method: by_mean_loss
 allen_cahn:
   D: 0.001
   loss_weights:
@@ -20,15 +39,12 @@ allen_cahn:
   temporal_domain:
   - 0.0
   - 1.0
-  wavelet_threshold: 10
 base_architecture:
 - 2
 - 30
 - 30
 - 30
-- 30
-- 30
-- 2
+- 1
 batch_size: 512
 bins: 5
 burgers1d:
@@ -45,7 +61,6 @@ burgers1d:
   temporal_domain:
   - 0.0
   - 1.0
-  wavelet_threshold: 10
 burgers2d:
   loss_weights:
     bc: 1.0
@@ -62,7 +77,6 @@ burgers2d:
   temporal_domain:
   - 0.0
   - 2.0
-  wavelet_threshold: 10
 conv_diff:
   beta: 1.0
   epsilon: 0.01
@@ -78,10 +92,9 @@ conv_diff:
   temporal_domain:
   - 0.0
   - 1.0
-  wavelet_threshold: 10
 cuda: true
-epochs: 101
-eval_every: 10
+epochs: 5
+eval_every: 1
 eval_only: false
 fisher_kpp:
   D: 1.0
@@ -98,7 +111,6 @@ fisher_kpp:
   temporal_domain:
   - 0.0
   - 1.0
-  wavelet_threshold: 10
 inner_metrics_eval_every: 2000
 kdv:
   loss_weights:
@@ -114,7 +126,6 @@ kdv:
   temporal_domain:
   - 0.0
   - 1.0
-  wavelet_threshold: 10
 ks:
   alpha: 6.25
   beta: 0.390625
@@ -131,7 +142,6 @@ ks:
   temporal_domain:
   - 0.0
   - 1.0
-  wavelet_threshold: 10
 lbfgs_history_size: 20
 lbfgs_line_search: strong_wolfe
 lbfgs_lr: 1.0
@@ -142,10 +152,10 @@ lr: 0.0001
 model: AToE
 n_bin_visualize_ncc: 100
 n_freq_grid: 128
-name: FullTree_schrodinger
-optimizer_switch_at: 1.0
-print_every: 10
-problem: schrodinger
+name: AToE_allen_cahn_smoke
+optimizer_switch_at: 0.8
+print_every: 1
+problem: allen_cahn
 resume_from: null
 sampling:
   boundary_train_ratio: 0.005
@@ -167,7 +177,6 @@ schrodinger:
   temporal_domain:
   - 0.0
   - 1.5707963267948966
-  wavelet_threshold: 10
 seed: 42
 wave1d:
   loss_weights:
@@ -182,4 +191,3 @@ wave1d:
   temporal_domain:
   - 0.0
   - 6.283185307179586
-  wavelet_threshold: 10
