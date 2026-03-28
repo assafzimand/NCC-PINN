@@ -295,7 +295,9 @@ class ANT(nn.Module):
 
         if threshold is not None and num_leaves > 1:
             active_mask = psi_raw > threshold
-            active_any = active_mask.sum(dim=0) > 0
+            _ms = self.adaptive_config.get(
+                'relevant_samples_to_activate_expert', 0)
+            active_any = active_mask.sum(dim=0) > _ms
             active_leaf_local = torch.nonzero(
                 active_any, as_tuple=True
             )[0].tolist()

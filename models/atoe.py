@@ -570,7 +570,9 @@ class AToE(nn.Module):
         if _t: _t.stop('fwd.compute_masks')
 
         if _t: _t.start('fwd.sparse_selection')
-        active_experts_any = (masks.sum(dim=0) > 0)  # (K,)
+        _ms = self.adaptive_config.get(
+            'relevant_samples_to_activate_expert', 0)
+        active_experts_any = (masks.sum(dim=0) > _ms)  # (K,)
         active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]
         num_active = len(active_expert_indices)
         if _t: _t.stop('fwd.sparse_selection')
@@ -619,7 +621,9 @@ class AToE(nn.Module):
 
         if _t: _t.start('fwd.sparse_selection')
         active_mask = psi_experts > threshold  # (N, K)
-        active_experts_any = active_mask.sum(dim=0) > 0  # (K,)
+        _ms = self.adaptive_config.get(
+            'relevant_samples_to_activate_expert', 0)
+        active_experts_any = active_mask.sum(dim=0) > _ms  # (K,)
         active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]
         num_active = len(active_expert_indices)
         if _t: _t.stop('fwd.sparse_selection')
@@ -697,7 +701,9 @@ class AToE(nn.Module):
 
         if threshold is not None and K > 0:
             active_mask = psi_experts > threshold  # (N, K)
-            active_experts_any = active_mask.sum(dim=0) > 0  # (K,)
+            _ms = self.adaptive_config.get(
+                'relevant_samples_to_activate_expert', 0)
+            active_experts_any = active_mask.sum(dim=0) > _ms  # (K,)
             active_expert_indices = torch.nonzero(active_experts_any, as_tuple=True)[0]
         elif K > 0:
             active_expert_indices = torch.arange(K, device=device)

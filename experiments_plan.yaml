@@ -31,8 +31,8 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 100
-  print_every: 100
+  eval_every: 10
+  print_every: 10
   save_every: 5000
   inner_metrics_eval_every: 2000
   seed: 42
@@ -43,7 +43,7 @@ base_config:
     output_dim: 2  # Complex-valued: h = [u, v]
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 1.5707963267948966]
-    # wavelet_threshold: 20  # OLD METHOD: no longer used; spawning uses mean-loss leaf selection
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -54,7 +54,7 @@ base_config:
     output_dim: 1  # Real-valued: h is scalar
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 6.283185307179586]  # 2π
-    # wavelet_threshold: 1  # OLD METHOD: no longer used; spawning uses mean-loss leaf selection
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -66,7 +66,7 @@ base_config:
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     nu: 0.003141592653589793  # Viscosity coefficient (effective viscosity = nu/pi = 1/1000, "hard" benchmark)
-    # wavelet_threshold: 10  # OLD METHOD: no longer used; spawning uses mean-loss leaf selection
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -78,7 +78,7 @@ base_config:
     spatial_domain: [[0.0, 1.0], [0.0, 1.0]]
     temporal_domain: [0.0, 2.0]
     nu: 0.1  # Viscosity coefficient
-    # wavelet_threshold: 10  # OLD METHOD: no longer used; spawning uses mean-loss leaf selection
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -90,6 +90,7 @@ base_config:
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     D: 0.001
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -101,6 +102,7 @@ base_config:
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     mu: 0.000484
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -113,6 +115,7 @@ base_config:
     temporal_domain: [0.0, 1.0]
     D: 1.0
     kappa: 25.0
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -125,6 +128,7 @@ base_config:
     temporal_domain: [0.0, 1.0]
     beta: 1.0
     epsilon: 0.01
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -138,6 +142,7 @@ base_config:
     alpha: 6.25           # 100/16
     beta: 0.390625        # 100/16^2
     gamma: 0.00152587890625  # 100/16^4
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -171,204 +176,96 @@ base_config:
     enable_gradient_diagnostics: false # Enable detailed gradient flow diagnostics (verbose)
     use_decomposed_derivatives: true
     expert_activation_threshold: 1e-9  # null = disabled, float = only evaluate experts with psi > threshold
+    relevant_samples_to_activate_expert: 0  # min samples in batch for expert to be considered "active"
+    spawning_method: by_mean_loss  # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm"
 
 
 # Experiments to run
+# ===== Full-tree-by-norm spawning test on all PDEs =====
+# 101 epochs of Adam (no LBFGS switch), spawn once at epoch 100
 experiments:
-  # - name: "AToELeaves_schrodinger"
-  #   problem: schrodinger
-  #   model: AToELeaves
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  - name: "FullTree_schrodinger"
+    problem: schrodinger
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+    epochs: 101
+    optimizer_switch_at: 1.0
+    eval_every: 10
+    print_every: 10
+    adaptive_pinn:
+      spawning_method: full_tree_by_norm
+      spawn_every_epochs: 100
 
-  # - name: "AToE_schrodinger"
-  #   problem: schrodinger
-  #   model: AToE
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  - name: "FullTree_wave1d"
+    problem: wave1d
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    epochs: 101
+    optimizer_switch_at: 1.0
+    eval_every: 10
+    print_every: 10
+    adaptive_pinn:
+      spawning_method: full_tree_by_norm
+      spawn_every_epochs: 100
 
-  # - name: "ANT_schrodinger"
-  #   problem: schrodinger
-  #   model: ANT
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  - name: "FullTree_burgers1d"
+    problem: burgers1d
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    epochs: 101
+    optimizer_switch_at: 1.0
+    eval_every: 10
+    print_every: 10
+    adaptive_pinn:
+      spawning_method: full_tree_by_norm
+      spawn_every_epochs: 100
 
-  # - name: "AToELeaves_wave1d"
-  #   problem: wave1d
-  #   model: AToELeaves
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: "FullTree_burgers2d"
+    problem: burgers2d
+    model: AToE
+    base_architecture: [3, 30, 30, 30, 30, 30, 1]
+    epochs: 101
+    optimizer_switch_at: 1.0
+    eval_every: 10
+    print_every: 10
+    adaptive_pinn:
+      spawning_method: full_tree_by_norm
+      spawn_every_epochs: 100
 
-  # - name: "AToE_wave1d"
-  #   problem: wave1d
-  #   model: AToE
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: "FullTree_allen_cahn"
+    problem: allen_cahn
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    epochs: 101
+    optimizer_switch_at: 1.0
+    eval_every: 10
+    print_every: 10
+    adaptive_pinn:
+      spawning_method: full_tree_by_norm
+      spawn_every_epochs: 100
 
-  # - name: "ANT_wave1d"
-  #   problem: wave1d
-  #   model: ANT
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: "FullTree_kdv"
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    epochs: 101
+    optimizer_switch_at: 1.0
+    eval_every: 10
+    print_every: 10
+    adaptive_pinn:
+      spawning_method: full_tree_by_norm
+      spawn_every_epochs: 100
 
-  # - name: "AToELeaves_burgers1d"
-  #   problem: burgers1d
-  #   model: AToELeaves
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
-
-  # - name: "AToE_burgers1d"
-  #   problem: burgers1d
-  #   model: AToE
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
-
-  # - name: "ANT_burgers1d"
-  #   problem: burgers1d
-  #   model: ANT
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
-
-  # - name: "AToELeaves_burgers2d"
-  #   problem: burgers2d
-  #   model: AToELeaves
-  #   base_architecture: [3, 30, 30, 30, 30, 30, 1]
-
-  # - name: "AToE_burgers2d"
-  #   problem: burgers2d
-  #   model: AToE
-  #   base_architecture: [3, 30, 30, 30, 30, 30, 1]
-
-  # - name: "ANT_burgers2d"
-  #   problem: burgers2d
-  #   model: ANT
-  #   base_architecture: [3, 30, 30, 30, 30, 30, 1]
-
-  # ===== Smoke-test experiments for new PDEs =====
-  # - name: "AToE_allen_cahn_smoke"
-  #   problem: allen_cahn
-  #   model: AToE
-  #   base_architecture: [2, 30, 30, 30, 1]
-  #   epochs: 5
-  #   eval_every: 1
-  #   print_every: 1
-  #   adaptive_pinn:
-  #     enabled: true
-  #     max_experts: 10
-  #     spawn_every_epochs: 2
-  #     AToE_threshold_capacity: null
-  #     ANT_threshold_architecture: null
-  #     ANT_default_hidden_layers: [70]
-  #     freeze_mode: none
-  #     blending_mode: soft
-  #     sigma_fraction: 0.2
-  #     base_weight: 1.0
-  #     base_everywhere: true
-  #     tree_max_depth: 15
-  #     tree_min_samples_leaf: 20
-  #     enable_timing: false
-  #     inner_metrics_calculation: false
-  #     enable_gradient_diagnostics: false
-  #     use_decomposed_derivatives: true
-  #     expert_activation_threshold: 1e-9
-
-  # - name: "AToE_kdv_smoke"
-  #   problem: kdv
-  #   model: AToE
-  #   base_architecture: [2, 30, 30, 30, 1]
-  #   epochs: 5
-  #   eval_every: 1
-  #   print_every: 1
-  #   adaptive_pinn:
-  #     enabled: true
-  #     max_experts: 10
-  #     spawn_every_epochs: 2
-  #     AToE_threshold_capacity: null
-  #     ANT_threshold_architecture: null
-  #     ANT_default_hidden_layers: [70]
-  #     freeze_mode: none
-  #     blending_mode: soft
-  #     sigma_fraction: 0.2
-  #     base_weight: 1.0
-  #     base_everywhere: true
-  #     tree_max_depth: 15
-  #     tree_min_samples_leaf: 20
-  #     enable_timing: false
-  #     inner_metrics_calculation: false
-  #     enable_gradient_diagnostics: false
-  #     use_decomposed_derivatives: true
-  #     expert_activation_threshold: 1e-9
-
-  # - name: "AToE_fisher_kpp_smoke"
-  #   problem: fisher_kpp
-  #   model: AToE
-  #   base_architecture: [2, 30, 30, 30, 1]
-  #   epochs: 5
-  #   eval_every: 1
-  #   print_every: 1
-  #   adaptive_pinn:
-  #     enabled: true
-  #     max_experts: 10
-  #     spawn_every_epochs: 2
-  #     AToE_threshold_capacity: null
-  #     ANT_threshold_architecture: null
-  #     ANT_default_hidden_layers: [70]
-  #     freeze_mode: none
-  #     blending_mode: soft
-  #     sigma_fraction: 0.2
-  #     base_weight: 1.0
-  #     base_everywhere: true
-  #     tree_max_depth: 15
-  #     tree_min_samples_leaf: 20
-  #     enable_timing: false
-  #     inner_metrics_calculation: false
-  #     enable_gradient_diagnostics: false
-  #     use_decomposed_derivatives: true
-  #     expert_activation_threshold: 1e-9
-
-  # - name: "AToE_conv_diff_smoke"
-  #   problem: conv_diff
-  #   model: AToE
-  #   base_architecture: [2, 30, 30, 30, 1]
-  #   epochs: 5
-  #   eval_every: 1
-  #   print_every: 1
-  #   adaptive_pinn:
-  #     enabled: true
-  #     max_experts: 10
-  #     spawn_every_epochs: 2
-  #     AToE_threshold_capacity: null
-  #     ANT_threshold_architecture: null
-  #     ANT_default_hidden_layers: [70]
-  #     freeze_mode: none
-  #     blending_mode: soft
-  #     sigma_fraction: 0.2
-  #     base_weight: 1.0
-  #     base_everywhere: true
-  #     tree_max_depth: 15
-  #     tree_min_samples_leaf: 20
-  #     enable_timing: false
-  #     inner_metrics_calculation: false
-  #     enable_gradient_diagnostics: false
-  #     use_decomposed_derivatives: true
-  #     expert_activation_threshold: 1e-9
-
-  - name: "AToE_ks_smoke"
+  - name: "FullTree_ks"
     problem: ks
     model: AToE
-    base_architecture: [2, 30, 30, 30, 1]
-    epochs: 5
-    eval_every: 1
-    print_every: 1
-    lbfgs_lr: 0.1        # Conservative for 4th-order derivative chain
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    epochs: 101
+    optimizer_switch_at: 1.0
+    eval_every: 10
+    print_every: 10
+    lbfgs_lr: 0.1
     lbfgs_max_iter: 5
     adaptive_pinn:
-      enabled: true
-      max_experts: 10
-      spawn_every_epochs: 2
-      AToE_threshold_capacity: null
-      ANT_threshold_architecture: null
-      ANT_default_hidden_layers: [70]
-      freeze_mode: none
-      blending_mode: soft
-      sigma_fraction: 0.2
-      base_weight: 1.0
-      base_everywhere: true
-      tree_max_depth: 15
-      tree_min_samples_leaf: 20
-      enable_timing: false
-      inner_metrics_calculation: false
-      enable_gradient_diagnostics: false
-      use_decomposed_derivatives: true
-      expert_activation_threshold: 1e-9
+      spawning_method: full_tree_by_norm
+      spawn_every_epochs: 100

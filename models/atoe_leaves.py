@@ -333,7 +333,9 @@ class AToELeaves(nn.Module):
         psi_leaves = psi_experts[:, leaf_list]  # (N, L)
 
         active_mask = psi_leaves > threshold  # (N, L)
-        active_any = active_mask.sum(dim=0) > 0  # (L,)
+        _ms = self.adaptive_config.get(
+            'relevant_samples_to_activate_expert', 0)
+        active_any = active_mask.sum(dim=0) > _ms  # (L,)
         active_local_indices = torch.nonzero(active_any, as_tuple=True)[0]
 
         psi_sum = psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
