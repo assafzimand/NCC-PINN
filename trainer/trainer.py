@@ -384,28 +384,29 @@ def train(
     region_detector = None
     spawn_every = adaptive_cfg.get('spawn_every_epochs', 2000)
     max_experts = adaptive_cfg.get('max_experts', 5)
+    spawning_method = adaptive_cfg.get('spawning_method', 'by_mean_loss')
     problem_cfg = cfg.get(cfg['problem'], {})
-    # OLD METHOD: wavelet_threshold no longer used; spawning uses mean-loss leaf selection.
-    # wavelet_threshold = problem_cfg.get('wavelet_threshold', None)
+    wavelet_threshold = problem_cfg.get('wavelet_threshold', 0.0)
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
+    spawning_complete = False
 
     if is_adaptive:
-        # Extract tree-based spawning parameters
         tree_max_depth = adaptive_cfg.get('tree_max_depth', 15)
         tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
 
-        print(f"\nAdaptive PINN enabled (Mean-Loss Leaf Selection):")
+        print(f"\nAdaptive PINN enabled (spawning_method={spawning_method}):")
         print(f"  Max experts: {max_experts}")
         print(f"  Spawn every: {spawn_every} epochs")
         print(f"  Tree max depth: {tree_max_depth}")
         print(f"  Tree min samples leaf: {tree_min_samples_leaf}")
+        if spawning_method in ('accept_split_by_norm', 'full_tree_by_norm'):
+            print(f"  Wavelet threshold: {wavelet_threshold}")
         print(f"  Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
         print(f"  Freeze mode: {adaptive_cfg.get('freeze_mode', 'none')}")
         print(f"  Model type: {type(model).__name__}")
         enable_timing_cfg = adaptive_cfg.get('enable_timing', False)
         print(f"  Timing profiling: {'enabled' if enable_timing_cfg else 'disabled'}")
-        
-        # Import and create region detector
+
         from adaptive.region_detector import RegionDetector
         from adaptive.visualization import (
             plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
@@ -414,17 +415,13 @@ def train(
         from adaptive.residual_utils import compute_loss_components
         from adaptive.indicators import RegionDescriptor
 
-        # Get domain bounds
         domain_bounds = model.get_domain_bounds()
-
-        # Prepare ground truth grid for visualization
         gt_grid, gt_x, gt_t = prepare_ground_truth_grid(eval_data, domain_bounds)
 
-        # Create RegionDetector with n_estimators=1 (single tree for each spawn)
         tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
         region_detector = RegionDetector(
-            n_estimators=1,  # Single tree for each parent split
-            max_depth=1,     # Single binary split per spawn
+            n_estimators=1,
+            max_depth=tree_max_depth if spawning_method == 'full_tree_by_norm' else 1,
             min_samples_leaf=tree_min_samples_leaf,
             domain_bounds=domain_bounds
         )
@@ -769,10 +766,15 @@ def train(
                 metrics['freq_history'].append((epoch, freq_metrics))
 
         # Adaptive PINN: Hierarchical expert spawning from leaf nodes
-        spawn_check_triggered = (is_adaptive and
-                                 epoch % spawn_every == 0 and
-                                 hasattr(model, 'num_experts') and
-                                model.num_experts < max_experts)
+        if spawning_method == 'full_tree_by_norm':
+            spawn_check_triggered = (is_adaptive and
+                                     epoch % spawn_every == 0 and
+                                     not spawning_complete)
+        else:
+            spawn_check_triggered = (is_adaptive and
+                                     epoch % spawn_every == 0 and
+                                     hasattr(model, 'num_experts') and
+                                     model.num_experts < max_experts)
         
         if spawn_check_triggered:
             print(f"\n{'='*60}")
@@ -812,143 +814,357 @@ def train(
             X_eval = eval_inputs.cpu().numpy()
             y_eval = u_pred.cpu().numpy()
 
-            # -----------------------------------------------------------
-            # New spawning: pick the single leaf with highest mean loss
-            # -----------------------------------------------------------
             import numpy as np
-            w_res = loss_components['weights'].get('residual', 1.0)
-            w_ic  = loss_components['weights'].get('ic', 1.0)
-            w_bc  = loss_components['weights'].get('bc', 1.0)
-            per_sample_total = (w_res * loss_components['residual']
-                                + w_ic * loss_components['ic']
-                                + w_bc * loss_components['bc'])
-
-            leaf_mean_losses = []
-            for leaf_region, leaf_idx in leaf_nodes:
-                if leaf_region is None:
-                    mask = np.ones(len(X_eval), dtype=bool)
-                else:
-                    mask = np.ones(len(X_eval), dtype=bool)
-                    for dim in range(len(leaf_region.bounds_lower)):
-                        mask &= (X_eval[:, dim] >= leaf_region.bounds_lower[dim])
-                        mask &= (X_eval[:, dim] <= leaf_region.bounds_upper[dim])
-                n_in_region = mask.sum()
-                if n_in_region > 0:
-                    mean_loss = float(per_sample_total[mask].mean())
-                else:
-                    mean_loss = 0.0
-                leaf_mean_losses.append((mean_loss, leaf_region, leaf_idx, n_in_region))
-                leaf_str = f"Expert {leaf_idx+1}" if leaf_idx >= 0 else "Base Model"
-                print(f"    Leaf {leaf_str}: mean_loss={mean_loss:.6f} ({n_in_region} samples)")
-
-            leaf_loss_history.append({
-                'epoch': epoch,
-                'leaves': [
-                    {
-                        'leaf_idx': idx,
-                        'mean_loss': ml,
-                        'n_samples': int(n),
-                        'bounds_lower': list(reg.bounds_lower) if reg is not None else list(domain_bounds['lower']),
-                        'bounds_upper': list(reg.bounds_upper) if reg is not None else list(domain_bounds['upper']),
-                    }
-                    for ml, reg, idx, n in leaf_mean_losses
-                ]
-            })
-
-            leaf_mean_losses.sort(key=lambda x: x[0], reverse=True)
-
             is_copy_spawn = isinstance(model, AToELeaves)
             experts_spawned_this_step = 0
 
-            for candidate_loss, candidate_region, candidate_idx, candidate_n in leaf_mean_losses:
-                candidate_str = f"Expert {candidate_idx+1}" if candidate_idx >= 0 else "Base Model"
-                print(f"\n  [Spawning] Trying leaf: {candidate_str} "
-                      f"(mean_loss={candidate_loss:.6f}, {candidate_n} samples)")
+            if 'spawning_diagnostics' not in metrics:
+                metrics['spawning_diagnostics'] = []
 
-                parent_region = candidate_region
-                parent_idx = candidate_idx
-                parent_depth = 0 if parent_region is None else parent_region.depth
+            # =============================================================
+            # Dispatch on spawning_method
+            # =============================================================
 
-                children = region_detector.spawn_children_for_node(
-                    parent_region=parent_region if parent_region is not None else
-                                 RegionDescriptor(
-                                     bounds_lower=list(domain_bounds['lower']),
-                                     bounds_upper=list(domain_bounds['upper']),
-                                     wavelet_norm=0.0,
-                                     spawn_epoch=0,
-                                     depth=0,
-                                     parent_idx=-1
-                                 ),
+            if spawning_method == 'by_mean_loss':
+                # Pick the single leaf with highest mean loss, split it
+                _spawned_children_diag = []
+                w_res = loss_components['weights'].get('residual', 1.0)
+                w_ic  = loss_components['weights'].get('ic', 1.0)
+                w_bc  = loss_components['weights'].get('bc', 1.0)
+                per_sample_total = (w_res * loss_components['residual']
+                                    + w_ic * loss_components['ic']
+                                    + w_bc * loss_components['bc'])
+
+                leaf_mean_losses = []
+                for leaf_region, leaf_idx in leaf_nodes:
+                    if leaf_region is None:
+                        mask = np.ones(len(X_eval), dtype=bool)
+                    else:
+                        mask = np.ones(len(X_eval), dtype=bool)
+                        for dim in range(len(leaf_region.bounds_lower)):
+                            mask &= (X_eval[:, dim] >= leaf_region.bounds_lower[dim])
+                            mask &= (X_eval[:, dim] <= leaf_region.bounds_upper[dim])
+                    n_in_region = mask.sum()
+                    if n_in_region > 0:
+                        mean_loss = float(per_sample_total[mask].mean())
+                    else:
+                        mean_loss = 0.0
+                    leaf_mean_losses.append((mean_loss, leaf_region, leaf_idx, n_in_region))
+                    leaf_str = f"Expert {leaf_idx+1}" if leaf_idx >= 0 else "Base Model"
+                    print(f"    Leaf {leaf_str}: mean_loss={mean_loss:.6f} ({n_in_region} samples)")
+
+                leaf_loss_history.append({
+                    'epoch': epoch,
+                    'leaves': [
+                        {
+                            'leaf_idx': idx,
+                            'mean_loss': ml,
+                            'n_samples': int(n),
+                            'bounds_lower': list(reg.bounds_lower) if reg is not None else list(domain_bounds['lower']),
+                            'bounds_upper': list(reg.bounds_upper) if reg is not None else list(domain_bounds['upper']),
+                        }
+                        for ml, reg, idx, n in leaf_mean_losses
+                    ]
+                })
+
+                leaf_mean_losses.sort(key=lambda x: x[0], reverse=True)
+
+                for candidate_loss, candidate_region, candidate_idx, candidate_n in leaf_mean_losses:
+                    candidate_str = f"Expert {candidate_idx+1}" if candidate_idx >= 0 else "Base Model"
+                    print(f"\n  [Spawning] Trying leaf: {candidate_str} "
+                          f"(mean_loss={candidate_loss:.6f}, {candidate_n} samples)")
+
+                    parent_region = candidate_region
+                    parent_idx = candidate_idx
+                    parent_depth = 0 if parent_region is None else parent_region.depth
+
+                    children = region_detector.spawn_children_for_node(
+                        parent_region=parent_region if parent_region is not None else
+                                     RegionDescriptor(
+                                         bounds_lower=list(domain_bounds['lower']),
+                                         bounds_upper=list(domain_bounds['upper']),
+                                         wavelet_norm=0.0,
+                                         spawn_epoch=0,
+                                         depth=0,
+                                         parent_idx=-1
+                                     ),
+                        X=X_eval,
+                        y=y_eval,
+                        loss_components=loss_components,
+                        verbose=True
+                    )
+
+                    if not children:
+                        print(f"      [Spawning] Could not split {candidate_str} "
+                              f"(too few samples?), trying next leaf...")
+                        continue
+
+                    child_depth = parent_depth + 1
+                    for child_node, _ in children:
+                        child_region = RegionDescriptor(
+                            bounds_lower=child_node.bounds_lower,
+                            bounds_upper=child_node.bounds_upper,
+                            wavelet_norm=child_node.wavelet_norm,
+                            spawn_epoch=epoch,
+                            depth=child_depth,
+                            parent_idx=parent_idx
+                        )
+
+                        if is_copy_spawn:
+                            expert_idx = model.spawn_expert(child_region, copy_from_idx=parent_idx)
+                        else:
+                            expert_idx = model.spawn_expert(child_region)
+                        if expert_idx >= 0:
+                            experts_spawned_this_step += 1
+                            if 'expert_spawns' not in metrics:
+                                metrics['expert_spawns'] = []
+                            metrics['expert_spawns'].append({
+                                'epoch': epoch,
+                                'expert_idx': expert_idx,
+                                'region': child_region.to_dict(),
+                                'depth': child_depth,
+                                'parent_idx': parent_idx,
+                                **(({'num_experts': model.num_experts} if hasattr(model, 'num_experts') else {}))
+                            })
+
+                    _spawned_children_diag = [
+                        {
+                            'node_id': c.node_id,
+                            'wavelet_norm': c.wavelet_norm,
+                            'n_samples': c.n_samples,
+                            'bounds_lower': c.bounds_lower,
+                            'bounds_upper': c.bounds_upper,
+                        }
+                        for c, _ in children
+                    ]
+                    if experts_spawned_this_step > 0:
+                        print(f"      [Spawning] Spawned {experts_spawned_this_step} children from {candidate_str}")
+                    break
+
+                # Save diagnostics for by_mean_loss
+                diag = {
+                    'epoch': epoch,
+                    'method': 'by_mean_loss',
+                    'evaluated_leaves': [
+                        {
+                            'leaf_idx': idx,
+                            'mean_loss': ml,
+                            'n_samples': int(n),
+                            'selected': (idx == leaf_mean_losses[0][2]),
+                            'bounds_lower': list(
+                                reg.bounds_lower) if reg is not None else list(domain_bounds['lower']),
+                            'bounds_upper': list(
+                                reg.bounds_upper) if reg is not None else list(domain_bounds['upper']),
+                        }
+                        for ml, reg, idx, n in leaf_mean_losses
+                    ],
+                    'spawned_children': _spawned_children_diag,
+                }
+                metrics['spawning_diagnostics'].append(diag)
+
+            elif spawning_method == 'accept_split_by_norm':
+                # Iterate all leaves, split each, accept if wavelet norm above threshold
+                norm_diag_leaves = []
+                for leaf_region, leaf_idx in leaf_nodes:
+                    if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
+                        break
+
+                    parent_region = leaf_region
+                    parent_idx = leaf_idx
+                    parent_depth = 0 if parent_region is None else parent_region.depth
+                    leaf_str = f"Expert {leaf_idx+1}" if leaf_idx >= 0 else "Base Model"
+
+                    children = region_detector.spawn_children_for_node(
+                        parent_region=parent_region if parent_region is not None else
+                                     RegionDescriptor(
+                                         bounds_lower=list(domain_bounds['lower']),
+                                         bounds_upper=list(domain_bounds['upper']),
+                                         wavelet_norm=0.0,
+                                         spawn_epoch=0,
+                                         depth=0,
+                                         parent_idx=-1
+                                     ),
+                        X=X_eval,
+                        y=y_eval,
+                        loss_components=loss_components,
+                        verbose=True
+                    )
+
+                    if not children:
+                        norm_diag_leaves.append({
+                            'leaf_idx': leaf_idx,
+                            'children': [],
+                            'accepted': False,
+                            'reason': 'no_split',
+                        })
+                        continue
+
+                    above = any(c.wavelet_norm >= wavelet_threshold for c, _ in children)
+                    child_diags = [
+                        {
+                            'node_id': c.node_id,
+                            'wavelet_norm': c.wavelet_norm,
+                            'n_samples': c.n_samples,
+                            'bounds_lower': c.bounds_lower,
+                            'bounds_upper': c.bounds_upper,
+                            'is_leaf': c.is_leaf,
+                        }
+                        for c, _ in children
+                    ]
+                    norm_diag_leaves.append({
+                        'leaf_idx': leaf_idx,
+                        'children': child_diags,
+                        'accepted': above,
+                        'reason': 'above_threshold' if above else 'below_threshold',
+                    })
+
+                    if not above:
+                        print(f"    [Spawning] {leaf_str}: children below wavelet threshold "
+                              f"({wavelet_threshold}), skipping")
+                        continue
+
+                    child_depth = parent_depth + 1
+                    for child_node, _ in children:
+                        if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
+                            break
+                        child_region = RegionDescriptor(
+                            bounds_lower=child_node.bounds_lower,
+                            bounds_upper=child_node.bounds_upper,
+                            wavelet_norm=child_node.wavelet_norm,
+                            spawn_epoch=epoch,
+                            depth=child_depth,
+                            parent_idx=parent_idx
+                        )
+                        if is_copy_spawn:
+                            expert_idx = model.spawn_expert(child_region, copy_from_idx=parent_idx)
+                        else:
+                            expert_idx = model.spawn_expert(child_region)
+                        if expert_idx >= 0:
+                            experts_spawned_this_step += 1
+                            if 'expert_spawns' not in metrics:
+                                metrics['expert_spawns'] = []
+                            metrics['expert_spawns'].append({
+                                'epoch': epoch,
+                                'expert_idx': expert_idx,
+                                'region': child_region.to_dict(),
+                                'depth': child_depth,
+                                'parent_idx': parent_idx,
+                                **(({'num_experts': model.num_experts} if hasattr(model, 'num_experts') else {}))
+                            })
+
+                metrics['spawning_diagnostics'].append({
+                    'epoch': epoch,
+                    'method': 'accept_split_by_norm',
+                    'wavelet_threshold': wavelet_threshold,
+                    'evaluated_leaves': norm_diag_leaves,
+                })
+
+            elif spawning_method == 'full_tree_by_norm':
+                # One-shot: fit full tree, prune bottom-up, spawn all accepted
+                print(f"  [FullTree] Fitting full tree (max_depth={region_detector.max_depth}, "
+                      f"min_samples_leaf={region_detector.min_samples_leaf})...")
+                accepted_nodes = region_detector.fit_full_tree_and_prune(
                     X=X_eval,
                     y=y_eval,
                     loss_components=loss_components,
-                    verbose=True
+                    wavelet_threshold=wavelet_threshold,
+                    verbose=True,
                 )
 
-                if not children:
-                    print(f"      [Spawning] Could not split {candidate_str} "
-                          f"(too few samples?), trying next leaf...")
-                    continue
+                # Determine which nodes to spawn based on model type
+                tree = region_detector.rf.estimators_[0].tree_
+                children_left = tree.children_left
 
-                child_depth = parent_depth + 1
-                for child_node, _ in children:
+                if isinstance(model, AToELeaves):
+                    # Only leaf nodes of the pruned tree
+                    accepted_ids = {n.node_id for n, _ in accepted_nodes}
+                    nodes_to_spawn = [
+                        (node, parent_id) for node, parent_id in accepted_nodes
+                        if children_left[node.node_id] == -1
+                        or children_left[node.node_id] not in accepted_ids
+                    ]
+                else:
+                    # AToE and ANT: all accepted nodes
+                    nodes_to_spawn = accepted_nodes
+
+                # Pre-compute tree depth for each node and parent map
+                from collections import deque as _deque
+                _parent_map = {}
+                _node_tree_depth = {0: 0}
+                _bfs = _deque([0])
+                while _bfs:
+                    nid = _bfs.popleft()
+                    l, r = children_left[nid], tree.children_right[nid]
+                    for child in (l, r):
+                        if child != -1:
+                            _parent_map[child] = nid
+                            _node_tree_depth[child] = _node_tree_depth[nid] + 1
+                            _bfs.append(child)
+
+                node_to_expert = {}
+
+                for node, parent_tree_id in nodes_to_spawn:
+                    parent_expert_idx = node_to_expert.get(parent_tree_id, -1)
+                    depth = _node_tree_depth.get(node.node_id, 1)
+
                     child_region = RegionDescriptor(
-                        bounds_lower=child_node.bounds_lower,
-                        bounds_upper=child_node.bounds_upper,
-                        wavelet_norm=child_node.wavelet_norm,
+                        bounds_lower=node.bounds_lower,
+                        bounds_upper=node.bounds_upper,
+                        wavelet_norm=node.wavelet_norm,
                         spawn_epoch=epoch,
-                        depth=child_depth,
-                        parent_idx=parent_idx
+                        depth=depth,
+                        parent_idx=parent_expert_idx
                     )
 
                     if is_copy_spawn:
-                        expert_idx = model.spawn_expert(child_region, copy_from_idx=parent_idx)
+                        expert_idx = model.spawn_expert(child_region, copy_from_idx=parent_expert_idx)
                     else:
                         expert_idx = model.spawn_expert(child_region)
                     if expert_idx >= 0:
+                        node_to_expert[node.node_id] = expert_idx
                         experts_spawned_this_step += 1
-
                         if 'expert_spawns' not in metrics:
                             metrics['expert_spawns'] = []
-                        spawn_record = {
+                        metrics['expert_spawns'].append({
                             'epoch': epoch,
                             'expert_idx': expert_idx,
                             'region': child_region.to_dict(),
-                            'depth': child_depth,
-                            'parent_idx': parent_idx
-                        }
-                        if hasattr(model, 'num_experts'):
-                            spawn_record['num_experts'] = model.num_experts
-                        metrics['expert_spawns'].append(spawn_record)
+                            'depth': depth,
+                            'parent_idx': parent_expert_idx,
+                            **(({'num_experts': model.num_experts} if hasattr(model, 'num_experts') else {}))
+                        })
 
-                if experts_spawned_this_step > 0:
-                    print(f"      [Spawning] Spawned {experts_spawned_this_step} children from {candidate_str}")
-                break
+                # Save diagnostics for all tree nodes
+                accepted_ids_diag = {n.node_id for n, _ in accepted_nodes}
+                spawned_ids_diag = {n.node_id for n, _ in nodes_to_spawn}
+                all_tree_nodes = region_detector.compute_wavelet_norms()
+                tree_diag_nodes = []
+                for nd in all_tree_nodes:
+                    if nd.node_id == 0:
+                        continue
+                    tree_diag_nodes.append({
+                        'node_id': nd.node_id,
+                        'wavelet_norm': nd.wavelet_norm,
+                        'n_samples': nd.n_samples,
+                        'is_leaf': nd.is_leaf,
+                        'bounds_lower': nd.bounds_lower,
+                        'bounds_upper': nd.bounds_upper,
+                        'accepted': nd.node_id in accepted_ids_diag,
+                        'spawned_as_expert': nd.node_id in spawned_ids_diag,
+                        'tree_depth': _node_tree_depth.get(nd.node_id, -1),
+                    })
+                metrics['spawning_diagnostics'].append({
+                    'epoch': epoch,
+                    'method': 'full_tree_by_norm',
+                    'wavelet_threshold': wavelet_threshold,
+                    'total_tree_nodes': tree.node_count,
+                    'accepted_count': len(accepted_ids_diag),
+                    'spawned_count': len(spawned_ids_diag),
+                    'nodes': tree_diag_nodes,
+                })
 
-            # ---------------------------------------------------------------
-            # OLD METHOD (wavelet-norm threshold on all leaves):
-            #
-            # for parent_region, parent_idx in parent_regions_to_process:
-            #     if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
-            #         break
-            #     children = region_detector.spawn_children_for_node(...)
-            #     if wavelet_threshold is not None:
-            #         children_above_threshold = [
-            #             (c, s) for c, s in children
-            #             if c.wavelet_norm >= wavelet_threshold
-            #         ]
-            #         if len(children_above_threshold) > 0:
-            #             children_to_spawn = children
-            #         else:
-            #             children_to_spawn = None
-            #     else:
-            #         children_to_spawn = children
-            #     if not children_to_spawn:
-            #         ... rejected_regions ...
-            #         continue
-            #     for child_node, _ in children_to_spawn:
-            #         model.spawn_expert(child_region)
-            # ---------------------------------------------------------------
+                spawning_complete = True
+                print(f"  [FullTree] Spawning complete. No further spawning steps.")
 
             if experts_spawned_this_step > 0:
                 print(f"\n  [Spawning] Spawned {experts_spawned_this_step} experts in this step")
@@ -1174,6 +1390,8 @@ def train(
         metrics['adaptive_pinn'] = {
             'num_experts': model.num_experts,
             'max_experts': max_experts,
+            'spawning_method': spawning_method,
+            'wavelet_threshold': wavelet_threshold,
             'regions': [r.to_dict() for r in model.regions]
         }
 

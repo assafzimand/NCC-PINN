@@ -250,21 +250,12 @@ class RegionDetector:
                 if parent_id is not None:
                     parent_prediction = tree.value[parent_id, :, 0].copy()  # Shape (d,)
                 
-                # OLD METHOD: wavelet norm computation (no longer used for spawn decisions).
-                # Spawning now uses mean-loss leaf selection in the trainer instead.
-                #
-                # wavelet_norm = 0.0
-                # if parent_prediction is not None and len(sample_indices) > 0:
-                #     diff = prediction - parent_prediction
-                #     l2_norm_squared = float(np.sum(diff ** 2))
-                #     # Full version with loss weighting:
-                #     # total_loss(ω) = w_res·mean(res[ω]) + w_ic·mean(ic[ω]) + w_bc·mean(bc[ω])
-                #     # wavelet_norm = l2_norm_squared * total_loss(ω) * n_samples
-                #     # Simplified version (loss weighting removed):
-                #     # wavelet_norm = l2_norm_squared * n_samples
-
                 wavelet_norm = 0.0
                 sum_residuals = 0.0
+                if parent_prediction is not None and len(sample_indices) > 0:
+                    diff = prediction - parent_prediction
+                    l2_norm_squared = float(np.sum(diff ** 2))
+                    wavelet_norm = l2_norm_squared * n_samples
 
                 all_nodes.append(TreeNodeInfo(
                     node_id=node_id,
@@ -515,6 +506,157 @@ class RegionDetector:
                           f"wavelet={child_node.wavelet_norm:.6f}, samples={child_node.n_samples}")
 
         return children
+
+    def fit_full_tree_and_prune(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        loss_components: Optional[Dict] = None,
+        wavelet_threshold: float = 0.0,
+        verbose: bool = True,
+    ) -> List[Tuple[TreeNodeInfo, int]]:
+        """
+        Fit a full decision tree on the entire domain and prune via
+        bottom-up sibling-pair wavelet norm thresholding.
+
+        Algorithm:
+        1. Fit a single tree with configured max_depth and min_samples_leaf
+        2. Compute wavelet norms for all nodes
+        3. Bottom-up pruning: for each sibling pair starting from deepest,
+           if either sibling has wavelet_norm >= threshold OR either is
+           already accepted, accept both and mark all ancestors.
+           Otherwise prune both.
+        4. Return accepted non-root nodes in BFS order.
+
+        Args:
+            X: (N, n_dims) coordinates
+            y: (N,) or (N, output_dim) predictions
+            loss_components: per-sample losses (passed to fit)
+            wavelet_threshold: minimum wavelet norm to accept a sibling pair
+            verbose: print diagnostics
+
+        Returns:
+            List of (TreeNodeInfo, parent_tree_node_id) in BFS order.
+            parent_tree_node_id is the tree node id of the nearest
+            accepted ancestor, or -1 for children of root.
+        """
+        from collections import deque
+
+        old_n_estimators = self.n_estimators
+        self.n_estimators = 1
+        try:
+            self.fit(X=X, y=y, loss_components=loss_components)
+        finally:
+            self.n_estimators = old_n_estimators
+
+        tree = self.rf.estimators_[0].tree_
+        all_nodes = self.compute_wavelet_norms()
+
+        if not all_nodes:
+            if verbose:
+                print("  [FullTree] No nodes in tree")
+            return []
+
+        node_lookup = {node.node_id: node for node in all_nodes}
+
+        # Build parent->children mapping and compute depth of each node
+        children_left = tree.children_left
+        children_right = tree.children_right
+        node_depth = {}
+        parent_map = {}
+        queue = deque([(0, 0)])
+        max_depth_seen = 0
+        while queue:
+            nid, depth = queue.popleft()
+            node_depth[nid] = depth
+            max_depth_seen = max(max_depth_seen, depth)
+            l, r = children_left[nid], children_right[nid]
+            if l != -1:
+                parent_map[l] = nid
+                queue.append((l, depth + 1))
+            if r != -1:
+                parent_map[r] = nid
+                queue.append((r, depth + 1))
+
+        # Group sibling pairs by depth
+        depth_to_sibling_pairs = {}
+        for nid in range(tree.node_count):
+            l, r = children_left[nid], children_right[nid]
+            if l != -1 and r != -1:
+                child_depth = node_depth.get(l, 0)
+                if child_depth not in depth_to_sibling_pairs:
+                    depth_to_sibling_pairs[child_depth] = []
+                depth_to_sibling_pairs[child_depth].append((l, r))
+
+        accepted = set()
+
+        # Bottom-up: deepest first
+        for depth in range(max_depth_seen, 0, -1):
+            pairs = depth_to_sibling_pairs.get(depth, [])
+            for left_id, right_id in pairs:
+                left_accepted = left_id in accepted
+                right_accepted = right_id in accepted
+
+                if left_accepted or right_accepted:
+                    accept_pair = True
+                else:
+                    left_wn = node_lookup[left_id].wavelet_norm if left_id in node_lookup else 0.0
+                    right_wn = node_lookup[right_id].wavelet_norm if right_id in node_lookup else 0.0
+                    accept_pair = (left_wn >= wavelet_threshold
+                                   or right_wn >= wavelet_threshold)
+
+                if accept_pair:
+                    for nid in (left_id, right_id):
+                        accepted.add(nid)
+                        # Mark all ancestors
+                        cur = nid
+                        while cur in parent_map:
+                            cur = parent_map[cur]
+                            if cur in accepted:
+                                break
+                            accepted.add(cur)
+
+        # Root itself is not an expert (it is the base model)
+        accepted.discard(0)
+
+        if verbose:
+            print(f"\n  [FullTree] Tree has {tree.node_count} nodes, "
+                  f"max depth {max_depth_seen}")
+            print(f"  [FullTree] Accepted {len(accepted)} nodes "
+                  f"(threshold={wavelet_threshold})")
+
+        # Build result in BFS order with parent relationships
+        result = []
+        bfs = deque([(0, -1)])  # (node_id, nearest_accepted_ancestor)
+        while bfs:
+            nid, nearest_ancestor = bfs.popleft()
+            if nid != 0 and nid in accepted and nid in node_lookup:
+                result.append((node_lookup[nid], nearest_ancestor))
+                if verbose:
+                    node = node_lookup[nid]
+                    anc_str = "Base" if nearest_ancestor == -1 else f"Node{nearest_ancestor}"
+                    is_leaf_str = "leaf" if node.is_leaf else "internal"
+                    print(f"    [FullTree] Node {nid} ({is_leaf_str}): "
+                          f"ACCEPT (parent={anc_str}, "
+                          f"wavelet={node.wavelet_norm:.6f}, "
+                          f"samples={node.n_samples})")
+                next_ancestor = nid
+            else:
+                next_ancestor = nearest_ancestor
+
+            l, r = children_left[nid], children_right[nid]
+            if l != -1:
+                bfs.append((l, next_ancestor))
+            if r != -1:
+                bfs.append((r, next_ancestor))
+
+        if verbose:
+            n_leaves = sum(1 for nid in accepted
+                          if children_left[nid] == -1
+                          or nid not in accepted)
+            print(f"  [FullTree] Result: {len(result)} accepted nodes")
+
+        return result
 
     def _compute_outside_fraction(
         self, 
