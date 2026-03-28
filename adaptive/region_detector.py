@@ -514,7 +514,7 @@ class RegionDetector:
         loss_components: Optional[Dict] = None,
         wavelet_threshold: float = 0.0,
         verbose: bool = True,
-    ) -> List[Tuple[TreeNodeInfo, int]]:
+    ) -> Tuple[List[Tuple[TreeNodeInfo, int]], Dict]:
         """
         Fit a full decision tree on the entire domain and prune via
         bottom-up sibling-pair wavelet norm thresholding.
@@ -536,9 +536,11 @@ class RegionDetector:
             verbose: print diagnostics
 
         Returns:
-            List of (TreeNodeInfo, parent_tree_node_id) in BFS order.
-            parent_tree_node_id is the tree node id of the nearest
-            accepted ancestor, or -1 for children of root.
+            Tuple of:
+            - List of (TreeNodeInfo, parent_tree_node_id) in BFS order.
+              parent_tree_node_id is the tree node id of the nearest
+              accepted ancestor, or -1 for children of root.
+            - Dict of per-depth pruning statistics.
         """
         from collections import deque
 
@@ -555,7 +557,7 @@ class RegionDetector:
         if not all_nodes:
             if verbose:
                 print("  [FullTree] No nodes in tree")
-            return []
+            return [], {}
 
         node_lookup = {node.node_id: node for node in all_nodes}
 
@@ -589,32 +591,58 @@ class RegionDetector:
                 depth_to_sibling_pairs[child_depth].append((l, r))
 
         accepted = set()
+        depth_stats = {}
 
         # Bottom-up: deepest first
         for depth in range(max_depth_seen, 0, -1):
             pairs = depth_to_sibling_pairs.get(depth, [])
+            n_by_threshold = 0
+            n_by_child = 0
+            n_rejected = 0
+            norms_at_depth = []
+
             for left_id, right_id in pairs:
                 left_accepted = left_id in accepted
                 right_accepted = right_id in accepted
 
+                left_wn = (node_lookup[left_id].wavelet_norm
+                           if left_id in node_lookup else 0.0)
+                right_wn = (node_lookup[right_id].wavelet_norm
+                            if right_id in node_lookup else 0.0)
+                norms_at_depth.extend([left_wn, right_wn])
+
                 if left_accepted or right_accepted:
                     accept_pair = True
+                    n_by_child += 1
+                elif (left_wn >= wavelet_threshold
+                      or right_wn >= wavelet_threshold):
+                    accept_pair = True
+                    n_by_threshold += 1
                 else:
-                    left_wn = node_lookup[left_id].wavelet_norm if left_id in node_lookup else 0.0
-                    right_wn = node_lookup[right_id].wavelet_norm if right_id in node_lookup else 0.0
-                    accept_pair = (left_wn >= wavelet_threshold
-                                   or right_wn >= wavelet_threshold)
+                    accept_pair = False
+                    n_rejected += 1
 
                 if accept_pair:
                     for nid in (left_id, right_id):
                         accepted.add(nid)
-                        # Mark all ancestors
                         cur = nid
                         while cur in parent_map:
                             cur = parent_map[cur]
                             if cur in accepted:
                                 break
                             accepted.add(cur)
+
+            if pairs:
+                depth_stats[depth] = {
+                    'n_pairs': len(pairs),
+                    'accepted_by_threshold': n_by_threshold,
+                    'accepted_by_child': n_by_child,
+                    'rejected': n_rejected,
+                    'norm_min': float(min(norms_at_depth)),
+                    'norm_max': float(max(norms_at_depth)),
+                    'norm_median': float(
+                        np.median(norms_at_depth)),
+                }
 
         # Root itself is not an expert (it is the base model)
         accepted.discard(0)
@@ -624,6 +652,19 @@ class RegionDetector:
                   f"max depth {max_depth_seen}")
             print(f"  [FullTree] Accepted {len(accepted)} nodes "
                   f"(threshold={wavelet_threshold})")
+            print(f"  [FullTree] Per-depth pruning stats:")
+            for d in sorted(depth_stats.keys()):
+                s = depth_stats[d]
+                print(
+                    f"    Depth {d:2d}: "
+                    f"{s['n_pairs']:3d} pairs | "
+                    f"{s['accepted_by_threshold']:2d} by threshold | "
+                    f"{s['accepted_by_child']:2d} by child | "
+                    f"{s['rejected']:3d} rejected | "
+                    f"norms [{s['norm_min']:.2f}, "
+                    f"{s['norm_median']:.2f}, "
+                    f"{s['norm_max']:.2f}]"
+                )
 
         # Build result in BFS order with parent relationships
         result = []
@@ -656,7 +697,7 @@ class RegionDetector:
                           or nid not in accepted)
             print(f"  [FullTree] Result: {len(result)} accepted nodes")
 
-        return result
+        return result, depth_stats
 
     def _compute_outside_fraction(
         self, 

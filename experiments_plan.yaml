@@ -43,7 +43,7 @@ base_config:
     output_dim: 2  # Complex-valued: h = [u, v]
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 1.5707963267948966]
-    wavelet_threshold: 10
+    wavelet_threshold: 5
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -54,7 +54,7 @@ base_config:
     output_dim: 1  # Real-valued: h is scalar
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 6.283185307179586]  # 2π
-    wavelet_threshold: 10
+    wavelet_threshold: 5
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -66,7 +66,7 @@ base_config:
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     nu: 0.003141592653589793  # Viscosity coefficient (effective viscosity = nu/pi = 1/1000, "hard" benchmark)
-    wavelet_threshold: 10
+    wavelet_threshold: 5
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -78,7 +78,7 @@ base_config:
     spatial_domain: [[0.0, 1.0], [0.0, 1.0]]
     temporal_domain: [0.0, 2.0]
     nu: 0.1  # Viscosity coefficient
-    wavelet_threshold: 10
+    wavelet_threshold: 5
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -90,7 +90,7 @@ base_config:
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     D: 0.001
-    wavelet_threshold: 10
+    wavelet_threshold: 5
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -102,7 +102,7 @@ base_config:
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     mu: 0.000484
-    wavelet_threshold: 10
+    wavelet_threshold: 5
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -115,7 +115,7 @@ base_config:
     temporal_domain: [0.0, 1.0]
     D: 1.0
     kappa: 25.0
-    wavelet_threshold: 10
+    wavelet_threshold: 5
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -128,7 +128,7 @@ base_config:
     temporal_domain: [0.0, 1.0]
     beta: 1.0
     epsilon: 0.01
-    wavelet_threshold: 10
+    wavelet_threshold: 5
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -142,7 +142,7 @@ base_config:
     alpha: 6.25           # 100/16
     beta: 0.390625        # 100/16^2
     gamma: 0.00152587890625  # 100/16^4
-    wavelet_threshold: 10
+    wavelet_threshold: 5
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -169,8 +169,8 @@ base_config:
     sigma_fraction: 0.2                # For soft: sigma = fraction * region_size (per-dimension)
     base_weight: 1.0                   # Uniform weight for base model (soft blending only)
     base_everywhere: true              # If false, u_0 has indicator = domain \ experts
-    tree_max_depth: 15                 # Max depth of decision tree
-    tree_min_samples_leaf: 20          # Min samples in tree leaf node
+    tree_max_depth: 20                 # Max depth of decision tree
+    tree_min_samples_leaf: 10          # Min samples in tree leaf node
     enable_timing: false               # Enable epoch timing profiling (can slow down training)
     inner_metrics_calculation: false   # Disable NCC/probes during training (complex with experts)
     enable_gradient_diagnostics: false # Enable detailed gradient flow diagnostics (verbose)
@@ -195,10 +195,6 @@ experiments:
   - name: "FullTree_burgers1d"
     problem: burgers1d
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
-
-  - name: "FullTree_burgers2d"
-    problem: burgers2d
-    base_architecture: [3, 30, 30, 30, 30, 30, 1]
 
   - name: "FullTree_allen_cahn"
     problem: allen_cahn
