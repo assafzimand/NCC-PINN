@@ -101,17 +101,13 @@ def _build_expert_tree_from_pretrained(
     with torch.no_grad():
         u_pred_base = model.base_model(eval_inputs)  # Base only (pretrained, frozen)
 
-    # loss_components no longer needed: wavelet norm is
-    # l2_norm_squared * n_samples (loss weighting was removed).
-    loss_components = None
-
     # Convert to numpy for RF
     X_eval = eval_inputs.cpu().numpy()
     y_eval = u_pred_base.cpu().numpy()
 
     # Fit tree once on entire domain (using eval_data)
     print(f"\nFitting single decision tree (max_depth={tree_max_depth}, min_samples_leaf={tree_min_samples_leaf})...")
-    region_detector.fit(X=X_eval, y=y_eval, loss_components=loss_components)
+    region_detector.fit(X=X_eval, y=y_eval)
 
     # Traverse tree (BFS) to get candidate regions
     print(f"\nTraversing tree (BFS) to extract regions...")
@@ -808,25 +804,27 @@ def train(
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
 
-            # Compute per-sample loss components for mean-loss leaf selection
-            problem = cfg.get('problem', 'schrodinger')
-            loss_weights = cfg[problem].get('loss_weights', {})
-            loss_components = compute_loss_components(
-                model=model,
-                x=eval_data['x'],
-                t=eval_data['t'],
-                target=eval_data.get('h_gt', eval_data.get('u_gt')),
-                masks=eval_data['mask'],
-                loss_fn=loss_fn,
-                weights={
-                    'residual': loss_weights.get('residual', 1.0),
-                    'ic': loss_weights.get('ic', 1.0),
-                    'bc': loss_weights.get('bc', 1.0),
-                }
-            )
-
             X_eval = eval_inputs.cpu().numpy()
             y_eval = u_pred.cpu().numpy()
+
+            # Only compute per-sample losses for by_mean_loss (expensive)
+            loss_components = None
+            if spawning_method == 'by_mean_loss':
+                problem = cfg.get('problem', 'schrodinger')
+                loss_weights = cfg[problem].get('loss_weights', {})
+                loss_components = compute_loss_components(
+                    model=model,
+                    x=eval_data['x'],
+                    t=eval_data['t'],
+                    target=eval_data.get('h_gt', eval_data.get('u_gt')),
+                    masks=eval_data['mask'],
+                    loss_fn=loss_fn,
+                    weights={
+                        'residual': loss_weights.get('residual', 1.0),
+                        'ic': loss_weights.get('ic', 1.0),
+                        'bc': loss_weights.get('bc', 1.0),
+                    }
+                )
 
             import numpy as np
             is_copy_spawn = isinstance(model, AToELeaves)
@@ -1004,9 +1002,14 @@ def train(
                         verbose=True
                     )
 
+                    parent_bounds_lower = list(parent_region.bounds_lower) if parent_region is not None else list(domain_bounds['lower'])
+                    parent_bounds_upper = list(parent_region.bounds_upper) if parent_region is not None else list(domain_bounds['upper'])
+
                     if not children:
                         norm_diag_leaves.append({
                             'leaf_idx': leaf_idx,
+                            'parent_bounds_lower': parent_bounds_lower,
+                            'parent_bounds_upper': parent_bounds_upper,
                             'children': [],
                             'accepted': False,
                             'reason': 'no_split',
@@ -1027,6 +1030,8 @@ def train(
                     ]
                     norm_diag_leaves.append({
                         'leaf_idx': leaf_idx,
+                        'parent_bounds_lower': parent_bounds_lower,
+                        'parent_bounds_upper': parent_bounds_upper,
                         'children': child_diags,
                         'accepted': above,
                         'reason': 'above_threshold' if above else 'below_threshold',
@@ -1159,6 +1164,7 @@ def train(
                         continue
                     tree_diag_nodes.append({
                         'node_id': nd.node_id,
+                        'parent_node_id': _parent_map.get(nd.node_id, -1),
                         'wavelet_norm': nd.wavelet_norm,
                         'n_samples': nd.n_samples,
                         'is_leaf': bool(nd.is_leaf),
@@ -1408,7 +1414,9 @@ def train(
             regions=model.regions,
             output_path=adaptive_plots_dir / "expert_regions.json",
             rejected_regions=rejected_regions,
-            leaf_loss_history=leaf_loss_history
+            leaf_loss_history=leaf_loss_history,
+            spawning_method=spawning_method,
+            spawning_diagnostics=metrics.get('spawning_diagnostics', []),
         )
         
         metrics['adaptive_pinn'] = {

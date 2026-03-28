@@ -547,7 +547,9 @@ def save_regions_metadata(
     regions: List[RegionDescriptor],
     output_path: Union[str, Path],
     rejected_regions: Optional[List[RegionDescriptor]] = None,
-    leaf_loss_history: Optional[list] = None
+    leaf_loss_history: Optional[list] = None,
+    spawning_method: Optional[str] = None,
+    spawning_diagnostics: Optional[list] = None,
 ) -> None:
     """
     Save expert regions metadata to JSON file.
@@ -558,6 +560,8 @@ def save_regions_metadata(
         rejected_regions: List of RegionDescriptor for rejected candidates
         leaf_loss_history: Per-spawn-epoch list of dicts with leaf mean losses.
             Each entry: {'epoch': int, 'leaves': [{'leaf_idx', 'mean_loss', ...}]}
+        spawning_method: Name of spawning method used (by_mean_loss, accept_split_by_norm, full_tree_by_norm)
+        spawning_diagnostics: Full spawning diagnostics list from metrics
     """
     import json
 
@@ -582,14 +586,34 @@ def save_regions_metadata(
         'regions': all_regions
     }
 
+    if spawning_method:
+        data['spawning_method'] = spawning_method
+
     if leaf_loss_history:
         data['leaf_loss_history'] = leaf_loss_history
 
+    if spawning_diagnostics:
+        data['spawning_diagnostics'] = spawning_diagnostics
+
+    class _SafeEncoder(json.JSONEncoder):
+        def default(self, obj):
+            import numpy as _np
+            if isinstance(obj, (_np.bool_,)):
+                return bool(obj)
+            if isinstance(obj, (_np.integer,)):
+                return int(obj)
+            if isinstance(obj, (_np.floating,)):
+                return float(obj)
+            if isinstance(obj, _np.ndarray):
+                return obj.tolist()
+            return super().default(obj)
+
     with open(output_path, 'w') as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f, indent=2, cls=_SafeEncoder)
 
     n_rejected = len(rejected_regions) if rejected_regions else 0
-    print(f"  Expert regions metadata saved to {output_path} ({len(regions)} spawned, {n_rejected} rejected)")
+    print(f"  Expert regions metadata saved to {output_path} "
+          f"({len(regions)} spawned, {n_rejected} rejected)")
 
 
 def load_regions_metadata(
