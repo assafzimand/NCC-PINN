@@ -13,11 +13,14 @@ from scipy.interpolate import griddata
 
 def _detect_problem_from_label(label: str) -> str:
     """Infer the problem name from a run directory label."""
-    known = ['schrodinger', 'burgers2d', 'burgers1d', 'wave1d']
+    known = [
+        'schrodinger', 'burgers2d', 'burgers1d', 'wave1d',
+        'allen_cahn', 'kdv', 'ks', 'fisher_kpp', 'conv_diff',
+    ]
     for p in known:
         if p in label.lower():
             return p
-    return 'schrodinger'
+    return 'unknown'
 
 
 def load_ground_truth(output_dir, problem=None):

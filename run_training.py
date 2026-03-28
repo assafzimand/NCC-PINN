@@ -8,6 +8,7 @@ from pathlib import Path
 from utils.io import load_config, make_run_dir
 from utils.dataset_gen import generate_and_save_datasets
 from models.fc_model import FCNet
+from models.network_factory import create_network
 from trainer.trainer import train
 
 
@@ -82,7 +83,9 @@ def main():
         print(f"    Max experts: {adaptive_cfg.get('max_experts', 5)}")
         print(f"    Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
     else:
-        model = FCNet(architecture, activation, config)
+        expert_type = adaptive_cfg.get('expert_type', 'mlp')
+        model = create_network(architecture, activation, config,
+                               is_base=True, expert_type=expert_type)
         print(f"  Model created: {len(model.get_layer_names())} layers")
     print(f"  Device: {device}")
 
