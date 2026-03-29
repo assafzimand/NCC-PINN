@@ -37,10 +37,10 @@ $$h_t + h\, h_x - \frac{\nu}{\pi}\, h_{xx} = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Optimizer | Rel. L₂ | Reference |
-|--------|------|-----------|---------|-----------|
-| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | **2.68 × 10⁻⁷** | [Hag et al., 2025 (Nature Comput. Sci.)](https://www.nature.com/articles/s44387-026-00084-4) |
-| Vanilla PINN | 2019 | L-BFGS | 6.7 × 10⁻⁴ | [Raissi et al., J. Comput. Phys. 378](https://doi.org/10.1016/j.jcp.2018.10.045) |
+| Method | Year | Optimizer | Rel. L₂ | Model Capacity | Reference |
+|--------|------|-----------|---------|----------------|-----------|
+| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | **2.68 × 10⁻⁷** | **2,011 params** (from paper Table 2) | [Hag et al., 2025 (npj AI)](https://www.nature.com/articles/s44387-026-00084-4) |
+| Vanilla PINN | 2019 | L-BFGS | 6.7 × 10⁻⁴ | **3,021 params** — MLP `[2,20×8,1]` (from [code](https://github.com/maziarraissi/PINNs)) | [Raissi et al., J. Comput. Phys. 378](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
 > Note: results above are for the $\nu/\pi = 1/1000$ variant matching our config. For the easier $\nu/\pi = 1/100$ variant, SOTA is vRBA: 8.25 × 10⁻⁹ and PirateNet (Adam): 8.20 × 10⁻⁵.
 
@@ -62,11 +62,11 @@ $$i\, h_t + \tfrac{1}{2}\, h_{xx} + |h|^2 h = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Rel. L₂ | Reference |
-|--------|------|---------|-----------|
-| Vanilla PINN | 2019 | ~1.97 × 10⁻² | [Raissi et al., J. Comput. Phys. 378](https://doi.org/10.1016/j.jcp.2018.10.045) |
-| PirateNet + FF + WF + CS | 2024 | ~10⁻⁴ range | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
-| PINNacle benchmark (multi-method) | 2024 | varies | [Hao et al., NeurIPS 2024](https://arxiv.org/abs/2306.08827) |
+| Method | Year | Rel. L₂ | Model Capacity | Reference |
+|--------|------|---------|----------------|-----------|
+| Vanilla PINN | 2019 | ~1.97 × 10⁻² | **30,802 params** — MLP `[2,100×4,2]` (from [code](https://github.com/maziarraissi/PINNs)) | [Raissi et al., J. Comput. Phys. 378](https://doi.org/10.1016/j.jcp.2018.10.045) |
+| PirateNet + FF + WF + CS | 2024 | ~10⁻⁴ range | *~500K+ params (est.)* — ModifiedMlp with 256 neurons/layer + FF + adaptive residual connections. Exact param count not stated; jaxpi default is 4×256. | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| PINNacle benchmark (multi-method) | 2024 | varies | Varies by method; standardized per-problem configs | [Hao et al., NeurIPS 2024](https://arxiv.org/abs/2306.08827) |
 
 ---
 
@@ -86,10 +86,10 @@ $$h_{tt} - h_{xx} = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Rel. L₂ | Reference |
-|--------|------|---------|-----------|
-| PINNacle benchmark (multi-method) | 2024 | varies by method | [Hao et al., NeurIPS 2024](https://arxiv.org/abs/2306.08827) |
-| Vanilla PINN | 2019 | ~10⁻³ range | [Raissi et al., J. Comput. Phys. 378](https://doi.org/10.1016/j.jcp.2018.10.045) |
+| Method | Year | Rel. L₂ | Model Capacity | Reference |
+|--------|------|---------|----------------|-----------|
+| PINNacle benchmark (multi-method) | 2024 | varies by method | Varies by method | [Hao et al., NeurIPS 2024](https://arxiv.org/abs/2306.08827) |
+| Vanilla PINN | 2019 | ~10⁻³ range | *~3K params (est.)* — same MLP style as Burgers (`[2,20×8,1]`). Raissi uses this architecture across 1D problems. | [Raissi et al., J. Comput. Phys. 378](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
 > Note: The 1D wave equation with smooth IC is relatively easy for PINNs. It is included primarily as a validation/baseline problem rather than a challenging benchmark.
 
@@ -111,10 +111,10 @@ $$h_t + h(h_{x_0} + h_{x_1}) - \nu(h_{x_0 x_0} + h_{x_1 x_1}) = 0$$
 
 **PINN Benchmark Results:**
 
-| Method | Year | Notes | Reference |
-|--------|------|-------|-----------|
-| WF-PINNs | 2025 | Weak-form PINNs for Burgers-type models including 2D | [Alghamdi et al., Sci. Reports, 2025](https://www.nature.com/articles/s41598-025-24427-4) |
-| PINNacle benchmark | 2024 | Includes 2D Burgers among 20+ PDEs | [Hao et al., NeurIPS 2024](https://arxiv.org/abs/2306.08827) |
+| Method | Year | Notes | Model Capacity | Reference |
+|--------|------|-------|----------------|-----------|
+| WF-PINNs | 2025 | Weak-form PINNs for Burgers-type models including 2D | *Not reported.* Paper states "simple standard neural network architecture"; dual-network for inverse problems. | [Alghamdi et al., Sci. Reports, 2025](https://www.nature.com/articles/s41598-025-24427-4) |
+| PINNacle benchmark | 2024 | Includes 2D Burgers among 20+ PDEs | Varies by method | [Hao et al., NeurIPS 2024](https://arxiv.org/abs/2306.08827) |
 
 > Note: 2D Burgers with $\nu = 0.1$ is moderately diffusive. Few papers report comparable benchmark numbers for this exact configuration.
 
@@ -135,15 +135,15 @@ $$h_t - D\, h_{xx} - 5(h - h^3) = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Optimizer | Rel. L₂ | Reference |
-|--------|------|-----------|---------|-----------|
-| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | **1.88 × 10⁻⁶** | [Hag et al., 2025 (Nature Comput. Sci.)](https://www.nature.com/articles/s44387-026-00084-4) |
-| RAD + FF | 2024 | SSBroyden | 2.20 × 10⁻⁶ | [Wu et al., JMLR 24, 2023](https://jmlr.org/papers/v24/22-1258.html) |
-| PirateNet + FF + WF + CS + LRA | 2025 | SOAP | 3.48 × 10⁻⁶ | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
-| PirateNet + FF + WF + CS + NTK | 2024 | Adam | 2.24 × 10⁻⁵ | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
-| BRDR + FF + mMLP | 2025 | Adam | 1.45 × 10⁻⁵ | [Kim & Perdikaris, 2025](https://www.nature.com/articles/s44387-026-00084-4#ref-CR16) |
-| DASA-PINN + FF | 2023 | Adam | 8.57 × 10⁻⁵ | [Anagnostopoulos et al., 2023](https://arxiv.org/abs/2302.08894) |
-| Vanilla PINN | 2017 | Adam | 4.98 × 10⁻¹ | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
+| Method | Year | Optimizer | Rel. L₂ | Model Capacity | Reference |
+|--------|------|-----------|---------|----------------|-----------|
+| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | **1.88 × 10⁻⁶** | **2,011 params** (from paper Table 2) | [Hag et al., 2025 (npj AI)](https://www.nature.com/articles/s44387-026-00084-4) |
+| RAD + FF | 2024 | SSBroyden | 2.20 × 10⁻⁶ | *~2K params (est.)* — vRBA Table 4 compares RAD under same SSBroyden setup, implying same network size | [Wu et al., JMLR 24, 2023](https://jmlr.org/papers/v24/22-1258.html) |
+| PirateNet + FF + WF + CS + LRA | 2025 | SOAP | 3.48 × 10⁻⁶ | *~500K+ params (est.)* — same PirateNet architecture (same research group) | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
+| PirateNet + FF + WF + CS + NTK | 2024 | Adam | 2.24 × 10⁻⁵ | *~500K+ params (est.)* — paper: "256 neurons in each hidden layer", ModifiedMlp + FF | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| BRDR + FF + mMLP | 2025 | Adam | 1.45 × 10⁻⁵ | *~20K–50K params (est.)* — uses mMLP (modified MLP) + FF; architecture details not explicitly reported | [Kim & Perdikaris, 2025](https://www.nature.com/articles/s44387-026-00084-4#ref-CR16) |
+| DASA-PINN + FF | 2023 | Adam | 8.57 × 10⁻⁵ | *~200K-270K params (est.)* — uses standard MLP + FF + attention weighting; code at [github](https://github.com/soanagno/rba-pinns), exact arch not reported in paper | [Anagnostopoulos et al., 2023](https://arxiv.org/abs/2307.00379) |
+| Vanilla PINN | 2017 | Adam | 4.98 × 10⁻¹ | *~3K params (est.)* — Raissi-style MLP | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
 ---
 
@@ -162,12 +162,12 @@ $$h_t + \eta\, h\, h_x + \mu^2\, h_{xxx} = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Optimizer | Rel. L₂ | Reference |
-|--------|------|-----------|---------|-----------|
-| vRBA ($\Phi = e^r$) + FF | 2025 | SSBroyden | **2.17 × 10⁻⁶** | [Hag et al., 2025 (Nature Comput. Sci.)](https://www.nature.com/articles/s44387-026-00084-4) |
-| RAD + FF | 2024 | SSBroyden | 6.00 × 10⁻⁶ | [Wu et al., JMLR 24, 2023](https://jmlr.org/papers/v24/22-1258.html) |
-| PirateNet + FF + WF + CS + LRA | 2025 | SOAP | 3.40 × 10⁻⁴ | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
-| PirateNet + FF + WF + CS + LRA | 2024 | Adam | 4.27 × 10⁻⁴ | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| Method | Year | Optimizer | Rel. L₂ | Model Capacity | Reference |
+|--------|------|-----------|---------|----------------|-----------|
+| vRBA ($\Phi = e^r$) + FF | 2025 | SSBroyden | **2.17 × 10⁻⁶** | **2,011 params** (from paper Table 2) | [Hag et al., 2025 (npj AI)](https://www.nature.com/articles/s44387-026-00084-4) |
+| RAD + FF | 2024 | SSBroyden | 6.00 × 10⁻⁶ | *~2K params (est.)* — same SSBroyden setup as vRBA comparison | [Wu et al., JMLR 24, 2023](https://jmlr.org/papers/v24/22-1258.html) |
+| PirateNet + FF + WF + CS + LRA | 2025 | SOAP | 3.40 × 10⁻⁴ | *~500K+ params (est.)* — PirateNet ModifiedMlp + FF | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
+| PirateNet + FF + WF + CS + LRA | 2024 | Adam | 4.27 × 10⁻⁴ | *~500K+ params (est.)* — PirateNet ModifiedMlp + FF | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
 
 ---
 
@@ -186,11 +186,11 @@ $$h_t - D\, h_{xx} - \kappa\, h(1 - h) = 0$$
 
 **PINN Benchmark Results:**
 
-| Method | Year | Notes | Reference |
-|--------|------|-------|-----------|
-| PINN (various architectures) | 2025 | ~10⁻⁶ errors reported | [Oruç, Accscience, 2025](https://www.accscience.com/journal/NSCE/articles/online_first/6222) |
-| Residual-weighted PINN | 2024 | Specialized for steep traveling waves | [Hale & Sheraton, 2024](https://arxiv.org/abs/2402.08313) |
-| PIKAN (KAN-based PINN) | 2026 | Includes Fisher-type reaction-diffusion | [Rigas et al., 2026](https://arxiv.org/abs/2602.15068) |
+| Method | Year | Notes | Model Capacity | Reference |
+|--------|------|-------|----------------|-----------|
+| PINN (various architectures) | 2025 | ~10⁻⁶ errors reported | *Not reported.* Paper tests multiple architectures without specifying param counts. | [Oruç, Accscience, 2025](https://www.accscience.com/journal/NSCE/articles/online_first/6222) |
+| Residual-weighted PINN | 2024 | Specialized for steep traveling waves | *Not reported.* | [Hale & Sheraton, 2024](https://arxiv.org/abs/2402.08313) |
+| PIKAN (KAN-based PINN) | 2026 | Includes Fisher-type reaction-diffusion | *KAN-based* — uses Kolmogorov-Arnold Networks instead of MLP; param count depends on B-spline grid size. Rigas et al. report KANs can match MLPs with 8.5× fewer params. | [Rigas et al., 2026](https://arxiv.org/abs/2602.15068) |
 
 > Note: Fisher-KPP is less standardized as a PINN benchmark. The large $\kappa = 25$ makes the wavefront very steep, providing a good test case for adaptive methods.
 
@@ -212,10 +212,10 @@ $$h_t + \beta\, h_x - \varepsilon\, h_{xx} = 0$$
 
 **PINN Benchmark Results:**
 
-| Method | Year | Notes | Reference |
-|--------|------|-------|-----------|
-| PINNacle benchmark (multi-method) | 2024 | Includes convection-diffusion problems | [Hao et al., NeurIPS 2024](https://arxiv.org/abs/2306.08827) |
-| Specialized loss functionals | 2024 | 17% L² error reduction vs vanilla for convection-dominated problems | [Brüning et al., J. Numer. Math., 2024](https://link.springer.com/article/10.1007/s42967-024-00433-7) |
+| Method | Year | Notes | Model Capacity | Reference |
+|--------|------|-------|----------------|-----------|
+| PINNacle benchmark (multi-method) | 2024 | Includes convection-diffusion problems | Varies by method; standard baseline: 4 hidden layers × 128-256 neurons | [Hao et al., NeurIPS 2024](https://arxiv.org/abs/2306.08827) |
+| Specialized loss functionals | 2024 | 17% L² error reduction vs vanilla for convection-dominated problems | *Not reported.* Paper focuses on loss functional design, not architecture. | [Brüning et al., J. Numer. Math., 2024](https://link.springer.com/article/10.1007/s42967-024-00433-7) |
 
 > Note: Convection-diffusion with $Pe = 100$ is convection-dominated, producing sharp layers. This makes it a natural test case for adaptive expert methods even though it is linear.
 
@@ -236,13 +236,34 @@ $$h_t + \alpha\, h\, h_x + \beta\, h_{xx} + \gamma\, h_{xxxx} = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Optimizer | Rel. L₂ | Reference |
-|--------|------|-----------|---------|-----------|
-| PirateNet + FF + WF + CS + NTK | 2024 | Adam | **1.42 × 10⁻⁴** | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
-| PirateNet + FF + WF + CS + LRA | 2025 | SOAP | ~10⁻⁴ range | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
-| BRDR + FF + mMLP | 2025 | Adam | tested | [Kim & Perdikaris, 2025](https://www.nature.com/articles/s44387-026-00084-4#ref-CR16) |
+| Method | Year | Optimizer | Rel. L₂ | Model Capacity | Reference |
+|--------|------|-----------|---------|----------------|-----------|
+| PirateNet + FF + WF + CS + NTK | 2024 | Adam | **1.42 × 10⁻⁴** | *~500K+ params (est.)* — PirateNet ModifiedMlp + FF | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| PirateNet + FF + WF + CS + LRA | 2025 | SOAP | ~10⁻⁴ range | *~500K+ params (est.)* — same PirateNet architecture | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
+| BRDR + FF + mMLP | 2025 | Adam | tested | *~20K-50K params (est.)* — mMLP with FF, smaller than PirateNet; exact size not reported | [Kim & Perdikaris, 2025](https://www.nature.com/articles/s44387-026-00084-4#ref-CR16) |
 
 > Note: KS is one of the most challenging 1D PINN benchmarks due to its chaotic dynamics and 4th-order spatial derivative. The PirateNet benchmark above uses the same domain and parameter configuration as our implementation.
+
+---
+
+## Model Capacity Summary
+
+A cross-method summary of network sizes. **Bold** = exact numbers from paper/code. *Italic* = assessment/estimate.
+
+| Method | Architecture | Params | Source |
+|--------|-------------|--------|--------|
+| **Raissi (Burgers 1D)** | MLP `[2, 20×8, 1]`, Tanh | **3,021** | Code: [github](https://github.com/maziarraissi/PINNs) |
+| **Raissi (Schrödinger)** | MLP `[2, 100×4, 2]`, Tanh | **30,802** | Code: [github](https://github.com/maziarraissi/PINNs) |
+| **vRBA (Adam)** | MLP + FF | **21,318** | Paper Table 2 |
+| **vRBA (SSBroyden)** | MLP + FF | **2,011** | Paper Table 2 |
+| *PirateNet* | ModifiedMlp × 256 + FF + adaptive residual connections | *~500K+* | Paper: "256 neurons in each hidden layer"; ModifiedMlp adds U/V encoding branches. Exact count not stated; jaxpi default is 4×256. |
+| *RAD (SSBroyden)* | MLP + FF (same setup as vRBA) | *~2K* | Compared in vRBA Table 4 under identical SSBroyden config |
+| *SOAP* | PirateNet (same group) | *~500K+* | Same architecture as PirateNet paper |
+| *BRDR (mMLP)* | Modified MLP + FF | *~20K–50K* | Uses mMLP variant; no explicit count in paper |
+| *DASA-PINN / RBA* | Standard MLP + FF + attention weights | *~200K–270K* | Estimated from standard 4–5 hidden layers × 256; code at [github](https://github.com/soanagno/rba-pinns) |
+| *PINNacle* | Varies per method/PDE | *Varies* | Benchmark tool; default baseline ~4 layers × 128–256 |
+
+> **How to read**: "MLP + FF" = multi-layer perceptron with random Fourier feature embedding. PirateNet adds adaptive residual connections on top of the modified MLP (mMLP) architecture. SSBroyden is a quasi-Newton optimizer that converges with far fewer parameters than Adam.
 
 ---
 
@@ -252,10 +273,11 @@ $$h_t + \alpha\, h\, h_x + \beta\, h_{xx} + \gamma\, h_{xxxx} = 0$$
 |---------|---------------|
 | **Raissi et al., 2019** | M. Raissi, P. Perdikaris, G.E. Karniadakis. "Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations." *J. Comput. Phys.* 378, 2019. |
 | **PirateNet (Wang et al., 2024)** | S. Wang, B. Li, Y. Chen, P. Perdikaris. "PirateNets: Physics-informed Deep Learning with Residual Adaptive Networks." *JMLR* 25, 2024. |
-| **RAD (Wu et al., 2023)** | C. Wu, M. Zhu, Q. Tan, Y. Kartha, L. Lu. "A comprehensive study of non-adaptive and residual-based adaptive sampling for physics-informed neural networks." *JMLR* 24, 2023. |
-| **vRBA (Hag et al., 2025)** | J. Hag et al. "Variance-reduced residual-based adaptive sampling for physics-informed neural networks." *Nature Comput. Sci.*, 2025. |
+| **RAD (Wu et al., 2023)** | C. Wu, M. Zhu, Q. Tan, Y. Kartha, L. Lu. "A comprehensive study of non-adaptive and residual-based adaptive sampling for physics-informed neural networks." *CMAME* 403, 2023. |
+| **vRBA (Hag et al., 2025)** | J. Hag et al. "A variational framework for residual-based adaptivity in neural PDE solvers and operator learning." *npj Artificial Intelligence*, 2025. |
 | **PINNacle (Hao et al., 2024)** | Z. Hao et al. "PINNacle: A Comprehensive Benchmark of Physics-Informed Neural Networks for Solving PDEs." *NeurIPS Datasets & Benchmarks*, 2024. |
 | **SOAP (Huang et al., 2025)** | Z. Huang, T. Zhang. "SOAP optimizer for PINNs." arXiv:2412.09009, 2025. |
+| **DASA-PINN / RBA (Anagnostopoulos et al., 2024)** | S. Anagnostopoulos, J.D. Toscano, N. Stergiopulos, G.E. Karniadakis. "Residual-based attention in physics-informed neural networks." *CMAME* 421, 2024. |
 
 ---
 

@@ -8,7 +8,7 @@ base_config:
   activation: tanh
   epochs: 2001
   batch_size: 512
-  lr: 0.0001  
+  lr: 0.001  
 
   # Optimizer settings
   optimizer_switch_at: 0.75
@@ -164,7 +164,7 @@ base_config:
     AToE_threshold_capacity: null        # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null     # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 70        # neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
-    expert_type: mlp                     # 'mlp' or 'resnet'
+    expert_type: resnet                     # 'mlp' or 'resnet'
     freeze_mode: none                  # "none" | "previous" | "base_only"
     blending_mode: soft                # "hard" | "soft"
     sigma_fraction: 0.2                # For soft: sigma = fraction * region_size (per-dimension)
@@ -187,23 +187,21 @@ base_config:
 experiments:
   - name: "FullTree_schrodinger"
     problem: schrodinger
-    base_architecture: [2, 100, 100, 100, 100, 100, 2]
+    base_architecture: [2, 128, 128, 128, 128, 128, 2]
 
   - name: "FullTree_burgers1d"
     problem: burgers1d
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 128, 128, 128, 128, 128, 1]
 
   - name: "FullTree_allen_cahn"
     problem: allen_cahn
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 128, 128, 128, 128, 128, 1]
 
   - name: "FullTree_kdv"
     problem: kdv
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 128, 128, 128, 128, 128, 1]
 
   - name: "FullTree_ks"
     problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 128, 128, 128, 128, 128, 1]
     optimizer_switch_at: 1.0
-    lr: 0.001
-
