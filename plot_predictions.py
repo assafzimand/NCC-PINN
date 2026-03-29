@@ -141,6 +141,12 @@ def _find_checkpoint(ts_dir, cfg):
     problem_dir = ts_dir.parent
     ckpt_dir = problem_dir / 'checkpoints' / arch_str
 
+    spawn_epoch = cfg.get('adaptive_pinn', {}).get('spawn_every_epochs')
+    if spawn_epoch is not None:
+        spawn_ckpt = ckpt_dir / f'checkpoint_epoch_{spawn_epoch}.pt'
+        if spawn_ckpt.exists():
+            return spawn_ckpt
+
     for name in ['final_model.pt', 'best_model.pt']:
         candidate = ckpt_dir / name
         if candidate.exists():
@@ -173,7 +179,13 @@ def _grid_1d(x, t, values, n_x=200, n_t=200):
     X, T = np.meshgrid(x_lin, t_lin, indexing='ij')
     Z = griddata(
         np.column_stack([x, t]), values, (X, T),
-        method='cubic')
+        method='linear')
+    mask = np.isnan(Z)
+    if mask.any():
+        Z_nn = griddata(
+            np.column_stack([x, t]), values, (X, T),
+            method='nearest')
+        Z[mask] = Z_nn[mask]
     return x_lin, t_lin, Z
 
 
@@ -191,8 +203,8 @@ def _plot_triplet_1d(x, t, h_pred, h_gt, pred_label,
     _, _, Z_gt = _grid_1d(x, t, mag_gt)
     Z_err = np.abs(Z_pred - Z_gt)
 
-    vmin = min(np.nanmin(Z_pred), np.nanmin(Z_gt))
-    vmax = max(np.nanmax(Z_pred), np.nanmax(Z_gt))
+    vmin = np.nanmin([np.nanmin(Z_pred), np.nanmin(Z_gt)])
+    vmax = np.nanmax([np.nanmax(Z_pred), np.nanmax(Z_gt)])
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     fig.suptitle(title, fontsize=14, fontweight='bold')
@@ -229,8 +241,8 @@ def _plot_triplet_2d(x, t, h_pred, h_gt, pred_label,
     mag_pred = _to_magnitude(h_pred)
     mag_gt = _to_magnitude(h_gt)
 
-    vmin = min(mag_pred.min(), mag_gt.min())
-    vmax = max(mag_pred.max(), mag_gt.max())
+    vmin = np.nanmin([np.nanmin(mag_pred), np.nanmin(mag_gt)])
+    vmax = np.nanmax([np.nanmax(mag_pred), np.nanmax(mag_gt)])
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     fig.suptitle(title, fontsize=14, fontweight='bold')
@@ -513,7 +525,10 @@ def process_run(label, ts_dir):
                 n_exp, regions, exp_title, exp_path)
         print(f"    Saved {exp_path.name} ({n_exp} experts)")
     else:
-        print("    No experts — skipping base & expert plots")
+        base_path = ts_dir / "base_pred_vs_gt.png"
+        plot_fn(x_arg, t_arg, h_composed, h_gt_np,
+                'Base (backbone only)', tag, base_path)
+        print(f"    Saved {base_path.name} (no experts, base = composed)")
 
     return composed_path, base_path
 
