@@ -1,0 +1,58 @@
+{
+  "allen_cahn": {
+    "domain_bounds": {
+      "lower": [
+        -1.0,
+        0.0
+      ],
+      "upper": [
+        1.0,
+        1.0
+      ]
+    },
+    "tree_params": {
+      "max_depth": 15,
+      "min_samples_leaf": 50,
+      "wavelet_threshold": 2
+    },
+    "summary": {
+      "total_nodes": 158,
+      "accepted_nodes": 42,
+      "pruned_tree_leaves": 22
+    },
+    "accepted_nodes_bfs": [
+      {
+        "node_id": 1,
+        "parent_tree_node_id": -1,
+        "bounds_lower": [
+          -1.0,
+          0.0
+        ],
+        "bounds_upper": [
+          0.533105731010437,
+          0.9998791813850403
+        ],
+        "wavelet_norm": 143.13708972283985,
+        "n_samples": 3888,
+        "tree_depth": 1,
+        "is_leaf_in_pruned_tree": false
+      },
+      {
+        "node_id": 124,
+        "parent_tree_node_id": -1,
+        "bounds_lower": [
+          0.533105731010437,
+          0.0
+        ],
+        "bounds_upper": [
+          1.0,
+          0.9998791813850403
+        ],
+        "wavelet_norm": 478.9302967662661,
+        "n_samples": 1162,
+        "tree_depth": 1,
+        "is_leaf_in_pruned_tree": false
+      },
+      {
+        "node_id": 2,
+        "parent_tree_node_id": 

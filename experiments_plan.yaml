@@ -68,7 +68,7 @@ base_config:
     output_dim: 1
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 6.283185307179586]  # 2pi
-    wavelet_threshold: 5
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -142,7 +142,7 @@ base_config:
     temporal_domain: [0.0, 1.0]
     beta: 1.0                        # Convection coefficient
     epsilon: 0.01                    # Diffusion coefficient (Peclet = 100)
-    wavelet_threshold: 5
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -156,7 +156,7 @@ base_config:
     alpha: 6.25                      # 100/16
     beta: 0.390625                   # 100/16^2
     gamma: 0.00152587890625          # 100/16^4
-    wavelet_threshold: 5
+    wavelet_threshold: 10
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -192,12 +192,13 @@ base_config:
     use_decomposed_derivatives: true
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
-    spawning_method: full_tree_by_norm         # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm"
+    spawning_method: full_tree_by_norm         # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
+    perfect_trees_path: perfect_tree_examples/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
-    # ── 3-Phase training config (only used when spawning_method is full_tree_by_norm) ──
-    # Phase 1: Train base model alone to get ok-ish predictions for tree fitting.
-    # Phase 2: Fit decision tree, prune by wavelet norms, spawn experts (automatic).
-    # Phase 3: Train full composed model (base + experts) with top-level config.
+    # ── 3-Phase training config ──
+    # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
+    # use_perfect_trees: SKIPS Phase 1, loads pre-computed tree from perfect_trees_path, spawns experts, then Phase 3.
+    # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
       epochs: 2000                             # Phase 1: how many epochs to train base model before tree fitting
