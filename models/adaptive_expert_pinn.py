@@ -371,7 +371,20 @@ class AdaptiveExpertPINN(nn.Module):
         the batched structure used for parallel computation.
         """
         self.batched_models.sync_from_models(self.base_model, self.experts)
-    
+
+    def reinitialize_base(self):
+        """Reinitialize base model weights (same architecture, fresh random init).
+
+        Preserves expert regions and their weights but gives the base model
+        a clean start for Phase 3 training in the 3-phase full_tree_by_norm pipeline.
+        """
+        for module in self.base_model.modules():
+            if hasattr(module, 'reset_parameters'):
+                module.reset_parameters()
+        n_params = sum(p.numel() for p in self.base_model.parameters())
+        print(f"  Base model reinitialized ({n_params} params)")
+        self.batched_models.sync_from_models(self.base_model, self.experts)
+
     def spawn_expert(self, region: RegionDescriptor, copy_from_idx: Optional[int] = None) -> int:
         """
         Spawn a new expert PINN for the given region.
