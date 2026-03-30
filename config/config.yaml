@@ -25,6 +25,15 @@ adaptive_pinn:
   use_decomposed_derivatives: true
   relevant_samples_to_activate_expert: 0
   spawning_method: by_mean_loss
+  # ── 3-Phase training (only used when spawning_method: full_tree_by_norm) ──
+  # Phase 1: Train base model alone for initial_train.epochs.
+  # Phase 2: Fit tree, prune by wavelet norms, spawn experts (automatic).
+  # Phase 3: Train full composed model using top-level config (epochs, lr, etc.).
+  # If initial_train is absent, single-phase behavior is preserved.
+  # initial_train:
+  #   epochs: 2000                   # Phase 1 epoch count
+  #   lr: 0.001                      # Phase 1 learning rate
+  reinitialize_base_after_spawn: false  # If true, reinitialize base model weights after spawning (before Phase 3)
 allen_cahn:
   D: 0.001
   loss_weights:
@@ -142,18 +151,32 @@ ks:
   temporal_domain:
   - 0.0
   - 1.0
-lbfgs_history_size: 20
-lbfgs_line_search: strong_wolfe
-lbfgs_lr: 1.0
-lbfgs_max_iter: 20
-lbfgs_tolerance_change: 0.0
-lbfgs_tolerance_grad: 0.0
-lr: 0.0001
+# ── Primary optimizer ──
+optimizer: adam                       # Primary optimizer: 'adam' | 'soap'. Selects which first-order optimizer to use.
+lr: 0.001                            # Base (peak) learning rate. Literature standard is 1e-3 for PINNs (PirateNet, SOAP, vRBA).
+
+# ── LR scheduling (applies to Adam and SOAP) ──
+lr_schedule: exponential             # LR schedule: 'none' (constant lr), 'exponential' (step decay -- matches PirateNet/SOAP), 'cosine' (cosine annealing to 0).
+lr_warmup_steps: 0                   # Number of optimizer steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
+lr_decay_rate: 0.9                   # For exponential schedule: multiply lr by this factor every lr_decay_steps. 0.9 matches PirateNet/SOAP.
+lr_decay_steps: 2000                 # For exponential schedule: how often (in optimizer steps) to apply decay. 2000 matches PirateNet/SOAP.
+
+# ── SOAP-specific hyperparameters (only used when optimizer: soap) ──
+soap_betas: [0.95, 0.95]            # SOAP momentum parameters (beta1, beta2). Recommended default from paper.
+soap_precondition_frequency: 10      # How often (in steps) SOAP updates its Shampoo-style preconditioner. Lower = more accurate but slower.
+
+# ── L-BFGS second stage (only applies when optimizer: adam; ignored when optimizer: soap) ──
+optimizer_switch_at: 0.75            # Fraction of total epochs after which Adam switches to L-BFGS. Set to 1.0 to disable L-BFGS.
+lbfgs_lr: 1.0                       # L-BFGS learning rate (line search makes this effectively a max step size).
+lbfgs_max_iter: 20                   # Max L-BFGS iterations per step.
+lbfgs_history_size: 20               # L-BFGS history size (number of past updates stored).
+lbfgs_line_search: strong_wolfe      # L-BFGS line search algorithm.
+lbfgs_tolerance_grad: 0.0            # Gradient tolerance for L-BFGS convergence. 0 = disabled.
+lbfgs_tolerance_change: 0.0          # Loss change tolerance for L-BFGS convergence. 0 = disabled.
 model: AToE
 n_bin_visualize_ncc: 100
 n_freq_grid: 128
 name: AToE_allen_cahn_smoke
-optimizer_switch_at: 0.8
 print_every: 1
 problem: allen_cahn
 resume_from: null

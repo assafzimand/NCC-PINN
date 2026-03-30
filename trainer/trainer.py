@@ -262,6 +262,76 @@ def _create_lbfgs_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimize
     )
 
 
+def _create_soap_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer:
+    """Create SOAP optimizer (quasi-second-order, Shampoo-preconditioned Adam).
+
+    Only includes trainable parameters (requires_grad=True).
+    """
+    from optimizers.soap import SOAP
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    return SOAP(
+        trainable_params,
+        lr=cfg['lr'],
+        betas=tuple(cfg.get('soap_betas', [0.95, 0.95])),
+        eps=cfg.get('adam_eps', 1e-8),
+        precondition_frequency=cfg.get('soap_precondition_frequency', 10),
+        weight_decay=cfg.get('soap_weight_decay', 0.0),
+    )
+
+
+def _create_primary_optimizer(model: nn.Module, cfg: Dict) -> Tuple[torch.optim.Optimizer, str]:
+    """Create the primary (first-order) optimizer based on config.
+
+    Returns (optimizer, name_string).
+    """
+    opt_name = cfg.get('optimizer', 'adam').lower()
+    if opt_name == 'soap':
+        return _create_soap_optimizer(model, cfg), 'SOAP'
+    else:
+        return _create_adam_optimizer(model, cfg), 'Adam'
+
+
+def _create_lr_scheduler(optimizer, cfg, total_steps):
+    """Create an LR scheduler composed of optional warmup + decay.
+
+    Uses standard PyTorch schedulers:
+    - LinearLR for warmup (ramps from ~0 to base lr)
+    - StepLR for exponential decay (multiplies lr by decay_rate every decay_steps)
+    - CosineAnnealingLR for cosine schedule
+
+    Returns None if no scheduling is configured.
+    """
+    from torch.optim.lr_scheduler import LinearLR, StepLR, CosineAnnealingLR, SequentialLR
+
+    schedule = cfg.get('lr_schedule', 'exponential')
+    warmup_steps = cfg.get('lr_warmup_steps', 0)
+
+    if schedule == 'none' and warmup_steps <= 0:
+        return None
+
+    schedulers = []
+    milestones = []
+
+    if warmup_steps > 0:
+        schedulers.append(LinearLR(optimizer, start_factor=0.01, total_iters=warmup_steps))
+        milestones.append(warmup_steps)
+
+    if schedule == 'exponential':
+        decay_rate = cfg.get('lr_decay_rate', 0.9)
+        decay_steps = cfg.get('lr_decay_steps', 2000)
+        schedulers.append(StepLR(optimizer, step_size=decay_steps, gamma=decay_rate))
+    elif schedule == 'cosine':
+        remaining = max(total_steps - warmup_steps, 1)
+        schedulers.append(CosineAnnealingLR(optimizer, T_max=remaining))
+
+    if len(schedulers) == 0:
+        return None
+    elif len(schedulers) == 1:
+        return schedulers[0]
+    else:
+        return SequentialLR(optimizer, schedulers=schedulers, milestones=milestones)
+
+
 def train(
     model: nn.Module,
     loss_fn: Callable,
@@ -339,23 +409,67 @@ def train(
     eval_loader = _create_dataloader(eval_data, cfg['batch_size'],
                                      shuffle=False)
 
+    # ── 3-phase logic for full_tree_by_norm ──
+    adaptive_cfg_init = cfg.get('adaptive_pinn', {})
+    spawning_method_init = adaptive_cfg_init.get('spawning_method', 'by_mean_loss')
+    initial_train_cfg = adaptive_cfg_init.get('initial_train', None)
+    use_three_phase = (spawning_method_init == 'full_tree_by_norm' and initial_train_cfg is not None)
+    reinit_base_after_spawn = adaptive_cfg_init.get('reinitialize_base_after_spawn', False)
+
+    if use_three_phase:
+        phase1_cfg = dict(cfg)
+        for k, v in initial_train_cfg.items():
+            phase1_cfg[k] = v
+        phase1_epochs = initial_train_cfg.get('epochs', cfg['epochs'])
+        phase3_epochs = cfg['epochs']
+        active_cfg = phase1_cfg
+        epochs = phase1_epochs
+        current_phase = 1
+        print(f"\n  [3-Phase] Phase 1: initial training for {phase1_epochs} epochs")
+        print(f"  [3-Phase] Phase 3 will run for {phase3_epochs} epochs after spawning")
+        if reinit_base_after_spawn:
+            print(f"  [3-Phase] Base model will be reinitialized after spawning")
+    else:
+        active_cfg = cfg
+        epochs = cfg['epochs']
+        current_phase = 0  # single-phase (legacy)
+
     # Determine switch epoch and optimizer strategy
-    switch_at_fraction = cfg.get('optimizer_switch_at', 1.0)
-    epochs = cfg['epochs']
+    opt_type = active_cfg.get('optimizer', 'adam').lower()
+    switch_at_fraction = active_cfg.get('optimizer_switch_at', 1.0)
     switch_epoch = int(epochs * switch_at_fraction) + 1
 
-    # Setup initial optimizer
+    # Estimate total optimizer steps for LR scheduler
+    n_train_samples = train_data['x'].shape[0]
+    batches_per_epoch = max(1, (n_train_samples + cfg['batch_size'] - 1) // cfg['batch_size'])
+    total_steps_estimate = epochs * batches_per_epoch
+
+    # Setup initial optimizer + scheduler
     if switch_at_fraction == 0.0:
-        optimizer = _create_lbfgs_optimizer(model, cfg)
+        optimizer = _create_lbfgs_optimizer(model, active_cfg)
         current_optimizer_name = 'LBFGS'
+        lr_scheduler = None
         print(f"Using LBFGS optimizer (full-batch) for all epochs")
     else:
-        optimizer = _create_adam_optimizer(model, cfg)
-        current_optimizer_name = 'Adam'
-        if switch_at_fraction < 1.0:
-            print(f"Using Adam (mini-batch) until epoch {switch_epoch}, then LBFGS (full-batch)")
+        optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
+        lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
+        if current_optimizer_name == 'SOAP':
+            print(f"Using SOAP optimizer (mini-batch) for all epochs")
+            if switch_at_fraction < 1.0:
+                print(f"  Note: optimizer_switch_at is ignored when using SOAP (no L-BFGS switch)")
+            switch_at_fraction = 1.0
+            switch_epoch = epochs + 1
         else:
-            print(f"Using Adam optimizer (mini-batch) for all epochs")
+            if switch_at_fraction < 1.0:
+                print(f"Using Adam (mini-batch) until epoch {switch_epoch}, then LBFGS (full-batch)")
+            else:
+                print(f"Using Adam optimizer (mini-batch) for all epochs")
+        if lr_scheduler is not None:
+            sched_name = active_cfg.get('lr_schedule', 'exponential')
+            warmup = active_cfg.get('lr_warmup_steps', 0)
+            print(f"  LR schedule: {sched_name} (warmup={warmup} steps, ~{total_steps_estimate} total steps)")
+
+    step_count = 0  # global optimizer step counter for LR scheduler
 
     # Training setup
     print_every = cfg['print_every']
@@ -444,7 +558,8 @@ def train(
     leaf_loss_history = []
     
     # Training loop
-    print(f"\nTraining for {epochs} epochs...")
+    total_epochs = epochs  # may extend when transitioning to Phase 3
+    print(f"\nTraining for {total_epochs} epochs...")
     start_time = time.time()
     
     # Epoch timer for fine-grained performance profiling
@@ -453,7 +568,9 @@ def train(
     if enable_timing:
         model._timer = timer
 
-    for epoch in range(1, epochs + 1):
+    epoch = 0
+    while epoch < total_epochs:
+        epoch += 1
         timer.start_epoch(epoch, num_experts=model.num_experts if (is_adaptive and hasattr(model, 'num_experts')) else 0)
 
         # Train phase
@@ -489,6 +606,10 @@ def train(
                 timer.start('train.optim_step')
                 optimizer.step()
                 timer.stop('train.optim_step')
+
+                step_count += 1
+                if lr_scheduler is not None and current_optimizer_name != 'LBFGS':
+                    lr_scheduler.step()
 
                 train_loss += loss.item()
                 n_train_batches += 1
@@ -600,8 +721,8 @@ def train(
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                     
-                    optimizer = _create_adam_optimizer(model, cfg)
-                    current_optimizer_name = 'Adam'
+                    optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
+                    lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
                     
                     # Continue with Adam on first batch
                     optimizer.zero_grad()
@@ -616,15 +737,16 @@ def train(
 
         train_loss /= n_train_batches
         
-        # Check for optimizer switch
+        # Check for optimizer switch (Adam -> L-BFGS; does not apply for SOAP)
         if epoch == switch_epoch and switch_at_fraction < 1.0 and current_optimizer_name == 'Adam':
             print(f"\n{'='*60}")
             print(f"OPTIMIZER SWITCH: Adam -> LBFGS at epoch {epoch}")
             print(f"Switching to full-batch LBFGS for fine-tuning")
             print(f"{'='*60}\n")
             
-            optimizer = _create_lbfgs_optimizer(model, cfg)
+            optimizer = _create_lbfgs_optimizer(model, active_cfg)
             current_optimizer_name = 'LBFGS'
+            lr_scheduler = None  # L-BFGS uses its own line search
         
         # Store train loss every epoch
         metrics['train_loss_epochs'].append(epoch)
@@ -632,7 +754,7 @@ def train(
 
         # Compute evaluation metrics only every print_every epochs or last epoch
         # This speeds up training significantly for physics-informed losses
-        should_evaluate = (epoch % eval_every == 0 or epoch == 1 or epoch == epochs)
+        should_evaluate = (epoch % eval_every == 0 or epoch == 1 or epoch == total_epochs)
         
         # Initialize metrics for this epoch (will be updated if we evaluate)
         eval_loss = None
@@ -710,7 +832,7 @@ def train(
         if should_evaluate:
             elapsed = time.time() - start_time
             batch_mode = "mini" if current_optimizer_name == 'Adam' else "full"
-            print(f"Epoch [{epoch}/{epochs}] ({elapsed:.1f}s) [{current_optimizer_name}/{batch_mode}] | "
+            print(f"Epoch [{epoch}/{total_epochs}] ({elapsed:.1f}s) [{current_optimizer_name}/{batch_mode}] | "
                   f"Train Loss: {train_loss:.6f} | "
                   f"Eval Loss: {eval_loss:.6f} | "
                   f"Train Rel-L2: {train_rel_l2:.6f} | "
@@ -1199,10 +1321,31 @@ def train(
             if experts_spawned_this_step > 0:
                 print(f"\n  [Spawning] Spawned {experts_spawned_this_step} experts in this step")
 
-                if current_optimizer_name == 'Adam':
-                    optimizer = _create_adam_optimizer(model, cfg)
+                # ── 3-phase: reinitialize base + transition to Phase 3 ──
+                if use_three_phase and spawning_complete and current_phase == 1:
+                    if reinit_base_after_spawn:
+                        model.reinitialize_base()
+                    current_phase = 3
+                    active_cfg = cfg
+                    total_epochs = epoch + phase3_epochs  # extend loop
+                    # Recalculate optimizer strategy from top-level config
+                    opt_type = active_cfg.get('optimizer', 'adam').lower()
+                    switch_at_fraction = active_cfg.get('optimizer_switch_at', 1.0)
+                    switch_epoch = epoch + int(phase3_epochs * switch_at_fraction) + 1
+                    total_steps_p3 = phase3_epochs * batches_per_epoch
+                    print(f"\n  [3-Phase] Transitioning to Phase 3: {phase3_epochs} epochs of full model training")
+                    print(f"  [3-Phase] Total epochs now: {total_epochs} (Phase 1: {epoch}, Phase 3: {phase3_epochs})")
+                    print(f"  [3-Phase] Optimizer: {opt_type}, lr: {active_cfg.get('lr')}, schedule: {active_cfg.get('lr_schedule', 'exponential')}")
+
+                optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
+                if current_phase == 3:
+                    lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_p3)
                 else:
-                    optimizer = _create_lbfgs_optimizer(model, cfg)
+                    lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
+                if current_optimizer_name == 'SOAP':
+                    switch_at_fraction = 1.0
+                    switch_epoch = epoch + epochs + 1
+                step_count = 0
 
                 model.freeze_models()
 
@@ -1243,7 +1386,7 @@ def train(
 
     # Save final model
     final_checkpoint_path = checkpoint_dir / "final_model.pt"
-    _save_checkpoint(final_checkpoint_path, model, optimizer, current_optimizer_name, epochs,
+    _save_checkpoint(final_checkpoint_path, model, optimizer, current_optimizer_name, total_epochs,
                     train_loss, eval_loss, cfg, metrics)
 
     print(f"\nTraining completed in {time.time() - start_time:.1f}s")
