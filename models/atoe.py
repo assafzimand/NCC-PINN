@@ -363,12 +363,18 @@ class AToE(nn.Module):
         """
         self.batched_models.sync_from_models(self.base_model, self.experts)
 
-    def spawn_expert(self, region: RegionDescriptor) -> int:
+    def spawn_expert(self, region: RegionDescriptor,
+                     zero_init: bool = True) -> int:
         """
         Spawn a new expert PINN for the given region.
 
         Args:
             region: RegionDescriptor defining the expert's domain (includes depth)
+            zero_init: If True, zero-initialize the final layer so the expert
+                       initially contributes nothing (smooth integration during
+                       on-the-fly spawning). If False, keep PyTorch default
+                       random init (used when all experts are created at once
+                       before training, e.g. full_tree_by_norm / use_perfect_trees).
 
         Returns:
             Index of the new expert
@@ -382,17 +388,18 @@ class AToE(nn.Module):
             is_base=True, expert_type=self.expert_type
         )
         expert = expert.to(device)
-        if self.expert_type == 'resnet':
-            nn.init.zeros_(expert.output_proj.weight)
-            if expert.output_proj.bias is not None:
-                nn.init.zeros_(expert.output_proj.bias)
-        else:
-            layer_names = expert.get_layer_names()
-            if layer_names:
-                final_layer = expert.network[layer_names[-1]]
-                nn.init.zeros_(final_layer.weight)
-                if final_layer.bias is not None:
-                    nn.init.zeros_(final_layer.bias)
+        if zero_init:
+            if self.expert_type == 'resnet':
+                nn.init.zeros_(expert.output_proj.weight)
+                if expert.output_proj.bias is not None:
+                    nn.init.zeros_(expert.output_proj.bias)
+            else:
+                layer_names = expert.get_layer_names()
+                if layer_names:
+                    final_layer = expert.network[layer_names[-1]]
+                    nn.init.zeros_(final_layer.weight)
+                    if final_layer.bias is not None:
+                        nn.init.zeros_(final_layer.bias)
 
         self.experts.append(expert)
         self.regions.append(region)

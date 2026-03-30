@@ -255,10 +255,10 @@ def _create_lbfgs_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimize
         lr=cfg.get('lbfgs_lr', 1.0),
         max_iter=cfg.get('lbfgs_max_iter', 20),
         max_eval=None,  # Default: max_iter * 1.25
-        history_size=cfg.get('lbfgs_history_size', 100),
+        history_size=cfg.get('lbfgs_history_size', 20),
         line_search_fn=cfg.get('lbfgs_line_search', 'strong_wolfe'),
-        tolerance_grad=cfg.get('lbfgs_tolerance_grad', 1e-7),
-        tolerance_change=cfg.get('lbfgs_tolerance_change', 1e-9)
+        tolerance_grad=cfg.get('lbfgs_tolerance_grad', 0.0),
+        tolerance_change=cfg.get('lbfgs_tolerance_change', 0.0)
     )
 
 
@@ -590,6 +590,8 @@ def train(
               f"({pt_summary['pruned_tree_leaves']} leaves)")
 
         is_copy_spawn = isinstance(model, AToELeaves)
+        is_atoe_plain = isinstance(model, AToE) and not isinstance(model, AToELeaves)
+        atoe_zero_init = not reinit_base_after_spawn
         if isinstance(model, AToELeaves):
             nodes_to_spawn = [
                 n for n in pt_nodes
@@ -618,6 +620,9 @@ def train(
                 expert_idx = model.spawn_expert(
                     child_region,
                     copy_from_idx=parent_expert_idx)
+            elif is_atoe_plain:
+                expert_idx = model.spawn_expert(
+                    child_region, zero_init=atoe_zero_init)
             else:
                 expert_idx = model.spawn_expert(child_region)
             if expert_idx >= 0:
@@ -1381,6 +1386,8 @@ def train(
                             _bfs.append(child)
 
                 node_to_expert = {}
+                is_atoe_plain = isinstance(model, AToE) and not isinstance(model, AToELeaves)
+                atoe_zero_init = not reinit_base_after_spawn
 
                 for node, parent_tree_id in nodes_to_spawn:
                     parent_expert_idx = node_to_expert.get(parent_tree_id, -1)
@@ -1397,6 +1404,9 @@ def train(
 
                     if is_copy_spawn:
                         expert_idx = model.spawn_expert(child_region, copy_from_idx=parent_expert_idx)
+                    elif is_atoe_plain:
+                        expert_idx = model.spawn_expert(
+                            child_region, zero_init=atoe_zero_init)
                     else:
                         expert_idx = model.spawn_expert(child_region)
                     if expert_idx >= 0:
