@@ -25,10 +25,10 @@ adaptive_pinn:
   use_decomposed_derivatives: true
   relevant_samples_to_activate_expert: 0
   spawning_method: by_mean_loss
-  # ── 3-Phase training (only used when spawning_method: full_tree_by_norm) ──
-  # Phase 1: Train base model alone for initial_train.epochs.
-  # Phase 2: Fit tree, prune by wavelet norms, spawn experts (automatic).
-  # Phase 3: Train full composed model using top-level config (epochs, lr, etc.).
+  perfect_trees_path: perfect_tree_examples/perfect_trees.json  # Path to pre-computed perfect trees JSON (used when spawning_method: use_perfect_trees)
+  # ── 3-Phase training (only used when spawning_method: full_tree_by_norm or use_perfect_trees) ──
+  # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
+  # use_perfect_trees: skips Phase 1, loads tree from perfect_trees_path, spawns experts, then Phase 3.
   # If initial_train is absent, single-phase behavior is preserved.
   # initial_train:
   #   epochs: 2000                   # Phase 1 epoch count

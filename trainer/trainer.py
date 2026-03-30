@@ -409,14 +409,23 @@ def train(
     eval_loader = _create_dataloader(eval_data, cfg['batch_size'],
                                      shuffle=False)
 
-    # ── 3-phase logic for full_tree_by_norm ──
+    # ── 3-phase logic for full_tree_by_norm / use_perfect_trees ──
     adaptive_cfg_init = cfg.get('adaptive_pinn', {})
     spawning_method_init = adaptive_cfg_init.get('spawning_method', 'by_mean_loss')
     initial_train_cfg = adaptive_cfg_init.get('initial_train', None)
     use_three_phase = (spawning_method_init == 'full_tree_by_norm' and initial_train_cfg is not None)
+    use_perfect_trees = (spawning_method_init == 'use_perfect_trees')
     reinit_base_after_spawn = adaptive_cfg_init.get('reinitialize_base_after_spawn', False)
 
-    if use_three_phase:
+    if use_perfect_trees:
+        # Skip Phase 1: spawn from pre-computed tree, then Phase 3
+        phase3_epochs = cfg['epochs']
+        active_cfg = cfg
+        epochs = phase3_epochs
+        current_phase = 3
+        print(f"\n  [PerfectTree] Skipping Phase 1: loading pre-computed tree")
+        print(f"  [PerfectTree] Phase 3 will run for {phase3_epochs} epochs")
+    elif use_three_phase:
         phase1_cfg = dict(cfg)
         for k, v in initial_train_cfg.items():
             phase1_cfg[k] = v
@@ -523,7 +532,7 @@ def train(
         print(f"  Spawn every: {spawn_every} epochs")
         print(f"  Tree max depth: {tree_max_depth}")
         print(f"  Tree min samples leaf: {tree_min_samples_leaf}")
-        if spawning_method in ('accept_split_by_norm', 'full_tree_by_norm'):
+        if spawning_method in ('accept_split_by_norm', 'full_tree_by_norm', 'use_perfect_trees'):
             print(f"  Wavelet threshold: {wavelet_threshold}")
         print(f"  Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
         print(f"  Freeze mode: {adaptive_cfg.get('freeze_mode', 'none')}")
@@ -545,7 +554,7 @@ def train(
         tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
         region_detector = RegionDetector(
             n_estimators=1,
-            max_depth=tree_max_depth if spawning_method == 'full_tree_by_norm' else 1,
+            max_depth=tree_max_depth if spawning_method in ('full_tree_by_norm', 'use_perfect_trees') else 1,
             min_samples_leaf=tree_min_samples_leaf,
             domain_bounds=domain_bounds
         )
@@ -556,7 +565,131 @@ def train(
     
     rejected_regions = []
     leaf_loss_history = []
-    
+
+    # ── use_perfect_trees: spawn experts from JSON before training ──
+    if use_perfect_trees and is_adaptive:
+        import json as _json
+        perfect_trees_path = adaptive_cfg.get(
+            'perfect_trees_path',
+            'perfect_tree_examples/perfect_trees.json')
+        problem_name = cfg.get('problem', '')
+        print(f"\n  [PerfectTree] Loading tree from: {perfect_trees_path}")
+
+        with open(perfect_trees_path, 'r') as _f:
+            all_perfect_trees = _json.load(_f)
+
+        if problem_name not in all_perfect_trees:
+            raise ValueError(
+                f"Problem '{problem_name}' not found in "
+                f"{perfect_trees_path}. "
+                f"Available: {list(all_perfect_trees.keys())}")
+
+        pt_data = all_perfect_trees[problem_name]
+        pt_nodes = pt_data['accepted_nodes_bfs']
+        pt_summary = pt_data['summary']
+        print(f"  [PerfectTree] Tree has "
+              f"{pt_summary['accepted_nodes']} accepted nodes "
+              f"({pt_summary['pruned_tree_leaves']} leaves)")
+
+        is_copy_spawn = isinstance(model, AToELeaves)
+        if isinstance(model, AToELeaves):
+            nodes_to_spawn = [
+                n for n in pt_nodes
+                if n['is_leaf_in_pruned_tree']]
+        else:
+            nodes_to_spawn = pt_nodes
+
+        node_to_expert = {}
+        experts_spawned_pt = 0
+        for nd in nodes_to_spawn:
+            parent_tree_nid = nd['parent_tree_node_id']
+            parent_expert_idx = node_to_expert.get(
+                parent_tree_nid, -1)
+            depth = nd['tree_depth']
+
+            child_region = RegionDescriptor(
+                bounds_lower=nd['bounds_lower'],
+                bounds_upper=nd['bounds_upper'],
+                wavelet_norm=nd['wavelet_norm'],
+                spawn_epoch=0,
+                depth=depth,
+                parent_idx=parent_expert_idx,
+            )
+
+            if is_copy_spawn:
+                expert_idx = model.spawn_expert(
+                    child_region,
+                    copy_from_idx=parent_expert_idx)
+            else:
+                expert_idx = model.spawn_expert(child_region)
+            if expert_idx >= 0:
+                node_to_expert[nd['node_id']] = expert_idx
+                experts_spawned_pt += 1
+
+        print(f"  [PerfectTree] Spawned {experts_spawned_pt} "
+              f"experts from perfect tree")
+
+        if reinit_base_after_spawn:
+            model.reinitialize_base()
+
+        spawning_complete = True
+        model.freeze_models()
+
+        # Save metrics
+        if 'spawning_diagnostics' not in metrics:
+            metrics['spawning_diagnostics'] = []
+        metrics['spawning_diagnostics'].append({
+            'epoch': 0,
+            'method': 'use_perfect_trees',
+            'source_file': perfect_trees_path,
+            'accepted_count': len(nodes_to_spawn),
+            'spawned_count': experts_spawned_pt,
+            'nodes': pt_data.get('all_nodes', []),
+            'wavelet_threshold': pt_data['tree_params'].get(
+                'wavelet_threshold', 0),
+        })
+
+        # Plot initial expert regions
+        problem_type = (
+            '2d' if len(domain_bounds['lower']) == 2
+            else '3d')
+        leaf_info = model.get_leaf_info()
+        leaf_expert_indices = [
+            idx for _, idx in leaf_info if idx >= 0]
+        regions_to_plot = (
+            [model.regions[i] for i in leaf_expert_indices]
+            if isinstance(model, (AToELeaves, ANT))
+            else model.regions)
+        plot_expert_regions(
+            regions=regions_to_plot,
+            domain_bounds=domain_bounds,
+            output_path=(
+                adaptive_plots_dir
+                / "expert_regions_perfect_tree.png"),
+            problem_type=problem_type,
+            title=(
+                f"Perfect Tree Regions "
+                f"({len(regions_to_plot)} experts)"),
+            ground_truth=gt_grid,
+            grid_x=gt_x,
+            grid_t=gt_t,
+        )
+
+        # Recreate optimizer for Phase 3 (fresh state)
+        optimizer, current_optimizer_name = (
+            _create_primary_optimizer(model, active_cfg))
+        total_steps_p3 = phase3_epochs * batches_per_epoch
+        lr_scheduler = _create_lr_scheduler(
+            optimizer, active_cfg, total_steps_p3)
+        if current_optimizer_name == 'SOAP':
+            switch_at_fraction = 1.0
+            switch_epoch = epochs + 1
+        step_count = 0
+        print(f"  [PerfectTree] Phase 3 optimizer: "
+              f"{current_optimizer_name}, "
+              f"lr={active_cfg.get('lr')}, "
+              f"schedule={active_cfg.get('lr_schedule', 'exponential')}")
+
     # Training loop
     total_epochs = epochs  # may extend when transitioning to Phase 3
     print(f"\nTraining for {total_epochs} epochs...")
@@ -898,7 +1031,7 @@ def train(
                 metrics['freq_history'].append((epoch, freq_metrics))
 
         # Adaptive PINN: Hierarchical expert spawning from leaf nodes
-        if spawning_method == 'full_tree_by_norm':
+        if spawning_method in ('full_tree_by_norm', 'use_perfect_trees'):
             spawn_check_triggered = (is_adaptive and
                                      epoch % spawn_every == 0 and
                                      not spawning_complete)
