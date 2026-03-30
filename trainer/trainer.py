@@ -715,8 +715,8 @@ def train(
         train_loss = 0.0
         n_train_batches = 0
 
-        if current_optimizer_name == 'Adam':
-            # Adam: Mini-batch training (GPU parallelized)
+        if current_optimizer_name in ('Adam', 'SOAP'):
+            # Adam/SOAP: Mini-batch training (GPU parallelized)
             for batch in train_loader:
                 optimizer.zero_grad()
                 timer.start('train.loss_fn')
@@ -968,7 +968,7 @@ def train(
         # Print progress
         if should_evaluate:
             elapsed = time.time() - start_time
-            batch_mode = "mini" if current_optimizer_name == 'Adam' else "full"
+            batch_mode = "mini" if current_optimizer_name in ('Adam', 'SOAP') else "full"
             print(f"Epoch [{epoch}/{total_epochs}] ({elapsed:.1f}s) [{current_optimizer_name}/{batch_mode}] | "
                   f"Train Loss: {train_loss:.6f} | "
                   f"Eval Loss: {eval_loss:.6f} | "
