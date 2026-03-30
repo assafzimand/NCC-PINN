@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "full_tree_by_norm_large_base"
+experiment_name: "full_tree_by_norm_large_resnets_ks_allen_cahn"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -185,22 +185,22 @@ base_config:
 # ===== Full-tree-by-norm spawning test on all PDEs =====
 # 101 epochs of Adam (no LBFGS), spawn once at epoch 100
 experiments:
-  - name: "FullTree_schrodinger"
-    problem: schrodinger
-    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  # - name: "FullTree_schrodinger"
+  #   problem: schrodinger
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
 
-  - name: "FullTree_burgers1d"
-    problem: burgers1d
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  # - name: "FullTree_burgers1d"
+  #   problem: burgers1d
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
   - name: "FullTree_allen_cahn"
     problem: allen_cahn
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
 
-  - name: "FullTree_kdv"
-    problem: kdv
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  # - name: "FullTree_kdv"
+  #   problem: kdv
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
   - name: "FullTree_ks"
     problem: ks
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
