@@ -10,7 +10,6 @@ import re
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-import torch
 from typing import Dict
 
 import sys
@@ -97,93 +96,232 @@ def _build_run_name(ts_dir: Path) -> str:
         return ts_dir.name
 
 
-def _generate_training_results_plot(parent_dir, df):
-    """Generate training and results comparison table (copied from run_experiments.py)."""
+def _extract_run_info(result_path: Path) -> Dict:
+    """Extract model/optimizer/capacity info from a run directory."""
+    info = {
+        'pde': '-',
+        'model_type': '-',
+        'expert_type': '-',
+        'total_params': '-',
+        'n_experts': 0,
+        'expert_sizes': '-',
+        'optimizer': '-',
+        'lr_sched': '-',
+        'spawning': '-',
+    }
+    config_file = result_path / 'config_used.yaml'
+    if config_file.exists():
+        try:
+            import yaml
+            with open(config_file) as f:
+                cfg = yaml.safe_load(f)
+            adaptive = cfg.get('adaptive_pinn', {})
+            info['pde'] = cfg.get('problem', '-')
+            info['model_type'] = cfg.get('model', '-')
+            info['expert_type'] = adaptive.get(
+                'expert_type', 'mlp')
+
+            opt = cfg.get('optimizer', 'adam')
+            sw = cfg.get('optimizer_switch_at', 1.0)
+            if opt == 'soap':
+                info['optimizer'] = 'SOAP'
+            elif sw < 1.0:
+                info['optimizer'] = f'Adam→LBFGS@{sw}'
+            else:
+                info['optimizer'] = 'Adam'
+
+            lr = cfg.get('lr', '?')
+            sched = cfg.get('lr_schedule', 'none')
+            bs = cfg.get('batch_size', '?')
+            info['lr_sched'] = (
+                f"lr={lr}\n{sched}\nbs={bs}")
+            info['spawning'] = adaptive.get(
+                'spawning_method', '-')
+        except Exception:
+            pass
+
+    metrics_file = result_path / 'metrics.json'
+    if metrics_file.exists():
+        try:
+            with open(metrics_file) as f:
+                met = json.load(f)
+            ap = met.get('adaptive_pinn', {})
+            info['n_experts'] = ap.get('num_experts', 0)
+
+            forward_p = ap.get('forward_params')
+            total_p = met.get('total_params',
+                              ap.get('total_params'))
+            if forward_p is not None:
+                info['total_params'] = f'{forward_p:,}'
+            elif total_p is not None:
+                info['total_params'] = f'{total_p:,}'
+
+            expert_params = ap.get('expert_params', [])
+            n_exp = info['n_experts']
+            if expert_params and n_exp > 0:
+                leaf_idx = set(
+                    ap.get('leaf_expert_indices', []))
+                is_leaves = info['model_type'] in (
+                    'AToELeaves', 'AToE-Leaves')
+                if is_leaves and leaf_idx:
+                    active_params = [
+                        expert_params[i]
+                        for i in leaf_idx
+                        if i < len(expert_params)]
+                    label = 'leaves'
+                else:
+                    active_params = expert_params
+                    label = 'experts'
+                if active_params:
+                    mx = max(active_params)
+                    mn = min(active_params)
+                    avg = sum(active_params) // len(
+                        active_params)
+                    ct = len(active_params)
+                    if mx == mn:
+                        info['expert_sizes'] = (
+                            f"{ct} {label}\n"
+                            f"fixed: {mx:,}p each")
+                    else:
+                        info['expert_sizes'] = (
+                            f"{ct} {label}\n"
+                            f"max:{mx:,} avg:{avg:,}p")
+                else:
+                    info['expert_sizes'] = (
+                        f"{n_exp} experts")
+            elif n_exp > 0:
+                info['expert_sizes'] = (
+                    f"{n_exp} experts")
+            else:
+                info['expert_sizes'] = 'base only'
+        except Exception:
+            pass
+
+    return info
+
+
+def _generate_training_results_plot(parent_dir, df,
+                                     run_infos=None):
+    """Generate comparison table with model/optimizer info
+    and colored result columns."""
     from matplotlib.colors import LinearSegmentedColormap
     import numpy as np
 
-    fig = plt.figure(figsize=(16, 6))
-    ax3 = fig.add_subplot(111)
-    ax3.axis('off')
+    info_cols = [
+        'PDE', 'Model', 'Capacity', 'Optimizer',
+        'LR / Sched', 'Spawning']
+    result_cols = [
+        'Train\nLoss', 'Eval\nLoss',
+        'Train\nRel-L2', 'Train\nInf',
+        'Eval\nRel-L2', 'Eval\nInf']
+    col_labels = ['Experiment'] + info_cols + result_cols
+    n_info = len(info_cols)
+    first_result_col = 1 + n_info
 
-    # Create colored table
+    def _fmt(v):
+        import math
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return 'N/A'
+        return f'{v:.6f}'
+
     table_data = []
-    col_labels = ['Experiment', 'Train Loss', 'Eval Loss', 'Train Rel-L2', 'Train Inf',
-                  'Eval Rel-L2', 'Eval Inf', 'NCC Final Acc', 'Margin SNR',
-                  'Deriv Train Res', 'Deriv Eval Res']
-
     for _, row in df.iterrows():
+        exp = row['experiment']
+        info = (run_infos or {}).get(exp, {})
+        model_str = (
+            f"{info.get('model_type', '-')}\n"
+            f"{info.get('expert_type', '-')}")
+        capacity_str = (
+            f"{info.get('total_params', '-')} params\n"
+            f"{info.get('expert_sizes', '-')}")
         row_data = [
-            row['experiment'],
-            f"{row['final_train_loss']:.6f}",
-            f"{row['final_eval_loss']:.6f}",
-            f"{row['final_train_rel_l2']:.6f}",
-            f"{row['final_train_inf_norm']:.6f}",
-            f"{row['final_eval_rel_l2']:.6f}",
-            f"{row['final_eval_inf_norm']:.6f}",
-            f"{row['ncc_final_accuracy']:.6f}",
-            f"{row['margin_snr']:.2f}"
+            exp,
+            info.get('pde', '-'),
+            model_str,
+            capacity_str,
+            info.get('optimizer', '-'),
+            info.get('lr_sched', '-'),
+            info.get('spawning', '-'),
+            _fmt(row['final_train_loss']),
+            _fmt(row['final_eval_loss']),
+            _fmt(row['final_train_rel_l2']),
+            _fmt(row['final_train_inf_norm']),
+            _fmt(row['final_eval_rel_l2']),
+            _fmt(row['final_eval_inf_norm']),
         ]
-        # Add derivatives if available
-        if 'deriv_final_train_residual' in row and not pd.isna(row['deriv_final_train_residual']):
-            row_data.append(f"{row['deriv_final_train_residual']:.2e}")
-        else:
-            row_data.append("N/A")
-        if 'deriv_final_eval_residual' in row and not pd.isna(row['deriv_final_eval_residual']):
-            row_data.append(f"{row['deriv_final_eval_residual']:.2e}")
-        else:
-            row_data.append("N/A")
         table_data.append(row_data)
 
-    table = ax3.table(cellText=table_data, colLabels=col_labels,
-                     cellLoc='center', loc='center',
-                     bbox=[0.05, 0.1, 0.9, 0.8])
+    n_rows = len(table_data)
+    n_cols = len(col_labels)
+    fig_w = max(22, n_cols * 2.0)
+    row_h = 0.55
+    fig_h = max(4, 1.2 + n_rows * row_h)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    ax.axis('off')
+
+    table = ax.table(
+        cellText=table_data, colLabels=col_labels,
+        cellLoc='center', loc='center',
+        bbox=[0.01, 0.01, 0.98, 0.92])
 
     table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1, 2.0)
+    table.set_fontsize(7)
+    table.auto_set_column_width(list(range(n_cols)))
 
-    # Create green-to-red colormap
-    cmap = LinearSegmentedColormap.from_list('GreenRed', ['#2ecc71', '#f1c40f', '#e74c3c'])
+    cell_h = 1.0 / (n_rows + 1)
+    for (r, c), cell in table.get_celld().items():
+        cell.set_height(cell_h)
 
-    # Color coding for each column
-    num_cols = len(col_labels)
-    for col_idx in range(1, min(num_cols, len(df.columns) + 1)):
-        # Check if this column exists in the dataframe
-        if col_idx >= len(df.columns):
+    cmap = LinearSegmentedColormap.from_list(
+        'GreenRed', ['#2ecc71', '#f1c40f', '#e74c3c'])
+
+    result_keys = [
+        'final_train_loss', 'final_eval_loss',
+        'final_train_rel_l2', 'final_train_inf_norm',
+        'final_eval_rel_l2', 'final_eval_inf_norm']
+    for ri, key in enumerate(result_keys):
+        ci = first_result_col + ri
+        if key not in df.columns:
             continue
-
-        col_name = df.columns[col_idx]
-        values = df[col_name].values
-
-        # Skip if all NaN
-        if pd.isna(values).all():
+        vals = df[key].values.astype(float)
+        if pd.isna(vals).all():
             continue
+        vmin, vmax = np.nanmin(vals), np.nanmax(vals)
+        rng = vmax - vmin
+        if rng < 1e-15:
+            continue
+        for row_idx in range(n_rows):
+            v = vals[row_idx]
+            if pd.isna(v):
+                continue
+            norm_v = (v - vmin) / (rng + 1e-15)
+            cell = table[(row_idx + 1, ci)]
+            cell.set_facecolor(cmap(norm_v))
+            cell.set_alpha(0.7)
 
-        # For losses/errors/residuals, lower is better; for accuracy and margin SNR, higher is better
-        if col_idx == 7 or col_idx == 8:  # NCC accuracy and Margin SNR - higher is better
-            norm_values = 1 - (values - values.min()) / (values.max() - values.min() + 1e-10)
-        else:  # Losses, errors, residuals - lower is better
-            norm_values = (values - values.min()) / (values.max() - values.min() + 1e-10)
-
-        for row_idx, norm_val in enumerate(norm_values):
-            if not pd.isna(norm_val):
-                cell = table[(row_idx + 1, col_idx)]
-                color = cmap(norm_val)
-                cell.set_facecolor(color)
-                cell.set_alpha(0.7)
-
-    # Style header
-    for col_idx in range(num_cols):
-        cell = table[(0, col_idx)]
+    for ci in range(n_cols):
+        cell = table[(0, ci)]
         cell.set_facecolor('#34495e')
-        cell.set_text_props(weight='bold', color='white')
+        cell.set_text_props(
+            weight='bold', color='white', fontsize=7)
 
-    fig.suptitle('Training and Results Comparison', fontsize=16, fontweight='bold', y=0.92)
+    for row_idx in range(n_rows):
+        cell_exp = table[(row_idx + 1, 0)]
+        cell_exp.set_text_props(fontsize=6)
+        for ci in range(1, first_result_col):
+            cell = table[(row_idx + 1, ci)]
+            cell.set_facecolor('#f8f9fa')
+            cell.set_text_props(fontsize=6.5)
 
-    plt.savefig(parent_dir / "training_and_results_comparison.png", dpi=150, bbox_inches='tight')
+    fig.suptitle(
+        'Training and Results Comparison',
+        fontsize=14, fontweight='bold', y=0.98)
+
+    plt.savefig(
+        parent_dir / "training_and_results_comparison.png",
+        dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"  Training and results comparison saved to training_and_results_comparison.png")
+    print("  Training and results comparison saved")
 
 
 def generate_comparison_for_batch(batch_dir: Path, label: str = None):
@@ -224,19 +362,18 @@ def generate_comparison_for_batch(batch_dir: Path, label: str = None):
         for model_dir in model_dirs:
             timestamp_dirs = sorted(
                 [d for d in model_dir.iterdir()
-                 if d.is_dir() and d.name != 'checkpoints']
+                 if d.is_dir() and d.name != 'checkpoints'
+                 and (d / 'metrics.json').exists()]
             )
             if not timestamp_dirs:
                 results[model_dir.name] = model_dir
                 continue
 
-            if len(model_dirs) == 1 and len(timestamp_dirs) > 1:
-                print(f"  Single architecture with {len(timestamp_dirs)} runs — comparing all")
-                for ts_dir in timestamp_dirs:
-                    exp_name = _build_run_name(ts_dir)
-                    results[exp_name] = ts_dir
-            else:
-                results[model_dir.name] = timestamp_dirs[-1]
+            for ts_dir in timestamp_dirs:
+                exp_name = _get_model_name(ts_dir)
+                if exp_name in results:
+                    exp_name = f"{exp_name}_{ts_dir.name[-6:]}"
+                results[exp_name] = ts_dir
 
     # Collect training metrics (same logic as run_experiments.py)
     metrics_data = []
@@ -244,8 +381,6 @@ def generate_comparison_for_batch(batch_dir: Path, label: str = None):
     probe_data = {}
     derivatives_data = {}
     frequency_data = {}
-    expert_regions_data = {}
-
     for exp_name, result_path in results.items():
         if result_path is None:
             continue
@@ -307,18 +442,6 @@ def generate_comparison_for_batch(batch_dir: Path, label: str = None):
                 freq_metrics = json.load(f)
                 frequency_data[exp_name] = freq_metrics
 
-        # Load expert regions for adaptive PINN
-        expert_regions_file = result_path / "adaptive_plots" / "expert_regions.json"
-        if expert_regions_file.exists():
-            try:
-                from adaptive.indicators import RegionDescriptor
-                from adaptive.visualization import load_regions_metadata
-                regions = load_regions_metadata(expert_regions_file)
-                if regions:
-                    expert_regions_data[exp_name] = regions
-            except Exception as e:
-                print(f"  Warning: Could not load expert regions for {exp_name}: {e}")
-
         # Extract margin SNR if NCC data available
         if final_ncc:
             final_layer = list(final_ncc['layer_accuracies'].keys())[-1]
@@ -330,23 +453,19 @@ def generate_comparison_for_batch(batch_dir: Path, label: str = None):
             margin_snr = float('nan')
             ncc_accuracy = float('nan')
 
+        def _last(lst):
+            return lst[-1] if lst else float('nan')
+
         # Build metrics row
         metrics_row = {
             'experiment': exp_name,
-            'final_train_loss': train_metrics['train_loss'][-1],
-            'final_eval_loss': train_metrics['eval_loss'][-1],
-            'final_train_rel_l2': train_metrics['train_rel_l2'][-1],
-            'final_train_inf_norm': train_metrics['train_inf_norm'][-1],
-            'final_eval_rel_l2': train_metrics['eval_rel_l2'][-1],
-            'final_eval_inf_norm': train_metrics['eval_inf_norm'][-1],
-            'ncc_final_accuracy': ncc_accuracy,
-            'margin_snr': margin_snr
+            'final_train_loss': _last(train_metrics.get('train_loss', [])),
+            'final_eval_loss': _last(train_metrics.get('eval_loss', [])),
+            'final_train_rel_l2': _last(train_metrics.get('train_rel_l2', [])),
+            'final_train_inf_norm': _last(train_metrics.get('train_inf_norm', [])),
+            'final_eval_rel_l2': _last(train_metrics.get('eval_rel_l2', [])),
+            'final_eval_inf_norm': _last(train_metrics.get('eval_inf_norm', [])),
         }
-
-        # Add derivatives if available
-        if deriv_metrics:
-            metrics_row['deriv_final_train_residual'] = deriv_metrics['final_layer_train_residual']
-            metrics_row['deriv_final_eval_residual'] = deriv_metrics['final_layer_eval_residual']
 
         metrics_data.append(metrics_row)
         if ncc_epochs:
@@ -356,13 +475,19 @@ def generate_comparison_for_batch(batch_dir: Path, label: str = None):
         print(f"  No valid results to compare for batch {batch_dir.name}")
         return
 
+    # Extract run info (model/optimizer/capacity) for each experiment
+    run_infos = {}
+    for exp_name, result_path in results.items():
+        if result_path is not None:
+            run_infos[exp_name] = _extract_run_info(result_path)
+
     # Create comparison table
     df = pd.DataFrame(metrics_data)
     df.to_csv(batch_dir / "comparison_summary.csv", index=False)
     print(f"  Comparison table saved to comparison_summary.csv")
 
     # Generate plots
-    _generate_training_results_plot(batch_dir, df)
+    _generate_training_results_plot(batch_dir, df, run_infos)
 
     if ncc_data:
         generate_ncc_classification_plot(batch_dir, ncc_data)
@@ -377,65 +502,6 @@ def generate_comparison_for_batch(batch_dir: Path, label: str = None):
     if frequency_data:
         generate_frequency_coverage_comparison(batch_dir, frequency_data)
         plot_spectral_learning_efficiency_comparison(frequency_data, batch_dir)
-
-    if expert_regions_data:
-        print(f"  Generating expert regions comparison ({len(expert_regions_data)} experiments)...")
-        try:
-            from adaptive.visualization import (
-                plot_expert_regions_comparison, prepare_ground_truth_grid
-            )
-
-            # Get domain bounds from first experiment's config
-            first_result_path = list(results.values())[0]
-            if first_result_path is not None:
-                config_file = first_result_path / "config_used.yaml"
-                if config_file.exists():
-                    import yaml
-                    with open(config_file) as f:
-                        exp_config = yaml.safe_load(f)
-                    problem = exp_config.get('problem', 'burgers1d')
-                    problem_config = exp_config.get(problem, {})
-                    spatial_domain = problem_config.get('spatial_domain', [[-1, 1]])
-                    temporal_domain = problem_config.get('temporal_domain', [0, 1])
-
-                    # Build domain bounds
-                    if len(spatial_domain) == 1:
-                        domain_bounds = {
-                            'lower': [spatial_domain[0][0], temporal_domain[0]],
-                            'upper': [spatial_domain[0][1], temporal_domain[1]]
-                        }
-                        problem_type = '2d'
-                    else:
-                        domain_bounds = {
-                            'lower': [spatial_domain[0][0], spatial_domain[1][0], temporal_domain[0]],
-                            'upper': [spatial_domain[0][1], spatial_domain[1][1], temporal_domain[1]]
-                        }
-                        problem_type = '3d'
-
-                    # Load eval data for ground truth
-                    gt_grid, gt_x, gt_t = None, None, None
-                    if problem_type == '2d':
-                        eval_data_path = Path("datasets") / problem / "eval_data.pt"
-                        if eval_data_path.exists():
-                            try:
-                                eval_data = torch.load(eval_data_path, map_location='cpu')
-                                gt_grid, gt_x, gt_t = prepare_ground_truth_grid(
-                                    eval_data, domain_bounds
-                                )
-                            except Exception as e:
-                                print(f"  Warning: Could not load ground truth: {e}")
-
-                    plot_expert_regions_comparison(
-                        experiment_regions=expert_regions_data,
-                        domain_bounds=domain_bounds,
-                        output_path=batch_dir / "expert_regions_comparison.png",
-                        problem_type=problem_type,
-                        ground_truth=gt_grid,
-                        grid_x=gt_x,
-                        grid_t=gt_t
-                    )
-        except Exception as e:
-            print(f"  Error generating expert regions comparison: {e}")
 
     print(f"\n  [OK] Comparison plots saved to {batch_dir}")
 

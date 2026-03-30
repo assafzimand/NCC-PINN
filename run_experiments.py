@@ -76,24 +76,26 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             print(f"\nERROR in {exp_name} NCC: Process exited with code {result.returncode}")
             return None
         
-        # Find the checkpoint that was just created
-        checkpoints_root = Path("checkpoints") / config['problem']
-        checkpoint_pattern_new = f"{config['problem']}-{layers_str}-{config['activation']}"
-        checkpoint_pattern_legacy = f"layers-{layers_str}_act-{config['activation']}"
-        checkpoint_dirs = list(checkpoints_root.glob(checkpoint_pattern_new))
-        if not checkpoint_dirs:
-            checkpoint_dirs = list(checkpoints_root.glob(checkpoint_pattern_legacy))
+        # Find the checkpoint inside the run's output dir
+        outputs_root = Path("outputs")
+        arch_folder_name = f"{config['problem']}-{layers_str}-{config['activation']}"
+        arch_dir = outputs_root / arch_folder_name
+        best_checkpoint = None
+        if arch_dir.exists():
+            ts_dirs = sorted(
+                [d for d in arch_dir.iterdir() if d.is_dir()],
+                key=lambda x: x.stat().st_mtime)
+            if ts_dirs:
+                run_ckpt_dir = ts_dirs[-1] / "checkpoints"
+                for name in ['best_model.pt', 'final_model.pt']:
+                    c = run_ckpt_dir / name
+                    if c.exists():
+                        best_checkpoint = c
+                        break
         
-        if not checkpoint_dirs:
-            print(f"\nERROR: Could not find checkpoint for {exp_name}")
-            return None
-        
-        checkpoint_dir = checkpoint_dirs[0]
-        best_checkpoint = checkpoint_dir / "best_model.pt"
-        
-        if not best_checkpoint.exists():
-            print(f"\nERROR: best_model.pt not found in {checkpoint_dir}")
-            return None
+        if best_checkpoint is None:
+            print(f"\nWARNING: No checkpoint found for {exp_name}, skipping inner metrics")
+            best_checkpoint = Path("nonexistent")
         
         # Check if we should skip inner metrics analysis for adaptive PINN
         adaptive_cfg = config.get('adaptive_pinn', {})
@@ -251,44 +253,6 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
                         # Clean up the frequency directory
                         if freq_dir.exists():
                             shutil.rmtree(freq_dir)
-                    
-                    # Also move corresponding checkpoints to experiment folder
-                    checkpoints_root = Path("checkpoints") / config['problem']
-                    if checkpoints_root.exists():
-                        checkpoint_pattern_new = f"{config['problem']}-{layers_str}-{config['activation']}"
-                        checkpoint_pattern_legacy = f"layers-{layers_str}_act-{config['activation']}"
-                        checkpoint_dirs = sorted(
-                            checkpoints_root.glob(checkpoint_pattern_new),
-                            key=lambda p: p.stat().st_mtime,
-                            reverse=True
-                        )
-                        if not checkpoint_dirs:
-                            checkpoint_dirs = sorted(
-                                checkpoints_root.glob(checkpoint_pattern_legacy),
-                                key=lambda p: p.stat().st_mtime,
-                                reverse=True
-                            )
-                        
-                        if checkpoint_dirs:
-                            checkpoint_dir = checkpoint_dirs[0]
-                            # Create checkpoints folder in experiment directory
-                            exp_checkpoints_dir = exp_output_dir / "checkpoints"
-                            exp_checkpoints_dir.mkdir(parents=True, exist_ok=True)
-                            
-                            # Copy checkpoint directory (robust on Windows and when src removed later)
-                            dest_checkpoint = exp_checkpoints_dir / checkpoint_dir.name
-                            if dest_checkpoint.exists():
-                                shutil.rmtree(dest_checkpoint)
-                            dest_checkpoint.mkdir(parents=True, exist_ok=True)
-                            # Manual recursive copy to avoid Windows copytree edge-cases
-                            for src_path in checkpoint_dir.rglob("*"):
-                                rel = src_path.relative_to(checkpoint_dir)
-                                dst_path = dest_checkpoint / rel
-                                if src_path.is_dir():
-                                    dst_path.mkdir(parents=True, exist_ok=True)
-                                else:
-                                    dst_path.parent.mkdir(parents=True, exist_ok=True)
-                                    shutil.copy2(src_path, dst_path)
                     
                     # Return the moved timestamp directory
                     return dest_dir
@@ -639,8 +603,9 @@ def main():
         )
         results[exp['name']] = result
     
-    # Generate comparison report
-    generate_comparison_report(parent_dir, results)
+    # Generate comparison report using the shared regenerate script
+    from regenerate_comparison_plots import generate_comparison_for_batch
+    generate_comparison_for_batch(parent_dir)
     
     print(f"\n{'='*70}")
     print("All Experiments Complete!")

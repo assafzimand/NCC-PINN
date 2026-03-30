@@ -144,8 +144,8 @@ def test_trainer_small_run():
     assert config_path.exists(), "Config file should exist"
     print(f"    ✓ Config file exists")
 
-    # Check periodic checkpoints
-    checkpoint_dir = Path("checkpoints") / config['problem']
+    # Check periodic checkpoints (now inside run_dir)
+    checkpoint_dir = run_dir / "checkpoints"
     epoch_checkpoint = checkpoint_dir / "checkpoint_epoch_2.pt"
     assert epoch_checkpoint.exists(), "Periodic checkpoint should exist"
     print(f"    ✓ Periodic checkpoint exists (epoch 2)")

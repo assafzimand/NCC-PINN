@@ -43,15 +43,15 @@ def find_model_checkpoint(run_dir: Path, problem: str, model_name: str) -> Optio
     model_dir = run_dir.parent
     
     possible_paths = [
+        # Inside run directory (current structure)
+        run_dir / "checkpoints" / "final_model.pt",
+        run_dir / "checkpoints" / "best_model.pt",
         # Inside experiment's model folder (AWS experiment structure)
         model_dir / "checkpoints" / model_name / "final_model.pt",
         model_dir / "checkpoints" / model_name / "best_model.pt",
-        # Global checkpoints folder (local development structure)
+        # Legacy global checkpoints folder
         Path("checkpoints") / problem / model_name / "final_model.pt",
         Path("checkpoints") / problem / model_name / "best_model.pt",
-        # Inside run directory
-        run_dir / "checkpoints" / "final_model.pt",
-        run_dir / "checkpoints" / "best_model.pt",
     ]
     
     for path in possible_paths:

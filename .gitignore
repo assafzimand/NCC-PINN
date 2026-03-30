@@ -3,6 +3,7 @@ datasets/
 cursor/
 .venv/
 outputs/
+checkpoints/
 IMPROVEMENT_PLAN.md
 .cursor/
 experiments_analysis/analysis/
@@ -10,4 +11,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pt
+*.png
 .Python
