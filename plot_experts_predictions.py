@@ -134,12 +134,7 @@ def _load_checkpoint(model, ckpt_path, is_adaptive):
 
 
 def _find_checkpoint(ts_dir, cfg):
-    problem = cfg['problem']
-    arch = cfg['base_architecture']
-    act = cfg.get('activation', 'tanh')
-    arch_str = f"{problem}-{'-'.join(map(str, arch))}-{act}"
-    problem_dir = ts_dir.parent
-    ckpt_dir = problem_dir / 'checkpoints' / arch_str
+    ckpt_dir = ts_dir / 'checkpoints'
 
     spawn_epoch = cfg.get('adaptive_pinn', {}).get('spawn_every_epochs')
     if spawn_epoch is not None:
@@ -152,10 +147,17 @@ def _find_checkpoint(ts_dir, cfg):
         if candidate.exists():
             return candidate
 
+    # Legacy fallback: old structure with checkpoints at parent level
+    problem = cfg['problem']
+    arch = cfg['base_architecture']
+    act = cfg.get('activation', 'tanh')
+    arch_str = f"{problem}-{'-'.join(map(str, arch))}-{act}"
+    legacy_dir = ts_dir.parent / 'checkpoints' / arch_str
     for name in ['final_model.pt', 'best_model.pt']:
-        found = list(problem_dir.rglob(name))
-        if found:
-            return found[0]
+        candidate = legacy_dir / name
+        if candidate.exists():
+            return candidate
+
     return None
 
 

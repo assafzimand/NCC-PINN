@@ -502,9 +502,7 @@ def train(
     best_eval_loss = float('inf')
     best_checkpoint_path = None
 
-    # Create checkpoint directory (aligned with outputs naming: <problem>-<layers>-<act>)
-    architecture_str = "-".join(map(str, cfg['base_architecture']))
-    checkpoint_dir = Path("checkpoints") / cfg['problem'] / f"{cfg['problem']}-{architecture_str}-{cfg['activation']}"
+    checkpoint_dir = run_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # Create ncc_plots directory for periodic NCC analysis
@@ -701,6 +699,12 @@ def train(
     if enable_timing:
         model._timer = timer
 
+    train_loss = 0.0
+    eval_loss = 0.0
+    train_rel_l2 = 0.0
+    eval_rel_l2 = 0.0
+    train_inf_norm = 0.0
+    eval_inf_norm = 0.0
     epoch = 0
     while epoch < total_epochs:
         epoch += 1
@@ -1695,13 +1699,60 @@ def train(
             spawning_diagnostics=metrics.get('spawning_diagnostics', []),
         )
         
+        base_params = sum(p.numel() for p in model.base_model.parameters())
+        expert_full_params = []
+        for i, expert in enumerate(model.experts):
+            expert_full_params.append(
+                sum(p.numel() for p in expert.parameters()))
+        expert_archs = [
+            e.layers if hasattr(e, 'layers') else []
+            for e in model.experts]
+
+        leaf_info = model.get_leaf_info()
+        leaf_expert_indices = set(
+            idx for _, idx in leaf_info if idx >= 0)
+
+        is_ant = isinstance(model, ANT)
+        is_leaves_only = isinstance(model, AToELeaves) and not is_ant
+
+        # For ANT: non-leaf experts' output layers (last_hidden → output_dim)
+        # are unused in inference (only activations propagate to children).
+        # Count full params for leaves, subtract output layer for non-leaves.
+        if is_ant:
+            expert_params = []
+            for i, full_p in enumerate(expert_full_params):
+                arch = expert_archs[i]
+                if i not in leaf_expert_indices and len(arch) >= 2:
+                    out_layer = arch[-2] * arch[-1] + arch[-1]
+                    expert_params.append(full_p - out_layer)
+                else:
+                    expert_params.append(full_p)
+        else:
+            expert_params = expert_full_params
+
+        leaf_params = sum(
+            expert_params[i] for i in leaf_expert_indices
+            if i < len(expert_params))
+
         metrics['adaptive_pinn'] = {
             'num_experts': model.num_experts,
             'max_experts': max_experts,
             'spawning_method': spawning_method,
             'wavelet_threshold': wavelet_threshold,
-            'regions': [r.to_dict() for r in model.regions]
+            'regions': [r.to_dict() for r in model.regions],
+            'base_params': base_params,
+            'expert_params': expert_params,
+            'expert_architectures': expert_archs,
+            'total_params': base_params + sum(expert_params),
+            'leaf_expert_indices': sorted(leaf_expert_indices),
+            'leaf_params': leaf_params,
+            'forward_params': base_params + (
+                leaf_params if is_leaves_only
+                else sum(expert_params)),
         }
+
+    total_model_params = sum(p.numel() for p in model.parameters())
+    metrics['total_params'] = total_model_params
 
     # Save metrics to JSON
     metrics_path = run_dir / "metrics.json"

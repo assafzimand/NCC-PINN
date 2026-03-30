@@ -118,8 +118,8 @@ def test_training_orchestrator():
         assert eval_data.exists(), "eval_data.pt should exist"
         print(f"    ✓ Datasets generated")
 
-        # Check checkpoints
-        checkpoint_dir = Path("checkpoints") / problem
+        # Check checkpoints (now inside run_dir)
+        checkpoint_dir = run_dir / "checkpoints"
         assert checkpoint_dir.exists(), "Checkpoint directory should exist"
         
         best_ckpt = checkpoint_dir / "best_model.pt"
@@ -133,7 +133,6 @@ def test_training_orchestrator():
         # Cleanup
         shutil.rmtree(test_dataset_dir)
         shutil.rmtree(run_dir)
-        shutil.rmtree(checkpoint_dir)
         temp_config_path.unlink()
         print(f"\n    ✓ Test data cleaned up")
 
@@ -243,9 +242,6 @@ def test_eval_only_mode():
             shutil.rmtree(run_dir)
         if eval_run_dir.exists():
             shutil.rmtree(eval_run_dir)
-        checkpoint_dir = Path("checkpoints") / problem
-        if checkpoint_dir.exists():
-            shutil.rmtree(checkpoint_dir)
         print(f"  ✓ Test data cleaned up")
 
     finally:

@@ -34,6 +34,20 @@ from adaptive.visualization import prepare_ground_truth_grid  # noqa: E402
 from utils.dataset_gen import calculate_dataset_sizes  # noqa: E402
 
 
+class _NumpySafeEncoder(json.JSONEncoder):
+    """Handle numpy types that stdlib json can't serialize."""
+    def default(self, o):
+        if isinstance(o, (np.integer,)):
+            return int(o)
+        if isinstance(o, (np.floating,)):
+            return float(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        if isinstance(o, (np.bool_,)):
+            return bool(o)
+        return super().default(o)
+
+
 def load_config(plan_path: Path) -> dict:
     """Load experiments_plan.yaml and return the base_config."""
     with open(plan_path, 'r') as f:
@@ -466,7 +480,7 @@ def main():
     # Save unified JSON with all problems
     json_path = output_dir / 'perfect_trees.json'
     with open(json_path, 'w') as f:
-        json.dump(all_trees, f, indent=2)
+        json.dump(all_trees, f, indent=2, cls=_NumpySafeEncoder)
     print(f"\nSaved unified JSON: {json_path}")
     print(f"  Problems included: {list(all_trees.keys())}")
     for p, d in all_trees.items():

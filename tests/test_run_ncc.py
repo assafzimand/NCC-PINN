@@ -107,9 +107,6 @@ def test_run_ncc_with_training():
         # Cleanup
         shutil.rmtree(test_dataset_dir)
         shutil.rmtree(run_dir)
-        checkpoint_dir = Path("checkpoints") / problem
-        if checkpoint_dir.exists():
-            shutil.rmtree(checkpoint_dir)
         print(f"\n    ✓ Test data cleaned up")
 
     finally:
@@ -218,9 +215,6 @@ def test_run_ncc_eval_only():
         shutil.rmtree(test_dataset_dir)
         shutil.rmtree(run_dir)
         shutil.rmtree(ncc_run_dir)
-        checkpoint_dir = Path("checkpoints") / problem
-        if checkpoint_dir.exists():
-            shutil.rmtree(checkpoint_dir)
         print(f"    ✓ Test data cleaned up")
 
         io_module.make_run_dir = original_make_run_dir

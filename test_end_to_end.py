@@ -169,8 +169,8 @@ try:
                 print(f"   ✗ {plot_name} - MISSING!")
                 all_good = False
 
-    # Check checkpoints
-    checkpoint_dir = Path("checkpoints") / problem
+    # Check checkpoints (now inside run_dir)
+    checkpoint_dir = run_dir / "checkpoints"
     if checkpoint_dir.exists():
         print("\nCheckpoints:")
         checkpoint_files = ['best_model.pt', 'final_model.pt']
