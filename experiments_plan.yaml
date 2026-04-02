@@ -9,7 +9,7 @@ base_config:
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
   epochs: 1                      # Total training epochs for Phase 3 (full composed model)
-  batch_size: 512                    # Mini-batch size for Adam/SOAP training
+  batch_size: 2048                    # Mini-batch size for Adam/SOAP training
 
   # ── Primary optimizer ──
   optimizer: soap                     # Primary optimizer: 'adam' | 'soap'
@@ -17,7 +17,7 @@ base_config:
 
   # ── LR scheduling (applies to Adam and SOAP, step-based) ──
   lr_schedule: exponential           # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
-  lr_warmup_steps: 0                 # Steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
+  lr_warmup_steps: 5000                 # Steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps. Matches PirateNet/SOAP.
   lr_decay_steps: 5000               # For exponential: how often (in optimizer steps) to decay. Matches PirateNet/SOAP.
 
@@ -159,7 +159,7 @@ base_config:
     wavelet_threshold: 10
     loss_weights:
       residual: 1.0
-      ic: 1.0
+      ic: 1000.0
       bc: 1.0
 
   # ── Dataset sampling ratios ──
