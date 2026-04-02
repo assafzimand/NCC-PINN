@@ -143,6 +143,11 @@ ks:
     bc: 1.0
     ic: 1.0
     residual: 1.0
+  causal_training:
+    enabled: true                # Weight residual loss by temporal causality (earlier times first). Critical for chaotic PDEs.
+    num_chunks: 100              # Number of temporal bins for causal weighting (paper uses full temporal grid resolution).
+    tol_schedule: [0.01, 0.1, 1.0, 10.0, 100.0]  # Annealing schedule for epsilon (Wang et al. 2022 recommended values).
+    min_weight_threshold: 0.99   # Advance to next epsilon when min(w_i) exceeds this (paper: delta=0.99).
   output_dim: 1
   spatial_dim: 1
   spatial_domain:

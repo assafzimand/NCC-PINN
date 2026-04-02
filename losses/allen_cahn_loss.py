@@ -14,6 +14,7 @@ import torch
 import torch.nn as nn
 from typing import Dict, Callable, Tuple
 import numpy as np
+from losses.causal_weighting import create_causal_state, compute_causal_residual
 
 
 def compute_derivatives(
@@ -194,6 +195,8 @@ def build_loss(**cfg):
     weight_bc = loss_weights.get('bc', 1.0)
     D = problem_config.get('D', 0.001)
 
+    causal_state = create_causal_state(problem_config)
+
     def loss_fn(model, batch, for_tree_spawning=False):
         x = batch['x']; t = batch['t']
         h_gt = batch.get('h_gt', batch.get('u_gt'))
@@ -237,7 +240,7 @@ def build_loss(**cfg):
             if for_tree_spawning:
                 residual_per_sample[masks['residual']] = residual_squared
             else:
-                mse_residual = torch.mean(residual_squared)
+                mse_residual = compute_causal_residual(residual_squared, t_f, causal_state)
         else:
             if not for_tree_spawning:
                 mse_residual = torch.tensor(0.0, device=device)
@@ -276,4 +279,6 @@ def build_loss(**cfg):
             return {'residual': residual_per_sample, 'ic': ic_per_sample, 'bc': bc_per_sample}
         else:
             return weight_residual * mse_residual + weight_ic * mse_ic + weight_bc * mse_bc
+
+    loss_fn.causal_state = causal_state
     return loss_fn

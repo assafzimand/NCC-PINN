@@ -13,6 +13,7 @@ where:
 import torch
 import torch.nn as nn
 from typing import Dict, Callable, Tuple
+from losses.causal_weighting import create_causal_state, compute_causal_residual
 
 
 def compute_derivatives(
@@ -420,6 +421,8 @@ def build_loss(**cfg) -> Callable:
     # Get Fisher-KPP parameters
     D = problem_config.get('D', 1.0)
     kappa = problem_config.get('kappa', 25.0)
+
+    causal_state = create_causal_state(problem_config)
     
     def loss_fn(model: nn.Module, batch: Dict[str, torch.Tensor], 
                 for_tree_spawning: bool = False):
@@ -504,7 +507,7 @@ def build_loss(**cfg) -> Callable:
             if for_tree_spawning:
                 residual_per_sample[masks['residual']] = residual_squared
             else:
-                mse_residual = torch.mean(residual_squared)
+                mse_residual = compute_causal_residual(residual_squared, t_f, causal_state)
         else:
             if not for_tree_spawning:
                 mse_residual = torch.tensor(0.0, device=device)
@@ -574,5 +577,6 @@ def build_loss(**cfg) -> Callable:
                 weight_bc * mse_bc
             )
             return total_loss
-    
+
+    loss_fn.causal_state = causal_state
     return loss_fn

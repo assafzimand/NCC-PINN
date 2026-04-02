@@ -161,6 +161,11 @@ base_config:
       residual: 1.0
       ic: 1000.0
       bc: 1.0
+    causal_training:
+      enabled: true                  # Causal weighting on residual loss — critical for chaotic KS (Wang et al. 2022)
+      num_chunks: 100                # Temporal bins (paper uses full temporal grid, ~100 time points)
+      tol_schedule: [0.01, 0.1, 1.0, 10.0, 100.0]  # Epsilon annealing schedule (paper recommended)
+      min_weight_threshold: 0.99     # Advance epsilon when min(w_i) > this (paper: delta=0.99)
 
   # ── Dataset sampling ratios ──
   sampling:
