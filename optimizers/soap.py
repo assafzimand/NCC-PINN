@@ -309,8 +309,11 @@ class SOAP(optim.Optimizer):
             try:
                 _, Q = torch.linalg.eigh(m + 1e-30 * torch.eye(m.shape[0], device=m.device))
             except Exception:
-                _, Q = torch.linalg.eigh(m.to(torch.float64) + 1e-30 * torch.eye(m.shape[0], device=m.device))
-                Q = Q.to(m.dtype)
+                try:
+                    _, Q = torch.linalg.eigh(m.to(torch.float64) + 1e-30 * torch.eye(m.shape[0], device=m.device))
+                    Q = Q.to(m.dtype)
+                except Exception:
+                    Q = torch.eye(m.shape[0], device=m.device, dtype=m.dtype)
             Q = torch.flip(Q, [1])
 
             if not float_data:
