@@ -19,7 +19,7 @@ base_config:
   lr_schedule: exponential           # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
   lr_warmup_steps: 1000                 # Steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps. Matches PirateNet/SOAP.
-  lr_decay_steps: 5000               # For exponential: how often (in optimizer steps) to decay. Matches PirateNet/SOAP.
+  lr_decay_steps: 2000               # For exponential: how often (in optimizer steps) to decay. ~8 decays over 4000 epochs.
 
   # ── SOAP-specific (only used when optimizer: soap) ──
   soap_betas: [0.95, 0.95]          # SOAP momentum parameters (beta1, beta2). Paper default.
@@ -159,12 +159,12 @@ base_config:
     wavelet_threshold: 10
     loss_weights:
       residual: 1.0
-      ic: 1000.0
+      ic: 100.0                      # Reduced from 1000: causal training already emphasizes early times
       bc: 1.0
     causal_training:
       enabled: true                  # Causal weighting on residual loss — critical for chaotic KS (Wang et al. 2022)
       num_chunks: 100                # Temporal bins (paper uses full temporal grid, ~100 time points)
-      tol_schedule: [0.01, 0.1, 1.0, 10.0, 100.0]  # Epsilon annealing schedule (paper recommended)
+      tol_schedule: [0.01, 0.1, 1.0]  # Capped schedule for short runs. Full paper: [0.01, 0.1, 1.0, 10.0, 100.0] (needs 60k+ epochs).
       min_weight_threshold: 0.99     # Advance epsilon when min(w_i) > this (paper: delta=0.99)
 
   # ── Dataset sampling ratios ──
@@ -180,7 +180,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 2000                   # Check for spawning every N epochs
+    spawn_every_epochs: 4000                   # Check for spawning every N epochs (matches initial_train.epochs)
     AToE_threshold_capacity: 1000              # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: 30             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 30              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
@@ -207,7 +207,7 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 2000                             # Phase 1: how many epochs to train base model before tree fitting
+      epochs: 4000                             # Phase 1: how many epochs to train base model before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
