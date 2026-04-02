@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "full_tree_test_new_optimizer_soap"
+experiment_name: "AToE_Resnet_SOAP_perfect_trees"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -8,8 +8,8 @@ base_config:
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 1                      # Total training epochs for Phase 3 (full composed model)
-  batch_size: 4096                    # Mini-batch size for Adam/SOAP training
+  epochs: 10000                      # Total training epochs for Phase 3 (full composed model)
+  batch_size: 2048                    # Mini-batch size for Adam/SOAP training
 
   # ── Primary optimizer ──
   optimizer: soap                     # Primary optimizer: 'adam' | 'soap'
@@ -17,9 +17,9 @@ base_config:
 
   # ── LR scheduling (applies to Adam and SOAP, step-based) ──
   lr_schedule: exponential           # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
-  lr_warmup_steps: 1000                 # Steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
+  lr_warmup_steps: 5000                 # Steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps. Matches PirateNet/SOAP.
-  lr_decay_steps: 2000               # For exponential: how often (in optimizer steps) to decay. ~8 decays over 4000 epochs.
+  lr_decay_steps: 5000               # For exponential: how often (in optimizer steps) to decay. ~8 decays over 4000 epochs.
 
   # ── SOAP-specific (only used when optimizer: soap) ──
   soap_betas: [0.95, 0.95]          # SOAP momentum parameters (beta1, beta2). Paper default.
@@ -198,7 +198,7 @@ base_config:
     use_decomposed_derivatives: true
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
-    spawning_method: full_tree_by_norm       # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
+    spawning_method: use_perfect_trees       # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
     perfect_trees_path: perfect_tree_examples/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
     # ── 3-Phase training config ──
@@ -215,21 +215,21 @@ base_config:
 # 3-phase full_tree_by_norm: Phase 1 trains base (2000 epochs), spawns tree,
 # reinitializes base, then Phase 3 trains full model (5001 epochs).
 experiments:
-  # - name: "allen_cahn_soap"
-  #   problem: allen_cahn
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: "allen_cahn_soap"
+    problem: allen_cahn
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  - name: "ks_soap"
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 1]
+  # - name: "ks_soap"
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 256, 256, 1]
 
   # - name: "burgers1d_soap"
   #   problem: burgers1d
   #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  # - name: "schrodinger_soap"
-  #   problem: schrodinger
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  # # - name: "schrodinger_soap"
+  # #   problem: schrodinger
+  # #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
 
   # - name: "kdv_soap"
   #   problem: kdv
