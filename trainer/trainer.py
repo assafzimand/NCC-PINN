@@ -16,6 +16,7 @@ from models.atoe import AToE
 from models.atoe_leaves import AToELeaves
 from models.ant import ANT
 from utils.dataset_gen import regenerate_training_data
+from losses.causal_weighting import advance_causal_schedule
 
 
 class _NumpySafeEncoder(json.JSONEncoder):
@@ -717,6 +718,13 @@ def train(
     if resample_every > 0:
         print(f"  Dataset resampling enabled: every {resample_every} epochs")
 
+    _cs_init = getattr(loss_fn, 'causal_state', None)
+    if _cs_init is not None:
+        print(f"  Causal training enabled: "
+              f"schedule={_cs_init['schedule']}, "
+              f"chunks={_cs_init['num_chunks']}, "
+              f"threshold={_cs_init['threshold']}")
+
     epoch = 0
     while epoch < total_epochs:
         epoch += 1
@@ -907,6 +915,16 @@ def train(
         # Store train loss every epoch
         metrics['train_loss_epochs'].append(epoch)
         metrics['train_loss'].append(train_loss)
+
+        # Causal weighting: check if epsilon should advance
+        causal_state = getattr(loss_fn, 'causal_state', None)
+        if advance_causal_schedule(causal_state):
+            cs = loss_fn.causal_state
+            print(f"  [Causal] epsilon advanced to "
+                  f"{cs['tol']:.2f} "
+                  f"(stage {cs['schedule_idx']+1}/"
+                  f"{len(cs['schedule'])}, "
+                  f"min_w={cs['min_weight']:.4f})")
 
         # Compute evaluation metrics only every print_every epochs or last epoch
         # This speeds up training significantly for physics-informed losses

@@ -1,0 +1,135 @@
+"""
+Causal weighting for PINN residual loss.
+
+Implements the causal training strategy from
+"Respecting Causality is All You Need" (Wang et al., 2022):
+sort residual collocation points by time, split into temporal
+chunks, and apply exponentially decaying weights:
+
+    w_i = exp(-epsilon * sum_{j<i} L_j)
+
+so the network learns earlier times before later ones.
+
+The paper recommends an annealing schedule for epsilon:
+    [0.01, 0.1, 1, 10, 100]
+advancing to the next level when min(w_i) > delta (e.g. 0.99),
+meaning all temporal chunks have converged.
+"""
+
+import torch
+from typing import Dict, Optional, List
+
+
+def create_causal_state(
+    problem_config: Dict,
+) -> Optional[Dict]:
+    """
+    Build a mutable causal-state dict from problem config.
+
+    Returns None when causal training is disabled, which
+    downstream functions interpret as "use plain MSE".
+    """
+    causal_cfg = problem_config.get('causal_training', {})
+    if not causal_cfg.get('enabled', False):
+        return None
+
+    schedule = causal_cfg.get(
+        'tol_schedule', [0.01, 0.1, 1.0, 10.0, 100.0])
+    return {
+        'enabled': True,
+        'num_chunks': causal_cfg.get('num_chunks', 100),
+        'schedule': list(schedule),
+        'schedule_idx': 0,
+        'tol': float(schedule[0]),
+        'min_weight': 1.0,
+        'threshold': causal_cfg.get(
+            'min_weight_threshold', 0.99),
+    }
+
+
+def advance_causal_schedule(causal_state: Optional[Dict]) -> bool:
+    """
+    Check convergence and advance epsilon if appropriate.
+
+    Call this once per epoch from the trainer. Returns True
+    if epsilon was advanced, False otherwise.
+    """
+    if causal_state is None:
+        return False
+    idx = causal_state['schedule_idx']
+    schedule = causal_state['schedule']
+    if idx >= len(schedule) - 1:
+        return False
+    if causal_state['min_weight'] > causal_state['threshold']:
+        causal_state['schedule_idx'] = idx + 1
+        causal_state['tol'] = float(schedule[idx + 1])
+        causal_state['min_weight'] = 1.0
+        return True
+    return False
+
+
+def compute_causal_residual(
+    residual_squared: torch.Tensor,
+    t_residual: torch.Tensor,
+    causal_state: Optional[Dict],
+) -> torch.Tensor:
+    """
+    Compute residual MSE, optionally with causal weighting.
+
+    When causal_state is None (disabled), returns plain mean.
+    Otherwise applies temporal causal weights and updates
+    causal_state['min_weight'] for the annealing check.
+    """
+    if causal_state is None:
+        return torch.mean(residual_squared)
+    return _apply_causal_weights(
+        residual_squared,
+        t_residual,
+        causal_state['num_chunks'],
+        causal_state['tol'],
+        causal_state,
+    )
+
+
+def _apply_causal_weights(
+    residual_squared: torch.Tensor,
+    t_residual: torch.Tensor,
+    num_chunks: int,
+    causal_tol: float,
+    causal_state: Optional[Dict],
+) -> torch.Tensor:
+    """
+    Sort residual points by time, bin into chunks, and
+    weight each chunk by exp(-epsilon * cumulative_loss).
+    """
+    t_flat = t_residual.view(-1)
+    N = t_flat.shape[0]
+
+    if N == 0 or num_chunks <= 1:
+        return torch.mean(residual_squared)
+
+    sort_idx = torch.argsort(t_flat)
+    r2_sorted = residual_squared[sort_idx]
+
+    chunk_size = max(1, N // num_chunks)
+    chunk_losses: List[torch.Tensor] = []
+    for i in range(num_chunks):
+        start = i * chunk_size
+        end = (start + chunk_size
+               if i < num_chunks - 1 else N)
+        chunk_losses.append(
+            torch.mean(r2_sorted[start:end]))
+
+    chunk_losses_t = torch.stack(chunk_losses)
+
+    cumsum = torch.cumsum(chunk_losses_t, dim=0)
+    zero = torch.zeros(1, device=cumsum.device)
+    shifted = torch.cat([zero, cumsum[:-1]])
+    weights = torch.exp(-causal_tol * shifted)
+
+    if causal_state is not None:
+        causal_state['min_weight'] = weights.min().item()
+
+    weighted = (torch.sum(weights * chunk_losses_t)
+                / torch.sum(weights))
+    return weighted
