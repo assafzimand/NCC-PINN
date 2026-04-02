@@ -125,11 +125,11 @@ def _apply_causal_weights(
     cumsum = torch.cumsum(chunk_losses_t, dim=0)
     zero = torch.zeros(1, device=cumsum.device)
     shifted = torch.cat([zero, cumsum[:-1]])
-    weights = torch.exp(-causal_tol * shifted)
+    weights = torch.exp(-causal_tol * shifted).detach()
 
     if causal_state is not None:
         causal_state['min_weight'] = weights.min().item()
 
     weighted = (torch.sum(weights * chunk_losses_t)
-                / torch.sum(weights))
+                / weights.sum())
     return weighted
