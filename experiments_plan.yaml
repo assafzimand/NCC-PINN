@@ -165,10 +165,11 @@ base_config:
   # ── Dataset sampling ratios ──
   sampling:
     sample_volume_ratio: 35          # Target: S^(1/d) / V^(1/d) = 35
-    initial_train_ratio: 0.005       # 0.5% of residual_train
-    boundary_train_ratio: 0.005      # 0.5% of residual_train
+    initial_train_ratio: 0.013       # ~260 IC points (with n_residual=20000). Papers use 256-512.
+    boundary_train_ratio: 0.013      # ~260 BC points (with n_residual=20000). Papers use 200+.
     eval_train_ratio: 0.25           # eval = 25% of train (all types)
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
+    resample_every_epochs: 500       # Regenerate training data every N epochs. 0 = disabled. Papers use 500.
 
   # ── Adaptive Expert PINN configuration (Tree-Based Spawning) ──
   adaptive_pinn:
@@ -215,7 +216,7 @@ experiments:
 
   - name: "ks_soap"
     problem: ks
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]  # 5 hidden x 128 neurons
+    base_architecture: [2, 128, 128, 128, 128, 128, 1]  # 5 hidden x 128 neurons
 
   # - name: "burgers1d_soap"
   #   problem: burgers1d

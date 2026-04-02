@@ -15,6 +15,7 @@ from trainer.timing import EpochTimer
 from models.atoe import AToE
 from models.atoe_leaves import AToELeaves
 from models.ant import ANT
+from utils.dataset_gen import regenerate_training_data
 
 
 class _NumpySafeEncoder(json.JSONEncoder):
@@ -710,10 +711,23 @@ def train(
     eval_rel_l2 = 0.0
     train_inf_norm = 0.0
     eval_inf_norm = 0.0
+
+    resample_every = cfg.get('sampling', {}).get('resample_every_epochs', 0)
+    base_seed = cfg.get('seed', 42)
+    if resample_every > 0:
+        print(f"  Dataset resampling enabled: every {resample_every} epochs")
+
     epoch = 0
     while epoch < total_epochs:
         epoch += 1
         timer.start_epoch(epoch, num_experts=model.num_experts if (is_adaptive and hasattr(model, 'num_experts')) else 0)
+
+        # Resample training data periodically (in-memory, no disk I/O)
+        if resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0:
+            resample_seed = base_seed + epoch
+            print(f"  [Resample] Regenerating training data (epoch {epoch}, seed {resample_seed})...")
+            train_data = regenerate_training_data(cfg, device, resample_seed=resample_seed)
+            train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
 
         # Train phase
         model.train()
