@@ -244,6 +244,45 @@ def generate_and_save_datasets(config: Dict) -> None:
         print(f"Frequency grid already exists: {freq_grid_path}")
 
 
+def regenerate_training_data(
+    config: Dict,
+    device: torch.device,
+    resample_seed: int = 0,
+) -> Dict[str, torch.Tensor]:
+    """
+    Regenerate training data in-memory with fresh random samples.
+
+    Uses the same solver and sizes as the initial dataset but with a
+    different random seed so every call produces different (t, x) points.
+    Does NOT write to disk -- the result is used only for the current
+    training session.
+
+    Args:
+        config: Full configuration dictionary.
+        device: Torch device for the returned tensors.
+        resample_seed: Seed for this particular resample (varies per call).
+
+    Returns:
+        Dictionary with 'x', 't', 'h_gt', 'mask' tensors on *device*.
+    """
+    problem = config['problem']
+    sizes = calculate_dataset_sizes(config)
+
+    solver_module = importlib.import_module(f"solvers.{problem}_solver")
+
+    cfg_for_resample = dict(config)
+    cfg_for_resample['seed'] = resample_seed
+
+    train_data = solver_module.generate_dataset(
+        n_residual=sizes['n_residual_train'],
+        n_ic=sizes['n_initial_train'],
+        n_bc=sizes['n_boundary_train'],
+        device=device,
+        config=cfg_for_resample,
+    )
+    return train_data
+
+
 def load_dataset(
     path: str,
     device: torch.device = None

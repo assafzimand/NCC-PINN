@@ -181,10 +181,11 @@ print_every: 1
 problem: allen_cahn
 resume_from: null
 sampling:
-  boundary_train_ratio: 0.005
+  boundary_train_ratio: 0.013
   eval_train_ratio: 0.25
-  initial_train_ratio: 0.005
+  initial_train_ratio: 0.013
   ncc_train_ratio: 0.25
+  resample_every_epochs: 0  # 0 = disabled. N > 0 = regenerate all training points every N epochs in-memory.
   sample_volume_ratio: 35
 save_every: 5000
 schrodinger:
