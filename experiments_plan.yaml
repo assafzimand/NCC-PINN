@@ -9,7 +9,7 @@ base_config:
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
   epochs: 1                      # Total training epochs for Phase 3 (full composed model)
-  batch_size: 2048                    # Mini-batch size for Adam/SOAP training
+  batch_size: 4096                    # Mini-batch size for Adam/SOAP training
 
   # ── Primary optimizer ──
   optimizer: soap                     # Primary optimizer: 'adam' | 'soap'
@@ -221,7 +221,7 @@ experiments:
 
   - name: "ks_soap"
     problem: ks
-    base_architecture: [2, 128, 128, 128, 128, 128, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
 
   # - name: "burgers1d_soap"
   #   problem: burgers1d
