@@ -8,8 +8,10 @@ base_config:
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 10000                      # Total training epochs for Phase 3 (full composed model)
+  epochs: 30000                      # Upper bound for Phase 3. Early stopping will terminate sooner if converged.
   batch_size: 2048                    # Mini-batch size for Adam/SOAP training
+  patience_epochs: 3000              # Stop if eval Rel-L2 doesn't improve for 3000 epochs (~30k steps)
+  min_epochs: 5000                   # Don't early-stop before this many epochs
 
   # ── Primary optimizer ──
   optimizer: soap                     # Primary optimizer: 'adam' | 'soap'
@@ -174,7 +176,7 @@ base_config:
     boundary_train_ratio: 0.026      # ~260 BC points (with n_residual=20000). Papers use 200+.
     eval_train_ratio: 0.25           # eval = 25% of train (all types)
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
-    resample_every_epochs: 500       # Regenerate training data every N epochs. 0 = disabled. Papers use 500.
+    resample_every_epochs: 10       # Regenerate training data every N epochs. 0 = disabled. Papers use 500.
 
   # ── Adaptive Expert PINN configuration (Tree-Based Spawning) ──
   adaptive_pinn:
@@ -215,7 +217,7 @@ base_config:
 # 3-phase full_tree_by_norm: Phase 1 trains base (2000 epochs), spawns tree,
 # reinitializes base, then Phase 3 trains full model (5001 epochs).
 experiments:
-  - name: "allen_cahn_soap"
+  - name: "allen_cahn"
     problem: allen_cahn
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
@@ -227,10 +229,10 @@ experiments:
   #   problem: burgers1d
   #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  # # - name: "schrodinger_soap"
-  # #   problem: schrodinger
-  # #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  # - name: "schrodinger_soap"
+  #   problem: schrodinger
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
 
-  # - name: "kdv_soap"
-  #   problem: kdv
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: "kdv"
+    problem: kdv
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]

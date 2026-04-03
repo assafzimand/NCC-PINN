@@ -103,6 +103,8 @@ conv_diff:
   - 1.0
 cuda: true
 epochs: 5
+patience_epochs: 0               # 0 = disabled. N > 0 = stop if eval Rel-L2 doesn't improve for N epochs.
+min_epochs: 0                    # Don't early-stop before this many epochs regardless of patience.
 eval_every: 1
 eval_only: false
 fisher_kpp:
