@@ -502,7 +502,11 @@ def train(
     }
 
     best_eval_loss = float('inf')
+    best_eval_rel_l2 = float('inf')
     best_checkpoint_path = None
+    patience_epochs = cfg.get('patience_epochs', 0)
+    min_epochs = cfg.get('min_epochs', 0)
+    epochs_without_improvement = 0
 
     checkpoint_dir = run_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -724,6 +728,10 @@ def train(
               f"schedule={_cs_init['schedule']}, "
               f"chunks={_cs_init['num_chunks']}, "
               f"threshold={_cs_init['threshold']}")
+
+    if patience_epochs > 0:
+        print(f"  Early stopping enabled: patience={patience_epochs} epochs, "
+              f"min_epochs={min_epochs}")
 
     epoch = 0
     while epoch < total_epochs:
@@ -1041,6 +1049,21 @@ def train(
             best_checkpoint_path = checkpoint_dir / "best_model.pt"
             _save_checkpoint(best_checkpoint_path, model, optimizer, current_optimizer_name, epoch,
                            train_loss, eval_loss, cfg, metrics)
+
+        # Patience-based early stopping on eval Rel-L2
+        if eval_rel_l2 is not None and patience_epochs > 0:
+            if eval_rel_l2 < best_eval_rel_l2:
+                best_eval_rel_l2 = eval_rel_l2
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += eval_every
+            if (epoch >= min_epochs
+                    and epochs_without_improvement >= patience_epochs):
+                print(f"\n  [EarlyStop] No Rel-L2 improvement "
+                      f"for {epochs_without_improvement} epochs "
+                      f"(best={best_eval_rel_l2:.6f}). "
+                      f"Stopping at epoch {epoch}.")
+                break
 
         # Periodic inner metrics (NCC + probes + derivatives + frequency)
         # Skip if adaptive PINN and inner_metrics_calculation is disabled

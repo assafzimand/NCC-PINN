@@ -1,5 +1,6 @@
 """Dataset generation utilities."""
 
+import math
 import torch
 from pathlib import Path
 from typing import Dict
@@ -244,43 +245,151 @@ def generate_and_save_datasets(config: Dict) -> None:
         print(f"Frequency grid already exists: {freq_grid_path}")
 
 
+def _analytic_ic(problem: str, x: torch.Tensor, pc: Dict) -> torch.Tensor:
+    """Return analytical IC values h(x, t=0).  Shape: (N, output_dim)."""
+    if problem == 'allen_cahn':
+        return x[:, 0:1] ** 2 * torch.cos(math.pi * x[:, 0:1])
+    if problem == 'burgers1d':
+        return -torch.sin(math.pi * x[:, 0:1])
+    if problem == 'burgers2d':
+        return 1.0 / (1.0 + torch.exp((x[:, 0:1] + x[:, 1:2]) / 0.2))
+    if problem == 'kdv':
+        return torch.cos(math.pi * x[:, 0:1])
+    if problem == 'ks':
+        return torch.cos(x[:, 0:1]) * (1.0 + torch.sin(x[:, 0:1]))
+    if problem == 'schrodinger':
+        real = 2.0 / torch.cosh(x[:, 0:1])
+        imag = torch.zeros_like(real)
+        return torch.cat([real, imag], dim=1)
+    if problem == 'wave1d':
+        return torch.sin(x[:, 0:1])
+    if problem == 'fisher_kpp':
+        kappa = pc.get('kappa', 25.0)
+        width = math.sqrt(kappa / 6.0)
+        return 1.0 / (1.0 + torch.exp(width * (x[:, 0:1] - 0.25)))
+    if problem == 'conv_diff':
+        return -torch.sin(math.pi * x[:, 0:1])
+    raise ValueError(f"No analytic IC for problem '{problem}'")
+
+
+def _analytic_bc(problem: str, x: torch.Tensor, t: torch.Tensor,
+                 pc: Dict) -> torch.Tensor:
+    """Return analytical BC h_gt at boundary points.  Shape: (N, output_dim).
+
+    For problems whose loss hardcodes the target (allen_cahn, burgers1d,
+    conv_diff) or uses periodic matching (kdv, ks, schrodinger), the
+    returned values are never read by the loss — we fill zeros."""
+    if problem == 'burgers2d':
+        return 1.0 / (1.0 + torch.exp((x[:, 0:1] + x[:, 1:2] - t) / 0.2))
+    if problem == 'wave1d':
+        return torch.sin(x[:, 0:1]) * torch.cos(t)
+    if problem == 'fisher_kpp':
+        x_lo = pc['spatial_domain'][0][0]
+        x_hi = pc['spatial_domain'][0][1]
+        mid = (x_lo + x_hi) / 2.0
+        return torch.where(x[:, 0:1] < mid,
+                           torch.ones_like(x[:, 0:1]),
+                           torch.zeros_like(x[:, 0:1]))
+    if problem == 'schrodinger':
+        return torch.zeros(x.shape[0], 2, device=x.device)
+    return torch.zeros(x.shape[0], 1, device=x.device)
+
+
 def regenerate_training_data(
     config: Dict,
     device: torch.device,
     resample_seed: int = 0,
 ) -> Dict[str, torch.Tensor]:
-    """
-    Regenerate training data in-memory with fresh random samples.
+    """Lightweight resampling: fresh random coordinates + analytical IC/BC.
 
-    Uses the same solver and sizes as the initial dataset but with a
-    different random seed so every call produces different (t, x) points.
-    Does NOT write to disk -- the result is used only for the current
-    training session.
-
-    Args:
-        config: Full configuration dictionary.
-        device: Torch device for the returned tensors.
-        resample_seed: Seed for this particular resample (varies per call).
-
-    Returns:
-        Dictionary with 'x', 't', 'h_gt', 'mask' tensors on *device*.
+    Unlike the initial dataset generation this does **not** run any
+    numerical solver — only random (x, t) sampling plus trivial
+    analytical formulas for IC and BC ground truth.
     """
     problem = config['problem']
+    pc = config[problem]
+    spatial_dim = pc['spatial_dim']
+    spatial_domain = pc['spatial_domain']
+    t_min, t_max = pc['temporal_domain']
+    output_dim = pc.get('output_dim', 1)
+
     sizes = calculate_dataset_sizes(config)
+    n_res = sizes['n_residual_train']
+    n_ic = sizes['n_initial_train']
+    n_bc = sizes['n_boundary_train']
+    N = n_res + n_ic + n_bc
 
-    solver_module = importlib.import_module(f"solvers.{problem}_solver")
+    torch.manual_seed(resample_seed)
 
-    cfg_for_resample = dict(config)
-    cfg_for_resample['seed'] = resample_seed
+    x = torch.zeros(N, spatial_dim, device=device)
+    t = torch.zeros(N, 1, device=device)
+    h_gt = torch.zeros(N, output_dim, device=device)
+    idx = 0
 
-    train_data = solver_module.generate_dataset(
-        n_residual=sizes['n_residual_train'],
-        n_ic=sizes['n_initial_train'],
-        n_bc=sizes['n_boundary_train'],
-        device=device,
-        config=cfg_for_resample,
-    )
-    return train_data
+    # --- residual: random interior points (h_gt unused by PDE loss) ---
+    for d in range(spatial_dim):
+        lo, hi = spatial_domain[d]
+        x[idx:idx + n_res, d] = torch.rand(n_res, device=device) * (hi - lo) + lo
+    t[idx:idx + n_res, 0] = torch.rand(n_res, device=device) * (t_max - t_min) + t_min
+    idx += n_res
+
+    # --- IC: random x at t_min, analytical h_gt ---
+    for d in range(spatial_dim):
+        lo, hi = spatial_domain[d]
+        x[idx:idx + n_ic, d] = torch.rand(n_ic, device=device) * (hi - lo) + lo
+    t[idx:idx + n_ic, 0] = t_min
+    h_gt[idx:idx + n_ic] = _analytic_ic(problem, x[idx:idx + n_ic], pc)
+    idx += n_ic
+
+    # --- BC: boundary coordinates + analytical h_gt ---
+    if spatial_dim == 1:
+        x_lo, x_hi = spatial_domain[0]
+        n_left = n_bc // 2
+        n_right = n_bc - n_left
+        t_bc = torch.rand(max(n_left, n_right), device=device) * (t_max - t_min) + t_min
+        x[idx:idx + n_left, 0] = x_lo
+        t[idx:idx + n_left, 0] = t_bc[:n_left]
+        idx += n_left
+        x[idx:idx + n_right, 0] = x_hi
+        t[idx:idx + n_right, 0] = t_bc[:n_right]
+        idx += n_right
+    else:
+        x0_lo, x0_hi = spatial_domain[0]
+        x1_lo, x1_hi = spatial_domain[1]
+        n_per = n_bc // 4
+        rem = n_bc - 4 * n_per
+        for ei in range(4):
+            ne = n_per + (1 if ei < rem else 0)
+            if ei == 0:
+                x[idx:idx + ne, 0] = x0_lo
+                x[idx:idx + ne, 1] = torch.rand(ne, device=device) * (x1_hi - x1_lo) + x1_lo
+            elif ei == 1:
+                x[idx:idx + ne, 0] = x0_hi
+                x[idx:idx + ne, 1] = torch.rand(ne, device=device) * (x1_hi - x1_lo) + x1_lo
+            elif ei == 2:
+                x[idx:idx + ne, 0] = torch.rand(ne, device=device) * (x0_hi - x0_lo) + x0_lo
+                x[idx:idx + ne, 1] = x1_lo
+            else:
+                x[idx:idx + ne, 0] = torch.rand(ne, device=device) * (x0_hi - x0_lo) + x0_lo
+                x[idx:idx + ne, 1] = x1_hi
+            t[idx:idx + ne, 0] = torch.rand(ne, device=device) * (t_max - t_min) + t_min
+            idx += ne
+
+    bc_start = n_res + n_ic
+    h_gt[bc_start:] = _analytic_bc(problem, x[bc_start:], t[bc_start:], pc)
+
+    # --- masks ---
+    mask_res = torch.zeros(N, dtype=torch.bool, device=device)
+    mask_res[:n_res] = True
+    mask_ic = torch.zeros(N, dtype=torch.bool, device=device)
+    mask_ic[n_res:n_res + n_ic] = True
+    mask_bc = torch.zeros(N, dtype=torch.bool, device=device)
+    mask_bc[n_res + n_ic:] = True
+
+    return {
+        "x": x, "t": t, "h_gt": h_gt,
+        "mask": {"residual": mask_res, "IC": mask_ic, "BC": mask_bc},
+    }
 
 
 def load_dataset(
