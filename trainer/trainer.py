@@ -502,7 +502,7 @@ def train(
     }
 
     best_eval_loss = float('inf')
-    best_eval_rel_l2 = float('inf')
+    best_train_loss = float('inf')
     best_checkpoint_path = None
     patience_epochs = cfg.get('patience_epochs', 0)
     min_epochs = cfg.get('min_epochs', 0)
@@ -1051,9 +1051,9 @@ def train(
                            train_loss, eval_loss, cfg, metrics)
 
         # Patience-based early stopping on eval Rel-L2
-        if eval_rel_l2 is not None and patience_epochs > 0:
-            if eval_rel_l2 < best_eval_rel_l2:
-                best_eval_rel_l2 = eval_rel_l2
+        if train_loss is not None and patience_epochs > 0:
+            if train_loss < best_train_loss:
+                best_train_loss = train_loss
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += eval_every
@@ -1061,7 +1061,7 @@ def train(
                     and epochs_without_improvement >= patience_epochs):
                 print(f"\n  [EarlyStop] No Rel-L2 improvement "
                       f"for {epochs_without_improvement} epochs "
-                      f"(best={best_eval_rel_l2:.6f}). "
+                      f"(best={best_train_loss:.6f}). "
                       f"Stopping at epoch {epoch}.")
                 break
 
