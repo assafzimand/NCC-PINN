@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "AToE_Resnet_SOAP_perfect_trees"
+experiment_name: "AToE_Resnet_SOAP_perfect_trees_fixed_6k_experts"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -183,8 +183,8 @@ base_config:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
     spawn_every_epochs: 4000                   # Check for spawning every N epochs (matches initial_train.epochs)
-    AToE_threshold_capacity: 1000              # null = same as base, int = base capacity at threshold norm
-    ANT_threshold_architecture: 30             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
+    AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
+    ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 30              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
     expert_type: resnet                        # 'mlp' or 'resnet' -- architecture for base model and experts
     freeze_mode: none                          # "none" | "previous" | "base_only"
@@ -219,7 +219,7 @@ base_config:
 experiments:
   - name: "allen_cahn"
     problem: allen_cahn
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 40, 40, 40, 40, 40, 1]
 
   # - name: "ks_soap"
   #   problem: ks
@@ -235,4 +235,4 @@ experiments:
 
   - name: "kdv"
     problem: kdv
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 40, 40, 40, 40, 40, 1]
