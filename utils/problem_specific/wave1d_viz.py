@@ -60,96 +60,10 @@ def visualize_dataset(data_dict: Dict, save_dir: Path, config: Dict, split_name:
     print(f"  {split_name.capitalize()} dataset visualization saved to {save_path}")
 
 
-def visualize_evaluation(model: torch.nn.Module, eval_data_path: str, 
-                        save_dir: Path, config: Dict):
-    """
-    Visualize wave equation model evaluation with smooth heatmap comparison plots.
-    
-    Creates a 3-column figure with continuous heatmaps:
-    - Ground truth h(x,t)
-    - Predicted h(x,t)
-    - Error |h_pred - h_gt|
-    
-    Args:
-        model: Trained neural network
-        eval_data_path: Path to evaluation dataset
-        save_dir: Directory to save visualization
-        config: Configuration dictionary
-    """
-    # Get problem-specific config
-    problem = config.get('problem', 'wave1d')
-    problem_config = config[problem]
-    spatial_domain = problem_config['spatial_domain'][0]  # [x_min, x_max]
-    temporal_domain = problem_config['temporal_domain']  # [t_min, t_max]
-    
-    x_min, x_max = spatial_domain
-    t_min, t_max = temporal_domain
-    
-    # Create dense evaluation grid for smooth heatmaps
-    n_x = 256
-    n_t = 200
-    x_grid = np.linspace(x_min, x_max, n_x)
-    t_grid = np.linspace(t_min, t_max, n_t)
-    X, T = np.meshgrid(x_grid, t_grid)
-    
-    # Flatten for model input
-    device = next(model.parameters()).device
-    x_flat = torch.tensor(X.flatten(), dtype=torch.float32, device=device).view(-1, 1)
-    t_flat = torch.tensor(T.flatten(), dtype=torch.float32, device=device).view(-1, 1)
-    
-    # Model predictions
-    model.eval()
-    with torch.no_grad():
-        xt_input = torch.cat([x_flat, t_flat], dim=1)
-        h_pred = model(xt_input)  # (N, 1)
-        h_pred_np = h_pred[:, 0].cpu().numpy().reshape(n_t, n_x)
-    
-    # Get ground truth using the analytical solver
-    from solvers.wave1d_solver import analytical_solution
-    h_gt = analytical_solution(X, T)  # Already on grid, shape (n_t, n_x)
-    
-    # Compute error
-    error = np.abs(h_pred_np - h_gt)
-    
-    # Create figure with 3 subplots
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    
-    # Determine common color scale for GT and Pred
-    vmax = max(np.abs(h_gt).max(), np.abs(h_pred_np).max())
-    vmin = -vmax
-    
-    # Plot 1: Ground Truth - continuous heatmap
-    im1 = axes[0].contourf(X, T, h_gt, levels=50, cmap='RdBu_r', vmin=vmin, vmax=vmax)
-    axes[0].set_xlabel('x', fontsize=12)
-    axes[0].set_ylabel('t', fontsize=12)
-    axes[0].set_title('Ground Truth h(x,t)', fontsize=14, fontweight='bold')
-    cbar1 = plt.colorbar(im1, ax=axes[0])
-    cbar1.set_label('h', fontsize=11)
-    
-    # Plot 2: Prediction - continuous heatmap
-    im2 = axes[1].contourf(X, T, h_pred_np, levels=50, cmap='RdBu_r', vmin=vmin, vmax=vmax)
-    axes[1].set_xlabel('x', fontsize=12)
-    axes[1].set_ylabel('t', fontsize=12)
-    axes[1].set_title('Prediction h_pred(x,t)', fontsize=14, fontweight='bold')
-    cbar2 = plt.colorbar(im2, ax=axes[1])
-    cbar2.set_label('h', fontsize=11)
-    
-    # Plot 3: Error - continuous heatmap
-    im3 = axes[2].contourf(X, T, error, levels=50, cmap='Reds')
-    axes[2].set_xlabel('x', fontsize=12)
-    axes[2].set_ylabel('t', fontsize=12)
-    axes[2].set_title('Error |h_pred - h_gt|', fontsize=14, fontweight='bold')
-    cbar3 = plt.colorbar(im3, ax=axes[2])
-    cbar3.set_label('|error|', fontsize=11)
-    
-    plt.tight_layout()
-    
-    # Save
-    save_path = save_dir / "evaluation_comparison.png"
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    print(f"  Evaluation comparison saved to {save_path}")
+def visualize_evaluation(model: torch.nn.Module, eval_data_path: str,
+                         save_dir: Path, config: Dict):
+    from utils.problem_specific.generic_viz import plot_predictions_and_error_maps
+    plot_predictions_and_error_maps(model, save_dir, config)
 
 
 def visualize_ncc_dataset(ncc_data: Dict, dataset_dir: Path, config: Dict, prefix: str = ""):

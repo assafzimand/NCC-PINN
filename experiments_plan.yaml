@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "capacity_map_fixed_size_perfect_trees"
+experiment_name: "capacity_map_fixed_size_5k_perfect_trees"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -185,7 +185,7 @@ base_config:
     spawn_every_epochs: 1                      # Check for spawning every N epochs (matches initial_train.epochs)
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
-    ANT_default_hidden_layers: 70              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
+    ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
     expert_type: resnet                        # 'mlp' or 'resnet' -- architecture for base model and experts
     freeze_mode: none                          # "none" | "previous" | "base_only"
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
@@ -219,64 +219,64 @@ experiments:
   - name: "allen_cahn_AToE"
     problem: allen_cahn
     model: AToE
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]
   - name: "allen_cahn_AToELeaves"
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]
   - name: "allen_cahn_ANT"
     problem: allen_cahn
     model: ANT
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]
 
   - name: "ks_AToE"
     problem: ks
     model: AToE
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]
   - name: "ks_AToELeaves"
     problem: ks
     model: AToELeaves
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]
   - name: "ks_ANT"
     problem: ks
     model: ANT
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]
 
   - name: "burgers1d_AToE"
     problem: burgers1d
     model: AToE
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]
   - name: "burgers1d_AToELeaves"
     problem: burgers1d
     model: AToELeaves
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]
   - name: "burgers1d_ANT"
     problem: burgers1d
     model: ANT
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]
 
   - name: "schrodinger_AToE"
     problem: schrodinger
     model: AToE
-    base_architecture: [2, 40, 40, 40, 40, 40, 2]
+    base_architecture: [2, 35, 35, 35, 35, 2]
   - name: "schrodinger_AToELeaves"
     problem: schrodinger
     model: AToELeaves
-    base_architecture: [2, 40, 40, 40, 40, 40, 2]
+    base_architecture: [2, 35, 35, 35, 35, 2]
   - name: "schrodinger_ANT"
     problem: schrodinger
     model: ANT
-    base_architecture: [2, 40, 40, 40, 40, 40, 2]
+    base_architecture: [2, 35, 35, 35, 35, 2]
 
   - name: "kdv_AToE"
     problem: kdv
     model: AToE
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]
   - name: "kdv_AToELeaves"
     problem: kdv
     model: AToELeaves
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]
   - name: "kdv_ANT"
     problem: kdv
     model: ANT
-    base_architecture: [2, 40, 40, 40, 40, 40, 1]
+    base_architecture: [2, 35, 35, 35, 35, 1]

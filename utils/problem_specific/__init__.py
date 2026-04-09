@@ -84,5 +84,15 @@ def get_visualization_module(problem_name: str):
                 visualize_ncc_classification_accuracy_changes, 
                 visualize_ncc_classification_input_space_accuracy_changes)
     else:
-        raise ValueError(f"Unknown problem: {problem_name}")
+        # For problems without a dedicated viz module, use the generic evaluator.
+        from .generic_viz import plot_predictions_and_error_maps
+
+        def _generic_visualize_evaluation(model, eval_data_path, save_dir, config):
+            plot_predictions_and_error_maps(model, save_dir, config)
+
+        def _noop(*args, **kwargs):
+            pass
+
+        return (_noop, _generic_visualize_evaluation,
+                _noop, _noop, _noop, _noop, _noop, _noop, _noop)
 
