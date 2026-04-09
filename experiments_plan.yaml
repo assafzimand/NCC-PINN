@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "capacity_map_fixed_size_5k_perfect_trees"
+experiment_name: "AToE_Resnet_SOAP_perfect_trees_fixed_experts"  # Name for this batch of experiments (used in logging and checkpointing)
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -8,10 +8,10 @@ base_config:
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 1                          # No real training — just spawn experts and save
+  epochs: 30000                          # No real training — just spawn experts and save
   batch_size: 2048                    # Mini-batch size for Adam/SOAP training
   patience_epochs: 3000              # Stop if eval Rel-L2 doesn't improve for 3000 epochs (~30k steps)
-  min_epochs: 1                      # No early-stop guard needed
+  min_epochs: 5000                      # No early-stop guard needed
 
   # ── Primary optimizer ──
   optimizer: soap                     # Primary optimizer: 'adam' | 'soap'
@@ -182,7 +182,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 1                      # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 4000                      # Check for spawning every N epochs (matches initial_train.epochs)
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
@@ -209,7 +209,7 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 1                                # Phase 1: how many epochs to train base model before tree fitting
+      epochs: 4000                                # Phase 1: how many epochs to train base model before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
@@ -220,63 +220,35 @@ experiments:
     problem: allen_cahn
     model: AToE
     base_architecture: [2, 35, 35, 35, 35, 1]
-  - name: "allen_cahn_AToELeaves"
-    problem: allen_cahn
-    model: AToELeaves
-    base_architecture: [2, 35, 35, 35, 35, 1]
-  - name: "allen_cahn_ANT"
-    problem: allen_cahn
-    model: ANT
-    base_architecture: [2, 35, 35, 35, 35, 1]
+  # - name: "allen_cahn_ANT"
+  #   problem: allen_cahn
+  #   model: ANT
+  #   base_architecture: [2, 35, 35, 35, 35, 1]
 
-  - name: "ks_AToE"
-    problem: ks
-    model: AToE
-    base_architecture: [2, 35, 35, 35, 35, 1]
-  - name: "ks_AToELeaves"
-    problem: ks
-    model: AToELeaves
-    base_architecture: [2, 35, 35, 35, 35, 1]
-  - name: "ks_ANT"
-    problem: ks
-    model: ANT
-    base_architecture: [2, 35, 35, 35, 35, 1]
 
-  - name: "burgers1d_AToE"
-    problem: burgers1d
-    model: AToE
-    base_architecture: [2, 35, 35, 35, 35, 1]
-  - name: "burgers1d_AToELeaves"
-    problem: burgers1d
-    model: AToELeaves
-    base_architecture: [2, 35, 35, 35, 35, 1]
-  - name: "burgers1d_ANT"
-    problem: burgers1d
-    model: ANT
-    base_architecture: [2, 35, 35, 35, 35, 1]
+  # - name: "burgers1d_AToE"
+  #   problem: burgers1d
+  #   model: AToE
+  #   base_architecture: [2, 35, 35, 35, 35, 1]
+  # - name: "burgers1d_ANT"
+  #   problem: burgers1d
+  #   model: ANT
+  #   base_architecture: [2, 35, 35, 35, 35, 1]
 
-  - name: "schrodinger_AToE"
-    problem: schrodinger
-    model: AToE
-    base_architecture: [2, 35, 35, 35, 35, 2]
-  - name: "schrodinger_AToELeaves"
-    problem: schrodinger
-    model: AToELeaves
-    base_architecture: [2, 35, 35, 35, 35, 2]
-  - name: "schrodinger_ANT"
-    problem: schrodinger
-    model: ANT
-    base_architecture: [2, 35, 35, 35, 35, 2]
+  # - name: "schrodinger_AToE"
+  #   problem: schrodinger
+  #   model: AToE
+  #   base_architecture: [2, 35, 35, 35, 35, 2]
+  # - name: "schrodinger_ANT"
+  #   problem: schrodinger
+  #   model: ANT
+  #   base_architecture: [2, 35, 35, 35, 35, 2]
 
   - name: "kdv_AToE"
     problem: kdv
     model: AToE
     base_architecture: [2, 35, 35, 35, 35, 1]
-  - name: "kdv_AToELeaves"
-    problem: kdv
-    model: AToELeaves
-    base_architecture: [2, 35, 35, 35, 35, 1]
-  - name: "kdv_ANT"
-    problem: kdv
-    model: ANT
-    base_architecture: [2, 35, 35, 35, 35, 1]
+  # - name: "kdv_ANT"
+  #   problem: kdv
+  #   model: ANT
+  #   base_architecture: [2, 35, 35, 35, 35, 1]
