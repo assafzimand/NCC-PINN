@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "WebFetch(domain:faculty.sites.iastate.edu)"
+      "WebFetch(domain:faculty.sites.iastate.edu)",
+      "Bash(grep -l \"_get_interpolator\\\\|get_interpolator\" /c/Users/assaf/Desktop/Coding/Msc/Master/NCC-PINN/solvers/*.py)"
     ]
   }
 }

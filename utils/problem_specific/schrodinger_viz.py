@@ -76,13 +76,14 @@ def visualize_dataset(data_dict: Dict, save_dir: Path, config: Dict, split_name:
 
 def visualize_evaluation(model, eval_data_path: str, save_dir: Path, config: Dict):
     """
-    Comprehensive evaluation visualization for Schrödinger equation.
-    
+    Evaluation visualization for Schrödinger equation.
+    Produces predictions_and_error_maps.png via the generic visualizer.
+
     Generates:
     1. Six heatmaps (2 rows × 3 columns):
        - Row 1: |h| - Ground truth, Prediction, Error
        - Row 2: arg(h) - Ground truth, Prediction, Error
-       
+
     2. Six heatmaps for u and v components (2 rows × 3 columns):
        - Row 1: u (real) - Ground truth, Prediction, Error
        - Row 2: v (imaginary) - Ground truth, Prediction, Error
@@ -97,8 +98,11 @@ def visualize_evaluation(model, eval_data_path: str, save_dir: Path, config: Dic
         save_dir: Directory to save visualizations
         config: Configuration dictionary
     """
+    from utils.problem_specific.generic_viz import plot_predictions_and_error_maps
+    plot_predictions_and_error_maps(model, save_dir, config)
+
     from utils.dataset_gen import load_dataset
-    
+
     device = torch.device('cuda' if config['cuda'] and torch.cuda.is_available() else 'cpu')
     model = model.to(device)
     model.eval()
