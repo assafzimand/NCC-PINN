@@ -62,13 +62,6 @@ def solve_burgers1d_spectral(
     # Viscosity coefficient in PDE: nu/pi
     visc = nu / np.pi
 
-    # 2/3 dealiasing mask: zero top 1/3 of wavenumbers to suppress aliasing
-    # instability in the nonlinear term. Only applied to u and u_x used in
-    # the product; the linear diffusion term uses the full spectrum.
-    cutoff = nx // 3
-    dealias = np.ones(nx, dtype=np.float64)
-    dealias[cutoff: nx - cutoff] = 0.0
-
     # Initial condition: u(0, x) = -sin(pi*x)
     u = -np.sin(np.pi * x_grid)
 
@@ -87,16 +80,15 @@ def solve_burgers1d_spectral(
         """Compute right-hand side: -(u*u_x) + (nu/pi)*u_xx"""
         u_hat = np.fft.fft(u_current)
 
-        # Dealias before forming nonlinear product (2/3 rule)
-        u_hat_d = u_hat * dealias
-        u_d = np.real(np.fft.ifft(u_hat_d))
-        u_x = np.real(np.fft.ifft(1j * k * u_hat_d))
+        # Spectral derivatives
+        u_x_hat = 1j * k * u_hat
+        u_xx_hat = -k**2 * u_hat
 
-        # Diffusion uses full spectrum (linear — no aliasing)
-        u_xx = np.real(np.fft.ifft(-k**2 * u_hat))
+        u_x = np.real(np.fft.ifft(u_x_hat))
+        u_xx = np.real(np.fft.ifft(u_xx_hat))
 
         # RHS: -u*u_x + visc*u_xx
-        return -u_d * u_x + visc * u_xx
+        return -u_current * u_x + visc * u_xx
     
     # Integrate in time
     current_time = t_min
@@ -215,11 +207,11 @@ def _get_interpolator(config: Dict) -> Burgers1DInterpolator:
         x_max=x_max,
         t_min=t_min,
         t_max=t_max,
-        nx=256,
+        nx=512,
         nt=201,
         nu=nu
     )
-    
+
     return Burgers1DInterpolator(x_grid, t_grid, u_solution)
 
 
@@ -241,7 +233,7 @@ def _get_interpolator_cached(config: Dict) -> Burgers1DInterpolator:
     )
     
     if _cached_interpolator is None or _cached_config_hash != config_tuple:
-        print("  Generating burgers1d solution (256×201 grid)...")
+        print("  Generating burgers1d solution (512×201 grid)...")
         _cached_interpolator = _get_interpolator(config)
         _cached_config_hash = config_tuple
         print("  Solution computed: 201×256 grid")
