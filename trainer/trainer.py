@@ -1050,13 +1050,13 @@ def train(
             _save_checkpoint(best_checkpoint_path, model, optimizer, current_optimizer_name, epoch,
                            train_loss, eval_loss, cfg, metrics)
 
-        # Patience-based early stopping on eval Rel-L2
+        # Patience-based early stopping on train loss
         if train_loss is not None and patience_epochs > 0:
             if train_loss < best_train_loss:
                 best_train_loss = train_loss
                 epochs_without_improvement = 0
             else:
-                epochs_without_improvement += eval_every
+                epochs_without_improvement += 1
             if (epoch >= min_epochs
                     and epochs_without_improvement >= patience_epochs):
                 print(f"\n  [EarlyStop] No Rel-L2 improvement "
