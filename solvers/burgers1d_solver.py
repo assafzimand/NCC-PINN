@@ -61,34 +61,42 @@ def solve_burgers1d_spectral(
     
     # Viscosity coefficient in PDE: nu/pi
     visc = nu / np.pi
-    
+
+    # 2/3 dealiasing mask: zero top 1/3 of wavenumbers to suppress aliasing
+    # instability in the nonlinear term. Only applied to u and u_x used in
+    # the product; the linear diffusion term uses the full spectrum.
+    cutoff = nx // 3
+    dealias = np.ones(nx, dtype=np.float64)
+    dealias[cutoff: nx - cutoff] = 0.0
+
     # Initial condition: u(0, x) = -sin(pi*x)
     u = -np.sin(np.pi * x_grid)
-    
+
     # Storage for solution
     u_solution = np.zeros((nt, nx), dtype=np.float64)
     u_solution[0, :] = u.copy()
-    
+
     # Time stepping with RK4
     # Use adaptive time step for stability
     # CFL condition: dt < dx / max|u| and dt < dx^2 / (2*visc)
-    dt_base = min(0.5 * dx / (np.abs(u).max() + 1e-10), 
+    dt_base = min(0.5 * dx / (np.abs(u).max() + 1e-10),
                   0.25 * dx**2 / (visc + 1e-10))
     dt = min(dt_base, dt_save / 10)  # Ensure we can hit save times
-    
+
     def rhs(u_current):
         """Compute right-hand side: -(u*u_x) + (nu/pi)*u_xx"""
         u_hat = np.fft.fft(u_current)
-        
-        # Spectral derivatives
-        u_x_hat = 1j * k * u_hat
-        u_xx_hat = -k**2 * u_hat
-        
-        u_x = np.real(np.fft.ifft(u_x_hat))
-        u_xx = np.real(np.fft.ifft(u_xx_hat))
-        
+
+        # Dealias before forming nonlinear product (2/3 rule)
+        u_hat_d = u_hat * dealias
+        u_d = np.real(np.fft.ifft(u_hat_d))
+        u_x = np.real(np.fft.ifft(1j * k * u_hat_d))
+
+        # Diffusion uses full spectrum (linear — no aliasing)
+        u_xx = np.real(np.fft.ifft(-k**2 * u_hat))
+
         # RHS: -u*u_x + visc*u_xx
-        return -u_current * u_x + visc * u_xx
+        return -u_d * u_x + visc * u_xx
     
     # Integrate in time
     current_time = t_min
