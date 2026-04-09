@@ -628,7 +628,7 @@ def train(
                     copy_from_idx=parent_expert_idx)
             elif is_atoe_plain:
                 expert_idx = model.spawn_expert(
-                    child_region, zero_init=atoe_zero_init)
+                    child_region, zero_init=False)
             else:
                 expert_idx = model.spawn_expert(child_region)
             if expert_idx >= 0:
