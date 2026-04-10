@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "AToE_Resnet_SOAP_perfect_trees_fixed_experts"  # Name for this batch of experiments (used in logging and checkpointing)
+experiment_name: "perfect_trees_new_norm_test"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -8,7 +8,7 @@ base_config:
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 30000                          # No real training — just spawn experts and save
+  epochs: 0                          # No real training — just spawn experts and save
   batch_size: 2048                    # Mini-batch size for Adam/SOAP training
   patience_epochs: 3000              # Stop if eval Rel-L2 doesn't improve for 3000 epochs (~30k steps)
   min_epochs: 5000                      # No early-stop guard needed
@@ -92,7 +92,7 @@ base_config:
     output_dim: 1
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 6.283185307179586]  # 2pi
-    wavelet_threshold: 10
+    wavelet_threshold: 5
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -104,7 +104,7 @@ base_config:
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     nu: 0.003141592653589793         # Viscosity (effective viscosity = nu/pi = 1/1000, "hard" benchmark)
-    wavelet_threshold: 3
+    wavelet_threshold: 2
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -169,7 +169,7 @@ base_config:
     temporal_domain: [0.0, 1.0]
     D: 1.0
     kappa: 25.0
-    wavelet_threshold: 5
+    wavelet_threshold: 2
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -182,7 +182,7 @@ base_config:
     temporal_domain: [0.0, 1.0]
     beta: 1.0                        # Convection coefficient
     epsilon: 0.01                    # Diffusion coefficient (Peclet = 100)
-    wavelet_threshold: 10
+    wavelet_threshold: 5
     loss_weights:
       residual: 1.0
       ic: 1.0
@@ -196,7 +196,7 @@ base_config:
     alpha: 6.25                      # 100/16
     beta: 0.390625                   # 100/16^2
     gamma: 0.00152587890625          # 100/16^4
-    wavelet_threshold: 10
+    wavelet_threshold: 15
     loss_weights:
       residual: 1.0
       ic: 100.0                      # Reduced from 1000: causal training already emphasizes early times
@@ -244,7 +244,7 @@ base_config:
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
     spawning_method: use_perfect_trees       # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
-    perfect_trees_path: perfect_tree_examples/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
+    perfect_trees_path: perfect_tree_examples/new_nrom/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
     # ── 3-Phase training config ──
     # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
@@ -257,41 +257,69 @@ base_config:
 
 
 # ===== Experiments to run =====
-# 15 runs: 5 problems × 3 model types. Fixed expert sizes, no real training.
+# 15 runs: 5 problems x 3 model types. epochs=0 — just spawn experts from perfect trees, no training.
 experiments:
-  - name: "allen_cahn_AToE"
+  - name: allen_cahn_AToE
     problem: allen_cahn
     model: AToE
-    base_architecture: [2, 35, 35, 35, 35, 1]
-  # - name: "allen_cahn_ANT"
-  #   problem: allen_cahn
-  #   model: ANT
-  #   base_architecture: [2, 35, 35, 35, 35, 1]
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: allen_cahn_AToELeaves
+    problem: allen_cahn
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: allen_cahn_ANT
+    problem: allen_cahn
+    model: ANT
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
+  - name: ks_AToE
+    problem: ks
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: ks_AToELeaves
+    problem: ks
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: ks_ANT
+    problem: ks
+    model: ANT
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  # - name: "burgers1d_AToE"
-  #   problem: burgers1d
-  #   model: AToE
-  #   base_architecture: [2, 35, 35, 35, 35, 1]
-  # - name: "burgers1d_ANT"
-  #   problem: burgers1d
-  #   model: ANT
-  #   base_architecture: [2, 35, 35, 35, 35, 1]
+  - name: burgers1d_AToE
+    problem: burgers1d
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: burgers1d_AToELeaves
+    problem: burgers1d
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: burgers1d_ANT
+    problem: burgers1d
+    model: ANT
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  # - name: "schrodinger_AToE"
-  #   problem: schrodinger
-  #   model: AToE
-  #   base_architecture: [2, 35, 35, 35, 35, 2]
-  # - name: "schrodinger_ANT"
-  #   problem: schrodinger
-  #   model: ANT
-  #   base_architecture: [2, 35, 35, 35, 35, 2]
+  - name: schrodinger_AToE
+    problem: schrodinger
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  - name: schrodinger_AToELeaves
+    problem: schrodinger
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  - name: schrodinger_ANT
+    problem: schrodinger
+    model: ANT
+    base_architecture: [2, 30, 30, 30, 30, 30, 2]
 
-  - name: "kdv_AToE"
+  - name: kdv_AToE
     problem: kdv
     model: AToE
-    base_architecture: [2, 35, 35, 35, 35, 1]
-  # - name: "kdv_ANT"
-  #   problem: kdv
-  #   model: ANT
-  #   base_architecture: [2, 35, 35, 35, 35, 1]
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: kdv_AToELeaves
+    problem: kdv
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: kdv_ANT
+    problem: kdv
+    model: ANT
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
