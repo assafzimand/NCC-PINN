@@ -2,17 +2,20 @@
 
 import torch
 import torch.nn as nn
-from typing import List, Dict
+from typing import List, Dict, Optional
 from torch.utils.hooks import RemovableHandle
+from models.rwf_layer import RWFLinear
+from models.fourier_features import FourierFeatureEmbedding
 
 
 class ResBlock(nn.Module):
     """Pre-activation residual block: x + act(Linear(act(Linear(x))))."""
 
-    def __init__(self, dim: int, activation: nn.Module):
+    def __init__(self, dim: int, activation: nn.Module, use_rwf: bool = False):
         super().__init__()
-        self.fc1 = nn.Linear(dim, dim)
-        self.fc2 = nn.Linear(dim, dim)
+        LinearCls = RWFLinear if use_rwf else nn.Linear
+        self.fc1 = LinearCls(dim, dim)
+        self.fc2 = LinearCls(dim, dim)
         self.activation = activation
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -84,17 +87,32 @@ class ResNetModel(nn.Module):
 
         self.activation = self._get_activation(activation)
 
+        use_rwf = config.get('rwf', False)
+
+        # Fourier Features: embed input before input_proj
+        ff_cfg = config.get('fourier_features', {})
+        use_ff = ff_cfg.get('enabled', False)
+        self.ff_emb: Optional[FourierFeatureEmbedding] = None
+        effective_input_dim = layers[0]
+        if use_ff:
+            ff_dim = ff_cfg.get('dim', 64)
+            ff_scale = ff_cfg.get('scale', 1.0)
+            self.ff_emb = FourierFeatureEmbedding(layers[0], ff_dim, ff_scale)
+            effective_input_dim = self.ff_emb.output_dim  # 2 * ff_dim
+
         h = hidden[0]
-        self.input_proj = nn.Linear(layers[0], h)
+        LinearCls = RWFLinear if use_rwf else nn.Linear
+        self.input_proj = LinearCls(effective_input_dim, h)
 
         n_blocks = len(hidden) // 2
         has_leftover = len(hidden) % 2 == 1
 
         self.res_blocks = nn.ModuleList(
-            [ResBlock(h, self.activation) for _ in range(n_blocks)]
+            [ResBlock(h, self.activation, use_rwf=use_rwf) for _ in range(n_blocks)]
         )
-        self.leftover = nn.Linear(h, h) if has_leftover else None
+        self.leftover = LinearCls(h, h) if has_leftover else None
 
+        # Output projection always plain nn.Linear for output scale stability
         self.output_proj = nn.Linear(h, layers[-1])
 
         self.activations: Dict[str, torch.Tensor] = {}
@@ -117,6 +135,8 @@ class ResNetModel(nn.Module):
         return activations[activation.lower()]
 
     def forward(self, x: torch.Tensor, return_activation: bool = False):
+        if self.ff_emb is not None:
+            x = self.ff_emb(x)
         out = self.activation(self.input_proj(x))
 
         for block in self.res_blocks:

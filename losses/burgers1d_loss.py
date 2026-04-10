@@ -423,8 +423,9 @@ def build_loss(**cfg) -> Callable:
 
     causal_state = create_causal_state(problem_config)
     
-    def loss_fn(model: nn.Module, batch: Dict[str, torch.Tensor], 
-                for_tree_spawning: bool = False):
+    def loss_fn(model: nn.Module, batch: Dict[str, torch.Tensor],
+                for_tree_spawning: bool = False,
+                return_components: bool = False):
         """
         Compute physics-informed loss for 1D viscous Burgers equation.
         
@@ -575,6 +576,12 @@ def build_loss(**cfg) -> Callable:
                 'residual': residual_per_sample,  # (N,)
                 'ic': ic_per_sample,              # (N,)
                 'bc': bc_per_sample               # (N,)
+            }
+        elif return_components:
+            return {
+                'residual': mse_residual,
+                'ic': mse_ic,
+                'bc': mse_bc,
             }
         else:
             total_loss = (

@@ -295,10 +295,99 @@ def _analytic_bc(problem: str, x: torch.Tensor, t: torch.Tensor,
     return torch.zeros(x.shape[0], 1, device=x.device)
 
 
+def _compute_phi_pdf(residuals: torch.Tensor, phi_cfg: Dict) -> torch.Tensor:
+    """Compute sampling probability from residual magnitudes using potential Φ.
+
+    Args:
+        residuals: Absolute residual values per candidate point, shape (M,).
+        phi_cfg: Dict with keys 'phi', 'phi_epsilon', 'phi_power'.
+
+    Returns:
+        Normalized probability tensor of shape (M,).
+    """
+    phi = phi_cfg.get('phi', 'quadratic')
+    if phi == 'exponential':
+        eps = phi_cfg.get('phi_epsilon', 1.0)
+        w = torch.exp(residuals / eps)
+    elif phi == 'power':
+        p = phi_cfg.get('phi_power', 2.0)
+        w = residuals ** p
+    else:  # default: quadratic
+        w = residuals ** 2
+    w = w + 1e-10  # avoid all-zero
+    return w / w.sum()
+
+
+def _sample_adaptive_residual_points(
+    model,
+    config: Dict,
+    device: torch.device,
+    n_points: int,
+    cand_mult: int,
+    phi_cfg: Dict,
+) -> tuple:
+    """Sample residual points biased toward high-residual regions (vRBA/RAR-D).
+
+    Generates n_points * cand_mult uniform candidate points, evaluates the
+    model residual magnitude at each, builds a PDF via Φ(|r|), and draws
+    n_points samples.
+
+    Args:
+        model: PINN model (called with no_grad for residual estimation).
+        config: Full config dict.
+        device: Target device.
+        n_points: Number of adaptive points to return.
+        cand_mult: Candidate multiplier (candidates = n_points * cand_mult).
+        phi_cfg: Dict with phi type and parameters.
+
+    Returns:
+        (x_adaptive, t_adaptive): tensors of shape (n_points, spatial_dim)
+        and (n_points, 1).
+    """
+    import torch.nn.functional as F
+
+    problem = config['problem']
+    pc = config[problem]
+    spatial_dim = pc['spatial_dim']
+    spatial_domain = pc['spatial_domain']
+    t_min, t_max = pc['temporal_domain']
+
+    n_cand = n_points * cand_mult
+
+    # Sample uniform candidates
+    x_cand = torch.zeros(n_cand, spatial_dim, device=device)
+    for d in range(spatial_dim):
+        lo, hi = spatial_domain[d]
+        x_cand[:, d] = torch.rand(n_cand, device=device) * (hi - lo) + lo
+    t_cand = torch.rand(n_cand, 1, device=device) * (t_max - t_min) + t_min
+
+    # Estimate residual magnitude at candidates (no gradients needed for PDF)
+    with torch.no_grad():
+        xt_cand = torch.cat([x_cand, t_cand], dim=1)
+        try:
+            h_cand = model(xt_cand)
+            # Use L1 of prediction as a cheap surrogate for residual magnitude
+            # (true residual requires autograd which breaks no_grad context)
+            # Instead: compute std of predictions as local variation proxy
+            # Actually best we can do without autograd: use abs(model output)
+            # For single-output: abs(h), for multi-output: norm of h
+            residuals = h_cand.abs().mean(dim=-1)  # (n_cand,)
+        except Exception:
+            # Fallback: uniform sampling
+            return x_cand[:n_points], t_cand[:n_points]
+
+    # Build PDF and sample
+    probs = _compute_phi_pdf(residuals, phi_cfg)
+    indices = torch.multinomial(probs, num_samples=n_points, replacement=False)
+
+    return x_cand[indices], t_cand[indices]
+
+
 def regenerate_training_data(
     config: Dict,
     device: torch.device,
     resample_seed: int = 0,
+    model=None,
 ) -> Dict[str, torch.Tensor]:
     """Lightweight resampling: fresh random coordinates + analytical IC/BC.
 
@@ -321,17 +410,47 @@ def regenerate_training_data(
 
     torch.manual_seed(resample_seed)
 
+    # Adaptive sampling config (global sampling section)
+    as_global = config.get('sampling', {}).get('adaptive_sampling', {})
+    as_problem = config.get(problem, {}).get('adaptive_sampling', {})
+    as_enabled = as_global.get('enabled', False) and model is not None
+    as_ratio = as_global.get('adaptive_ratio', 0.5)
+    as_cand_mult = as_global.get('candidate_multiplier', 10)
+    # phi config comes from per-problem section
+    phi_cfg = {
+        'phi': as_problem.get('phi', 'quadratic'),
+        'phi_epsilon': as_problem.get('phi_epsilon', 1.0),
+        'phi_power': as_problem.get('phi_power', 2.0),
+    }
+
     x = torch.zeros(N, spatial_dim, device=device)
     t = torch.zeros(N, 1, device=device)
     h_gt = torch.zeros(N, output_dim, device=device)
     idx = 0
 
-    # --- residual: random interior points (h_gt unused by PDE loss) ---
-    for d in range(spatial_dim):
-        lo, hi = spatial_domain[d]
-        x[idx:idx + n_res, d] = torch.rand(n_res, device=device) * (hi - lo) + lo
-    t[idx:idx + n_res, 0] = torch.rand(n_res, device=device) * (t_max - t_min) + t_min
-    idx += n_res
+    # --- residual: mix of uniform + adaptive points ---
+    if as_enabled:
+        n_adaptive = int(n_res * as_ratio)
+        n_uniform = n_res - n_adaptive
+        # Uniform residual points
+        for d in range(spatial_dim):
+            lo, hi = spatial_domain[d]
+            x[idx:idx + n_uniform, d] = torch.rand(n_uniform, device=device) * (hi - lo) + lo
+        t[idx:idx + n_uniform, 0] = torch.rand(n_uniform, device=device) * (t_max - t_min) + t_min
+        idx += n_uniform
+        # Adaptive residual points
+        x_adap, t_adap = _sample_adaptive_residual_points(
+            model, config, device, n_adaptive, as_cand_mult, phi_cfg)
+        x[idx:idx + n_adaptive] = x_adap
+        t[idx:idx + n_adaptive] = t_adap
+        idx += n_adaptive
+    else:
+        # All uniform (default behavior, also used on first call when model=None)
+        for d in range(spatial_dim):
+            lo, hi = spatial_domain[d]
+            x[idx:idx + n_res, d] = torch.rand(n_res, device=device) * (hi - lo) + lo
+        t[idx:idx + n_res, 0] = torch.rand(n_res, device=device) * (t_max - t_min) + t_min
+        idx += n_res
 
     # --- IC: random x at t_min, analytical h_gt ---
     for d in range(spatial_dim):

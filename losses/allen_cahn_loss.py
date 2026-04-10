@@ -197,7 +197,7 @@ def build_loss(**cfg):
 
     causal_state = create_causal_state(problem_config)
 
-    def loss_fn(model, batch, for_tree_spawning=False):
+    def loss_fn(model, batch, for_tree_spawning=False, return_components=False):
         x = batch['x']; t = batch['t']
         h_gt = batch.get('h_gt', batch.get('u_gt'))
         masks = batch['mask']
@@ -277,6 +277,8 @@ def build_loss(**cfg):
                 mse_bc = torch.tensor(0.0, device=device)
         if for_tree_spawning:
             return {'residual': residual_per_sample, 'ic': ic_per_sample, 'bc': bc_per_sample}
+        elif return_components:
+            return {'residual': mse_residual, 'ic': mse_ic, 'bc': mse_bc}
         else:
             return weight_residual * mse_residual + weight_ic * mse_ic + weight_bc * mse_bc
 
