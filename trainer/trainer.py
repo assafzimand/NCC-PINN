@@ -1724,7 +1724,7 @@ def train(
     print(f"\nGenerating training plots...")
     training_plots_dir = run_dir / "training_plots"
     # Pass optimizer switch epoch if there was a switch
-    switch_epoch_to_plot = switch_epoch if switch_at_fraction < 1.0 else None
+    switch_epoch_to_plot = switch_epoch if (optimizer_2_name is not None and switch_epoch <= epochs) else None
     plot_training_curves(metrics, training_plots_dir, optimizer_switch_epoch=switch_epoch_to_plot)
 
     # Plot final predictions
