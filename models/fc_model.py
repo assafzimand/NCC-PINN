@@ -2,8 +2,10 @@
 
 import torch
 import torch.nn as nn
-from typing import List, Dict
+from typing import List, Dict, Optional
 from torch.utils.hooks import RemovableHandle
+from models.rwf_layer import RWFLinear
+from models.fourier_features import FourierFeatureEmbedding
 
 
 class FCNet(nn.Module):
@@ -63,12 +65,34 @@ class FCNet(nn.Module):
         # Get activation function
         self.activation = self._get_activation(activation)
 
+        # Fourier Features: embed input before first linear layer
+        ff_cfg = config.get('fourier_features', {})
+        use_ff = ff_cfg.get('enabled', False)
+        self.ff_emb: Optional[FourierFeatureEmbedding] = None
+        effective_input_dim = layers[0]
+        if use_ff:
+            ff_dim = ff_cfg.get('dim', 64)
+            ff_scale = ff_cfg.get('scale', 1.0)
+            self.ff_emb = FourierFeatureEmbedding(layers[0], ff_dim, ff_scale)
+            effective_input_dim = self.ff_emb.output_dim  # 2 * ff_dim
+
+        # RWF: use RWFLinear for hidden layers when enabled
+        use_rwf = config.get('rwf', False)
+        n_layers = len(layers) - 1  # total linear layers
+        LinearCls_hidden = RWFLinear if use_rwf else nn.Linear
+
         # Build network with named layers
+        # First layer may have expanded input_dim due to FF embedding
         self.network = nn.ModuleDict()
 
-        for i in range(len(layers) - 1):
+        for i in range(n_layers):
             layer_name = f"layer_{i + 1}"
-            self.network[layer_name] = nn.Linear(layers[i], layers[i + 1])
+            is_output_layer = (i == n_layers - 1)
+            in_dim = effective_input_dim if i == 0 else layers[i]
+            out_dim = layers[i + 1]
+            # Output layer always plain nn.Linear for output scale stability
+            LinearCls = nn.Linear if is_output_layer else LinearCls_hidden
+            self.network[layer_name] = LinearCls(in_dim, out_dim)
 
         # Storage for activations captured by hooks
         self.activations: Dict[str, torch.Tensor] = {}
@@ -113,6 +137,10 @@ class FCNet(nn.Module):
                 where activation is (N, last_hidden_dim).
         """
         out = x
+
+        # Apply Fourier Feature embedding if enabled
+        if self.ff_emb is not None:
+            out = self.ff_emb(out)
 
         # Pass through all layers except the last
         layer_names = list(self.network.keys())

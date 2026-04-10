@@ -59,6 +59,13 @@ class ANT(nn.Module):
         self.expert_type = adaptive_config.get(
             'expert_type', 'mlp'
         )
+        if self.expert_type == 'piratenet':
+            raise ValueError(
+                "PirateNet is incompatible with ANT: ANT requires "
+                "return_activation=True and a standard hidden-state interface "
+                "that PirateNet does not provide. "
+                "Use AToE or AToELeaves with expert_type='piratenet'."
+            )
 
         raw_hidden = adaptive_config.get(
             'ANT_default_hidden_layers', 70

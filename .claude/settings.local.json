@@ -3,7 +3,8 @@
     "allow": [
       "WebSearch",
       "WebFetch(domain:faculty.sites.iastate.edu)",
-      "Bash(grep -l \"_get_interpolator\\\\|get_interpolator\" /c/Users/assaf/Desktop/Coding/Msc/Master/NCC-PINN/solvers/*.py)"
+      "Bash(grep -l \"_get_interpolator\\\\|get_interpolator\" /c/Users/assaf/Desktop/Coding/Msc/Master/NCC-PINN/solvers/*.py)",
+      "Bash(grep -n \"def build_loss\" /c/Users/assaf/Desktop/Coding/Msc/Master/NCC-PINN/losses/*.py)"
     ]
   }
 }

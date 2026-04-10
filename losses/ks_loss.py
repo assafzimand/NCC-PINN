@@ -459,7 +459,8 @@ def build_loss(**cfg) -> Callable:
     causal_state = create_causal_state(problem_config)
 
     def loss_fn(model: nn.Module, batch: Dict[str, torch.Tensor],
-                for_tree_spawning: bool = False):
+                for_tree_spawning: bool = False,
+                return_components: bool = False):
         """
         Compute physics-informed loss for the KS equation.
 
@@ -647,6 +648,8 @@ def build_loss(**cfg) -> Callable:
                 'ic': ic_per_sample,
                 'bc': bc_per_sample,
             }
+        elif return_components:
+            return {'residual': mse_residual, 'ic': mse_ic, 'bc': mse_bc}
         else:
             total_loss = (
                 weight_residual * mse_residual
