@@ -9,6 +9,7 @@ Implements the algorithm to detect high-variation regions for spawning expert PI
 
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.tree import DecisionTreeRegressor
 from typing import List, Optional, Dict, Tuple
 from dataclasses import dataclass
 
@@ -211,7 +212,116 @@ class RegionDetector:
                 ))
         
         return all_nodes
-    
+
+    def compute_new_wavelet_norms(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+    ) -> List[TreeNodeInfo]:
+        """
+        Compute parent-assigned wavelet norms for all tree nodes.
+
+        NEW formula — norm is assigned to each node based on its own children:
+            norm(node) = ||Q_node - Q_left||^2 * n_left
+                       + ||Q_node - Q_right||^2 * n_right
+
+        For leaf nodes (no children in the fitted tree): a temporary
+        DecisionTreeRegressor(max_depth=1, min_samples_leaf=1) is fitted on
+        the samples that land in that leaf to obtain two hypothetical children.
+        The same formula is applied and the temporary tree is discarded.
+        If the leaf cannot be split, norm = 0.0.
+
+        Args:
+            X: (N, n_dims) sample coordinates — same array used to fit the tree
+            y: (N,) or (N, output_dim) target values
+
+        Returns:
+            List of TreeNodeInfo with wavelet_norm set to the new formula value.
+            All other fields (bounds, n_samples, prediction, …) are identical
+            to what compute_wavelet_norms() would return.
+        """
+        if self.rf is None:
+            raise RuntimeError("Must call fit() before compute_new_wavelet_norms()")
+
+        all_nodes = []
+
+        for tree_idx, estimator in enumerate(self.rf.estimators_):
+            tree = estimator.tree_
+
+            # leaf assignment for every sample (needed for the leaf split trick)
+            leaf_ids = estimator.apply(X)
+
+            for node_id in range(tree.node_count):
+                n_samples = int(tree.n_node_samples[node_id])
+                if n_samples < self.min_samples_leaf:
+                    continue
+
+                is_leaf = tree.children_left[node_id] == -1
+                bounds_lower, bounds_upper = self._get_node_bounds(tree, node_id)
+                parent_id = self._get_parent_id(tree, node_id)
+
+                prediction = tree.value[node_id, :, 0].copy()
+                parent_prediction = (
+                    tree.value[parent_id, :, 0].copy()
+                    if parent_id is not None else None
+                )
+
+                if not is_leaf:
+                    # ── Internal node: compute directly from tree values ──
+                    l = tree.children_left[node_id]
+                    r = tree.children_right[node_id]
+                    Q_node  = tree.value[node_id, :, 0]
+                    Q_left  = tree.value[l, :, 0]
+                    Q_right = tree.value[r, :, 0]
+                    n_left  = int(tree.n_node_samples[l])
+                    n_right = int(tree.n_node_samples[r])
+                    wavelet_norm = (
+                        float(np.sum((Q_left  - Q_node) ** 2)) * n_left
+                        + float(np.sum((Q_right - Q_node) ** 2)) * n_right
+                    )
+                else:
+                    # ── Leaf node: fit depth-1 subtree on this leaf's samples ──
+                    mask   = (leaf_ids == node_id)
+                    X_leaf = X[mask]
+                    y_leaf = y[mask]
+
+                    wavelet_norm = 0.0
+                    if len(X_leaf) >= 2:
+                        dt = DecisionTreeRegressor(
+                            max_depth=1, min_samples_leaf=1, random_state=42
+                        )
+                        try:
+                            dt.fit(X_leaf, y_leaf)
+                            sub = dt.tree_
+                            sub_l = sub.children_left[0]
+                            sub_r = sub.children_right[0]
+                            if sub_l != -1:
+                                Q_node  = sub.value[0,     :, 0]
+                                Q_hl    = sub.value[sub_l, :, 0]
+                                Q_hr    = sub.value[sub_r, :, 0]
+                                n_hl    = int(sub.n_node_samples[sub_l])
+                                n_hr    = int(sub.n_node_samples[sub_r])
+                                wavelet_norm = (
+                                    float(np.sum((Q_hl - Q_node) ** 2)) * n_hl
+                                    + float(np.sum((Q_hr - Q_node) ** 2)) * n_hr
+                                )
+                        except Exception:
+                            pass
+
+                all_nodes.append(TreeNodeInfo(
+                    node_id=node_id,
+                    tree_idx=tree_idx,
+                    is_leaf=is_leaf,
+                    n_samples=n_samples,
+                    bounds_lower=bounds_lower,
+                    bounds_upper=bounds_upper,
+                    prediction=prediction,
+                    parent_prediction=parent_prediction,
+                    wavelet_norm=wavelet_norm,
+                ))
+
+        return all_nodes
+
     def extract_regions_from_tree(
         self,
         wavelet_threshold: Optional[float] = None,
@@ -439,6 +549,7 @@ class RegionDetector:
         y: np.ndarray,
         wavelet_threshold: float = 0.0,
         verbose: bool = True,
+        norm_formula: str = 'old',
         **kwargs,
     ) -> Tuple[List[Tuple[TreeNodeInfo, int]], Dict]:
         """
@@ -459,6 +570,11 @@ class RegionDetector:
             y: (N,) or (N, output_dim) predictions
             wavelet_threshold: minimum wavelet norm to accept a sibling pair
             verbose: print diagnostics
+            norm_formula: 'old' (child-assigned, default) or 'new' (parent-assigned).
+                'old': norm(node) = ||Q_node - Q_parent||^2 * n_node
+                'new': norm(node) = ||Q_node - Q_left||^2 * n_left
+                                  + ||Q_node - Q_right||^2 * n_right
+                       (leaves use a temporary depth-1 split)
             **kwargs: Accepted for backward compat (loss_components) but unused.
 
         Returns:
@@ -478,7 +594,10 @@ class RegionDetector:
             self.n_estimators = old_n_estimators
 
         tree = self.rf.estimators_[0].tree_
-        all_nodes = self.compute_wavelet_norms()
+        if norm_formula == 'new':
+            all_nodes = self.compute_new_wavelet_norms(X, y)
+        else:
+            all_nodes = self.compute_wavelet_norms()
 
         if not all_nodes:
             if verbose:

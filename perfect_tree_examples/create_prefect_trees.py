@@ -143,7 +143,7 @@ def fit_and_get_all_nodes(
     )
 
     accepted_nodes, depth_stats = detector.fit_full_tree_and_prune(
-        X, y, wavelet_threshold=wavelet_threshold, verbose=True
+        X, y, wavelet_threshold=wavelet_threshold, verbose=True, norm_formula='new'
     )
     accepted_ids = {n.node_id for n, _ in accepted_nodes}
 
@@ -162,7 +162,7 @@ def fit_and_get_all_nodes(
                 _node_depth[child] = _node_depth[nid] + 1
                 bfs.append(child)
 
-    all_wn = detector.compute_wavelet_norms()
+    all_wn = detector.compute_new_wavelet_norms(X, y)
 
     node_dicts = []
     for nd in all_wn:
