@@ -178,7 +178,7 @@ def fit_and_get_all_nodes(
             'wavelet_norm_squared': nd.wavelet_norm_squared,
             'smoothness_alpha': nd.smoothness_alpha,
             'smoothness_r2': nd.smoothness_r2,
-            'smoothness_n_desc': nd.smoothness_n_desc,
+            'smoothness_n_levels': nd.smoothness_n_levels,
             'n_samples': nd.n_samples,
             'is_leaf': bool(nd.is_leaf),
             'bounds_lower': nd.bounds_lower,
