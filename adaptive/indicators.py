@@ -19,17 +19,18 @@ class RegionDescriptor:
     Attributes:
         bounds_lower: Lower bounds for each dimension [x_min, t_min] or [x_min, y_min, t_min]
         bounds_upper: Upper bounds for each dimension [x_max, t_max] or [x_max, y_max, t_max]
-        wavelet_norm: L2 norm of the geometric wavelet (refinement priority)
+        wavelet_norm_squared: L2 norm of the geometric wavelet (refinement priority)
         spawn_epoch: Epoch at which this region's expert was spawned
         depth: Depth level in the expert tree (1 = child of base model)
         parent_idx: Index of the parent expert (-1 for depth-1, base model is parent)
     """
     bounds_lower: List[float]
     bounds_upper: List[float]
-    wavelet_norm: float = 0.0
+    wavelet_norm_squared: float = 0.0
     spawn_epoch: int = 0
     depth: int = 1  # Depth level (1 = child of base)
     parent_idx: int = -1  # Parent expert index (-1 = base model)
+    smoothness_alpha: Optional[float] = None  # local tree-Besov smoothness; larger = smoother
     
     @property
     def n_dims(self) -> int:
@@ -56,22 +57,24 @@ class RegionDescriptor:
         return {
             'bounds_lower': self.bounds_lower,
             'bounds_upper': self.bounds_upper,
-            'wavelet_norm': self.wavelet_norm,
+            'wavelet_norm_squared': self.wavelet_norm_squared,
             'spawn_epoch': self.spawn_epoch,
             'depth': self.depth,
-            'parent_idx': self.parent_idx
+            'parent_idx': self.parent_idx,
+            'smoothness_alpha': self.smoothness_alpha,
         }
-    
+
     @classmethod
     def from_dict(cls, d: dict) -> 'RegionDescriptor':
         """Create from dictionary."""
         return cls(
             bounds_lower=d['bounds_lower'],
             bounds_upper=d['bounds_upper'],
-            wavelet_norm=d.get('wavelet_norm', 0.0),
+            wavelet_norm_squared=d.get('wavelet_norm_squared', 0.0),
             spawn_epoch=d.get('spawn_epoch', 0),
             depth=d.get('depth', 1),
-            parent_idx=d.get('parent_idx', -1)
+            parent_idx=d.get('parent_idx', -1),
+            smoothness_alpha=d.get('smoothness_alpha', None),
         )
 
 

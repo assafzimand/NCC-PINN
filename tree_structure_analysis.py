@@ -162,7 +162,7 @@ def _draw_rects_binary(ax, accepted, rejected, acc_color='#2ecc71', rej_color='#
     ax.legend(handles=legend_els, loc='upper right', fontsize=9, framealpha=0.9)
 
 
-def _draw_rects_3d(ax, regions, cmap_name='RdYlGn', value_key='wavelet_norm'):
+def _draw_rects_3d(ax, regions, cmap_name='RdYlGn', value_key='wavelet_norm_squared'):
     """Draw 3D wireframe boxes colored by a value."""
     vals = [r[value_key] for r in regions]
     if not vals:
@@ -411,8 +411,8 @@ def _plot_norm_per_epoch_accept(diags, output_dir, x_data, t_data, h_magnitude):
             else:
                 all_children_rej.extend(children)
 
-        norms_acc = [c['wavelet_norm'] for c in all_children_acc]
-        norms_rej = [c['wavelet_norm'] for c in all_children_rej]
+        norms_acc = [c['wavelet_norm_squared'] for c in all_children_acc]
+        norms_rej = [c['wavelet_norm_squared'] for c in all_children_rej]
         all_norms = norms_acc + norms_rej
 
         fig, axes = plt.subplots(1, 2, figsize=(16, 6))
@@ -463,10 +463,10 @@ def _plot_norm_evolution_accept(diags, output_dir):
             for child in leaf.get('children', []):
                 if leaf.get('accepted', False):
                     epochs_acc.append(ep)
-                    norms_acc.append(child['wavelet_norm'])
+                    norms_acc.append(child['wavelet_norm_squared'])
                 else:
                     epochs_rej.append(ep)
-                    norms_rej.append(child['wavelet_norm'])
+                    norms_rej.append(child['wavelet_norm_squared'])
 
     if not epochs_acc and not epochs_rej:
         return
@@ -512,7 +512,7 @@ def _analyze_accept_split_by_norm(data, output_dir, metrics_path, x_data, t_data
         print("    [accept_split_by_norm] Final regions summary...")
         fig, ax = plt.subplots(figsize=(10, 7))
         _render_gt_bg(ax, x_data, t_data, h_magnitude)
-        _draw_rects(ax, spawned, 'wavelet_norm', 'RdYlGn', 'Wavelet Norm')
+        _draw_rects(ax, spawned, 'wavelet_norm_squared', 'RdYlGn', 'Wavelet Norm')
         _set_ax_limits(ax, spawned)
         ax.set_title(f'Final Expert Regions (n={len(spawned)})', fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3, zorder=0)
@@ -529,9 +529,9 @@ def _analyze_accept_split_by_norm(data, output_dir, metrics_path, x_data, t_data
 
 def _plot_prune_comparison(all_nodes, accepted, rejected, threshold, output_dir):
     """Side-by-side histograms: all nodes (before) vs accepted only (after)."""
-    all_norms = [n['wavelet_norm'] for n in all_nodes]
-    acc_norms = [n['wavelet_norm'] for n in accepted]
-    rej_norms = [n['wavelet_norm'] for n in rejected]
+    all_norms = [n['wavelet_norm_squared'] for n in all_nodes]
+    acc_norms = [n['wavelet_norm_squared'] for n in accepted]
+    rej_norms = [n['wavelet_norm_squared'] for n in rejected]
     bins = np.histogram_bin_edges(all_norms, bins=40) if all_norms else 20
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
@@ -579,9 +579,9 @@ def _plot_prune_comparison(all_nodes, accepted, rejected, threshold, output_dir)
     depth_colors = plt.cm.viridis(np.linspace(0.2, 0.9, n_d))
 
     for di, depth in enumerate(depths[:6]):
-        d_all = [n['wavelet_norm'] for n in all_nodes if n['tree_depth'] == depth]
-        d_acc = [n['wavelet_norm'] for n in accepted if n['tree_depth'] == depth]
-        d_rej = [n['wavelet_norm'] for n in rejected if n['tree_depth'] == depth]
+        d_all = [n['wavelet_norm_squared'] for n in all_nodes if n['tree_depth'] == depth]
+        d_acc = [n['wavelet_norm_squared'] for n in accepted if n['tree_depth'] == depth]
+        d_rej = [n['wavelet_norm_squared'] for n in rejected if n['tree_depth'] == depth]
         d_bins = np.histogram_bin_edges(d_all, bins=15) if d_all else 10
 
         ax = axes[0, di]
@@ -627,7 +627,7 @@ def _plot_prune_spatial(all_nodes, accepted, output_dir, x_data, t_data, h_magni
 
         ax = axes[0]
         _render_gt_bg(ax, x_data, t_data, h_magnitude)
-        _draw_rects(ax, all_nodes, 'wavelet_norm', 'hot', 'Wavelet Norm')
+        _draw_rects(ax, all_nodes, 'wavelet_norm_squared', 'hot', 'Wavelet Norm')
         _set_ax_limits(ax, all_nodes)
         ax.set_title(f'Before Pruning (all {len(all_nodes)} nodes)', fontsize=13, fontweight='bold')
         ax.grid(True, alpha=0.3, zorder=0)
@@ -635,7 +635,7 @@ def _plot_prune_spatial(all_nodes, accepted, output_dir, x_data, t_data, h_magni
         ax = axes[1]
         _render_gt_bg(ax, x_data, t_data, h_magnitude)
         if accepted:
-            _draw_rects(ax, accepted, 'wavelet_norm', 'hot', 'Wavelet Norm')
+            _draw_rects(ax, accepted, 'wavelet_norm_squared', 'hot', 'Wavelet Norm')
         _set_ax_limits(ax, all_nodes)
         ax.set_title(f'After Pruning ({len(accepted)} accepted)', fontsize=13, fontweight='bold')
         ax.grid(True, alpha=0.3, zorder=0)
@@ -649,11 +649,11 @@ def _plot_prune_spatial(all_nodes, accepted, output_dir, x_data, t_data, h_magni
         fig = plt.figure(figsize=(18, 7))
         fig.suptitle('Spatial Regions: Before vs After Pruning (3D)', fontsize=15, fontweight='bold')
         ax1 = fig.add_subplot(121, projection='3d')
-        _draw_rects_3d(ax1, all_nodes, 'hot', 'wavelet_norm')
+        _draw_rects_3d(ax1, all_nodes, 'hot', 'wavelet_norm_squared')
         ax1.set_title(f'Before ({len(all_nodes)} nodes)')
         ax2 = fig.add_subplot(122, projection='3d')
         if accepted:
-            _draw_rects_3d(ax2, accepted, 'hot', 'wavelet_norm')
+            _draw_rects_3d(ax2, accepted, 'hot', 'wavelet_norm_squared')
         ax2.set_title(f'After ({len(accepted)} accepted)')
         plt.tight_layout()
         out = output_dir / 'prune_spatial_comparison_3d.png'
@@ -670,8 +670,8 @@ def _plot_depth_analysis_full_tree(all_nodes, threshold, output_dir, x_data, t_d
     for di, depth in enumerate(depths):
         d_acc = [n for n in all_nodes if n['tree_depth'] == depth and n['accepted']]
         d_rej = [n for n in all_nodes if n['tree_depth'] == depth and not n['accepted']]
-        n_acc = [n['wavelet_norm'] for n in d_acc]
-        n_rej = [n['wavelet_norm'] for n in d_rej]
+        n_acc = [n['wavelet_norm_squared'] for n in d_acc]
+        n_rej = [n['wavelet_norm_squared'] for n in d_rej]
         all_d_norms = n_acc + n_rej
         bins = np.histogram_bin_edges(all_d_norms, bins=20) if all_d_norms else 10
 
@@ -714,7 +714,7 @@ def _plot_depth_analysis_full_tree(all_nodes, threshold, output_dir, x_data, t_d
             ax = axes[1, 0]
             _render_gt_bg(ax, x_data, t_data, h_magnitude)
             if d_acc:
-                _draw_rects(ax, d_acc, 'wavelet_norm', 'hot', 'Wavelet Norm', lw=1.5)
+                _draw_rects(ax, d_acc, 'wavelet_norm_squared', 'hot', 'Wavelet Norm', lw=1.5)
             _set_ax_limits(ax, d_acc + d_rej)
             ax.set_title('Accepted Regions')
             ax.grid(True, alpha=0.3, zorder=0)
@@ -722,7 +722,7 @@ def _plot_depth_analysis_full_tree(all_nodes, threshold, output_dir, x_data, t_d
             ax = axes[1, 1]
             _render_gt_bg(ax, x_data, t_data, h_magnitude)
             if d_rej:
-                _draw_rects(ax, d_rej, 'wavelet_norm',
+                _draw_rects(ax, d_rej, 'wavelet_norm_squared',
                             'hot', 'Wavelet Norm',
                             lw=1.0, alpha_face=0.2)
             _set_ax_limits(ax, d_acc + d_rej)
@@ -731,11 +731,11 @@ def _plot_depth_analysis_full_tree(all_nodes, threshold, output_dir, x_data, t_d
         else:
             ax = axes[1, 0]
             if d_acc:
-                _draw_rects_3d(ax, d_acc, 'hot', 'wavelet_norm')
+                _draw_rects_3d(ax, d_acc, 'hot', 'wavelet_norm_squared')
             ax.set_title('Accepted')
             ax = axes[1, 1]
             if d_rej:
-                _draw_rects_3d(ax, d_rej, 'hot', 'wavelet_norm')
+                _draw_rects_3d(ax, d_rej, 'hot', 'wavelet_norm_squared')
             ax.set_title('Rejected')
 
         plt.tight_layout()
@@ -798,7 +798,7 @@ def _plot_acceptance_rate(all_nodes, output_dir):
 
 def _plot_threshold_cdf(all_nodes, threshold, output_dir):
     """CDF of wavelet norms with threshold line — shows sensitivity to threshold choice."""
-    norms = sorted([n['wavelet_norm'] for n in all_nodes])
+    norms = sorted([n['wavelet_norm_squared'] for n in all_nodes])
     if not norms:
         return
     cdf = np.arange(1, len(norms) + 1) / len(norms)
@@ -874,7 +874,7 @@ def _plot_tree_hierarchy(all_nodes, threshold, output_dir):
     fig_h = max(8, max_depth * 0.7)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
-    norms = [n['wavelet_norm'] for n in all_nodes]
+    norms = [n['wavelet_norm_squared'] for n in all_nodes]
     vmin, vmax = min(norms), max(norms)
     vrange = vmax - vmin if vmax > vmin else 1.0
     cmap = plt.get_cmap('hot')
@@ -898,7 +898,7 @@ def _plot_tree_hierarchy(all_nodes, threshold, output_dir):
         if nid not in positions:
             continue
         x, y = positions[nid]
-        nv = (n['wavelet_norm'] - vmin) / vrange if vrange > 0 else 0.5
+        nv = (n['wavelet_norm_squared'] - vmin) / vrange if vrange > 0 else 0.5
         c = cmap(nv)
         if n['accepted']:
             ax.scatter(x, -y, c=[c], s=45, edgecolors='black', linewidths=1.0, zorder=5)
@@ -937,7 +937,7 @@ def _print_full_tree_stats(all_nodes, accepted, rejected, threshold):
 
     for label, subset in [('Accepted', accepted), ('Rejected', rejected)]:
         if subset:
-            norms = [n['wavelet_norm'] for n in subset]
+            norms = [n['wavelet_norm_squared'] for n in subset]
             print(f"\n  {label} (n={len(subset)}):")
             print(f"    Norm: mean={np.mean(norms):.4f}, median={np.median(norms):.4f}, "
                   f"std={np.std(norms):.4f}")
@@ -1006,7 +1006,7 @@ def _analyze_legacy(data, output_dir, metrics_path, x_data, t_data, h_magnitude)
         print("    [legacy] Generating leaf loss plots...")
         _plot_leaf_loss_bars(leaf_loss_history, output_dir)
 
-    all_norms = [r.get('wavelet_norm', 0) for r in regions]
+    all_norms = [r.get('wavelet_norm_squared', 0) for r in regions]
     if not any(n > 0 for n in all_norms):
         print("    [legacy] No non-zero wavelet norms, skipping norm plots")
         return
@@ -1017,7 +1017,7 @@ def _analyze_legacy(data, output_dir, metrics_path, x_data, t_data, h_magnitude)
     if _dim_from_items(regions) == 2 and spawned:
         fig, ax = plt.subplots(figsize=(10, 7))
         _render_gt_bg(ax, x_data, t_data, h_magnitude)
-        _draw_rects(ax, spawned, 'wavelet_norm', 'RdYlGn', 'Wavelet Norm')
+        _draw_rects(ax, spawned, 'wavelet_norm_squared', 'RdYlGn', 'Wavelet Norm')
         _set_ax_limits(ax, spawned + rejected)
         ax.set_title(f'Expert Regions (n={len(spawned)})', fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3, zorder=0)

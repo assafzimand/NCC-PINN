@@ -332,7 +332,7 @@ class AToE(nn.Module):
             return self.config_base_architecture
 
         from models.architecture_bank import get_architecture_for_capacity
-        ratio = max(region.wavelet_norm / self.wavelet_threshold, 1.0)
+        ratio = max(region.wavelet_norm_squared / self.wavelet_threshold, 1.0)
         target_capacity = self.atoe_threshold_capacity * ratio
         return get_architecture_for_capacity(
             target_capacity, self.input_dim, self.output_dim
@@ -411,7 +411,7 @@ class AToE(nn.Module):
         print(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
         print(f"    Architecture: {architecture}")
         print(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
-        print(f"    Wavelet norm: {region.wavelet_norm:.6f}")
+        print(f"    Wavelet norm: {region.wavelet_norm_squared:.6f}")
         print(f"    Spawn epoch: {region.spawn_epoch}")
 
         self.sync_batched_indicators()

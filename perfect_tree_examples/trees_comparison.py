@@ -94,8 +94,8 @@ def merge_nodes(data1: dict, data2: dict) -> list:
         n2 = nodes2.get(nid)
         ref = n1 if n1 is not None else n2   # source for spatial metadata
 
-        norm1 = float(n1['wavelet_norm']) if n1 is not None else None
-        norm2 = float(n2['wavelet_norm']) if n2 is not None else None
+        norm1 = float(n1['wavelet_norm_squared']) if n1 is not None else None
+        norm2 = float(n2['wavelet_norm_squared']) if n2 is not None else None
         in1   = bool(n1['accepted'])      if n1 is not None else False
         in2   = bool(n2['accepted'])      if n2 is not None else False
 
