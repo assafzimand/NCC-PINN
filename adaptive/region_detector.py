@@ -32,7 +32,7 @@ class TreeNodeInfo:
     # Larger α = smoother region; None = not enough descendants for reliable estimate
     smoothness_alpha: Optional[float] = None
     smoothness_r2: Optional[float] = None   # R² of the log-log regression
-    smoothness_n_desc: int = 0              # number of descendants used in fit
+    smoothness_n_levels: int = 0              # number of descendants used in fit
 
 
 class RegionDetector:
@@ -162,18 +162,49 @@ class RegionDetector:
         nodes_by_id: Dict[int, TreeNodeInfo],
         children_left,
         children_right,
-        min_descendants: int = 10,
+        min_levels: int = 4,
     ) -> None:
-        """Populate smoothness_alpha/r2/n_desc in-place for each node.
-
-        For each node Ω, collects all descendant nodes ν in its subtree and fits:
-            log(||ψ_ν||₂ / |ν|^½)  ~  c + α * log(|ν|)
-        where ||ψ_ν||₂ = sqrt(wavelet_norm_squared_ν) and |ν| ≈ n_samples_ν.
-        The slope α is the local tree-Besov smoothness estimate.
-
-        Larger α → smoother region; α ≈ 0 → rough/discontinuous.
-        Sets smoothness_alpha = None when fewer than min_descendants points available.
         """
+        Populate smoothness_alpha/r2/n_levels in-place for each node.
+
+        Local smoothness for node Omega is estimated from decay of subtree wavelet
+        energy across relative tree levels.
+
+        For each descendant nu of Omega:
+            ||psi_nu||_2^2 = wavelet_norm_squared_nu
+
+        For each relative level ell >= 1 below Omega:
+            E_ell(Omega) = sum_{nu at relative level ell} ||psi_nu||_2^2
+
+        We fit:
+            log(E_ell) ~ a + b * ell
+
+        and define:
+            smoothness_alpha = -b / 2
+
+        Interpretation:
+            larger alpha   -> smoother region
+            alpha near 0   -> weak decay / rough region
+            alpha negative -> energy grows with scale refinement / very rough region
+
+        If fewer than min_levels valid relative levels are available, alpha is None.
+        """
+
+        def _compute_depths() -> Dict[int, int]:
+            depths = {}
+            stack = [(0, 0)]
+            while stack:
+                nid, depth = stack.pop()
+                if nid in depths:
+                    continue
+                depths[nid] = depth
+                left, right = children_left[nid], children_right[nid]
+                if left != -1:
+                    stack.append((left, depth + 1))
+                if right != -1:
+                    stack.append((right, depth + 1))
+            return depths
+
         def _collect_descendants(root_id: int) -> List[int]:
             result = []
             stack = [root_id]
@@ -185,39 +216,80 @@ class RegionDetector:
                         stack.append(child)
             return result
 
+        node_depth = _compute_depths()
+
         for node_id, node_info in nodes_by_id.items():
+            root_depth = node_depth.get(node_id, 0)
             desc_ids = _collect_descendants(node_id)
 
-            xs, ys = [], []
+            # relative level -> total wavelet energy on that level
+            level_to_energy: Dict[int, float] = {}
+
             for desc_id in desc_ids:
                 desc = nodes_by_id[desc_id]
-                n = desc.n_samples
-                if n < self.min_samples_leaf or desc.wavelet_norm_squared <= 0.0:
-                    continue
-                normalized = np.sqrt(desc.wavelet_norm_squared) / np.sqrt(n)
-                if normalized <= 0.0:
-                    continue
-                xs.append(np.log(float(n)))
-                ys.append(np.log(float(normalized)))
 
-            m = len(xs)
-            node_info.smoothness_n_desc = m
+                if desc.n_samples < self.min_samples_leaf:
+                    continue
+                if desc.wavelet_norm_squared <= 0.0:
+                    continue
 
-            if m < min_descendants:
+                rel_level = node_depth.get(desc_id, root_depth) - root_depth
+                if rel_level <= 0:
+                    continue
+
+                level_to_energy[rel_level] = (
+                    level_to_energy.get(rel_level, 0.0) + float(desc.wavelet_norm_squared)
+                )
+
+            # Build regression points: x = relative level, y = log(total energy)
+            xs = []
+            ys = []
+
+            for level in sorted(level_to_energy.keys()):
+                energy = level_to_energy[level]
+                if energy <= 0.0:
+                    continue
+                xs.append(float(level))
+                ys.append(float(np.log(energy)))
+
+            n_levels = len(xs)
+            node_info.smoothness_n_levels = n_levels
+
+            if n_levels < min_levels:
                 node_info.smoothness_alpha = None
                 node_info.smoothness_r2 = None
                 continue
 
-            x = np.array(xs, dtype=float)
-            y = np.array(ys, dtype=float)
-            A = np.vstack([x, np.ones_like(x)]).T
-            alpha, intercept = np.linalg.lstsq(A, y, rcond=None)[0]
+            x = np.asarray(xs, dtype=float)
+            y = np.asarray(ys, dtype=float)
 
-            y_pred = alpha * x + intercept
+            # Need at least some level spread
+            if float(np.max(x) - np.min(x)) < 1e-12:
+                node_info.smoothness_alpha = None
+                node_info.smoothness_r2 = None
+                continue
+
+            # Fit y = a + b*x
+            A = np.vstack([x, np.ones_like(x)]).T
+            slope, intercept = np.linalg.lstsq(A, y, rcond=None)[0]
+
+            y_pred = slope * x + intercept
             ss_res = float(np.sum((y - y_pred) ** 2))
-            ss_tot = float(np.sum((y - y.mean()) ** 2))
-            node_info.smoothness_alpha = float(alpha)
-            node_info.smoothness_r2 = (1.0 - ss_res / ss_tot) if ss_tot > 0.0 else None
+            ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+            r2 = (1.0 - ss_res / ss_tot) if ss_tot > 0.0 else None
+
+            # If log(E_l) ~ a - 2*alpha*l, then alpha = -slope / 2
+            alpha = -0.5 * float(slope)
+
+            node_info.smoothness_alpha = alpha
+            node_info.smoothness_r2 = r2
+
+            print(
+                f"    [Smoothness] Node {node_id}: "
+                f"alpha={node_info.smoothness_alpha:.4f}, "
+                f"r2={node_info.smoothness_r2:.4f}, "
+                f"levels={n_levels}"
+            )
 
     def compute_wavelet_norms(self) -> List[TreeNodeInfo]:
         """
@@ -265,7 +337,9 @@ class RegionDetector:
                 if parent_prediction is not None and n_samples > 0:
                     diff = prediction - parent_prediction
                     l2_norm_squared = float(np.sum(diff ** 2))
-                    wavelet_norm_squared = l2_norm_squared * n_samples
+                    volume = float(np.prod(np.maximum(
+                        np.asarray(bounds_upper, dtype=float) - np.asarray(bounds_lower, dtype=float),1e-12)))
+                    wavelet_norm_squared = l2_norm_squared * volume
 
                 node = TreeNodeInfo(
                     node_id=node_id,
@@ -723,6 +797,12 @@ class RegionDetector:
                 return False  # too few descendants → treat as smooth → prune
             return alpha < tree_smoothness_threshold
 
+        def _smoothness_is_reliable(nid: int) -> bool:
+            if nid not in node_lookup:
+                return False
+            r2 = node_lookup[nid].smoothness_r2
+            return r2 is not None and r2 >= 0.5        
+
         accepted = set()
         depth_stats = {}
 
@@ -751,7 +831,8 @@ class RegionDetector:
                     if left_accepted or right_accepted:
                         accept_pair = True
                         n_by_child += 1
-                    elif _is_rough(left_id) or _is_rough(right_id):
+                    elif ((_smoothness_is_reliable(left_id) and _is_rough(left_id)) or
+                        (_smoothness_is_reliable(right_id) and _is_rough(right_id))):
                         accept_pair = True
                         n_by_threshold += 1
                     else:
