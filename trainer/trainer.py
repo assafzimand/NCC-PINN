@@ -160,10 +160,11 @@ def _build_expert_tree_from_pretrained(
         region = RegionDescriptor(
             bounds_lower=node_info.bounds_lower,
             bounds_upper=node_info.bounds_upper,
-            wavelet_norm=node_info.wavelet_norm,
+            wavelet_norm_squared=node_info.wavelet_norm_squared,
             spawn_epoch=0,  # Tree building phase
             depth=depth,
-            parent_idx=parent_idx
+            parent_idx=parent_idx,
+            smoothness_alpha=node_info.smoothness_alpha,
         )
 
         # Spawn expert
@@ -682,7 +683,7 @@ def train(
             child_region = RegionDescriptor(
                 bounds_lower=nd['bounds_lower'],
                 bounds_upper=nd['bounds_upper'],
-                wavelet_norm=nd['wavelet_norm'],
+                wavelet_norm_squared=nd['wavelet_norm_squared'],
                 spawn_epoch=0,
                 depth=depth,
                 parent_idx=parent_expert_idx,
@@ -1304,7 +1305,7 @@ def train(
                                      RegionDescriptor(
                                          bounds_lower=list(domain_bounds['lower']),
                                          bounds_upper=list(domain_bounds['upper']),
-                                         wavelet_norm=0.0,
+                                         wavelet_norm_squared=0.0,
                                          spawn_epoch=0,
                                          depth=0,
                                          parent_idx=-1
@@ -1325,10 +1326,11 @@ def train(
                         child_region = RegionDescriptor(
                             bounds_lower=child_node.bounds_lower,
                             bounds_upper=child_node.bounds_upper,
-                            wavelet_norm=child_node.wavelet_norm,
+                            wavelet_norm_squared=child_node.wavelet_norm_squared,
                             spawn_epoch=epoch,
                             depth=child_depth,
-                            parent_idx=parent_idx
+                            parent_idx=parent_idx,
+                            smoothness_alpha=child_node.smoothness_alpha,
                         )
 
                         if is_copy_spawn:
@@ -1351,7 +1353,7 @@ def train(
                     _spawned_children_diag = [
                         {
                             'node_id': c.node_id,
-                            'wavelet_norm': c.wavelet_norm,
+                            'wavelet_norm_squared': c.wavelet_norm_squared,
                             'n_samples': c.n_samples,
                             'bounds_lower': c.bounds_lower,
                             'bounds_upper': c.bounds_upper,
@@ -1400,7 +1402,7 @@ def train(
                                      RegionDescriptor(
                                          bounds_lower=list(domain_bounds['lower']),
                                          bounds_upper=list(domain_bounds['upper']),
-                                         wavelet_norm=0.0,
+                                         wavelet_norm_squared=0.0,
                                          spawn_epoch=0,
                                          depth=0,
                                          parent_idx=-1
@@ -1425,11 +1427,11 @@ def train(
                         })
                         continue
 
-                    above = any(c.wavelet_norm >= wavelet_threshold for c, _ in children)
+                    above = any(c.wavelet_norm_squared >= wavelet_threshold for c, _ in children)
                     child_diags = [
                         {
                             'node_id': c.node_id,
-                            'wavelet_norm': c.wavelet_norm,
+                            'wavelet_norm_squared': c.wavelet_norm_squared,
                             'n_samples': c.n_samples,
                             'bounds_lower': c.bounds_lower,
                             'bounds_upper': c.bounds_upper,
@@ -1458,10 +1460,11 @@ def train(
                         child_region = RegionDescriptor(
                             bounds_lower=child_node.bounds_lower,
                             bounds_upper=child_node.bounds_upper,
-                            wavelet_norm=child_node.wavelet_norm,
+                            wavelet_norm_squared=child_node.wavelet_norm_squared,
                             spawn_epoch=epoch,
                             depth=child_depth,
-                            parent_idx=parent_idx
+                            parent_idx=parent_idx,
+                            smoothness_alpha=child_node.smoothness_alpha,
                         )
                         if is_copy_spawn:
                             expert_idx = model.spawn_expert(child_region, copy_from_idx=parent_idx)
@@ -1541,10 +1544,11 @@ def train(
                     child_region = RegionDescriptor(
                         bounds_lower=node.bounds_lower,
                         bounds_upper=node.bounds_upper,
-                        wavelet_norm=node.wavelet_norm,
+                        wavelet_norm_squared=node.wavelet_norm_squared,
                         spawn_epoch=epoch,
                         depth=depth,
-                        parent_idx=parent_expert_idx
+                        parent_idx=parent_expert_idx,
+                        smoothness_alpha=node.smoothness_alpha,
                     )
 
                     if is_copy_spawn:
@@ -1579,7 +1583,7 @@ def train(
                     tree_diag_nodes.append({
                         'node_id': nd.node_id,
                         'parent_node_id': _parent_map.get(nd.node_id, -1),
-                        'wavelet_norm': nd.wavelet_norm,
+                        'wavelet_norm_squared': nd.wavelet_norm_squared,
                         'n_samples': nd.n_samples,
                         'is_leaf': bool(nd.is_leaf),
                         'bounds_lower': nd.bounds_lower,

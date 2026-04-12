@@ -122,7 +122,8 @@ def extract_xy(eval_data: dict, output_dim: int):
 
 
 def fit_and_get_all_nodes(
-    X, y, max_depth, min_samples_leaf, wavelet_threshold
+    X, y, max_depth, min_samples_leaf, wavelet_threshold,
+    tree_smoothness_threshold=None,
 ):
     """Fit tree, prune, return visualization + reconstruction data.
 
@@ -143,7 +144,10 @@ def fit_and_get_all_nodes(
     )
 
     accepted_nodes, depth_stats = detector.fit_full_tree_and_prune(
-        X, y, wavelet_threshold=wavelet_threshold, verbose=True, norm_formula='new'
+        X, y,
+        wavelet_threshold=wavelet_threshold,
+        tree_smoothness_threshold=tree_smoothness_threshold,
+        verbose=True,
     )
     accepted_ids = {n.node_id for n, _ in accepted_nodes}
 
@@ -162,7 +166,7 @@ def fit_and_get_all_nodes(
                 _node_depth[child] = _node_depth[nid] + 1
                 bfs.append(child)
 
-    all_wn = detector.compute_new_wavelet_norms(X, y)
+    all_wn = detector.compute_wavelet_norms()
 
     node_dicts = []
     for nd in all_wn:
@@ -171,7 +175,10 @@ def fit_and_get_all_nodes(
         node_dicts.append({
             'node_id': nd.node_id,
             'parent_node_id': _parent_map.get(nd.node_id, -1),
-            'wavelet_norm': nd.wavelet_norm,
+            'wavelet_norm_squared': nd.wavelet_norm_squared,
+            'smoothness_alpha': nd.smoothness_alpha,
+            'smoothness_r2': nd.smoothness_r2,
+            'smoothness_n_desc': nd.smoothness_n_desc,
             'n_samples': nd.n_samples,
             'is_leaf': bool(nd.is_leaf),
             'bounds_lower': nd.bounds_lower,
@@ -193,7 +200,8 @@ def fit_and_get_all_nodes(
             'parent_tree_node_id': parent_tree_nid,
             'bounds_lower': node_info.bounds_lower,
             'bounds_upper': node_info.bounds_upper,
-            'wavelet_norm': node_info.wavelet_norm,
+            'wavelet_norm_squared': node_info.wavelet_norm_squared,
+            'smoothness_alpha': node_info.smoothness_alpha,
             'n_samples': node_info.n_samples,
             'tree_depth': _node_depth.get(
                 node_info.node_id, -1),
@@ -244,8 +252,13 @@ def _plot_regions_panel(ax, regions_dicts, domain_bounds, gt_grid, grid_x, grid_
     ax.set_aspect('auto')
 
 
-def _plot_hierarchy_panel(ax, all_nodes, threshold):
-    """Dendrogram-style tree hierarchy on a given axes (adapted from tree_structure_analysis)."""
+def _plot_hierarchy_panel(ax, all_nodes, smoothness_threshold, wavelet_threshold=None):
+    """Dendrogram-style tree hierarchy colored by smoothness_alpha (Besov index).
+
+    Nodes are colored red (rough, low α) → green (smooth, high α) via RdYlGn.
+    The smoothness threshold is marked on the colorbar. Nodes with no smoothness
+    estimate (α=None, too few descendants) are shown in gray.
+    """
     if not all_nodes:
         ax.set_title('Tree Hierarchy (no nodes)')
         return
@@ -287,11 +300,22 @@ def _plot_hierarchy_panel(ax, all_nodes, threshold):
 
     max_depth = max(n['tree_depth'] for n in all_nodes) if all_nodes else 1
 
-    norms = [n['wavelet_norm'] for n in all_nodes]
-    vmin, vmax = min(norms), max(norms)
-    vrange = vmax - vmin if vmax > vmin else 1.0
-    cmap = plt.get_cmap('hot')
+    # Build colormap range from valid smoothness_alpha values
+    alphas = [n['smoothness_alpha'] for n in all_nodes
+              if n.get('smoothness_alpha') is not None]
+    cmap = plt.get_cmap('RdYlGn')  # red=rough (low α), green=smooth (high α)
 
+    if alphas and smoothness_threshold is not None:
+        from matplotlib.colors import TwoSlopeNorm
+        vmin = min(min(alphas), smoothness_threshold - 0.1)
+        vmax = max(max(alphas), smoothness_threshold + 0.1)
+        norm = TwoSlopeNorm(vmin=vmin, vcenter=smoothness_threshold, vmax=vmax)
+    elif alphas:
+        norm = plt.Normalize(vmin=min(alphas), vmax=max(alphas))
+    else:
+        norm = plt.Normalize(vmin=0.0, vmax=1.0)
+
+    # Draw edges
     for n in all_nodes:
         nid = n['node_id']
         pid = n.get('parent_node_id', -1)
@@ -303,30 +327,55 @@ def _plot_hierarchy_panel(ax, all_nodes, threshold):
 
     ax.scatter(root_x, 0, c='white', s=60, edgecolors='black', linewidths=1.5, zorder=6, marker='s')
 
+    # Draw nodes — gray when α=None
     for n in all_nodes:
         nid = n['node_id']
         if nid not in positions:
             continue
         x, y = positions[nid]
-        nv = (n['wavelet_norm'] - vmin) / vrange if vrange > 0 else 0.5
-        c = cmap(nv)
-        if n['accepted']:
-            ax.scatter(x, -y, c=[c], s=35, edgecolors='black', linewidths=0.8, zorder=5)
+        alpha_val = n.get('smoothness_alpha')
+        if alpha_val is None:
+            color = ['#bbbbbb'] if n['accepted'] else ['#dddddd']
+            ec = 'black' if n['accepted'] else 'gray'
+            node_alpha = 1.0 if n['accepted'] else 0.3
         else:
-            ax.scatter(x, -y, c=[c], s=15, edgecolors='gray', linewidths=0.3, alpha=0.25, zorder=4)
+            color = [cmap(norm(alpha_val))]
+            ec = 'black' if n['accepted'] else 'gray'
+            node_alpha = 1.0 if n['accepted'] else 0.25
 
-    sm = plt.cm.ScalarMappable(cmap='hot', norm=plt.Normalize(vmin=vmin, vmax=vmax))
+        size = 35 if n['accepted'] else 15
+        lw = 0.8 if n['accepted'] else 0.3
+        ax.scatter(x, -y, c=color, s=size, edgecolors=ec,
+                   linewidths=lw, alpha=node_alpha,
+                   zorder=5 if n['accepted'] else 4)
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    plt.colorbar(sm, ax=ax, label='Wavelet Norm', shrink=0.7)
+    cb = plt.colorbar(sm, ax=ax, label='Smoothness α', shrink=0.7)
+
+    # Mark threshold on colorbar
+    if smoothness_threshold is not None and alphas:
+        cb.ax.axhline(y=smoothness_threshold, color='black',
+                      linewidth=1.5, linestyle='--')
+        cb.ax.text(0.5, smoothness_threshold,
+                   f' thr={smoothness_threshold}',
+                   transform=cb.ax.get_yaxis_transform(),
+                   va='bottom', ha='left', fontsize=7, color='black')
 
     ax.set_ylabel('Depth')
     ax.set_yticks([-d for d in range(max_depth + 1)])
     ax.set_yticklabels([str(d) for d in range(max_depth + 1)])
     ax.set_xticks([])
     n_acc = sum(1 for n in all_nodes if n['accepted'])
-    ax.set_title(f'Tree Hierarchy (thr={threshold})\n'
-                 f'{n_acc} accepted / {len(all_nodes) - n_acc} rejected',
-                 fontsize=10)
+    n_none = sum(1 for n in all_nodes if n.get('smoothness_alpha') is None)
+    thr_label = (f'α < {smoothness_threshold}'
+                 if smoothness_threshold is not None
+                 else f'norm ≥ {wavelet_threshold}')
+    ax.set_title(
+        f'Tree Hierarchy  (keep: {thr_label})\n'
+        f'{n_acc} accepted / {len(all_nodes) - n_acc} rejected'
+        f'  [{n_none} gray=no α]',
+        fontsize=10)
     ax.grid(True, alpha=0.15, axis='y')
 
 
@@ -334,6 +383,7 @@ def build_problem_tree_data(
     problem, domain_bounds,
     max_depth, min_samples_leaf, wavelet_threshold,
     bfs_accepted, node_dicts,
+    tree_smoothness_threshold=None,
 ):
     """Build the dict for one problem's perfect tree."""
     n_leaves = sum(
@@ -346,6 +396,7 @@ def build_problem_tree_data(
             'max_depth': max_depth,
             'min_samples_leaf': min_samples_leaf,
             'wavelet_threshold': wavelet_threshold,
+            'tree_smoothness_threshold': tree_smoothness_threshold,
         },
         'summary': {
             'total_nodes': len(node_dicts),
@@ -372,18 +423,22 @@ def process_problem(
     problem_cfg = base_cfg[problem]
     adaptive_cfg = base_cfg.get('adaptive_pinn', {})
 
-    max_depth = adaptive_cfg.get('tree_max_depth', 15)
+    max_depth = adaptive_cfg.get('tree_max_depth', 30)
     min_samples_leaf = adaptive_cfg.get(
-        'tree_min_samples_leaf', 50)
+        'tree_min_samples_leaf', 10)
     wavelet_threshold = problem_cfg.get(
         'wavelet_threshold',
         adaptive_cfg.get('wavelet_threshold', 5.0))
+    tree_smoothness_threshold = problem_cfg.get(
+        'tree_smoothness_threshold',
+        adaptive_cfg.get('tree_smoothness_threshold', None))
     output_dim = problem_cfg.get('output_dim', 1)
 
     print(
         f"  max_depth={max_depth}, "
         f"min_samples_leaf={min_samples_leaf}, "
-        f"wavelet_threshold={wavelet_threshold}")
+        f"wavelet_threshold={wavelet_threshold}, "
+        f"tree_smoothness_threshold={tree_smoothness_threshold}")
 
     eval_data = ensure_eval_data(problem, base_cfg)
     domain_bounds = build_domain_bounds(problem_cfg)
@@ -400,7 +455,8 @@ def process_problem(
 
     (node_dicts, accepted_ids,
      bfs_accepted, children_left) = fit_and_get_all_nodes(
-        X, y, max_depth, min_samples_leaf, wavelet_threshold
+        X, y, max_depth, min_samples_leaf, wavelet_threshold,
+        tree_smoothness_threshold=tree_smoothness_threshold,
     )
 
     # -- Build tree data for unified JSON --
@@ -408,6 +464,7 @@ def process_problem(
         problem, domain_bounds,
         max_depth, min_samples_leaf, wavelet_threshold,
         bfs_accepted, node_dicts,
+        tree_smoothness_threshold=tree_smoothness_threshold,
     )
 
     # -- Generate 3-panel plot --
@@ -429,18 +486,19 @@ def process_problem(
         axes[0], all_region_dicts, domain_bounds,
         gt_grid, grid_x, grid_t,
         f'{problem}: Before Pruning ({n_total} nodes)')
+    thr_label = (f'smoothness α<{tree_smoothness_threshold}'
+                 if tree_smoothness_threshold is not None
+                 else f'norm≥{wavelet_threshold}')
     _plot_regions_panel(
         axes[1], accepted_region_dicts, domain_bounds,
         gt_grid, grid_x, grid_t,
-        f'{problem}: After Pruning '
-        f'({n_accepted} nodes, thr={wavelet_threshold})')
+        f'{problem}: After Pruning ({n_accepted} nodes, {thr_label})')
     _plot_hierarchy_panel(
-        axes[2], node_dicts, wavelet_threshold)
+        axes[2], node_dicts, tree_smoothness_threshold, wavelet_threshold)
 
     fig.suptitle(
         f'Perfect Tree \u2014 {problem}  '
-        f'(depth={max_depth}, min_leaf={min_samples_leaf},'
-        f' threshold={wavelet_threshold})',
+        f'(depth={max_depth}, min_leaf={min_samples_leaf}, {thr_label})',
         fontsize=14, fontweight='bold', y=1.01)
     plt.tight_layout()
 

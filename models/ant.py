@@ -211,7 +211,7 @@ class ANT(nn.Module):
 
         if self.ant_threshold_width is not None:
             ratio = max(
-                region.wavelet_norm / self.wavelet_threshold,
+                region.wavelet_norm_squared / self.wavelet_threshold,
                 1.0,
             )
             base_w = max(1, round(
@@ -271,7 +271,7 @@ class ANT(nn.Module):
         )
         print(
             f"    Wavelet norm: "
-            f"{region.wavelet_norm:.6f}"
+            f"{region.wavelet_norm_squared:.6f}"
         )
         print(f"    Spawn epoch: {region.spawn_epoch}")
 
