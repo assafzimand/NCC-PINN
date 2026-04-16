@@ -9,7 +9,7 @@ base_config:
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
   epochs: 1                          # No real training — just spawn experts and save
-  batch_size: 2048                    # Mini-batch size for Adam/SOAP training
+  batch_size: 4096                    # Mini-batch size for Adam/SOAP training
   patience_epochs: 3000              # Stop if eval Rel-L2 doesn't improve for 3000 epochs (~30k steps)
   min_epochs: 5000                      # No early-stop guard needed
 
@@ -58,7 +58,7 @@ base_config:
 
   # ── LRA (Loss Rate Annealing) ──
   lra:
-    enabled: true                   # true to adaptively weight residual/IC/BC losses
+    enabled: false                   # true to adaptively weight residual/IC/BC losses
     update_every: 100                # epochs between weight updates (3 extra backward passes each)
     alpha: 0.1                       # EMA smoothing factor for weight updates
 
@@ -208,11 +208,11 @@ base_config:
     tree_smoothness_threshold: 0.7
     loss_weights:
       residual: 1.0
-      ic: 100.0                      # Reduced from 1000: causal training already emphasizes early times
+      ic: 20.0                      # Reduced from 1000: causal training already emphasizes early times
       bc: 1.0
     causal_training:
       enabled: true                  # Causal weighting on residual loss — critical for chaotic KS (Wang et al. 2022)
-      num_chunks: 100                # Temporal bins (paper uses full temporal grid, ~100 time points)
+      num_chunks: 16                # Temporal bins (paper uses full temporal grid, ~100 time points)
       tol_schedule: [0.01, 0.1, 1.0]  # Capped schedule for short runs. Full paper: [0.01, 0.1, 1.0, 10.0, 100.0] (needs 60k+ epochs).
       min_weight_threshold: 0.99     # Advance epsilon when min(w_i) > this (paper: delta=0.99)
 
@@ -225,7 +225,7 @@ base_config:
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
     resample_every_epochs: 100        # Regenerate training data every N epochs. 0 = disabled. Papers use 500.
     adaptive_sampling:
-      enabled: true                 # true to mix uniform + residual-adaptive points (vRBA/RAR-D)
+      enabled: false                 # true to mix uniform + residual-adaptive points (vRBA/RAR-D)
                                      # NOTE: only active during resampling (model=None on first call → uniform)
       adaptive_ratio: 0.5            # fraction of residual_train points that are adaptive
       candidate_multiplier: 10       # candidates evaluated = n_adaptive * this (higher → better PDF approx)
