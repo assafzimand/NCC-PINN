@@ -23,7 +23,7 @@ base_config:
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
   lr_schedule: exponential           # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
-  lr_warmup_steps: 0              # Steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
+  lr_warmup_steps: 2000              # Steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps.
   lr_decay_steps: 5000               # For exponential: how often (in optimizer steps) to decay.
 
