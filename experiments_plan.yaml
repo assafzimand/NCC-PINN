@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "perfect_trees_new_norm_test"
+experiment_name: "perfect_trees_new_norms_fixed_8k_resnets"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -81,7 +81,7 @@ base_config:
     output_dim: 2                    # Complex-valued: h = [u, v]
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 1.5707963267948966]
-    wavelet_threshold: 10            # Geometric wavelet norm threshold for tree pruning
+    wavelet_threshold: 0.1            # Geometric wavelet norm threshold for tree pruning
     tree_smoothness_threshold: 0.7   # Besov smoothness threshold (per-problem override)
     loss_weights:
       residual: 1.0
@@ -93,7 +93,7 @@ base_config:
     output_dim: 1
     spatial_domain: [[-5.0, 5.0]]
     temporal_domain: [0.0, 6.283185307179586]  # 2pi
-    wavelet_threshold: 5
+    wavelet_threshold: 0.3
     tree_smoothness_threshold: 0.7
     loss_weights:
       residual: 1.0
@@ -106,7 +106,7 @@ base_config:
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     nu: 0.003141592653589793         # Viscosity (effective viscosity = nu/pi = 1/1000, "hard" benchmark)
-    wavelet_threshold: 2
+    wavelet_threshold: 0.0005
     tree_smoothness_threshold: 0.7
     loss_weights:
       residual: 1.0
@@ -119,7 +119,7 @@ base_config:
     spatial_domain: [[0.0, 1.0], [0.0, 1.0]]
     temporal_domain: [0.0, 2.0]
     nu: 0.1                          # Viscosity coefficient
-    wavelet_threshold: 3
+    wavelet_threshold: 0.0005
     tree_smoothness_threshold: 0.7
     loss_weights:
       residual: 1.0
@@ -132,7 +132,7 @@ base_config:
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     D: 0.001                         # Diffusion coefficient
-    wavelet_threshold: 2
+    wavelet_threshold: 0.002
     tree_smoothness_threshold: 0.7
     loss_weights:
       residual: 1.0
@@ -153,7 +153,7 @@ base_config:
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
     mu: 0.000484                     # mu^2 = 4.84e-4 (Zabusky & Kruskal values)
-    wavelet_threshold: 5
+    wavelet_threshold: 0.0025
     tree_smoothness_threshold: 0.7
     loss_weights:
       residual: 1.0
@@ -175,7 +175,7 @@ base_config:
     temporal_domain: [0.0, 1.0]
     D: 1.0
     kappa: 25.0
-    wavelet_threshold: 2
+    wavelet_threshold: 0.0005
     tree_smoothness_threshold: 0.7
     loss_weights:
       residual: 1.0
@@ -189,7 +189,7 @@ base_config:
     temporal_domain: [0.0, 1.0]
     beta: 1.0                        # Convection coefficient
     epsilon: 0.01                    # Diffusion coefficient (Peclet = 100)
-    wavelet_threshold: 5
+    wavelet_threshold: 0.005
     tree_smoothness_threshold: 0.7
     loss_weights:
       residual: 1.0
@@ -204,7 +204,7 @@ base_config:
     alpha: 6.25                      # 100/16
     beta: 0.390625                   # 100/16^2
     gamma: 0.00152587890625          # 100/16^4
-    wavelet_threshold: 15
+    wavelet_threshold: 0.04
     tree_smoothness_threshold: 0.7
     loss_weights:
       residual: 1.0
@@ -235,10 +235,10 @@ base_config:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
     spawn_every_epochs: 4000                      # Check for spawning every N epochs (matches initial_train.epochs)
-    AToE_threshold_capacity: 1000              # null = same as base, int = base capacity at threshold norm
-    ANT_threshold_architecture: 50             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
+    AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
+    ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
-    expert_type: mlp                        # 'mlp' or 'resnet' -- architecture for base model and experts
+    expert_type: resnet                        # 'mlp' or 'resnet' -- architecture for base model and experts
     freeze_mode: none                          # "none" | "previous" | "base_only"
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
@@ -253,7 +253,7 @@ base_config:
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
     spawning_method: use_perfect_trees       # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
-    perfect_trees_path: perfect_tree_examples/new_nrom/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
+    perfect_trees_path: perfect_tree_examples/new_norm/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
     # ── 3-Phase training config ──
     # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
@@ -271,64 +271,64 @@ experiments:
   - name: allen_cahn_AToE
     problem: allen_cahn
     model: AToE
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]
   - name: allen_cahn_AToELeaves
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]
   - name: allen_cahn_ANT
     problem: allen_cahn
     model: ANT
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]
 
   - name: ks_AToE
     problem: ks
     model: AToE
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]
   - name: ks_AToELeaves
     problem: ks
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]
   - name: ks_ANT
     problem: ks
     model: ANT
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]
 
   - name: burgers1d_AToE
     problem: burgers1d
     model: AToE
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]
   - name: burgers1d_AToELeaves
     problem: burgers1d
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]
   - name: burgers1d_ANT
     problem: burgers1d
     model: ANT
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]
 
   - name: schrodinger_AToE
     problem: schrodinger
     model: AToE
-    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+    base_architecture: [2, 39, 39, 39, 39, 39, 2]
   - name: schrodinger_AToELeaves
     problem: schrodinger
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+    base_architecture: [2, 39, 39, 39, 39, 39, 2]
   - name: schrodinger_ANT
     problem: schrodinger
     model: ANT
-    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+    base_architecture: [2, 39, 39, 39, 39, 39, 2]
 
   - name: kdv_AToE
     problem: kdv
     model: AToE
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]
   - name: kdv_AToELeaves
     problem: kdv
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]
   - name: kdv_ANT
     problem: kdv
     model: ANT
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 39, 39, 39, 39, 39, 1]

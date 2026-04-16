@@ -297,7 +297,7 @@ class RegionDetector:
         
         Uses RF's internal node values (tree.value) as Q_Ω for each node.
         Supports multi-dimensional output (d > 1): Q is d-dimensional vector.
-        Wavelet norm = ||Q_child - Q_parent||^2 * n_samples
+        Wavelet norm = ||Q_child - Q_parent||^2 * Ω_volume
         
         Returns:
             List of TreeNodeInfo with wavelet norms
@@ -370,8 +370,8 @@ class RegionDetector:
         Compute parent-assigned wavelet norms for all tree nodes.
 
         NEW formula — norm is assigned to each node based on its own children:
-            norm(node) = ||Q_node - Q_left||^2 * n_left
-                       + ||Q_node - Q_right||^2 * n_right
+            norm(node) = ||Q_node - Q_left||^2 * volume_left
+                       + ||Q_node - Q_right||^2 * volume_right
 
         For leaf nodes (no children in the fitted tree): a temporary
         DecisionTreeRegressor(max_depth=1, min_samples_leaf=1) is fitted on
@@ -422,11 +422,15 @@ class RegionDetector:
                     Q_node  = tree.value[node_id, :, 0]
                     Q_left  = tree.value[l, :, 0]
                     Q_right = tree.value[r, :, 0]
-                    n_left  = int(tree.n_node_samples[l])
-                    n_right = int(tree.n_node_samples[r])
+                    bounds_lower_left, bounds_upper_left = self._get_node_bounds(tree, l)
+                    bounds_lower_right, bounds_upper_right = self._get_node_bounds(tree, r)
+                    volume_left = float(np.prod(np.maximum(
+                        np.asarray(bounds_upper_left, dtype=float) - np.asarray(bounds_lower_left, dtype=float),1e-12)))
+                    volume_right = float(np.prod(np.maximum(
+                        np.asarray(bounds_upper_right, dtype=float) - np.asarray(bounds_lower_right, dtype=float),1e-12)))
                     wavelet_norm_squared = (
-                        float(np.sum((Q_left  - Q_node) ** 2)) * n_left
-                        + float(np.sum((Q_right - Q_node) ** 2)) * n_right
+                        float(np.sum((Q_left  - Q_node) ** 2)) * volume_left
+                        + float(np.sum((Q_right - Q_node) ** 2)) * volume_right
                     )
                 else:
                     # ── Leaf node: fit depth-1 subtree on this leaf's samples ──
@@ -448,11 +452,15 @@ class RegionDetector:
                                 Q_node  = sub.value[0,     :, 0]
                                 Q_hl    = sub.value[sub_l, :, 0]
                                 Q_hr    = sub.value[sub_r, :, 0]
-                                n_hl    = int(sub.n_node_samples[sub_l])
-                                n_hr    = int(sub.n_node_samples[sub_r])
+                                bounds_lower_l, bounds_upper_l = self._get_node_bounds(sub, sub_l)
+                                bounds_lower_r, bounds_upper_r = self._get_node_bounds(sub, sub_r)
+                                volume_l = float(np.prod(np.maximum(
+                                    np.asarray(bounds_upper_l, dtype=float) - np.asarray(bounds_lower_l, dtype=float),1e-12)))
+                                volume_r = float(np.prod(np.maximum(
+                                    np.asarray(bounds_upper_r, dtype=float) - np.asarray(bounds_lower_r, dtype=float),1e-12)))
                                 wavelet_norm_squared = (
-                                    float(np.sum((Q_hl - Q_node) ** 2)) * n_hl
-                                    + float(np.sum((Q_hr - Q_node) ** 2)) * n_hr
+                                    float(np.sum((Q_hl - Q_node) ** 2)) * volume_l
+                                    + float(np.sum((Q_hr - Q_node) ** 2)) * volume_r
                                 )
                         except Exception:
                             pass
@@ -839,18 +847,7 @@ class RegionDetector:
                         accept_pair = False
                         n_rejected += 1
                 else:
-                    # ── Wavelet-norm-based pruning (fallback / kept for reference) ──
-                    # left_wn = (node_lookup[left_id].wavelet_norm_squared
-                    #            if left_id in node_lookup else 0.0)
-                    # right_wn = (node_lookup[right_id].wavelet_norm_squared
-                    #             if right_id in node_lookup else 0.0)
-                    # alphas_at_depth.extend([left_wn, right_wn])
-                    # if left_accepted or right_accepted:
-                    #     accept_pair = True; n_by_child += 1
-                    # elif left_wn >= wavelet_threshold or right_wn >= wavelet_threshold:
-                    #     accept_pair = True; n_by_threshold += 1
-                    # else:
-                    #     accept_pair = False; n_rejected += 1
+                    # ── Wavelet-norm-based pruning (fallback) ──
                     left_wn = (node_lookup[left_id].wavelet_norm_squared
                                if left_id in node_lookup else 0.0)
                     right_wn = (node_lookup[right_id].wavelet_norm_squared

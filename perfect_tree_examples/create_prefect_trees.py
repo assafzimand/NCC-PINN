@@ -146,7 +146,7 @@ def fit_and_get_all_nodes(
     accepted_nodes, depth_stats = detector.fit_full_tree_and_prune(
         X, y,
         wavelet_threshold=wavelet_threshold,
-        tree_smoothness_threshold=tree_smoothness_threshold,
+        tree_smoothness_threshold=None,
         verbose=True,
     )
     accepted_ids = {n.node_id for n, _ in accepted_nodes}
