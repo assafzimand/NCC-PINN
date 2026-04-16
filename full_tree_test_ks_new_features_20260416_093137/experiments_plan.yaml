@@ -57,7 +57,7 @@ base_config:
     - 1.0
     tree_smoothness_threshold: 0.7
     wavelet_threshold: 0.002
-  batch_size: 2048
+  batch_size: 4096
   bins: 5
   burgers1d:
     loss_weights:
@@ -169,7 +169,7 @@ base_config:
     causal_training:
       enabled: true
       min_weight_threshold: 0.99
-      num_chunks: 100
+      num_chunks: 16
       tol_schedule:
       - 0.01
       - 0.1
@@ -177,7 +177,7 @@ base_config:
     gamma: 0.00152587890625
     loss_weights:
       bc: 1.0
-      ic: 100.0
+      ic: 20.0
       residual: 1.0
     output_dim: 1
     spatial_dim: 1
@@ -202,7 +202,7 @@ base_config:
   lr_warmup_steps: 0
   lra:
     alpha: 0.1
-    enabled: true
+    enabled: false
     update_every: 100
   min_epochs: 5000
   model: AToE
@@ -220,7 +220,7 @@ base_config:
     adaptive_sampling:
       adaptive_ratio: 0.5
       candidate_multiplier: 10
-      enabled: true
+      enabled: false
     boundary_train_ratio: 0.026
     eval_train_ratio: 0.25
     initial_train_ratio: 0.026
@@ -280,5 +280,5 @@ experiments:
   problem: ks
 git:
   git_branch: AToE-AToE-leaves-ANT
-  git_commit: fd0a91731f57e1b1a15ba94ace00cdfdde24eae5
+  git_commit: 0c4099210fc5f47008d5546c1b41ded4e670a326
   git_dirty: true

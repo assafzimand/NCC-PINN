@@ -1,2 +1,2 @@
 experiment,final_train_loss,final_eval_loss,final_train_rel_l2,final_train_inf_norm,final_eval_rel_l2,final_eval_inf_norm
-AToE,,,,,,
+AToE,12.269001483917236,4.397628664970398,2.7725024620691934,0.8543044527371725,0.960311084985733,3.347872734069824
