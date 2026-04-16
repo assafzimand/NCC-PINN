@@ -1,0 +1,21 @@
+Training Summary
+============================================================
+
+Problem: ks
+Architecture: [2, 256, 256, 256, 256, 256, 1]
+Activation: tanh
+Epochs: 2000
+Batch size: 4096
+Learning rate: 0.001
+Device: cuda
+
+Final train loss: 12.269001
+Final eval loss: 4.397629
+Final train rel-L2: 2.772502
+Final eval rel-L2: 0.960311
+Final train inf-norm: 0.854304
+Final eval inf-norm: 3.347873
+Best eval loss: 2.059466
+
+Best checkpoint: outputs/ks-2-256-256-256-256-256-1-tanh/20260416_093140/checkpoints/best_model.pt
+Final checkpoint: outputs/ks-2-256-256-256-256-256-1-tanh/20260416_093140/checkpoints/final_model.pt

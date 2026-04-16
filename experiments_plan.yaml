@@ -16,8 +16,8 @@ base_config:
   # ── Primary optimizer ──
   # ── Optimizer configuration ──
   optimizer_1: soap                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
-  optimizer_2: null                  # Second optimizer: 'lbfgs' | 'adam' | 'soap' | 'ssbroyden' | null (null = no switch)
-  optimizer_switch_epoch: null       # Epoch to switch optimizer_1 → optimizer_2. Ignored when optimizer_2 is null.
+  optimizer_2: lbfgs                  # Second optimizer: 'lbfgs' | 'adam' | 'soap' | 'ssbroyden' | null (null = no switch)
+  optimizer_switch_epoch: 5000       # Epoch to switch optimizer_1 → optimizer_2. Ignored when optimizer_2 is null.
                                      # Patience early-stopping only active after switch (or from epoch 1 if no switch).
   lr: 0.001                          # Base (peak) learning rate. Literature standard is 1e-3 (PirateNet, SOAP, vRBA).
 
@@ -53,7 +53,7 @@ base_config:
   # ── Fourier Features ──
   fourier_features:
     enabled: true                   # true to map input → [cos(Bz), sin(Bz)] before network
-    dim: 64                          # number of Fourier features (output = 2*dim)
+    dim: 128                          # number of Fourier features (output = 2*dim)
     scale: 1.0                       # std of random projection matrix B
 
   # ── LRA (Loss Rate Annealing) ──
@@ -208,11 +208,11 @@ base_config:
     tree_smoothness_threshold: 0.7
     loss_weights:
       residual: 1.0
-      ic: 20.0                      # Reduced from 1000: causal training already emphasizes early times
+      ic: 50.0                      # Reduced from 1000: causal training already emphasizes early times
       bc: 1.0
     causal_training:
       enabled: true                  # Causal weighting on residual loss — critical for chaotic KS (Wang et al. 2022)
-      num_chunks: 16                # Temporal bins (paper uses full temporal grid, ~100 time points)
+      num_chunks: 64                # Temporal bins (paper uses full temporal grid, ~100 time points)
       tol_schedule: [0.01, 0.1, 1.0]  # Capped schedule for short runs. Full paper: [0.01, 0.1, 1.0, 10.0, 100.0] (needs 60k+ epochs).
       min_weight_threshold: 0.99     # Advance epsilon when min(w_i) > this (paper: delta=0.99)
 
@@ -223,7 +223,7 @@ base_config:
     boundary_train_ratio: 0.026      # ~260 BC points (with n_residual=20000). Papers use 200+.
     eval_train_ratio: 0.25           # eval = 25% of train (all types)
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
-    resample_every_epochs: 100        # Regenerate training data every N epochs. 0 = disabled. Papers use 500.
+    resample_every_epochs: 300        # Regenerate training data every N epochs. 0 = disabled. Papers use 500.
     adaptive_sampling:
       enabled: false                 # true to mix uniform + residual-adaptive points (vRBA/RAR-D)
                                      # NOTE: only active during resampling (model=None on first call → uniform)
@@ -234,7 +234,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 2000                      # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 6000                      # Check for spawning every N epochs (matches initial_train.epochs)
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
@@ -261,7 +261,7 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 2000                                # Phase 1: how many epochs to train base model before tree fitting
+      epochs: 6000                                # Phase 1: how many epochs to train base model before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
