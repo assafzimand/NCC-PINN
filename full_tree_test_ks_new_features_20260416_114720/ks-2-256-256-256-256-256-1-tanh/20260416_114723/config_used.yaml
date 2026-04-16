@@ -17,14 +17,14 @@ adaptive_pinn:
   expert_type: resnet
   freeze_mode: none
   initial_train:
-    epochs: 2000
+    epochs: 6000
   inner_metrics_calculation: false
   max_experts: 150
   perfect_trees_path: perfect_tree_examples/classic_norm/perfect_trees.json
   reinitialize_base_after_spawn: false
   relevant_samples_to_activate_expert: 0
   sigma_fraction: 0.2
-  spawn_every_epochs: 2000
+  spawn_every_epochs: 6000
   spawning_method: full_tree_by_norm
   tree_max_depth: 15
   tree_min_samples_leaf: 50
@@ -139,12 +139,12 @@ fisher_kpp:
   tree_smoothness_threshold: 0.7
   wavelet_threshold: 0.0005
 fourier_features:
-  dim: 64
+  dim: 128
   enabled: true
   scale: 1.0
 git:
   git_branch: AToE-AToE-leaves-ANT
-  git_commit: 0c4099210fc5f47008d5546c1b41ded4e670a326
+  git_commit: 71629606145f61286f2f14d0822fe07c123d1f01
   git_dirty: true
 inner_metrics_eval_every: 1000
 kdv:
@@ -180,7 +180,7 @@ ks:
   causal_training:
     enabled: true
     min_weight_threshold: 0.99
-    num_chunks: 16
+    num_chunks: 64
     tol_schedule:
     - 0.01
     - 0.1
@@ -188,7 +188,7 @@ ks:
   gamma: 0.00152587890625
   loss_weights:
     bc: 1.0
-    ic: 20.0
+    ic: 50.0
     residual: 1.0
   output_dim: 1
   spatial_dim: 1
@@ -210,7 +210,7 @@ lr: 0.001
 lr_decay_rate: 0.9
 lr_decay_steps: 5000
 lr_schedule: exponential
-lr_warmup_steps: 0
+lr_warmup_steps: 2000
 lra:
   alpha: 0.1
   enabled: false
@@ -221,8 +221,8 @@ n_bin_visualize_ncc: 100
 n_freq_grid: 128
 name: ks_AToE
 optimizer_1: soap
-optimizer_2: null
-optimizer_switch_epoch: null
+optimizer_2: lbfgs
+optimizer_switch_epoch: 5000
 patience_epochs: 3000
 print_every: 100
 problem: ks
@@ -237,7 +237,7 @@ sampling:
   eval_train_ratio: 0.25
   initial_train_ratio: 0.026
   ncc_train_ratio: 0.25
-  resample_every_epochs: 100
+  resample_every_epochs: 300
   sample_volume_ratio: 35
 save_every: 1000
 schrodinger:
