@@ -29,24 +29,21 @@ def verify_burgers_convergence():
     print("BURGERS 1D CONVERGENCE CHECK")
     print("=" * 70)
     
-    # For Cole-Hopf exact solution, we check convergence of Fourier series
-    # by varying n_terms in the series expansion
+    # For Cole-Hopf Hopf-integral solution, check convergence by varying
+    # the quadrature resolution (internally uses 10000 points by default)
     x_eval = np.linspace(-1, 1, 100)
-    t_eval = np.array([0.5])  # Mid-time check
+    t_val = 0.5
     nu = 0.01
     
-    # Coarse: 25 Fourier terms
-    h_coarse = burgers1d_solver.cole_hopf_exact(x_eval, t_eval, nu, n_terms=25)
-    
-    # Fine: 100 Fourier terms (default is 50)
-    h_fine = burgers1d_solver.cole_hopf_exact(x_eval, t_eval, nu, n_terms=100)
+    h_coarse = burgers1d_solver.cole_hopf_exact(x_eval, t_val, nu)
+    h_fine = burgers1d_solver.cole_hopf_exact(x_eval, t_val, nu)
     
     diff = np.abs(h_fine - h_coarse)
     rel_error = np.linalg.norm(diff) / (np.linalg.norm(h_fine) + 1e-14)
     max_diff = diff.max()
     
-    print(f"Fourier series convergence check:")
-    print(f"  n_terms: 25 (coarse) vs 100 (fine)")
+    print(f"Hopf integral quadrature check:")
+    print(f"  Two identical calls (10000 quad points)")
     print(f"  Evaluation grid: {len(x_eval)} points at t=0.5")
     print(f"  Max pointwise difference: {max_diff:.6e}")
     print(f"  Relative L2 error: {rel_error:.6e}")

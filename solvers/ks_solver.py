@@ -112,13 +112,17 @@ class KSInterpolator:
     """Interpolator for Kuramoto-Sivashinsky equation solution with periodic boundary conditions."""
 
     def __init__(self, x_grid, t_grid, h_solution):
-        # Store domain info for periodic wrapping
-        self.x_min, self.x_max = x_grid.min(), x_grid.max()
+        # Close the periodic grid: append x_max point duplicating x_min value
+        dx = x_grid[1] - x_grid[0]
+        x_closed = np.append(x_grid, x_grid[0] + len(x_grid) * dx)
+        h_closed = np.concatenate([h_solution, h_solution[:, :1]], axis=1)
+        
+        self.x_min = x_closed[0]
+        self.x_max = x_closed[-1]
         self.domain_length = self.x_max - self.x_min
         
-        # bounds_error=True since we handle wrapping explicitly
         self.interpolator = RegularGridInterpolator(
-            (t_grid, x_grid), h_solution,
+            (t_grid, x_closed), h_closed,
             method='cubic', bounds_error=True, fill_value=None,
         )
 
@@ -127,7 +131,6 @@ class KSInterpolator:
         x_flat = np.asarray(x_points).flatten()
         t_flat = np.asarray(t_points).flatten()
         
-        # Wrap x coordinates to [x_min, x_max) for periodic BCs
         x_wrapped = self.x_min + np.mod(x_flat - self.x_min, self.domain_length)
         
         points = np.column_stack([t_flat, x_wrapped])

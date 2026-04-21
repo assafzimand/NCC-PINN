@@ -63,66 +63,74 @@ def fd_residual_burgers1d(h, x_grid, t_grid, nu):
 
 
 def fd_residual_schrodinger(h_real, h_imag, x_grid, t_grid):
-    """Residual of i*h_t + 0.5*h_xx + |h|^2*h = 0.
+    """Residual of i*h_t + 0.5*h_xx + |h|^2*h = 0.  Periodic in x.
     Split into real and imaginary parts:
       -v_t + 0.5*u_xx + (u^2+v^2)*u = 0   (real)
        u_t + 0.5*v_xx + (u^2+v^2)*v = 0   (imag)
     """
     dt = t_grid[1] - t_grid[0]
     dx = x_grid[1] - x_grid[0]
+    nx = len(x_grid)
     u, v = h_real, h_imag
-    u_t  = (u[2:, 1:-1] - u[:-2, 1:-1]) / (2 * dt)
-    v_t  = (v[2:, 1:-1] - v[:-2, 1:-1]) / (2 * dt)
-    u_xx = (u[1:-1, 2:] - 2*u[1:-1, 1:-1] + u[1:-1, :-2]) / dx**2
-    v_xx = (v[1:-1, 2:] - 2*v[1:-1, 1:-1] + v[1:-1, :-2]) / dx**2
-    mod2 = u[1:-1, 1:-1]**2 + v[1:-1, 1:-1]**2
-    res_r = -v_t + 0.5*u_xx + mod2 * u[1:-1, 1:-1]
-    res_i =  u_t + 0.5*v_xx + mod2 * v[1:-1, 1:-1]
+    # Periodic padding: 1 ghost on each side
+    u_pad = np.concatenate([u[:, -1:], u, u[:, :1]], axis=1)
+    v_pad = np.concatenate([v[:, -1:], v, v[:, :1]], axis=1)
+    u_t  = (u[2:, :] - u[:-2, :]) / (2 * dt)
+    v_t  = (v[2:, :] - v[:-2, :]) / (2 * dt)
+    u_xx = (u_pad[1:-1, 2:nx+2] - 2*u_pad[1:-1, 1:nx+1] + u_pad[1:-1, :nx]) / dx**2
+    v_xx = (v_pad[1:-1, 2:nx+2] - 2*v_pad[1:-1, 1:nx+1] + v_pad[1:-1, :nx]) / dx**2
+    mod2 = u[1:-1, :]**2 + v[1:-1, :]**2
+    res_r = -v_t + 0.5*u_xx + mod2 * u[1:-1, :]
+    res_i =  u_t + 0.5*v_xx + mod2 * v[1:-1, :]
     return res_r, res_i
 
 
 def fd_residual_allen_cahn(h, x_grid, t_grid, D):
-    """Residual of h_t - D*h_xx - 5*(h - h^3) = 0."""
+    """Residual of h_t - D*h_xx - 5*(h - h^3) = 0.  Periodic in x."""
     dt = t_grid[1] - t_grid[0]
     dx = x_grid[1] - x_grid[0]
-    h_t  = (h[2:, 1:-1] - h[:-2, 1:-1]) / (2 * dt)
-    h_xx = (h[1:-1, 2:] - 2*h[1:-1, 1:-1] + h[1:-1, :-2]) / dx**2
-    h_c  = h[1:-1, 1:-1]
+    nx = len(x_grid)
+    # Periodic padding: 1 ghost on each side
+    h_pad = np.concatenate([h[:, -1:], h, h[:, :1]], axis=1)
+    h_t  = (h[2:, :] - h[:-2, :]) / (2 * dt)
+    h_xx = (h_pad[1:-1, 2:nx+2] - 2*h_pad[1:-1, 1:nx+1] + h_pad[1:-1, :nx]) / dx**2
+    h_c  = h[1:-1, :]
     res  = h_t - D * h_xx - 5.0 * (h_c - h_c**3)
     return res
 
 
 def fd_residual_kdv(h, x_grid, t_grid, mu):
-    """Residual of h_t + h*h_x + mu*h_xxx = 0."""
+    """Residual of h_t + h*h_x + mu*h_xxx = 0.  Periodic in x."""
     dt = t_grid[1] - t_grid[0]
     dx = x_grid[1] - x_grid[0]
-    # need 2 ghost cols on each side for h_xxx stencil (use periodic wrapping)
+    nx = len(x_grid)
+    # Periodic padding: 2 ghost on each side for h_xxx
     h_pad = np.concatenate([h[:, -2:], h, h[:, :2]], axis=1)
-    h_t   = (h[2:, 1:-1] - h[:-2, 1:-1]) / (2 * dt)
-    h_x   = (h_pad[1:-1, 3:-1] - h_pad[1:-1, 1:-3]) / (2 * dx)
-    # 5-point stencil for 3rd derivative
-    h_xxx = (-h_pad[1:-1, :-4] + 2*h_pad[1:-1, 1:-3]
-             - 2*h_pad[1:-1, 3:-1] + h_pad[1:-1, 4:]) / (2 * dx**3)
-    h_c   = h[1:-1, 1:-1]
+    h_t   = (h[2:, :] - h[:-2, :]) / (2 * dt)
+    h_x   = (h_pad[1:-1, 3:nx+3] - h_pad[1:-1, 1:nx+1]) / (2 * dx)
+    h_xxx = (-h_pad[1:-1, 0:nx] + 2*h_pad[1:-1, 1:nx+1]
+             - 2*h_pad[1:-1, 3:nx+3] + h_pad[1:-1, 4:nx+4]) / (2 * dx**3)
+    h_c   = h[1:-1, :]
     res   = h_t + h_c * h_x + mu * h_xxx
     return res
 
 
 def fd_residual_ks(h, x_grid, t_grid, alpha, beta, gamma):
-    """Residual of h_t + alpha*h*h_x + beta*h_xx + gamma*h_xxxx = 0."""
+    """Residual of h_t + alpha*h*h_x + beta*h_xx + gamma*h_xxxx = 0.  Periodic in x."""
     dt = t_grid[1] - t_grid[0]
     dx = x_grid[1] - x_grid[0]
-    # 3 ghost cols on each side for h_xxxx
+    nx = len(x_grid)
+    # Periodic padding: 3 ghost on each side for h_xxxx + centered h_x
     h_pad = np.concatenate([h[:, -3:], h, h[:, :3]], axis=1)
-    h_t    = (h[2:, 1:-1] - h[:-2, 1:-1]) / (2 * dt)
-    h_x    = (h_pad[1:-1, 4:-2] - h_pad[1:-1, 2:-4]) / (2 * dx)
-    h_xx   = (h_pad[1:-1, 4:-2] - 2*h_pad[1:-1, 3:-3] + h_pad[1:-1, 2:-4]) / dx**2
-    h_xxxx = (h_pad[1:-1, 6:]
-              - 4*h_pad[1:-1, 5:-1]
-              + 6*h_pad[1:-1, 4:-2]
-              - 4*h_pad[1:-1, 3:-3]
-              + h_pad[1:-1, 2:-4]) / dx**4
-    h_c   = h[1:-1, 1:-1]
+    h_t    = (h[2:, :] - h[:-2, :]) / (2 * dt)
+    h_x    = (h_pad[1:-1, 4:nx+4] - h_pad[1:-1, 2:nx+2]) / (2 * dx)
+    h_xx   = (h_pad[1:-1, 4:nx+4] - 2*h_pad[1:-1, 3:nx+3] + h_pad[1:-1, 2:nx+2]) / dx**2
+    h_xxxx = (h_pad[1:-1, 1:nx+1]
+              - 4*h_pad[1:-1, 2:nx+2]
+              + 6*h_pad[1:-1, 3:nx+3]
+              - 4*h_pad[1:-1, 4:nx+4]
+              + h_pad[1:-1, 5:nx+5]) / dx**4
+    h_c   = h[1:-1, :]
     res   = h_t + alpha * h_c * h_x + beta * h_xx + gamma * h_xxxx
     return res
 
@@ -202,7 +210,7 @@ def validate_burgers1d(config, dataset_dir):
     nx, nt = 256, 201
     x_grid = np.linspace(x_min, x_max, nx)
     t_grid = np.linspace(t_min, t_max, nt)
-    h_grid = np.array([cole_hopf_exact(x_grid, tv, nu, n_terms=200) for tv in t_grid])
+    h_grid = np.array([cole_hopf_exact(x_grid, tv, nu) for tv in t_grid])
     res = fd_residual_burgers1d(h_grid, x_grid, t_grid, nu)
     res_max, res_mse = np.abs(res).max(), (res**2).mean()
 
