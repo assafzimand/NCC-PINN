@@ -316,7 +316,7 @@ def validate_schrodinger(config, dataset_dir):
     # Spectral residual on native grid, interpolated to training residual pts
     print("    (running Schrodinger solver on native grid...)")
     x_grid, t_grid, h_sol = solve_nlse_splitstep(
-        x_min, x_max, t_min, t_max, nx=2048, nt=1000)
+        x_min, x_max, t_min, t_max, nx=2048, nt=5000)
     res_grid = spectral_residual_schrodinger(h_sol, x_grid, t_grid)
     t_interior = t_grid[1:-1]
     native_max = np.abs(res_grid).max()
@@ -368,7 +368,7 @@ def validate_allen_cahn(config, dataset_dir):
     res_max, res_mse = _spectral_res_at_training_pts(
         solve_allen_cahn,
         dict(x_min=x_min, x_max=x_max, t_min=t_min, t_max=t_max,
-             nx=512, nt=500, D=D),
+             nx=512, nt=5000, D=D),
         spectral_residual_allen_cahn, dict(D=D), data)
 
     return _report('allen_cahn', ic_max, ic_mse, bc_max, bc_mse,
@@ -408,7 +408,7 @@ def validate_kdv(config, dataset_dir):
     res_max, res_mse = _spectral_res_at_training_pts(
         solve_kdv,
         dict(x_min=x_min, x_max=x_max, t_min=t_min, t_max=t_max,
-             nx=512, nt=500, mu=mu),
+             nx=512, nt=5000, mu=mu),
         spectral_residual_kdv, dict(mu=mu), data)
 
     return _report('kdv', ic_max, ic_mse, bc_max, bc_mse, res_max, res_mse)
@@ -449,7 +449,7 @@ def validate_ks(config, dataset_dir):
     res_max, res_mse = _spectral_res_at_training_pts(
         solve_ks,
         dict(x_min=x_min, x_max=x_max, t_min=t_min, t_max=t_max,
-             nx=512, nt=500, alpha=alpha, beta=beta, gamma=gamma),
+             nx=512, nt=5000, alpha=alpha, beta=beta, gamma=gamma),
         spectral_residual_ks, dict(alpha=alpha, beta=beta, gamma=gamma),
         data)
 
