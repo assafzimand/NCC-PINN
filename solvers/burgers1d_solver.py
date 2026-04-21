@@ -15,77 +15,76 @@ import torch
 from typing import Tuple, Dict
 from scipy.integrate import solve_ivp
 from scipy.interpolate import RegularGridInterpolator
-from scipy.special import iv  # Modified Bessel function of the first kind
 import matplotlib.pyplot as plt
 import os
 
 
-def cole_hopf_exact(x, t, nu, n_terms=100):
+def cole_hopf_exact(x, t, nu, n_terms=200):
     """
-    Compute exact solution using Cole-Hopf transformation with Bessel series.
+    Compute exact solution using Cole-Hopf transformation for Dirichlet BCs.
     
     Burgers: h_t + h*h_x = (nu/pi)*h_xx with IC: h(x,0) = -sin(pi*x)
+    Domain: [-1, 1] with Dirichlet BCs: h(-1,t) = h(1,t) = 0
     
     Cole-Hopf: h = -2*(nu/pi) * phi_x / phi
     where phi solves the heat equation: phi_t = (nu/pi)*phi_xx
     with IC: phi(x, 0) = exp((1 - cos(pi*x))/(2*nu/pi))
     
-    The exact solution uses modified Bessel functions I_n for numerical stability.
-    This formulation is stable even for very small viscosity (nu/pi ~ 0.001).
+    For Dirichlet BCs, we use Fourier sine series on the transformed domain [0,1].
+    The solution is stable even for very small viscosity (nu/pi ~ 0.001).
     
     Reference: Raissi et al. (2019), original burgers_shock.mat dataset
     
     Args:
-        x: spatial coordinates (array-like)
+        x: spatial coordinates on [-1, 1] (array-like)
         t: time (scalar or array-like)
         nu: viscosity parameter (nu/pi in the PDE)
-        n_terms: number of terms in Bessel series expansion
+        n_terms: number of Fourier sine terms
     
     Returns:
         h: solution values at (x, t)
     """
-    x = np.asarray(x)
-    t = np.asarray(t)
+    x = np.asarray(x, dtype=np.float64)
+    t = np.asarray(t, dtype=np.float64)
     
     visc = nu / np.pi
     
-    # Key parameter for Bessel functions
-    # For IC u(0,x) = -sin(pi*x), after integration:
-    # phi(x,0) = exp((1 - cos(pi*x)) / (2*visc))
-    # The maximum of (1 - cos(pi*x)) is 2, so max exponent is 1/visc
-    a = 1.0 / (2.0 * visc)
+    # For Dirichlet BCs on [-1,1], transform to [0,2] for sine series
+    # Use domain [0, 2] with sine basis sin(n*pi*xi/2) where xi = x + 1
+    xi = x + 1.0  # Map [-1,1] to [0,2]
+    L = 2.0  # Domain length
     
-    # Time decay factor
-    decay_t = np.exp(-np.pi**2 * visc * t)
+    # Initial condition for phi: phi(x,0) = exp((1 - cos(pi*x))/(2*visc))
+    # Compute Fourier sine coefficients: a_n = (2/L) * integral_0^L phi_0(xi) * sin(n*pi*xi/L) dxi
     
-    # Initialize arrays
-    phi = np.zeros_like(x, dtype=np.float64)
-    phi_x = np.zeros_like(x, dtype=np.float64)
+    # Use high-resolution numerical integration for coefficients
+    n_integrate = 4000
+    xi_int = np.linspace(0, L, n_integrate)
+    x_int = xi_int - 1.0  # Map back to [-1,1]
+    phi_0 = np.exp((1.0 - np.cos(np.pi * x_int)) / (2.0 * visc))
     
-    # Compute Bessel series
-    # phi(x,t) = sum_{n=-N}^{N} I_n(a*exp(-pi^2*visc*t)) * exp(i*n*pi*x)
-    # For real solution with sin(pi*x) IC:
-    # phi(x,t) = I_0(a*decay) + 2*sum_{n=1}^{N} I_n(a*decay) * cos(n*pi*x)
-    
-    # Use logarithms for numerical stability when a is large
-    a_decay = a * decay_t
-    
-    # I_0 term
-    phi += iv(0, a_decay)
-    
-    # Sum over positive n (use symmetry I_{-n} = I_n for even function)
+    # Compute sine coefficients
+    a_n = np.zeros(n_terms, dtype=np.float64)
     for n in range(1, n_terms + 1):
-        bessel_n = iv(n, a_decay)
-        cos_term = np.cos(n * np.pi * x)
-        sin_term = -n * np.pi * np.sin(n * np.pi * x)
-        
-        phi += 2.0 * bessel_n * cos_term
-        phi_x += 2.0 * bessel_n * sin_term
+        sin_basis = np.sin(n * np.pi * xi_int / L)
+        a_n[n-1] = (2.0 / L) * np.trapz(phi_0 * sin_basis, xi_int)
     
-    # Cole-Hopf: h = -2*visc * phi_x / phi
-    # Add small regularization to avoid division by zero
-    phi = np.maximum(phi, 1e-14)
-    h = -2.0 * visc * phi_x / phi
+    # Time evolution: phi(xi,t) = sum_n a_n * exp(-n^2*pi^2*visc*t/L^2) * sin(n*pi*xi/L)
+    phi = np.zeros_like(xi, dtype=np.float64)
+    phi_xi = np.zeros_like(xi, dtype=np.float64)
+    
+    for n in range(1, n_terms + 1):
+        decay = np.exp(-n**2 * np.pi**2 * visc * t / L**2)
+        sin_val = np.sin(n * np.pi * xi / L)
+        cos_val = np.cos(n * np.pi * xi / L)
+        
+        phi += a_n[n-1] * decay * sin_val
+        phi_xi += a_n[n-1] * decay * (n * np.pi / L) * cos_val
+    
+    # Cole-Hopf: h = -2*visc * (dphi/dx) / phi
+    # Since xi = x + 1, dphi/dx = dphi/dxi
+    phi = np.maximum(np.abs(phi), 1e-15) * np.sign(phi + 1e-15)  # Preserve sign, avoid zero
+    h = -2.0 * visc * phi_xi / phi
     
     return h
 
@@ -312,7 +311,7 @@ def _get_interpolator_cached(config: Dict) -> Burgers1DInterpolator:
     config_tuple = (x_min, x_max, t_min, t_max, nu)
     
     if _cached_interpolator is None or _cached_config_hash != config_tuple:
-        print("  Generating Burgers1D solution using Cole-Hopf exact formula (Bessel series)...")
+        print("  Generating Burgers1D solution using Cole-Hopf exact formula (Fourier sine series)...")
         
         # Generate Cole-Hopf solution on fine grid
         nx_fine = 256
@@ -322,9 +321,9 @@ def _get_interpolator_cached(config: Dict) -> Burgers1DInterpolator:
         
         h_cole_hopf = np.zeros((nt_fine, nx_fine))
         for i, t_val in enumerate(t_grid):
-            h_cole_hopf[i, :] = cole_hopf_exact(x_grid, t_val, nu, n_terms=100)
+            h_cole_hopf[i, :] = cole_hopf_exact(x_grid, t_val, nu, n_terms=200)
         
-        print(f"  Cole-Hopf solution computed ({nx_fine}x{nt_fine} grid, 100 Bessel terms)")
+        print(f"  Cole-Hopf solution computed ({nx_fine}x{nt_fine} grid, 200 Fourier sine terms)")
         
         # Cross-check with Chebyshev (once per config)
         if not _crosscheck_done:
@@ -337,7 +336,7 @@ def _get_interpolator_cached(config: Dict) -> Burgers1DInterpolator:
             # Interpolate Cole-Hopf to Chebyshev grid for comparison
             h_cole_on_cheb = np.zeros_like(h_cheb)
             for i, t_val in enumerate(t_cheb):
-                h_cole_on_cheb[i, :] = cole_hopf_exact(x_cheb, t_val, nu, n_terms=100)
+                h_cole_on_cheb[i, :] = cole_hopf_exact(x_cheb, t_val, nu, n_terms=200)
             
             # Save cross-check visualization
             save_dir = os.path.join(
