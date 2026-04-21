@@ -186,9 +186,12 @@ def generate_dataset(
     
     x[idx:idx + n_bc_left, 0] = x_min
     t[idx:idx + n_bc_left, 0] = torch.from_numpy(t_grid[i_t_bc[:n_bc_left]].astype(np.float32)).to(device)
+    h_gt[idx:idx + n_bc_left, 0] = torch.from_numpy(h_solution[i_t_bc[:n_bc_left], 0].astype(np.float32)).to(device)
     idx += n_bc_left
     x[idx:idx + n_bc_right, 0] = x_max
     t[idx:idx + n_bc_right, 0] = torch.from_numpy(t_grid[i_t_bc[:n_bc_right]].astype(np.float32)).to(device)
+    # Periodic: h(x_max, t) = h(x_min, t); x_max not in half-open grid, use index 0
+    h_gt[idx:idx + n_bc_right, 0] = torch.from_numpy(h_solution[i_t_bc[:n_bc_right], 0].astype(np.float32)).to(device)
 
     mask_res = torch.zeros(N, dtype=torch.bool, device=device)
     mask_res[:n_residual] = True
@@ -197,9 +200,8 @@ def generate_dataset(
     mask_bc = torch.zeros(N, dtype=torch.bool, device=device)
     mask_bc[n_residual + n_ic:] = True
 
-    # Overwrite IC/BC with exact analytical values (no interpolation error)
+    # Overwrite IC with exact analytical values
     h_gt[mask_ic, 0] = torch.cos(np.pi * x[mask_ic, 0]).float()
-    h_gt[mask_bc, 0] = 0.0
 
     print("  Dataset generated successfully")
     return {
