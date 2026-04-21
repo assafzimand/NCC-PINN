@@ -28,9 +28,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from utils.dataset_gen import generate_and_save_datasets, load_dataset
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 def load_freq_grid_2d(dataset_dir):
     """Load frequency_grid.pt and return structured arrays for 2D PDEs."""
