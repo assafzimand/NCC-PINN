@@ -128,9 +128,9 @@ $$h_t - D\, h_{xx} - 5(h - h^3) = 0$$
 |----------|-------|
 | **Spatial domain** | $x \in [-1, 1]$ |
 | **Temporal domain** | $t \in [0, 1]$ |
-| **Parameters** | $D = 0.001$ |
+| **Parameters** | $D = 0.0001$ (standard SOTA benchmark) |
 | **Initial condition** | $h(x, 0) = x^2 \cos(\pi x)$ |
-| **Boundary conditions** | Dirichlet: $h(-1, t) = h(1, t) = -1$ |
+| **Boundary conditions** | Periodic: $h(-1, t) = h(1, t)$, $h_x(-1, t) = h_x(1, t)$ |
 | **Character** | Stiff nonlinear reaction-diffusion; sharp moving interface between $h \approx +1$ and $h \approx -1$ regions. One of the hardest standard PINN benchmarks |
 
 **PINN Benchmark Results (Rel. L₂ Error):**

@@ -660,15 +660,20 @@ def build_loss(**cfg) -> Callable:
             x_b = x[masks['BC']].contiguous()  # (N_b, spatial_dim)
             t_b = t[masks['BC']].contiguous()  # (N_b, 1)
             
-            # Split into left and right boundaries
-            # Assumption: first half are left (x=-5), second half are right (x=+5)
-            n_b_total = masks['BC'].sum().item()
-            n_b_left = n_b_total // 2
+            # Separate BC points by x-coordinate (works correctly after shuffle)
+            # Left boundary: x close to x_min (-5)
+            # Right boundary: x close to x_max (+5)
+            x_min_val = -5.0
+            x_max_val = 5.0
+            x_mid = (x_min_val + x_max_val) / 2.0
             
-            x_b_left = x_b[:n_b_left]
-            t_b_left = t_b[:n_b_left]
-            x_b_right = x_b[n_b_left:]
-            t_b_right = t_b[n_b_left:]
+            left_mask = x_b[:, 0] < x_mid
+            right_mask = ~left_mask
+            
+            x_b_left = x_b[left_mask]
+            t_b_left = t_b[left_mask]
+            x_b_right = x_b[right_mask]
+            t_b_right = t_b[right_mask]
             
             # Enable gradients for derivative computation
             x_b_left = x_b_left.clone().detach().requires_grad_(True)
@@ -679,6 +684,8 @@ def build_loss(**cfg) -> Callable:
             # Vectorized: stack left and right, then split back
             x_stacked = torch.cat([x_b_left, x_b_right], dim=0)
             t_stacked = torch.cat([t_b_left, t_b_right], dim=0)
+            n_b_left = len(x_b_left)
+            n_b_right = len(x_b_right)
             
             # Single forward pass for both boundaries
             xt_stacked = torch.cat([x_stacked, t_stacked], dim=1)
@@ -711,7 +718,7 @@ def build_loss(**cfg) -> Callable:
                 _, h_x_stacked, _ = compute_derivatives(u_stacked, v_stacked, x_stacked, t_stacked)
                 if _t: _t.stop('loss.bc.derivatives')
             
-            # Split predictions and derivatives (use actual sizes, not torch.chunk)
+            # Split predictions and derivatives
             u_left = u_stacked[:n_b_left]
             u_right = u_stacked[n_b_left:]
             v_left = v_stacked[:n_b_left]
@@ -724,27 +731,46 @@ def build_loss(**cfg) -> Callable:
             h_right = torch.complex(u_right, v_right)
             
             # Periodic BC: h(-5,t) = h(5,t) and h_x(-5,t) = h_x(5,t)
-            # Only compare paired points (min of left/right counts)
-            n_pairs = min(len(h_left), len(h_right))
+            # Match pairs by t-value (handles shuffle correctly)
+            n_left_pts = len(h_left)
+            n_right_pts = len(h_right)
             
-            if n_pairs == 0:
-                # No paired BC points in this batch (e.g., batch has only 1 BC point)
+            if n_left_pts == 0 or n_right_pts == 0:
                 if not for_tree_spawning:
                     mse_bc = torch.tensor(0.0, device=device)
             else:
-                diff_value = h_left[:n_pairs] - h_right[:n_pairs]
+                # Sort both sides by t for pairing
+                t_left_vals = t_b_left[:, 0]
+                t_right_vals = t_b_right[:, 0]
+                sort_left = torch.argsort(t_left_vals)
+                sort_right = torch.argsort(t_right_vals)
+                
+                # Take min number of pairs available
+                n_pairs = min(n_left_pts, n_right_pts)
+                
+                # Apply sorting for pairing
+                h_left_sorted = h_left[sort_left[:n_pairs]]
+                h_right_sorted = h_right[sort_right[:n_pairs]]
+                h_x_left_sorted = h_x_left[sort_left[:n_pairs]]
+                h_x_right_sorted = h_x_right[sort_right[:n_pairs]]
+                
+                # Compute differences
+                diff_value = h_left_sorted - h_right_sorted
                 bc_value_squared = diff_value.real ** 2 + diff_value.imag ** 2
                 
-                diff_derivative = h_x_left[:n_pairs] - h_x_right[:n_pairs]
+                diff_derivative = h_x_left_sorted - h_x_right_sorted
                 bc_deriv_squared = diff_derivative.real ** 2 + diff_derivative.imag ** 2
                 
                 bc_paired_loss = bc_value_squared + bc_deriv_squared
                 
                 if for_tree_spawning:
-                    # Split loss equally between left and right points
+                    # Map sorted indices back to original BC mask indices
                     bc_mask_indices = torch.where(masks['BC'])[0]
-                    left_indices = bc_mask_indices[:n_b_left][:n_pairs]
-                    right_indices = bc_mask_indices[n_b_left:][:n_pairs]
+                    left_bc_indices = bc_mask_indices[left_mask]
+                    right_bc_indices = bc_mask_indices[right_mask]
+                    
+                    left_indices = left_bc_indices[sort_left[:n_pairs]]
+                    right_indices = right_bc_indices[sort_right[:n_pairs]]
                     
                     bc_per_sample[left_indices] = bc_paired_loss / 2.0
                     bc_per_sample[right_indices] = bc_paired_loss / 2.0

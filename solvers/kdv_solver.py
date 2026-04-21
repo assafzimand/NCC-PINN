@@ -101,19 +101,28 @@ def solve_kdv(
 
 
 class KdVInterpolator:
-    """Interpolator for KdV equation solution."""
+    """Interpolator for KdV equation solution with periodic boundary conditions."""
 
     def __init__(self, x_grid, t_grid, h_solution):
+        # Store domain info for periodic wrapping
+        self.x_min, self.x_max = x_grid.min(), x_grid.max()
+        self.domain_length = self.x_max - self.x_min
+        
+        # bounds_error=True since we handle wrapping explicitly
         self.interpolator = RegularGridInterpolator(
             (t_grid, x_grid), h_solution,
-            method='cubic', bounds_error=False, fill_value=0.0,
+            method='cubic', bounds_error=True, fill_value=None,
         )
-        self.x_min, self.x_max = x_grid.min(), x_grid.max()
 
     def __call__(self, x_points, t_points):
+        """Interpolate with periodic x-wrapping."""
         x_flat = np.asarray(x_points).flatten()
         t_flat = np.asarray(t_points).flatten()
-        points = np.column_stack([t_flat, x_flat])
+        
+        # Wrap x coordinates to [x_min, x_max) for periodic BCs
+        x_wrapped = self.x_min + np.mod(x_flat - self.x_min, self.domain_length)
+        
+        points = np.column_stack([t_flat, x_wrapped])
         return self.interpolator(points)
 
 
@@ -130,7 +139,7 @@ def _get_interpolator(config: Dict) -> KdVInterpolator:
 
     x_grid, t_grid, h_sol = solve_kdv(
         x_min=x_min, x_max=x_max, t_min=t_min, t_max=t_max,
-        nx=256, nt=201, mu=mu,
+        nx=512, nt=500, mu=mu,
     )
     return KdVInterpolator(x_grid, t_grid, h_sol)
 

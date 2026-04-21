@@ -1,21 +1,22 @@
 """
-Allen-Cahn Equation Solver using Method of Lines + Implicit BDF.
+Allen-Cahn Equation Solver using Fourier Pseudo-Spectral + ETDRK4.
 
 Solves: h_t = D * h_xx + 5*(h - h^3)
 Domain: x in [-1, 1], t in [0, 1]
 Initial Condition: h(x, 0) = x^2 * cos(pi * x)
-Boundary Conditions: h(-1, t) = h(1, t) = -1 (Dirichlet)
-Parameters: D = 0.001
+Boundary Conditions: Periodic: h(-1,t) = h(1,t), h_x(-1,t) = h_x(1,t)
+Parameters: D = 0.0001 (standard Raissi/PirateNet benchmark)
 
-Uses second-order finite differences in space and scipy Radau (implicit)
-time integrator for the stiff system.
+Uses Fourier pseudo-spectral method for spatial discretization and
+ETDRK4 (Exponential Time Differencing RK4) for time integration.
+ETDRK4 handles the stiff linear diffusion term exactly in Fourier space.
+Reference: Kassam & Trefethen, SIAM J. Sci. Comput. 26(4), 2005.
 """
 
 import numpy as np
 import torch
 from typing import Tuple, Dict
 from scipy.interpolate import RegularGridInterpolator
-from scipy.integrate import solve_ivp
 
 
 def solve_allen_cahn(
@@ -24,90 +25,115 @@ def solve_allen_cahn(
     t_min: float = 0.0,
     t_max: float = 1.0,
     nx: int = 512,
-    nt: int = 201,
-    D: float = 0.001,
+    nt: int = 500,
+    D: float = 0.0001,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Solve the Allen-Cahn equation using method of lines with Radau integrator.
+    Solve the Allen-Cahn equation using Fourier pseudo-spectral + ETDRK4.
 
     Equation: h_t = D * h_xx + 5*(h - h^3)
-
-    Args:
-        x_min, x_max: Spatial domain bounds.
-        t_min, t_max: Temporal domain bounds.
-        nx: Number of interior spatial grid points.
-        nt: Number of time snapshots to save.
-        D: Diffusion coefficient (0.001 for the benchmark).
-
-    Returns:
-        x_grid: Spatial grid (nx+2,) including boundaries.
-        t_grid: Temporal grid (nt,).
-        h_solution: Solution field (nt, nx+2).
+    Rewritten: h_t = D*h_xx + 5*h - 5*h^3
+    In Fourier space: dv/dt = Lk*v + N_hat(v)
+      where Lk = -D*k^2 (linear diffusion, treated exactly)
+      and N_hat = FFT(5*h - 5*h^3) (nonlinear reaction, stepped explicitly)
     """
-    x_grid = np.linspace(x_min, x_max, nx + 2, dtype=np.float64)
-    dx = x_grid[1] - x_grid[0]
+    domain_len = x_max - x_min
+    dx = domain_len / nx
+    x_grid = np.linspace(x_min, x_max - dx, nx, dtype=np.float64)
     t_grid = np.linspace(t_min, t_max, nt, dtype=np.float64)
+    dt_save = t_grid[1] - t_grid[0] if nt > 1 else (t_max - t_min)
 
-    x_int = x_grid[1:-1]
-    n_int = len(x_int)
+    k = np.fft.fftfreq(nx, d=dx) * 2.0 * np.pi
 
-    u0 = x_int ** 2 * np.cos(np.pi * x_int)
+    # Initial condition: h(x, 0) = x^2 * cos(pi*x)
+    h0 = x_grid ** 2 * np.cos(np.pi * x_grid)
+    v = np.fft.fft(h0)
 
-    bc_left = -1.0
-    bc_right = -1.0
+    h_solution = np.zeros((nt, nx), dtype=np.float64)
+    h_solution[0, :] = h0.copy()
 
-    coeff = D / dx ** 2
+    # Linear operator in Fourier space: Lk = -D*k^2
+    # From: h_t = D*h_xx + ... => F[h_xx] = -k^2 * v => D*F[h_xx] = -D*k^2 * v
+    Lk = -D * k ** 2
 
-    def rhs(t_val, u):
-        du = np.empty_like(u)
-        # Diffusion with Dirichlet BC injected at boundaries
-        du[0] = coeff * (bc_left - 2 * u[0] + u[1])
-        du[1:-1] = coeff * (u[:-2] - 2 * u[1:-1] + u[2:])
-        du[-1] = coeff * (u[-2] - 2 * u[-1] + bc_right)
-        # Reaction
-        du += 5.0 * (u - u ** 3)
-        return du
+    # Adaptive sub-stepping based on stiffness
+    # 1. Linear diffusion stability: max|Lk| = D*k_max^2
+    Lk_max = np.max(np.abs(Lk))
+    dt_diffusion = 1.0 / (Lk_max + 1e-10)
+    
+    # 2. Nonlinear reaction stability: derivative of 5*(h - h^3) is 5*(1 - 3*h^2)
+    # Maximum occurs at h=+/-1: |d/dh[5(h-h^3)]| = 10 at h=+/-1
+    # Conservative estimate: dt < 1 / max_reaction_rate
+    max_reaction_rate = 10.0  # From 5*(1 - 3*h^2) at h=+/-1
+    dt_reaction = 1.0 / max_reaction_rate
+    
+    dt_safe = min(dt_diffusion, dt_reaction)
+    n_sub = max(int(np.ceil(dt_save / dt_safe)), 1)
+    dt = dt_save / n_sub
 
-    print("  Solving Allen-Cahn with Radau integrator...")
-    sol = solve_ivp(
-        rhs,
-        (t_min, t_max),
-        u0,
-        method='Radau',
-        t_eval=t_grid,
-        rtol=1e-8,
-        atol=1e-10,
-        max_step=0.01,
-    )
+    # ETDRK4 coefficients via contour integrals (Kassam & Trefethen 2005)
+    E = np.exp(Lk * dt)
+    E2 = np.exp(Lk * dt / 2.0)
 
-    if not sol.success:
-        print(f"  WARNING: solver message: {sol.message}")
+    M = 64
+    r = np.exp(2j * np.pi * (np.arange(1, M + 1) - 0.5) / M)
+    LR = dt * Lk[:, np.newaxis] + r[np.newaxis, :]
 
-    h_int = sol.y.T  # (nt, n_int)
+    Q = dt * np.real(np.mean((np.exp(LR / 2.0) - 1.0) / LR, axis=1))
+    f1 = dt * np.real(np.mean(
+        (-4.0 - LR + np.exp(LR) * (4.0 - 3.0 * LR + LR ** 2)) / LR ** 3, axis=1))
+    f2 = dt * np.real(np.mean(
+        (2.0 + LR + np.exp(LR) * (-2.0 + LR)) / LR ** 3, axis=1))
+    f3 = dt * np.real(np.mean(
+        (-4.0 - 3.0 * LR - LR ** 2 + np.exp(LR) * (4.0 - LR)) / LR ** 3, axis=1))
 
-    h_solution = np.zeros((nt, nx + 2), dtype=np.float64)
-    h_solution[:, 0] = bc_left
-    h_solution[:, -1] = bc_right
-    h_solution[:, 1:-1] = h_int
+    def N_hat(v_hat):
+        """Nonlinear term in Fourier space: FFT(5*h - 5*h^3)."""
+        h_phys = np.real(np.fft.ifft(v_hat))
+        reaction = 5.0 * h_phys - 5.0 * h_phys ** 3
+        return np.fft.fft(reaction)
+
+    print(f"  Solving Allen-Cahn with ETDRK4 ({nx} modes, {nt} save points, {n_sub} sub-steps/save)...")
+    for save_idx in range(1, nt):
+        for _ in range(n_sub):
+            Nv = N_hat(v)
+            a = E2 * v + Q * Nv
+            Na = N_hat(a)
+            b = E2 * v + Q * Na
+            Nb = N_hat(b)
+            c = E2 * a + Q * (2.0 * Nb - Nv)
+            Nc = N_hat(c)
+            v = E * v + Nv * f1 + 2.0 * (Na + Nb) * f2 + Nc * f3
+
+        h_solution[save_idx, :] = np.real(np.fft.ifft(v))
 
     return x_grid, t_grid, h_solution
 
 
 class AllenCahnInterpolator:
-    """Interpolator for Allen-Cahn equation solution."""
+    """Interpolator for Allen-Cahn equation solution with periodic boundary conditions."""
 
     def __init__(self, x_grid, t_grid, h_solution):
-        self.interpolator = RegularGridInterpolator(
-            (t_grid, x_grid), h_solution,
-            method='cubic', bounds_error=False, fill_value=-1.0,
-        )
+        # Store domain info for periodic wrapping
         self.x_min, self.x_max = x_grid.min(), x_grid.max()
         self.t_min, self.t_max = t_grid.min(), t_grid.max()
+        self.domain_length = self.x_max - self.x_min
+        
+        # bounds_error=True since we handle wrapping explicitly
+        self.interpolator = RegularGridInterpolator(
+            (t_grid, x_grid), h_solution,
+            method='cubic', bounds_error=True, fill_value=None,
+        )
 
     def __call__(self, x_points, t_points):
+        """Interpolate with periodic x-wrapping."""
         x_flat = np.asarray(x_points).flatten()
         t_flat = np.asarray(t_points).flatten()
-        points = np.column_stack([t_flat, x_flat])
+        
+        # Wrap x coordinates to [x_min, x_max) for periodic BCs
+        x_wrapped = self.x_min + np.mod(x_flat - self.x_min, self.domain_length)
+        
+        points = np.column_stack([t_flat, x_wrapped])
         return self.interpolator(points)
 
 
@@ -120,11 +146,11 @@ def _get_interpolator(config: Dict) -> AllenCahnInterpolator:
     pc = config[problem]
     x_min, x_max = pc['spatial_domain'][0]
     t_min, t_max = pc['temporal_domain']
-    D = pc.get('D', 0.001)
+    D = pc.get('D', 0.0001)
 
     x_grid, t_grid, h_sol = solve_allen_cahn(
         x_min=x_min, x_max=x_max, t_min=t_min, t_max=t_max,
-        nx=512, nt=201, D=D,
+        nx=512, nt=500, D=D,
     )
     return AllenCahnInterpolator(x_grid, t_grid, h_sol)
 
@@ -136,10 +162,10 @@ def _get_interpolator_cached(config: Dict) -> AllenCahnInterpolator:
     config_tuple = (
         tuple(pc['spatial_domain'][0]),
         tuple(pc['temporal_domain']),
-        pc.get('D', 0.001),
+        pc.get('D', 0.0001),
     )
     if _cached_interpolator is None or _cached_config_hash != config_tuple:
-        print("  Generating Allen-Cahn solution (514x201 grid)...")
+        print("  Generating Allen-Cahn solution (512x201 grid, ETDRK4)...")
         _cached_interpolator = _get_interpolator(config)
         _cached_config_hash = config_tuple
         print("  Solution computed.")
@@ -179,7 +205,7 @@ def generate_dataset(
     t[idx:idx + n_ic, 0] = t_min
     idx += n_ic
 
-    # BC points (Dirichlet at x=-1 and x=+1)
+    # BC points (Periodic at x=-1 and x=+1)
     print(f"  Sampling {n_bc} boundary condition points...")
     n_bc_left = n_bc // 2
     n_bc_right = n_bc - n_bc_left

@@ -1,8 +1,8 @@
 """
-Schrödinger Equation Solver using Split-Step Fourier Method.
+Schrodinger Equation Solver using Split-Step Fourier Method.
 
 Solves: i*h_t + 0.5*h_xx + |h|^2*h = 0
-Domain: x ∈ [-5, 5], t ∈ [0, π/2]
+Domain: x in [-5, 5], t in [0, pi/2]
 Initial Condition: h(x, 0) = 2*sech(x)
 Boundary Conditions: Periodic
 """
@@ -36,7 +36,7 @@ def solve_nlse_splitstep(
     nt: int = 800,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Solve the Nonlinear Schrödinger Equation using split-step Fourier method.
+    Solve the Nonlinear Schrodinger Equation using split-step Fourier method.
     
     Equation: i*h_t + 0.5*h_xx + |h|^2*h = 0
     
@@ -48,7 +48,7 @@ def solve_nlse_splitstep(
         x_min: Minimum spatial coordinate
         x_max: Maximum spatial coordinate
         t_min: Initial time (typically 0)
-        t_max: Final time (typically π/2)
+        t_max: Final time (typically pi/2)
         nx: Number of spatial grid points (use power of 2 for FFT efficiency)
         nt: Number of temporal grid points
         
@@ -57,9 +57,10 @@ def solve_nlse_splitstep(
         t_grid: Temporal grid (nt,)
         h_solution: Complex solution field (nt, nx)
     """
-    # Create spatial grid
-    x_grid = np.linspace(x_min, x_max, nx, dtype=np.float64)
-    dx = x_grid[1] - x_grid[0]
+    # Create spatial grid (periodic: half-open interval [x_min, x_max))
+    domain_len = x_max - x_min
+    dx = domain_len / nx
+    x_grid = np.linspace(x_min, x_max - dx, nx, dtype=np.float64)
     
     # Create temporal grid
     t_grid = np.linspace(t_min, t_max, nt, dtype=np.float64)
@@ -110,6 +111,7 @@ class NLSEInterpolator:
     """
     Interpolator for NLSE solution on fine grid.
     Provides ground truth values at arbitrary (x, t) points.
+    Handles periodic boundary conditions with x-wrapping.
     """
     
     def __init__(
@@ -126,12 +128,18 @@ class NLSEInterpolator:
             t_grid: Temporal grid (nt,)
             h_solution: Complex solution (nt, nx)
         """
+        # Store domain info for periodic wrapping
+        self.x_min = x_grid.min()
+        self.x_max = x_grid.max()
+        self.domain_length = self.x_max - self.x_min
+        
         # Create interpolators for real and imaginary parts
+        # bounds_error=True since we handle wrapping explicitly
         self.real_interp = RegularGridInterpolator(
             (t_grid, x_grid),
             h_solution.real,
             method='cubic',
-            bounds_error=False,
+            bounds_error=True,
             fill_value=None
         )
         
@@ -139,13 +147,14 @@ class NLSEInterpolator:
             (t_grid, x_grid),
             h_solution.imag,
             method='cubic',
-            bounds_error=False,
+            bounds_error=True,
             fill_value=None
         )
     
     def __call__(self, x: np.ndarray, t: np.ndarray) -> np.ndarray:
         """
         Interpolate solution at given (x, t) points.
+        Applies periodic wrapping to x coordinates.
         
         Args:
             x: Spatial coordinates (N,)
@@ -154,7 +163,11 @@ class NLSEInterpolator:
         Returns:
             h: Complex solution values (N,)
         """
-        points = np.column_stack([t, x])  # Note: (t, x) order for interpolator
+        # Wrap x coordinates to [x_min, x_max) for periodic BCs
+        x_wrapped = np.asarray(x).copy()
+        x_wrapped = self.x_min + np.mod(x_wrapped - self.x_min, self.domain_length)
+        
+        points = np.column_stack([t, x_wrapped])  # Note: (t, x) order for interpolator
         u = self.real_interp(points)
         v = self.imag_interp(points)
         return u + 1j * v
@@ -177,7 +190,7 @@ def _get_interpolator(config: Dict) -> NLSEInterpolator:
     global _interpolator
     
     if _interpolator is None:
-        print("  Generating NLSE ground truth solution (1024×800 grid)...")
+        print("  Generating NLSE ground truth solution (1024x800 grid)...")
         problem = config.get('problem', 'problem1')
         problem_config = config[problem]
         
@@ -188,14 +201,14 @@ def _get_interpolator(config: Dict) -> NLSEInterpolator:
         x_min, x_max = spatial_domain
         t_min, t_max = temporal_domain
         
-        # Solve NLSE on fine grid
+        # Solve NLSE on fine grid (increased resolution for benchmark accuracy)
         x_grid, t_grid, h_solution = solve_nlse_splitstep(
             x_min=x_min,
             x_max=x_max,
             t_min=t_min,
             t_max=t_max,
-            nx=1024,
-            nt=800
+            nx=2048,
+            nt=1000
         )
         
         print(f"  Solution computed: {h_solution.shape[0]}x{h_solution.shape[1]} grid")
@@ -283,7 +296,7 @@ def generate_dataset(
     """
     Generate dataset with NLSE ground truth via interpolation.
     
-    Uses split-step Fourier solver on 1024×800 grid, then interpolates
+    Uses split-step Fourier solver on 1024x800 grid, then interpolates
     to randomly sampled training points.
     
     Args:
