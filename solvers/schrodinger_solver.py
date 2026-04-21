@@ -124,28 +124,30 @@ class NLSEInterpolator:
         Initialize interpolator with precomputed solution.
         
         Args:
-            x_grid: Spatial grid (nx,)
+            x_grid: Spatial grid (nx,) -- half-open periodic grid
             t_grid: Temporal grid (nt,)
             h_solution: Complex solution (nt, nx)
         """
-        # Store domain info for periodic wrapping
-        self.x_min = x_grid.min()
-        self.x_max = x_grid.max()
+        # Close the periodic grid: append x_max point duplicating x_min value
+        dx = x_grid[1] - x_grid[0]
+        x_closed = np.append(x_grid, x_grid[0] + len(x_grid) * dx)
+        h_closed = np.concatenate([h_solution, h_solution[:, :1]], axis=1)
+        
+        self.x_min = x_closed[0]
+        self.x_max = x_closed[-1]
         self.domain_length = self.x_max - self.x_min
         
-        # Create interpolators for real and imaginary parts
-        # bounds_error=True since we handle wrapping explicitly
         self.real_interp = RegularGridInterpolator(
-            (t_grid, x_grid),
-            h_solution.real,
+            (t_grid, x_closed),
+            h_closed.real,
             method='cubic',
             bounds_error=True,
             fill_value=None
         )
         
         self.imag_interp = RegularGridInterpolator(
-            (t_grid, x_grid),
-            h_solution.imag,
+            (t_grid, x_closed),
+            h_closed.imag,
             method='cubic',
             bounds_error=True,
             fill_value=None
