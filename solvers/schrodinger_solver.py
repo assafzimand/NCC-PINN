@@ -10,7 +10,6 @@ Boundary Conditions: Periodic
 import numpy as np
 import torch
 from typing import Dict, Tuple
-from scipy.interpolate import RegularGridInterpolator
 
 
 def initial_condition_analytical(x: np.ndarray) -> np.ndarray:
@@ -107,91 +106,22 @@ def solve_nlse_splitstep(
     return x_grid, t_grid, h_solution
 
 
-class NLSEInterpolator:
+# Global solution cache (initialized on first dataset generation)
+_cached_solution = None
+
+
+def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Interpolator for NLSE solution on fine grid.
-    Provides ground truth values at arbitrary (x, t) points.
-    Handles periodic boundary conditions with x-wrapping.
-    """
+    Get cached NLSE solution grid.
     
-    def __init__(
-        self,
-        x_grid: np.ndarray,
-        t_grid: np.ndarray,
-        h_solution: np.ndarray
-    ):
-        """
-        Initialize interpolator with precomputed solution.
-        
-        Args:
-            x_grid: Spatial grid (nx,) -- half-open periodic grid
-            t_grid: Temporal grid (nt,)
-            h_solution: Complex solution (nt, nx)
-        """
-        # Close the periodic grid: append x_max point duplicating x_min value
-        dx = x_grid[1] - x_grid[0]
-        x_closed = np.append(x_grid, x_grid[0] + len(x_grid) * dx)
-        h_closed = np.concatenate([h_solution, h_solution[:, :1]], axis=1)
-        
-        self.x_min = x_closed[0]
-        self.x_max = x_closed[-1]
-        self.domain_length = self.x_max - self.x_min
-        
-        self.real_interp = RegularGridInterpolator(
-            (t_grid, x_closed),
-            h_closed.real,
-            method='cubic',
-            bounds_error=True,
-            fill_value=None
-        )
-        
-        self.imag_interp = RegularGridInterpolator(
-            (t_grid, x_closed),
-            h_closed.imag,
-            method='cubic',
-            bounds_error=True,
-            fill_value=None
-        )
-    
-    def __call__(self, x: np.ndarray, t: np.ndarray) -> np.ndarray:
-        """
-        Interpolate solution at given (x, t) points.
-        Applies periodic wrapping to x coordinates.
-        
-        Args:
-            x: Spatial coordinates (N,)
-            t: Temporal coordinates (N,)
-            
-        Returns:
-            h: Complex solution values (N,)
-        """
-        x_wrapped = np.asarray(x, dtype=np.float64)
-        x_wrapped = self.x_min + np.mod(x_wrapped - self.x_min, self.domain_length)
-        
-        points = np.column_stack([np.asarray(t, dtype=np.float64), x_wrapped])
-        u = self.real_interp(points)
-        v = self.imag_interp(points)
-        return u + 1j * v
-
-
-# Global interpolator (initialized on first dataset generation)
-_interpolator = None
-
-
-def _get_interpolator(config: Dict) -> NLSEInterpolator:
-    """
-    Get or create the NLSE interpolator (singleton pattern).
-    
-    Args:
-        config: Configuration dictionary
-        
     Returns:
-        Interpolator instance
+        (x_grid, t_grid, h_solution): Native grid arrays from the solver.
+        h_solution is complex-valued (nt, nx)
     """
-    global _interpolator
+    global _cached_solution
     
-    if _interpolator is None:
-        print("  Generating NLSE ground truth solution (1024x800 grid)...")
+    if _cached_solution is None:
+        print("  Generating NLSE ground truth solution (2048x1000 grid)...")
         problem = config.get('problem', 'problem1')
         problem_config = config[problem]
         
@@ -213,12 +143,9 @@ def _get_interpolator(config: Dict) -> NLSEInterpolator:
         )
         
         print(f"  Solution computed: {h_solution.shape[0]}x{h_solution.shape[1]} grid")
-        
-        # Create interpolator
-        _interpolator = NLSEInterpolator(x_grid, t_grid, h_solution)
-        print("  Interpolator ready")
+        _cached_solution = (x_grid, t_grid, h_solution)
     
-    return _interpolator
+    return _cached_solution
 
 
 def solve_ground_truth(x: torch.Tensor, t: torch.Tensor, seed: int = 42) -> torch.Tensor:
@@ -424,20 +351,22 @@ def evaluate_on_grid(x_grid: torch.Tensor, config: Dict) -> torch.Tensor:
     Returns:
         h_gt: Ground truth values (N, 2) with columns [real, imag]
     """
-    # Get interpolator (which solves the NLSE)
-    interpolator = _get_interpolator(config)
+    x_grid_np, t_grid_np, h_solution = _get_solution_cached(config)
     
-    x_np = x_grid.cpu().numpy()
+    # For each point in x_grid, find nearest grid point
+    x_query = x_grid.cpu().numpy()[:, 0]
+    t_query = x_grid.cpu().numpy()[:, 1]
     
-    # Extract coordinates
-    x = x_np[:, 0]
-    t = x_np[:, 1]
+    # Find nearest indices
+    i_x = np.searchsorted(x_grid_np, x_query)
+    i_x = np.clip(i_x, 0, len(x_grid_np) - 1)
     
-    # Evaluate using interpolator
-    h_complex = interpolator(x, t)
+    i_t = np.searchsorted(t_grid_np, t_query)
+    i_t = np.clip(i_t, 0, len(t_grid_np) - 1)
     
-    # Convert to (real, imag) format
-    h_gt = np.zeros((len(x), 2), dtype=np.float32)
+    # Extract complex values and split into real/imag
+    h_complex = h_solution[i_t, i_x]
+    h_gt = np.zeros((len(x_query), 2), dtype=np.float32)
     h_gt[:, 0] = h_complex.real.astype(np.float32)
     h_gt[:, 1] = h_complex.imag.astype(np.float32)
     

@@ -158,7 +158,6 @@ def test_trainer_small_run():
     assert 'epochs' in metrics, "Metrics missing epochs"
     assert 'train_loss' in metrics, "Metrics missing train_loss"
     assert 'eval_loss' in metrics, "Metrics missing eval_loss"
-    assert 'train_rel_l2' in metrics, "Metrics missing train_rel_l2"
     assert 'eval_rel_l2' in metrics, "Metrics missing eval_rel_l2"
     assert len(metrics['epochs']) == 3, "Should have 3 epochs of metrics"
 

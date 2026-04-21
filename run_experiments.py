@@ -361,8 +361,6 @@ def generate_comparison_report(parent_dir, results):
             'experiment': exp_name,
             'final_train_loss': train_metrics['train_loss'][-1],
             'final_eval_loss': train_metrics['eval_loss'][-1],
-            'final_train_rel_l2': train_metrics['train_rel_l2'][-1],
-            'final_train_inf_norm': train_metrics['train_inf_norm'][-1],
             'final_eval_rel_l2': train_metrics['eval_rel_l2'][-1],
             'final_eval_inf_norm': train_metrics['eval_inf_norm'][-1],
             'ncc_final_accuracy': final_ncc['layer_accuracies'][list(final_ncc['layer_accuracies'].keys())[-1]],
@@ -371,7 +369,6 @@ def generate_comparison_report(parent_dir, results):
         
         # Add probe metrics if available (last layer probe)
         if probe_metrics:
-            metrics_row['probe_final_train_rel_l2'] = probe_metrics['train']['rel_l2'][-1]
             metrics_row['probe_final_eval_rel_l2'] = probe_metrics['eval']['rel_l2'][-1]
         
         # Add derivatives metrics if available
@@ -487,7 +484,7 @@ def _generate_training_results_plot(parent_dir, df):
     
     # Create colored table
     table_data = []
-    col_labels = ['Experiment', 'Train Loss', 'Eval Loss', 'Train Rel-L2', 'Train Inf', 
+    col_labels = ['Experiment', 'Train Loss', 'Eval Loss',
                   'Eval Rel-L2', 'Eval Inf', 'NCC Final Acc', 'Margin SNR', 
                   'Deriv Train Res', 'Deriv Eval Res']
     
@@ -496,8 +493,6 @@ def _generate_training_results_plot(parent_dir, df):
             row['experiment'],
             f"{row['final_train_loss']:.6f}",
             f"{row['final_eval_loss']:.6f}",
-            f"{row['final_train_rel_l2']:.6f}",
-            f"{row['final_train_inf_norm']:.6f}",
             f"{row['final_eval_rel_l2']:.6f}",
             f"{row['final_eval_inf_norm']:.6f}",
             f"{row['ncc_final_accuracy']:.6f}",

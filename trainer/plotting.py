@@ -38,7 +38,7 @@ def plot_training_curves(
     Args:
         metrics: Dictionary with keys:
                 - 'train_loss_epochs', 'train_loss' (all epochs)
-                - 'epochs', 'eval_loss', 'train_rel_l2', 'eval_rel_l2' (eval epochs only)
+                - 'epochs', 'eval_loss', 'eval_rel_l2' (eval epochs only)
         save_dir: Directory to save plots
         optimizer_switch_epoch: Epoch where optimizer switched (e.g., Adam to LBFGS).
                                If provided, a vertical line is drawn at this epoch.
@@ -74,8 +74,6 @@ def plot_training_curves(
 
     # Plot 2: Relative L2 error
     ax = axes[1]
-    ax.plot(eval_epochs, metrics['train_rel_l2'], 'b-', label='Train Rel. L2',
-            linewidth=2, alpha=0.8)
     ax.plot(eval_epochs, metrics['eval_rel_l2'], 'r-', label='Eval Rel. L2',
             linewidth=2, alpha=0.8)
     
@@ -88,7 +86,7 @@ def plot_training_curves(
     ax.set_ylabel('Relative L2 Error', fontsize=12)
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
-    is_log_l2 = _safe_log_scale(ax, [metrics['train_rel_l2'], metrics['eval_rel_l2']])
+    is_log_l2 = _safe_log_scale(ax, [metrics['eval_rel_l2']])
     scale_str_l2 = "[log]" if is_log_l2 else "[linear]"
     ax.set_title(f'Relative L2 Error {scale_str_l2}', fontsize=14, fontweight='bold')
 

@@ -536,9 +536,7 @@ def train(
         'train_loss': [],          # All epochs
         'epochs': [],              # Evaluation epochs only
         'eval_loss': [],
-        'train_rel_l2': [],
         'eval_rel_l2': [],
-        'train_inf_norm': [],
         'eval_inf_norm': []
     }
 
@@ -786,9 +784,7 @@ def train(
 
     train_loss = 0.0
     eval_loss = 0.0
-    train_rel_l2 = 0.0
     eval_rel_l2 = 0.0
-    train_inf_norm = 0.0
     eval_inf_norm = 0.0
 
     resample_every = cfg.get('sampling', {}).get('resample_every_epochs', 0)
@@ -1032,32 +1028,11 @@ def train(
         # Initialize metrics for this epoch (will be updated if we evaluate)
         eval_loss = None
         eval_rel_l2 = None
-        train_rel_l2 = None
-        train_inf_norm = None
         eval_inf_norm = None
-        
+
         if should_evaluate:
             # Compute train rel-L2 and infinity norm errors
-            model.train()
-            train_rel_l2 = 0.0
-            train_inf_norm = 0.0
-            n_train_batches_l2 = 0
 
-            timer.start('eval.train_metrics')
-            for batch in train_loader:
-                with torch.no_grad():
-                    inputs = torch.cat([batch['x'], batch['t']], dim=1)
-                    h_pred = model(inputs)
-                    rel_l2 = compute_relative_l2_error(h_pred, batch['h_gt'])
-                    inf_norm = compute_infinity_norm_error(h_pred, batch['h_gt'])
-                    train_rel_l2 += rel_l2.item()
-                    train_inf_norm += inf_norm.item()
-                    n_train_batches_l2 += 1
-            timer.stop('eval.train_metrics')
-            
-            train_rel_l2 /= n_train_batches_l2
-            train_inf_norm /= n_train_batches_l2
-            
             # Eval phase
             model.eval()
             eval_loss = 0.0
@@ -1093,9 +1068,7 @@ def train(
             # Store evaluation metrics (train_loss already stored above for all epochs)
             metrics['epochs'].append(epoch)
             metrics['eval_loss'].append(eval_loss)
-            metrics['train_rel_l2'].append(train_rel_l2)
             metrics['eval_rel_l2'].append(eval_rel_l2)
-            metrics['train_inf_norm'].append(train_inf_norm)
             metrics['eval_inf_norm'].append(eval_inf_norm)
 
         # End epoch timing (handles printing based on print_every)
@@ -1108,9 +1081,7 @@ def train(
             print(f"Epoch [{epoch}/{total_epochs}] ({elapsed:.1f}s) [{current_optimizer_name}/{batch_mode}] | "
                   f"Train Loss: {train_loss:.6f} | "
                   f"Eval Loss: {eval_loss:.6f} | "
-                  f"Train Rel-L2: {train_rel_l2:.6f} | "
                   f"Eval Rel-L2: {eval_rel_l2:.6f} | "
-                  f"Train Inf: {train_inf_norm:.6f} | "
                   f"Eval Inf: {eval_inf_norm:.6f}")
 
             # DIAGNOSTIC: Print expert contributions (configurable)
@@ -1937,9 +1908,7 @@ def train(
         f.write(f"Device: {device}\n\n")
         f.write(f"Final train loss: {train_loss:.6f}\n")
         f.write(f"Final eval loss: {eval_loss:.6f}\n")
-        f.write(f"Final train rel-L2: {train_rel_l2:.6f}\n")
         f.write(f"Final eval rel-L2: {eval_rel_l2:.6f}\n")
-        f.write(f"Final train inf-norm: {train_inf_norm:.6f}\n")
         f.write(f"Final eval inf-norm: {eval_inf_norm:.6f}\n")
         f.write(f"Best eval loss: {best_eval_loss:.6f}\n\n")
         f.write(f"Best checkpoint: {best_checkpoint_path}\n")
