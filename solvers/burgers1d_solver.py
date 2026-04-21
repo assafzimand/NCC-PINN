@@ -421,7 +421,11 @@ def generate_dataset(
     
     h_gt = torch.zeros(N, 1, device=device, dtype=torch.float32)
     h_gt[:, 0] = torch.from_numpy(h_interp.astype(np.float32)).to(device)
-    
+
+    # Overwrite IC/BC with exact analytical values (no interpolation error)
+    h_gt[mask_ic, 0] = (-torch.sin(np.pi * x[mask_ic, 0])).float()
+    h_gt[mask_bc, 0] = 0.0
+
     print("  Dataset generated successfully (Cole-Hopf exact)")
     
     return {
