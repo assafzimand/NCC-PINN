@@ -2,14 +2,15 @@
 Ground Truth Validation Script.
 
 For each PDE, validates that the generated datasets satisfy:
-  1. IC  -- analytically: h_gt(x, t=0) vs known formula
-  2. BC  -- analytically: h_gt on boundary vs known formula / periodicity
+  1. IC  -- analytically: h_gt(x, t=0) from training_data.pt vs known formula
+  2. BC  -- analytically: h_gt on boundary from training_data.pt vs known
+            formula / periodicity
   3. PDE residual -- numerically: finite-difference derivatives on the
-     solver grid plugged into the PDE formula
+     frequency_grid.pt data (a regular grid already produced by the dataset
+     pipeline).  This avoids re-running solvers and tests the actual ground
+     truth data that will be used for metrics.
 
 No neural network or loss function is used here.
-The goal is to confirm that the *datasets themselves* are correct before
-any training begins.
 """
 
 import sys
@@ -23,6 +24,27 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from utils.dataset_gen import generate_and_save_datasets, load_dataset
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def load_freq_grid_2d(dataset_dir):
+    """Load frequency_grid.pt and return (h_2d, x_1d, t_1d) for 2D PDEs.
+    
+    The frequency grid is stored as meshgrid('ij') with spatial dims first,
+    time last.  h_2d is returned as (n_t, n_x) to match FD function convention.
+    """
+    fg = torch.load(dataset_dir / 'frequency_grid.pt', weights_only=False)
+    gs = fg['grid_shape']      # [n_x, n_t]
+    xg = fg['x_grid'].numpy()  # (N, 2) columns [x, t]
+    hg = fg['h_gt_grid'].numpy()  # (N, d_out)
+    n_x, n_t = gs[0], gs[1]
+    # 'ij' meshgrid: x varies slowly (stride n_t), t varies fast
+    x_1d = xg[::n_t, 0]         # shape (n_x,)
+    t_1d = xg[:n_t, 1]          # shape (n_t,)
+    return hg, gs, x_1d, t_1d, n_x, n_t
 
 
 # ---------------------------------------------------------------------------
@@ -184,10 +206,7 @@ def _report(name, ic_max, ic_mse, bc_max, bc_mse, res_max, res_mse):
 
 
 def validate_burgers1d(config, dataset_dir):
-    from solvers.burgers1d_solver import solve_burgers_chebyshev, cole_hopf_exact
     pc = config['burgers1d']
-    x_min, x_max = pc['spatial_domain'][0]
-    t_min, t_max = pc['temporal_domain']
     nu = pc.get('nu', 0.01)
 
     data = load_dataset(str(dataset_dir / 'training_data.pt'))
@@ -197,21 +216,17 @@ def validate_burgers1d(config, dataset_dir):
     mask_ic = data['mask']['IC'].numpy()
     mask_bc = data['mask']['BC'].numpy()
 
-    # IC: h(x, 0) = -sin(pi*x)
     ic_analytical = -np.sin(np.pi * x_np[mask_ic])
     ic_err = np.abs(h_np[mask_ic] - ic_analytical)
     ic_max, ic_mse = ic_err.max(), (ic_err**2).mean()
 
-    # BC: h(t, -1) = 0, h(t, 1) = 0  (Dirichlet)
-    bc_err = np.abs(h_np[mask_bc])   # ground truth should be 0 at boundaries
+    bc_err = np.abs(h_np[mask_bc])
     bc_max, bc_mse = bc_err.max(), (bc_err**2).mean()
 
-    # Residual: evaluate Cole-Hopf on fine grid then FD
-    nx, nt = 256, 201
-    x_grid = np.linspace(x_min, x_max, nx)
-    t_grid = np.linspace(t_min, t_max, nt)
-    h_grid = np.array([cole_hopf_exact(x_grid, tv, nu) for tv in t_grid])
-    res = fd_residual_burgers1d(h_grid, x_grid, t_grid, nu)
+    # Residual on frequency grid (already generated, no re-solve needed)
+    hg, gs, x_1d, t_1d, n_x, n_t = load_freq_grid_2d(dataset_dir)
+    h_2d = hg[:, 0].reshape(n_x, n_t).T  # (n_t, n_x)
+    res = fd_residual_burgers1d(h_2d, x_1d, t_1d, nu)
     res_max, res_mse = np.abs(res).max(), (res**2).mean()
 
     return _report('burgers1d', ic_max, ic_mse, bc_max, bc_mse, res_max, res_mse)
@@ -256,10 +271,8 @@ def validate_burgers2d(config, dataset_dir):
 
 
 def validate_schrodinger(config, dataset_dir):
-    from solvers.schrodinger_solver import solve_nlse_splitstep
     pc = config['schrodinger']
     x_min, x_max = pc['spatial_domain'][0]
-    t_min, t_max = pc['temporal_domain']
 
     data = load_dataset(str(dataset_dir / 'training_data.pt'))
     x_np = data['x'].numpy()[:, 0]
@@ -268,25 +281,20 @@ def validate_schrodinger(config, dataset_dir):
     mask_ic = data['mask']['IC'].numpy()
     mask_bc = data['mask']['BC'].numpy()
 
-    # IC: h(x, 0) = 2*sech(x)   => real=2/cosh(x), imag=0
     ic_real_an = 2.0 / np.cosh(x_np[mask_ic])
     ic_imag_an = np.zeros_like(ic_real_an)
     ic_err = np.sqrt((h_np[mask_ic, 0] - ic_real_an)**2
                      + (h_np[mask_ic, 1] - ic_imag_an)**2)
     ic_max, ic_mse = ic_err.max(), (ic_err**2).mean()
 
-    # BC: periodic => h(x_min, t) == h(x_max, t)
-    # BC points should be at x_min and x_max; for periodic, values are equal
-    # We check that stored values at x=x_min and x=x_max match
     x_bc = x_np[mask_bc]
-    h_bc = h_np[mask_bc]    # (N_bc, 2)
-    is_left  = (x_bc < -4.9)
-    is_right = (x_bc >  4.9)
+    h_bc = h_np[mask_bc]
+    is_left  = (x_bc < (x_min + 0.1))
+    is_right = (x_bc > (x_max - 0.1))
     t_left   = t_np[mask_bc][is_left]
     t_right  = t_np[mask_bc][is_right]
     h_left   = h_bc[is_left]
     h_right  = h_bc[is_right]
-    # match by closest time
     bc_errs = []
     for i in range(min(len(t_left), len(t_right))):
         j = np.argmin(np.abs(t_right - t_left[i]))
@@ -294,13 +302,11 @@ def validate_schrodinger(config, dataset_dir):
     bc_errs = np.array(bc_errs) if bc_errs else np.array([[0.0, 0.0]])
     bc_max, bc_mse = bc_errs.max(), (bc_errs**2).mean()
 
-    # Residual on solver grid
-    nx, nt = 256, 200
-    x_grid, t_grid, h_sol = solve_nlse_splitstep(
-        x_min, x_max, t_min, t_max, nx=nx, nt=nt)
-    u = h_sol.real
-    v = h_sol.imag
-    res_r, res_i = fd_residual_schrodinger(u, v, x_grid, t_grid)
+    # Residual on frequency grid
+    hg, gs, x_1d, t_1d, n_x, n_t = load_freq_grid_2d(dataset_dir)
+    u_2d = hg[:, 0].reshape(n_x, n_t).T  # (n_t, n_x)
+    v_2d = hg[:, 1].reshape(n_x, n_t).T
+    res_r, res_i = fd_residual_schrodinger(u_2d, v_2d, x_1d, t_1d)
     res_all = np.sqrt(res_r**2 + res_i**2)
     res_max, res_mse = res_all.max(), (res_all**2).mean()
 
@@ -308,10 +314,8 @@ def validate_schrodinger(config, dataset_dir):
 
 
 def validate_allen_cahn(config, dataset_dir):
-    from solvers.allen_cahn_solver import solve_allen_cahn
     pc = config['allen_cahn']
     x_min, x_max = pc['spatial_domain'][0]
-    t_min, t_max = pc['temporal_domain']
     D = pc.get('D', 0.0001)
 
     data = load_dataset(str(dataset_dir / 'training_data.pt'))
@@ -321,12 +325,10 @@ def validate_allen_cahn(config, dataset_dir):
     mask_ic = data['mask']['IC'].numpy()
     mask_bc = data['mask']['BC'].numpy()
 
-    # IC: h(x, 0) = x^2 * cos(pi*x)
     ic_analytical = x_np[mask_ic]**2 * np.cos(np.pi * x_np[mask_ic])
     ic_err = np.abs(h_np[mask_ic] - ic_analytical)
     ic_max, ic_mse = ic_err.max(), (ic_err**2).mean()
 
-    # BC: periodic => h(x_min, t) == h(x_max, t)
     x_bc = x_np[mask_bc]
     h_bc = h_np[mask_bc]
     t_bc = t_np[mask_bc]
@@ -341,21 +343,18 @@ def validate_allen_cahn(config, dataset_dir):
     bc_errs = np.array(bc_errs) if bc_errs else np.array([0.0])
     bc_max, bc_mse = bc_errs.max(), (bc_errs**2).mean()
 
-    # Residual on solver grid
-    print("    (re-running Allen-Cahn solver for residual check - may take a moment...)")
-    x_grid, t_grid, h_grid = solve_allen_cahn(
-        x_min, x_max, t_min, t_max, nx=128, nt=100, D=D)
-    res = fd_residual_allen_cahn(h_grid, x_grid, t_grid, D)
+    # Residual on frequency grid
+    hg, gs, x_1d, t_1d, n_x, n_t = load_freq_grid_2d(dataset_dir)
+    h_2d = hg[:, 0].reshape(n_x, n_t).T  # (n_t, n_x)
+    res = fd_residual_allen_cahn(h_2d, x_1d, t_1d, D)
     res_max, res_mse = np.abs(res).max(), (res**2).mean()
 
     return _report('allen_cahn', ic_max, ic_mse, bc_max, bc_mse, res_max, res_mse)
 
 
 def validate_kdv(config, dataset_dir):
-    from solvers.kdv_solver import solve_kdv
     pc = config['kdv']
     x_min, x_max = pc['spatial_domain'][0]
-    t_min, t_max = pc['temporal_domain']
     mu = pc.get('mu', 0.000484)
 
     data = load_dataset(str(dataset_dir / 'training_data.pt'))
@@ -365,12 +364,10 @@ def validate_kdv(config, dataset_dir):
     mask_ic = data['mask']['IC'].numpy()
     mask_bc = data['mask']['BC'].numpy()
 
-    # IC: h(x, 0) = cos(pi*x)
     ic_analytical = np.cos(np.pi * x_np[mask_ic])
     ic_err = np.abs(h_np[mask_ic] - ic_analytical)
     ic_max, ic_mse = ic_err.max(), (ic_err**2).mean()
 
-    # BC: periodic => values at x_min == values at x_max
     x_bc = x_np[mask_bc]; h_bc = h_np[mask_bc]; t_bc = t_np[mask_bc]
     is_left  = (x_bc < (x_min + 1e-6))
     is_right = (x_bc > (x_max - 1e-6))
@@ -383,20 +380,18 @@ def validate_kdv(config, dataset_dir):
     bc_errs = np.array(bc_errs) if bc_errs else np.array([0.0])
     bc_max, bc_mse = bc_errs.max(), (bc_errs**2).mean()
 
-    # Residual
-    x_grid, t_grid, h_grid = solve_kdv(
-        x_min, x_max, t_min, t_max, nx=128, nt=100, mu=mu)
-    res = fd_residual_kdv(h_grid, x_grid, t_grid, mu)
+    # Residual on frequency grid
+    hg, gs, x_1d, t_1d, n_x, n_t = load_freq_grid_2d(dataset_dir)
+    h_2d = hg[:, 0].reshape(n_x, n_t).T  # (n_t, n_x)
+    res = fd_residual_kdv(h_2d, x_1d, t_1d, mu)
     res_max, res_mse = np.abs(res).max(), (res**2).mean()
 
     return _report('kdv', ic_max, ic_mse, bc_max, bc_mse, res_max, res_mse)
 
 
 def validate_ks(config, dataset_dir):
-    from solvers.ks_solver import solve_ks
     pc = config['ks']
     x_min, x_max = pc['spatial_domain'][0]
-    t_min, t_max = pc['temporal_domain']
     alpha = pc.get('alpha', 100.0 / 16.0)
     beta  = pc.get('beta',  100.0 / 16.0**2)
     gamma = pc.get('gamma', 100.0 / 16.0**4)
@@ -408,12 +403,10 @@ def validate_ks(config, dataset_dir):
     mask_ic = data['mask']['IC'].numpy()
     mask_bc = data['mask']['BC'].numpy()
 
-    # IC: u(x, 0) = cos(x)*(1 + sin(x))
     ic_analytical = np.cos(x_np[mask_ic]) * (1.0 + np.sin(x_np[mask_ic]))
     ic_err = np.abs(h_np[mask_ic] - ic_analytical)
     ic_max, ic_mse = ic_err.max(), (ic_err**2).mean()
 
-    # BC: periodic
     x_bc = x_np[mask_bc]; h_bc = h_np[mask_bc]; t_bc = t_np[mask_bc]
     is_left  = (x_bc < (x_min + 1e-6))
     is_right = (x_bc > (x_max - 1e-6))
@@ -426,12 +419,10 @@ def validate_ks(config, dataset_dir):
     bc_errs = np.array(bc_errs) if bc_errs else np.array([0.0])
     bc_max, bc_mse = bc_errs.max(), (bc_errs**2).mean()
 
-    # Residual (use small grid so it's fast)
-    print("    (running small KS solve for residual check...)")
-    x_grid, t_grid, h_grid = solve_ks(
-        x_min, x_max, t_min, t_max, nx=64, nt=50,
-        alpha=alpha, beta=beta, gamma=gamma)
-    res = fd_residual_ks(h_grid, x_grid, t_grid, alpha, beta, gamma)
+    # Residual on frequency grid (no re-solve needed)
+    hg, gs, x_1d, t_1d, n_x, n_t = load_freq_grid_2d(dataset_dir)
+    h_2d = hg[:, 0].reshape(n_x, n_t).T  # (n_t, n_x)
+    res = fd_residual_ks(h_2d, x_1d, t_1d, alpha, beta, gamma)
     res_max, res_mse = np.abs(res).max(), (res**2).mean()
 
     return _report('ks', ic_max, ic_mse, bc_max, bc_mse, res_max, res_mse)
@@ -447,35 +438,27 @@ def validate_wave1d(config, dataset_dir):
     mask_ic = data['mask']['IC'].numpy()
     mask_bc = data['mask']['BC'].numpy()
 
-    # IC: h(x, 0) = sin(x)
     ic_analytical = np.sin(x_np[mask_ic])
     ic_err = np.abs(h_np[mask_ic] - ic_analytical)
     ic_max, ic_mse = ic_err.max(), (ic_err**2).mean()
 
-    # BC: h(t, +-5) = sin(+-5)*cos(t) (not exactly 0, but analytical)
     x_bc = x_np[mask_bc]
     t_bc = t_np[mask_bc]
     bc_analytical = np.sin(x_bc) * np.cos(t_bc)
     bc_err = np.abs(h_np[mask_bc] - bc_analytical)
     bc_max, bc_mse = bc_err.max(), (bc_err**2).mean()
 
-    # Residual on analytical grid: h_tt - h_xx = 0 exactly; verify via FD
-    from solvers.wave1d_solver import solve_wave1d_analytical
-    x_min, x_max = pc['spatial_domain'][0]
-    t_min, t_max = pc['temporal_domain']
-    x_grid, t_grid, h_grid = solve_wave1d_analytical(
-        x_min, x_max, t_min, t_max, nx=256, nt=200)
-    res = fd_residual_wave1d(h_grid, x_grid, t_grid)
+    # Residual on frequency grid
+    hg, gs, x_1d, t_1d, n_x, n_t = load_freq_grid_2d(dataset_dir)
+    h_2d = hg[:, 0].reshape(n_x, n_t).T  # (n_t, n_x)
+    res = fd_residual_wave1d(h_2d, x_1d, t_1d)
     res_max, res_mse = np.abs(res).max(), (res**2).mean()
 
     return _report('wave1d', ic_max, ic_mse, bc_max, bc_mse, res_max, res_mse)
 
 
 def validate_conv_diff(config, dataset_dir):
-    from solvers.conv_diff_solver import solve_conv_diff
     pc = config['conv_diff']
-    x_min, x_max = pc['spatial_domain'][0]
-    t_min, t_max = pc['temporal_domain']
     beta    = pc.get('beta', 1.0)
     epsilon = pc.get('epsilon', 0.01)
 
@@ -486,30 +469,24 @@ def validate_conv_diff(config, dataset_dir):
     mask_ic = data['mask']['IC'].numpy()
     mask_bc = data['mask']['BC'].numpy()
 
-    # IC: h(x, 0) = -sin(pi*x)
     ic_analytical = -np.sin(np.pi * x_np[mask_ic])
     ic_err = np.abs(h_np[mask_ic] - ic_analytical)
     ic_max, ic_mse = ic_err.max(), (ic_err**2).mean()
 
-    # BC: Dirichlet h(-1,t)=0, h(1,t)=0
     bc_err = np.abs(h_np[mask_bc])
     bc_max, bc_mse = bc_err.max(), (bc_err**2).mean()
 
-    # Residual
-    x_grid, t_grid, h_grid = solve_conv_diff(
-        x_min, x_max, t_min, t_max, nx=128, nt=100,
-        beta=beta, epsilon=epsilon)
-    res = fd_residual_conv_diff(h_grid, x_grid, t_grid, beta, epsilon)
+    # Residual on frequency grid
+    hg, gs, x_1d, t_1d, n_x, n_t = load_freq_grid_2d(dataset_dir)
+    h_2d = hg[:, 0].reshape(n_x, n_t).T  # (n_t, n_x)
+    res = fd_residual_conv_diff(h_2d, x_1d, t_1d, beta, epsilon)
     res_max, res_mse = np.abs(res).max(), (res**2).mean()
 
     return _report('conv_diff', ic_max, ic_mse, bc_max, bc_mse, res_max, res_mse)
 
 
 def validate_fisher_kpp(config, dataset_dir):
-    from solvers.fisher_kpp_solver import solve_fisher_kpp
     pc = config['fisher_kpp']
-    x_min, x_max = pc['spatial_domain'][0]
-    t_min, t_max = pc['temporal_domain']
     D     = pc.get('D', 1.0)
     kappa = pc.get('kappa', 25.0)
 
@@ -520,22 +497,19 @@ def validate_fisher_kpp(config, dataset_dir):
     mask_ic = data['mask']['IC'].numpy()
     mask_bc = data['mask']['BC'].numpy()
 
-    # IC: h(x, 0) = 1 / (1 + exp(sqrt(kappa/6)*(x - 0.25)))
     ic_analytical = 1.0 / (1.0 + np.exp(np.sqrt(kappa / 6.0) * (x_np[mask_ic] - 0.25)))
     ic_err = np.abs(h_np[mask_ic] - ic_analytical)
     ic_max, ic_mse = ic_err.max(), (ic_err**2).mean()
 
-    # BC: h(0,t)=1, h(1,t)=0
     x_bc = x_np[mask_bc]
     bc_analytical = np.where(x_bc < 0.5, 1.0, 0.0)
     bc_err = np.abs(h_np[mask_bc] - bc_analytical)
     bc_max, bc_mse = bc_err.max(), (bc_err**2).mean()
 
-    # Residual
-    x_grid, t_grid, h_grid = solve_fisher_kpp(
-        x_min, x_max, t_min, t_max, nx=128, nt=100,
-        D=D, kappa=kappa)
-    res = fd_residual_fisher_kpp(h_grid, x_grid, t_grid, D, kappa)
+    # Residual on frequency grid
+    hg, gs, x_1d, t_1d, n_x, n_t = load_freq_grid_2d(dataset_dir)
+    h_2d = hg[:, 0].reshape(n_x, n_t).T  # (n_t, n_x)
+    res = fd_residual_fisher_kpp(h_2d, x_1d, t_1d, D, kappa)
     res_max, res_mse = np.abs(res).max(), (res**2).mean()
 
     return _report('fisher_kpp', ic_max, ic_mse, bc_max, bc_mse, res_max, res_mse)
@@ -577,8 +551,10 @@ def main():
         dataset_dir = Path("datasets") / pde
         train_path  = dataset_dir / "training_data.pt"
 
-        if not train_path.exists():
-            print(f"  Datasets not found. Generating...")
+        freq_path = dataset_dir / "frequency_grid.pt"
+        if not train_path.exists() or not freq_path.exists():
+            what = "all datasets" if not train_path.exists() else "frequency grid"
+            print(f"  {what} not found. Generating...")
             config['problem'] = pde
             try:
                 import warnings
