@@ -188,6 +188,15 @@ def generate_dataset(
     h_gt = torch.zeros(N, 1, device=device, dtype=torch.float32)
     h_gt[:, 0] = torch.from_numpy(h_interp.astype(np.float32)).to(device)
 
+    # Overwrite IC/BC with exact analytical values (no interpolation error)
+    width = np.sqrt(kappa / 6.0)
+    h_gt[mask_ic, 0] = (1.0 / (1.0 + torch.exp(width * (x[mask_ic, 0] - 0.25)))).float()
+    mid = (x_min + x_max) / 2.0
+    x_bc = x[mask_bc, 0]
+    h_gt[mask_bc, 0] = torch.where(
+        x_bc < mid, torch.ones_like(x_bc),
+        torch.zeros_like(x_bc)).float()
+
     print("  Dataset generated successfully")
     return {
         "x": x, "t": t, "h_gt": h_gt,

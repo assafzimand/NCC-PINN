@@ -393,7 +393,12 @@ def generate_dataset(
     h_gt = torch.zeros(N, 2, device=device, dtype=torch.float32)
     h_gt[:, 0] = torch.from_numpy(h_interp.real.astype(np.float32)).to(device)
     h_gt[:, 1] = torch.from_numpy(h_interp.imag.astype(np.float32)).to(device)
-    
+
+    # Overwrite IC/BC with exact analytical values (no interpolation error)
+    h_gt[mask_ic, 0] = (2.0 / torch.cosh(x[mask_ic, 0])).float()
+    h_gt[mask_ic, 1] = 0.0
+    h_gt[mask_bc, :] = 0.0
+
     print("  Dataset generated successfully")
     
     return {
