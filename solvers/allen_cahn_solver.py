@@ -114,8 +114,6 @@ class AllenCahnInterpolator:
     """Interpolator for Allen-Cahn equation solution with periodic boundary conditions."""
 
     def __init__(self, x_grid, t_grid, h_solution):
-        self.t_min, self.t_max = t_grid.min(), t_grid.max()
-        
         # The solver grid is half-open [x_min, x_max-dx).
         # For correct periodic interpolation, append one point at x_max
         # that duplicates the first column (periodicity: f(x_max) = f(x_min)).
@@ -134,10 +132,9 @@ class AllenCahnInterpolator:
 
     def __call__(self, x_points, t_points):
         """Interpolate with periodic x-wrapping."""
-        x_flat = np.asarray(x_points).flatten()
-        t_flat = np.asarray(t_points).flatten()
+        x_flat = np.asarray(x_points, dtype=np.float64).flatten()
+        t_flat = np.asarray(t_points, dtype=np.float64).flatten()
         
-        # Wrap x coordinates to [x_min, x_max)
         x_wrapped = self.x_min + np.mod(x_flat - self.x_min, self.domain_length)
         
         points = np.column_stack([t_flat, x_wrapped])

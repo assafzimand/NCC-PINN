@@ -28,10 +28,10 @@ def generate_frequency_grid(config: Dict) -> Tuple[torch.Tensor, Tuple[int, ...]
     
     # Spatial dimensions
     for dom in spatial_domain:
-        grids.append(torch.linspace(dom[0], dom[1], n_grid))
+        grids.append(torch.linspace(dom[0], dom[1], n_grid, dtype=torch.float64))
     
     # Time dimension
-    grids.append(torch.linspace(temporal_domain[0], temporal_domain[1], n_grid))
+    grids.append(torch.linspace(temporal_domain[0], temporal_domain[1], n_grid, dtype=torch.float64))
     
     n_dims = len(grids)
     grid_shape = tuple([n_grid] * n_dims)

@@ -165,11 +165,10 @@ class NLSEInterpolator:
         Returns:
             h: Complex solution values (N,)
         """
-        # Wrap x coordinates to [x_min, x_max) for periodic BCs
-        x_wrapped = np.asarray(x).copy()
+        x_wrapped = np.asarray(x, dtype=np.float64)
         x_wrapped = self.x_min + np.mod(x_wrapped - self.x_min, self.domain_length)
         
-        points = np.column_stack([t, x_wrapped])  # Note: (t, x) order for interpolator
+        points = np.column_stack([np.asarray(t, dtype=np.float64), x_wrapped])
         u = self.real_interp(points)
         v = self.imag_interp(points)
         return u + 1j * v
