@@ -2,10 +2,10 @@
 1D Wave Equation Solver with Analytical Standing Wave Solution.
 
 Solves: h_tt - h_xx = 0
-Domain: x ∈ [-5, 5], t ∈ [0, 2π]
+Domain: x in [-5, 5], t in [0, 2*pi]
 Solution: h(x, t) = sin(x) * cos(t) (standing wave)
 Initial Condition: h(x, 0) = sin(x), h_t(x, 0) = 0
-Boundary Conditions: h(±5, t) = 0 (Dirichlet)
+Boundary Conditions: h(+/-5, t) = 0 (Dirichlet)
 """
 
 import numpy as np
@@ -112,15 +112,15 @@ def solve_wave1d_analytical(
     Solution: h(x, t) = sin(x) * cos(t)
     
     This is an exact analytical solution satisfying:
-    - PDE: h_tt = -sin(x)cos(t), h_xx = -sin(x)cos(t) => h_tt - h_xx = 0 ✓
-    - IC: h(x, 0) = sin(x), h_t(x, 0) = 0 ✓
-    - BC: h(±5, t) = sin(±5)cos(t) ≈ 0.96*cos(t) (approximately zero for large |x|)
+    - PDE: h_tt = -sin(x)cos(t), h_xx = -sin(x)cos(t) => h_tt - h_xx = 0 [OK]
+    - IC: h(x, 0) = sin(x), h_t(x, 0) = 0 [OK]
+    - BC: h(+/-5, t) = sin(+/-5)cos(t) ~= 0.96*cos(t) (approximately zero for large |x|)
     
     Args:
         x_min: Minimum spatial coordinate
         x_max: Maximum spatial coordinate
         t_min: Initial time (typically 0)
-        t_max: Final time (typically 2π for one period)
+        t_max: Final time (typically 2*pi for one period)
         nx: Number of spatial grid points
         nt: Number of temporal grid points
         
@@ -245,7 +245,7 @@ def _get_interpolator_cached(config: Dict) -> Wave1DInterpolator:
     )
     
     if _cached_interpolator is None or _cached_config_hash != config_tuple:
-        print("  Generating wave1d solution (1024×800 grid)...")
+        print("  Generating wave1d solution (1024x800 grid)...")
         _cached_interpolator = _get_interpolator(config)
         _cached_config_hash = config_tuple
         print("  Solution computed: 800x1024 grid")
@@ -263,13 +263,13 @@ def generate_dataset(
     """
     Generate dataset with wave1d ground truth via interpolation.
     
-    Uses analytical standing wave solution on 1024×800 grid, then interpolates
+    Uses analytical standing wave solution on 1024x800 grid, then interpolates
     to randomly sampled training points.
     
     Args:
         n_residual: Number of residual (interior) points
         n_ic: Number of initial condition points
-        n_bc: Number of boundary condition points (at x=±5)
+        n_bc: Number of boundary condition points (at x=+/-5)
         device: Device to create tensors on (CUDA or CPU)
         config: Configuration dictionary
         

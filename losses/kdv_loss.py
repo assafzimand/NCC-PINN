@@ -8,6 +8,15 @@ where:
 - MSE_f: PDE residual loss (h_t + h*h_x + mu*h_xxx = 0)
 - MSE_0: Initial condition loss (h(x,0) = cos(pi*x))
 - MSE_b: Boundary condition loss (periodic: h(-1,t)=h(1,t), h_x(-1,t)=h_x(1,t))
+
+IMPORTANT DESIGN CHOICE - Decomposed Derivatives:
+    Decomposed derivative computation is DISABLED for KdV residual loss.
+    Reason: The analytical 3rd derivative of indicator functions (d³ψ/dx³)
+    involves terms like 1/σ³, which cause catastrophic cancellation when
+    combined with partition-of-unity subtraction. Standard autograd on the
+    composed output avoids this by chaining through numerically stable
+    bounded operations.
+    See line ~507: use_decomposed = False (forced, not configurable).
 """
 
 import torch
@@ -591,13 +600,18 @@ def build_loss(**cfg) -> Callable:
             x_b = x[masks['BC']].contiguous()  # (N_b, spatial_dim)
             t_b = t[masks['BC']].contiguous()  # (N_b, 1)
 
-            n_bc = masks['BC'].sum().item()
-            n_left = n_bc // 2
+            # Separate BC points by x-coordinate (works correctly after shuffle)
+            x_min_val = -1.0
+            x_max_val = 1.0
+            x_mid = (x_min_val + x_max_val) / 2.0
+            
+            left_mask = x_b[:, 0] < x_mid
+            right_mask = ~left_mask
 
-            x_b_left = x_b[:n_left]
-            t_b_left = t_b[:n_left]
-            x_b_right = x_b[n_left:]
-            t_b_right = t_b[n_left:]
+            x_b_left = x_b[left_mask]
+            t_b_left = t_b[left_mask]
+            x_b_right = x_b[right_mask]
+            t_b_right = t_b[right_mask]
 
             x_b_left = x_b_left.clone().detach().requires_grad_(True)
             t_b_left = t_b_left.clone().detach().requires_grad_(True)
@@ -606,6 +620,8 @@ def build_loss(**cfg) -> Callable:
 
             x_stacked = torch.cat([x_b_left, x_b_right], dim=0)
             t_stacked = torch.cat([t_b_left, t_b_right], dim=0)
+            n_left = len(x_b_left)
+            n_right = len(x_b_right)
 
             xt_stacked = torch.cat([x_stacked, t_stacked], dim=1)
 
@@ -642,21 +658,35 @@ def build_loss(**cfg) -> Callable:
             h_x_left = h_x_stacked[:n_left]
             h_x_right = h_x_stacked[n_left:]
 
-            n_pairs = min(len(h_left), len(h_right))
-
-            if n_pairs == 0:
+            if n_left == 0 or n_right == 0:
                 if not for_tree_spawning:
                     mse_bc = torch.tensor(0.0, device=device)
             else:
-                bc_value_diff = (h_left[:n_pairs] - h_right[:n_pairs]) ** 2
-                bc_deriv_diff = (h_x_left[:n_pairs] - h_x_right[:n_pairs]) ** 2
+                # Sort both sides by t for pairing
+                t_left_vals = t_b_left[:, 0]
+                t_right_vals = t_b_right[:, 0]
+                sort_left = torch.argsort(t_left_vals)
+                sort_right = torch.argsort(t_right_vals)
+                
+                n_pairs = min(n_left, n_right)
+                
+                h_left_sorted = h_left[sort_left[:n_pairs]]
+                h_right_sorted = h_right[sort_right[:n_pairs]]
+                h_x_left_sorted = h_x_left[sort_left[:n_pairs]]
+                h_x_right_sorted = h_x_right[sort_right[:n_pairs]]
+
+                bc_value_diff = (h_left_sorted - h_right_sorted) ** 2
+                bc_deriv_diff = (h_x_left_sorted - h_x_right_sorted) ** 2
 
                 bc_paired_loss = bc_value_diff + bc_deriv_diff
 
                 if for_tree_spawning:
                     bc_mask_indices = torch.where(masks['BC'])[0]
-                    left_indices = bc_mask_indices[:n_left][:n_pairs]
-                    right_indices = bc_mask_indices[n_left:][:n_pairs]
+                    left_bc_indices = bc_mask_indices[left_mask]
+                    right_bc_indices = bc_mask_indices[right_mask]
+                    
+                    left_indices = left_bc_indices[sort_left[:n_pairs]]
+                    right_indices = right_bc_indices[sort_right[:n_pairs]]
 
                     bc_per_sample[left_indices] = bc_paired_loss / 2.0
                     bc_per_sample[right_indices] = bc_paired_loss / 2.0

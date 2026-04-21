@@ -131,7 +131,7 @@ base_config:
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
-    D: 0.001                         # Diffusion coefficient
+    D: 0.0001                        # Diffusion coefficient (SOTA benchmark standard)
     wavelet_threshold: 0.002
     tree_smoothness_threshold: 0.7
     loss_weights:
