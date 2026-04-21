@@ -11,7 +11,6 @@ Boundary Conditions: h(+/-5, t) = 0 (Dirichlet)
 import numpy as np
 import torch
 from typing import Tuple, Dict
-from scipy.interpolate import RegularGridInterpolator
 
 
 def analytical_solution(x: np.ndarray, t: np.ndarray) -> np.ndarray:
@@ -142,100 +141,17 @@ def solve_wave1d_analytical(
     return x_grid, t_grid, h_solution
 
 
-class Wave1DInterpolator:
-    """
-    Interpolator for 1D wave equation solution.
-    Provides ground truth values at arbitrary (x, t) points.
-    """
-    
-    def __init__(
-        self,
-        x_grid: np.ndarray,
-        t_grid: np.ndarray,
-        h_solution: np.ndarray
-    ):
-        """
-        Initialize interpolator with precomputed solution.
-        
-        Args:
-            x_grid: Spatial grid (nx,)
-            t_grid: Temporal grid (nt,)
-            h_solution: Real solution (nt, nx)
-        """
-        # Create interpolator (real-valued, not complex)
-        self.interpolator = RegularGridInterpolator(
-            (t_grid, x_grid),
-            h_solution,
-            method='cubic',
-            bounds_error=False,
-            fill_value=0.0
-        )
-        
-        self.x_min = x_grid.min()
-        self.x_max = x_grid.max()
-        self.t_min = t_grid.min()
-        self.t_max = t_grid.max()
-    
-    def __call__(self, x_points: np.ndarray, t_points: np.ndarray) -> np.ndarray:
-        """
-        Evaluate solution at arbitrary points.
-        
-        Args:
-            x_points: x coordinates (N,) or (N, 1)
-            t_points: t coordinates (N,) or (N, 1)
-            
-        Returns:
-            h_values: Solution at (x, t) points (N,) - real-valued
-        """
-        # Ensure 1D arrays
-        x_flat = np.asarray(x_points).flatten()
-        t_flat = np.asarray(t_points).flatten()
-        
-        # Stack for interpolator (expects (N, 2) with [t, x] order)
-        points = np.column_stack([t_flat, x_flat])
-        
-        # Interpolate (returns real values)
-        h_values = self.interpolator(points)
-        
-        return h_values
-
-
-def _get_interpolator(config: Dict) -> Wave1DInterpolator:
-    """
-    Get wave1d solution interpolator (lazy cached).
-    
-    Args:
-        config: Configuration dictionary
-        
-    Returns:
-        Wave1DInterpolator instance
-    """
-    # Extract domain from config
-    problem_config = config['wave1d']
-    x_min, x_max = problem_config['spatial_domain'][0]
-    t_min, t_max = problem_config['temporal_domain']
-    
-    # Solve wave equation on fine grid
-    x_grid, t_grid, h_solution = solve_wave1d_analytical(
-        x_min=x_min,
-        x_max=x_max,
-        t_min=t_min,
-        t_max=t_max,
-        nx=1024,
-        nt=800
-    )
-    
-    return Wave1DInterpolator(x_grid, t_grid, h_solution)
-
-
-# Cache interpolator to avoid recomputation
-_cached_interpolator = None
+_cached_solution = None
 _cached_config_hash = None
 
 
-def _get_interpolator_cached(config: Dict) -> Wave1DInterpolator:
-    """Get interpolator with caching."""
-    global _cached_interpolator, _cached_config_hash
+def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Get cached Wave1D solution grid.
+    
+    Returns:
+        (x_grid, t_grid, h_solution): Native grid arrays from analytical solution
+    """
+    global _cached_solution, _cached_config_hash
     
     # Create hash from relevant config params
     problem_config = config['wave1d']
@@ -244,13 +160,27 @@ def _get_interpolator_cached(config: Dict) -> Wave1DInterpolator:
         tuple(problem_config['temporal_domain'])
     )
     
-    if _cached_interpolator is None or _cached_config_hash != config_tuple:
+    if _cached_solution is None or _cached_config_hash != config_tuple:
         print("  Generating wave1d solution (1024x800 grid)...")
-        _cached_interpolator = _get_interpolator(config)
+        # Extract domain from config
+        x_min, x_max = problem_config['spatial_domain'][0]
+        t_min, t_max = problem_config['temporal_domain']
+        
+        # Solve wave equation on fine grid
+        x_grid, t_grid, h_solution = solve_wave1d_analytical(
+            x_min=x_min,
+            x_max=x_max,
+            t_min=t_min,
+            t_max=t_max,
+            nx=1024,
+            nt=800
+        )
+        
+        _cached_solution = (x_grid, t_grid, h_solution)
         _cached_config_hash = config_tuple
         print("  Solution computed: 800x1024 grid")
     
-    return _cached_interpolator
+    return _cached_solution
 
 
 def generate_dataset(
@@ -261,10 +191,9 @@ def generate_dataset(
     config: Dict
 ) -> Dict[str, torch.Tensor]:
     """
-    Generate dataset with wave1d ground truth via interpolation.
+    Generate dataset with wave1d ground truth sampled from solver grid.
     
-    Uses analytical standing wave solution on 1024x800 grid, then interpolates
-    to randomly sampled training points.
+    Uses analytical standing wave solution on 1024x800 grid.
     
     Args:
         n_residual: Number of residual (interior) points
@@ -289,8 +218,9 @@ def generate_dataset(
     spatial_domain = problem_config['spatial_domain']  # [[min, max], ...]
     temporal_domain = problem_config['temporal_domain']  # [min, max]
     
-    # Get or create interpolator (solves wave1d once)
-    interpolator = _get_interpolator_cached(config)
+    # Get solver grid
+    x_grid, t_grid, h_solution = _get_solution_cached(config)
+    nx, nt = len(x_grid), len(t_grid)
     
     # Set seed for reproducibility
     torch.manual_seed(seed)
@@ -301,6 +231,7 @@ def generate_dataset(
     # Initialize tensors
     x = torch.zeros(N, spatial_dim, device=device)
     t = torch.zeros(N, 1, device=device)
+    h_gt = torch.zeros(N, 1, device=device, dtype=torch.float32)
     
     # Extract domain bounds
     x_min, x_max = spatial_domain[0]
@@ -308,35 +239,36 @@ def generate_dataset(
     
     idx = 0
     
-    # 1. Residual points (uniform random in interior)
-    print(f"  Sampling {n_residual} residual points...")
-    x[idx:idx + n_residual, 0] = torch.rand(n_residual, device=device) * (x_max - x_min) + x_min
-    t[idx:idx + n_residual, 0] = torch.rand(n_residual, device=device) * (t_max - t_min) + t_min
+    # Residual: sample random grid indices
+    print(f"  Sampling {n_residual} residual points from grid...")
+    i_t = np.random.choice(nt, size=n_residual, replace=True)
+    i_x = np.random.choice(nx, size=n_residual, replace=True)
+    x[idx:idx + n_residual, 0] = torch.from_numpy(x_grid[i_x].astype(np.float32)).to(device)
+    t[idx:idx + n_residual, 0] = torch.from_numpy(t_grid[i_t].astype(np.float32)).to(device)
+    h_gt[idx:idx + n_residual, 0] = torch.from_numpy(h_solution[i_t, i_x].astype(np.float32)).to(device)
     idx += n_residual
     
-    # 2. Initial condition points (uniform random at t=0)
-    print(f"  Sampling {n_ic} initial condition points...")
-    x[idx:idx + n_ic, 0] = torch.rand(n_ic, device=device) * (x_max - x_min) + x_min
+    # IC: sample random x from grid, t=t_min
+    print(f"  Sampling {n_ic} initial condition points from grid...")
+    i_x_ic = np.random.choice(nx, size=n_ic, replace=True)
+    x[idx:idx + n_ic, 0] = torch.from_numpy(x_grid[i_x_ic].astype(np.float32)).to(device)
     t[idx:idx + n_ic, 0] = t_min
     idx += n_ic
     
-    # 3. Boundary condition points (at x=-5 and x=+5, Dirichlet)
-    print(f"  Sampling {n_bc} boundary condition points...")
+    # BC: sample random t from grid
+    print(f"  Sampling {n_bc} boundary condition points from grid...")
     n_bc_left = n_bc // 2
     n_bc_right = n_bc - n_bc_left
-    
-    # Sample times for boundaries
-    n_times = max(n_bc_left, n_bc_right)
-    t_bc = torch.rand(n_times, device=device) * (t_max - t_min) + t_min
+    i_t_bc = np.random.choice(nt, size=max(n_bc_left, n_bc_right), replace=True)
     
     # Left boundary (x = x_min)
     x[idx:idx + n_bc_left, 0] = x_min
-    t[idx:idx + n_bc_left, 0] = t_bc[:n_bc_left]
+    t[idx:idx + n_bc_left, 0] = torch.from_numpy(t_grid[i_t_bc[:n_bc_left]].astype(np.float32)).to(device)
     idx += n_bc_left
     
     # Right boundary (x = x_max)
     x[idx:idx + n_bc_right, 0] = x_max
-    t[idx:idx + n_bc_right, 0] = t_bc[:n_bc_right]
+    t[idx:idx + n_bc_right, 0] = torch.from_numpy(t_grid[i_t_bc[:n_bc_right]].astype(np.float32)).to(device)
     idx += n_bc_right
     
     # Create masks
@@ -348,17 +280,6 @@ def generate_dataset(
     
     mask_bc = torch.zeros(N, dtype=torch.bool, device=device)
     mask_bc[n_residual + n_ic:] = True
-    
-    # Interpolate ground truth using wave1d solution
-    print("  Interpolating ground truth values...")
-    x_np = x.cpu().numpy()[:, 0]  # (N,)
-    t_np = t.cpu().numpy()[:, 0]  # (N,)
-    
-    h_interp = interpolator(x_np, t_np)  # (N,) real
-    
-    # Convert to (N, 1) format (real-valued)
-    h_gt = torch.zeros(N, 1, device=device, dtype=torch.float32)
-    h_gt[:, 0] = torch.from_numpy(h_interp.astype(np.float32)).to(device)
 
     # Overwrite IC/BC with exact analytical values (no interpolation error)
     h_gt[mask_ic, 0] = torch.sin(x[mask_ic, 0]).float()

@@ -14,7 +14,6 @@ import numpy as np
 import torch
 from typing import Tuple, Dict
 from scipy.integrate import solve_ivp
-from scipy.interpolate import RegularGridInterpolator
 import matplotlib.pyplot as plt
 import os
 
@@ -258,45 +257,18 @@ Threshold: 1e-6
     return max_diff, rel_l2
 
 
-class Burgers1DInterpolator:
-    """Interpolator for 1D Burgers equation using Cole-Hopf exact solution."""
-    
-    def __init__(self, x_grid, t_grid, h_solution):
-        """
-        Initialize interpolator with Cole-Hopf solution.
-        
-        Args:
-            x_grid: Spatial grid (nx,)
-            t_grid: Temporal grid (nt,)
-            h_solution: Cole-Hopf exact solution (nt, nx)
-        """
-        # Strict bounds checking for Dirichlet problem (but allow small numerical tolerance)
-        self.interpolator = RegularGridInterpolator(
-            (t_grid, x_grid), h_solution,
-            method='cubic', bounds_error=False, fill_value=0.0
-        )
-        
-        self.x_min = x_grid.min()
-        self.x_max = x_grid.max()
-        self.t_min = t_grid.min()
-        self.t_max = t_grid.max()
-    
-    def __call__(self, x_points, t_points):
-        """Evaluate Cole-Hopf exact solution at arbitrary points."""
-        x_flat = np.asarray(x_points).flatten()
-        t_flat = np.asarray(t_points).flatten()
-        points = np.column_stack([t_flat, x_flat])
-        return self.interpolator(points)
-
-
-_cached_interpolator = None
+_cached_solution = None
 _cached_config_hash = None
 _crosscheck_done = False
 
 
-def _get_interpolator_cached(config: Dict) -> Burgers1DInterpolator:
-    """Get interpolator with caching and optional cross-check."""
-    global _cached_interpolator, _cached_config_hash, _crosscheck_done
+def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Get cached Burgers1D Cole-Hopf solution grid with cross-check.
+    
+    Returns:
+        (x_grid, t_grid, h_solution): Native grid arrays from Cole-Hopf exact formula
+    """
+    global _cached_solution, _cached_config_hash, _crosscheck_done
     
     problem_config = config['burgers1d']
     x_min, x_max = problem_config['spatial_domain'][0]
@@ -305,7 +277,7 @@ def _get_interpolator_cached(config: Dict) -> Burgers1DInterpolator:
     
     config_tuple = (x_min, x_max, t_min, t_max, nu)
     
-    if _cached_interpolator is None or _cached_config_hash != config_tuple:
+    if _cached_solution is None or _cached_config_hash != config_tuple:
         print("  Generating Burgers1D solution using Cole-Hopf exact formula (Fourier sine series)...")
         
         # Generate Cole-Hopf solution on fine grid
@@ -345,10 +317,10 @@ def _get_interpolator_cached(config: Dict) -> Burgers1DInterpolator:
             
             _crosscheck_done = True
         
-        _cached_interpolator = Burgers1DInterpolator(x_grid, t_grid, h_cole_hopf)
+        _cached_solution = (x_grid, t_grid, h_cole_hopf)
         _cached_config_hash = config_tuple
     
-    return _cached_interpolator
+    return _cached_solution
 
 
 def generate_dataset(
@@ -356,7 +328,7 @@ def generate_dataset(
     device: torch.device, config: Dict
 ) -> Dict[str, torch.Tensor]:
     """
-    Generate dataset with Burgers1D ground truth via Cole-Hopf exact solution.
+    Generate dataset with Burgers1D ground truth sampled from Cole-Hopf grid.
     
     Ground truth is computed using Cole-Hopf transformation (exact solution).
     First call performs cross-check with Chebyshev collocation and saves visualization.
@@ -368,7 +340,9 @@ def generate_dataset(
     x_min, x_max = problem_config['spatial_domain'][0]
     t_min, t_max = problem_config['temporal_domain']
     
-    interpolator = _get_interpolator_cached(config)
+    # Get Cole-Hopf solution grid
+    x_grid, t_grid, h_solution = _get_solution_cached(config)
+    nx, nt = len(x_grid), len(t_grid)
     
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -376,34 +350,38 @@ def generate_dataset(
     N = n_residual + n_ic + n_bc
     x = torch.zeros(N, spatial_dim, device=device)
     t = torch.zeros(N, 1, device=device)
+    h_gt = torch.zeros(N, 1, device=device, dtype=torch.float32)
     
     idx = 0
     
-    # Residual points
-    print(f"  Sampling {n_residual} residual points...")
-    x[idx:idx + n_residual, 0] = torch.rand(n_residual, device=device) * (x_max - x_min) + x_min
-    t[idx:idx + n_residual, 0] = torch.rand(n_residual, device=device) * (t_max - t_min) + t_min
+    # Residual: sample random grid indices
+    print(f"  Sampling {n_residual} residual points from grid...")
+    i_t = np.random.choice(nt, size=n_residual, replace=True)
+    i_x = np.random.choice(nx, size=n_residual, replace=True)
+    x[idx:idx + n_residual, 0] = torch.from_numpy(x_grid[i_x].astype(np.float32)).to(device)
+    t[idx:idx + n_residual, 0] = torch.from_numpy(t_grid[i_t].astype(np.float32)).to(device)
+    h_gt[idx:idx + n_residual, 0] = torch.from_numpy(h_solution[i_t, i_x].astype(np.float32)).to(device)
     idx += n_residual
     
-    # IC points
-    print(f"  Sampling {n_ic} initial condition points...")
-    x[idx:idx + n_ic, 0] = torch.rand(n_ic, device=device) * (x_max - x_min) + x_min
+    # IC: sample random x from grid, t=t_min
+    print(f"  Sampling {n_ic} initial condition points from grid...")
+    i_x_ic = np.random.choice(nx, size=n_ic, replace=True)
+    x[idx:idx + n_ic, 0] = torch.from_numpy(x_grid[i_x_ic].astype(np.float32)).to(device)
     t[idx:idx + n_ic, 0] = t_min
     idx += n_ic
     
-    # BC points (Dirichlet at x=-1 and x=+1)
-    print(f"  Sampling {n_bc} boundary condition points...")
+    # BC: sample random t from grid
+    print(f"  Sampling {n_bc} boundary condition points from grid...")
     n_bc_left = n_bc // 2
     n_bc_right = n_bc - n_bc_left
-    n_times = max(n_bc_left, n_bc_right)
-    t_bc = torch.rand(n_times, device=device) * (t_max - t_min) + t_min
+    i_t_bc = np.random.choice(nt, size=max(n_bc_left, n_bc_right), replace=True)
     
     x[idx:idx + n_bc_left, 0] = x_min
-    t[idx:idx + n_bc_left, 0] = t_bc[:n_bc_left]
+    t[idx:idx + n_bc_left, 0] = torch.from_numpy(t_grid[i_t_bc[:n_bc_left]].astype(np.float32)).to(device)
     idx += n_bc_left
     
     x[idx:idx + n_bc_right, 0] = x_max
-    t[idx:idx + n_bc_right, 0] = t_bc[:n_bc_right]
+    t[idx:idx + n_bc_right, 0] = torch.from_numpy(t_grid[i_t_bc[:n_bc_right]].astype(np.float32)).to(device)
     
     # Masks
     mask_res = torch.zeros(N, dtype=torch.bool, device=device)
@@ -412,15 +390,6 @@ def generate_dataset(
     mask_ic[n_residual:n_residual + n_ic] = True
     mask_bc = torch.zeros(N, dtype=torch.bool, device=device)
     mask_bc[n_residual + n_ic:] = True
-    
-    # Interpolate ground truth
-    print("  Evaluating Cole-Hopf exact solution...")
-    x_np = x.cpu().numpy()[:, 0]
-    t_np = t.cpu().numpy()[:, 0]
-    h_interp = interpolator(x_np, t_np)
-    
-    h_gt = torch.zeros(N, 1, device=device, dtype=torch.float32)
-    h_gt[:, 0] = torch.from_numpy(h_interp.astype(np.float32)).to(device)
 
     # Overwrite IC/BC with exact analytical values (no interpolation error)
     h_gt[mask_ic, 0] = (-torch.sin(np.pi * x[mask_ic, 0])).float()
@@ -436,7 +405,18 @@ def generate_dataset(
 
 def evaluate_on_grid(x_grid: torch.Tensor, config: Dict) -> torch.Tensor:
     """Evaluate Cole-Hopf exact solution on a regular grid."""
-    interpolator = _get_interpolator_cached(config)
-    x_np = x_grid.cpu().numpy()
-    h = interpolator(x_np[:, 0], x_np[:, 1])
+    x_grid_np, t_grid_np, h_solution = _get_solution_cached(config)
+    
+    # For each point in x_grid, find nearest grid point
+    x_query = x_grid.cpu().numpy()[:, 0]
+    t_query = x_grid.cpu().numpy()[:, 1]
+    
+    # Find nearest indices
+    i_x = np.searchsorted(x_grid_np, x_query)
+    i_x = np.clip(i_x, 0, len(x_grid_np) - 1)
+    
+    i_t = np.searchsorted(t_grid_np, t_query)
+    i_t = np.clip(i_t, 0, len(t_grid_np) - 1)
+    
+    h = h_solution[i_t, i_x]
     return torch.from_numpy(h.reshape(-1, 1).astype(np.float32))

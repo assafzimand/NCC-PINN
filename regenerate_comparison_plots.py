@@ -244,8 +244,6 @@ def _generate_training_results_plot(parent_dir, df,
             info.get('spawning', '-'),
             _fmt(row['final_train_loss']),
             _fmt(row['final_eval_loss']),
-            _fmt(row['final_train_rel_l2']),
-            _fmt(row['final_train_inf_norm']),
             _fmt(row['final_eval_rel_l2']),
             _fmt(row['final_eval_inf_norm']),
         ]
@@ -277,7 +275,6 @@ def _generate_training_results_plot(parent_dir, df,
 
     result_keys = [
         'final_train_loss', 'final_eval_loss',
-        'final_train_rel_l2', 'final_train_inf_norm',
         'final_eval_rel_l2', 'final_eval_inf_norm']
     for ri, key in enumerate(result_keys):
         ci = first_result_col + ri
@@ -461,8 +458,6 @@ def generate_comparison_for_batch(batch_dir: Path, label: str = None):
             'experiment': exp_name,
             'final_train_loss': _last(train_metrics.get('train_loss', [])),
             'final_eval_loss': _last(train_metrics.get('eval_loss', [])),
-            'final_train_rel_l2': _last(train_metrics.get('train_rel_l2', [])),
-            'final_train_inf_norm': _last(train_metrics.get('train_inf_norm', [])),
             'final_eval_rel_l2': _last(train_metrics.get('eval_rel_l2', [])),
             'final_eval_inf_norm': _last(train_metrics.get('eval_inf_norm', [])),
         }
