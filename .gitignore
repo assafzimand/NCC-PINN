@@ -1,5 +1,6 @@
 mlruns/
-datasets/
+datasets/*
+!datasets/reference/
 cursor/
 .venv/
 outputs/
