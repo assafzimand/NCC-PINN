@@ -148,72 +148,6 @@ def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     return _cached_solution
 
 
-def solve_ground_truth(x: torch.Tensor, t: torch.Tensor, seed: int = 42) -> torch.Tensor:
-    """
-    Ground truth solver using interpolated NLSE solution.
-    
-    Args:
-        x: Spatial coordinates (N, spatial_dim) on CUDA
-        t: Temporal coordinates (N, 1) on CUDA
-        seed: Random seed (unused, kept for compatibility)
-        
-    Returns:
-        u: Solution tensor (N, 2) where u[:, 0]=real, u[:, 1]=imag
-    """
-    # This function is called during dataset generation
-    # Need to get config from somewhere - will be passed via generate_dataset
-    # For now, return zeros as placeholder (actual interpolation in generate_dataset)
-    N = x.shape[0]
-    device = x.device
-    return torch.zeros(N, 2, device=device)
-
-
-def initial_condition(x: torch.Tensor, seed: int = 42) -> torch.Tensor:
-    """
-    Initial condition: h(x, 0) = 2*sech(x).
-    
-    Args:
-        x: Spatial coordinates (N, spatial_dim) on CUDA
-        seed: Random seed (unused, kept for compatibility)
-        
-    Returns:
-        u: Initial values (N, 2) where u[:, 0]=real, u[:, 1]=imag
-    """
-    # Move to CPU for numpy computation
-    x_np = x.cpu().numpy()
-    if x_np.ndim == 2:
-        x_np = x_np[:, 0]  # Extract 1D coordinate
-    
-    # Compute h0 = 2*sech(x)
-    h0 = initial_condition_analytical(x_np)
-    
-    # Convert to (real, imag) format
-    u = np.zeros((len(x_np), 2), dtype=np.float32)
-    u[:, 0] = h0.real
-    u[:, 1] = h0.imag
-    
-    # Move back to original device
-    return torch.from_numpy(u).to(x.device)
-
-
-def boundary_condition(x: torch.Tensor, t: torch.Tensor, seed: int = 42) -> torch.Tensor:
-    """
-    Boundary condition using interpolated solution.
-    
-    Args:
-        x: Spatial coordinates at boundary (N, spatial_dim) on CUDA
-        t: Temporal coordinates (N, 1) on CUDA
-        seed: Random seed (unused, kept for compatibility)
-        
-    Returns:
-        u: Boundary values (N, 2) where u[:, 0]=real, u[:, 1]=imag
-    """
-    # Placeholder - actual interpolation happens in generate_dataset
-    N = x.shape[0]
-    device = x.device
-    return torch.zeros(N, 2, device=device)
-
-
 def generate_dataset(
     n_residual: int,
     n_ic: int,
@@ -221,122 +155,89 @@ def generate_dataset(
     device: torch.device,
     config: Dict
 ) -> Dict[str, torch.Tensor]:
-    """
-    Generate dataset with NLSE ground truth via interpolation.
-    
-    Uses split-step Fourier solver on 1024x800 grid, then interpolates
-    to randomly sampled training points.
-    
-    Args:
-        n_residual: Number of residual (interior) points
-        n_ic: Number of initial condition points
-        n_bc: Number of boundary condition points (total, split between boundaries)
-        device: Device to create tensors on (CUDA or CPU)
-        config: Configuration dictionary
-        
-    Returns:
-        Dictionary with keys:
-            "x": (N, spatial_dim) spatial coordinates
-            "t": (N, 1) temporal coordinates
-            "h_gt": (N, 2) ground truth solution h = u + iv as (real, imag)
-            "mask": dict with "residual", "IC", "BC" boolean masks
+    """Generate dataset with Schrodinger ground truth sampled from solver grid.
+
+    All (x,t) points are sampled from the solver's native grid nodes.
+    Residual h_gt is looked up directly from h_solution (no interpolation).
+    IC h_gt is set analytically. BC h_gt is kept from the solver grid lookup
+    (periodic: value at x_min equals value at x_max).
     """
     seed = config['seed']
     problem = config.get('problem', 'problem1')
     problem_config = config[problem]
     spatial_dim = problem_config['spatial_dim']
-    spatial_domain = problem_config['spatial_domain']  # [[min, max], ...]
-    temporal_domain = problem_config['temporal_domain']  # [min, max]
-    
-    # Get or create interpolator (solves NLSE once)
-    interpolator = _get_interpolator(config)
-    
-    # Set seed for reproducibility
+    spatial_domain = problem_config['spatial_domain']
+    temporal_domain = problem_config['temporal_domain']
+
+    # Get solver grid
+    x_grid, t_grid, h_solution = _get_solution_cached(config)
+    nx, nt = len(x_grid), len(t_grid)
+
     torch.manual_seed(seed)
     np.random.seed(seed)
-    
+
     N = n_residual + n_ic + n_bc
-    
-    # Initialize tensors
     x = torch.zeros(N, spatial_dim, device=device)
     t = torch.zeros(N, 1, device=device)
-    
-    # Extract domain bounds
+    h_gt = torch.zeros(N, 2, device=device, dtype=torch.float32)
+
     x_min, x_max = spatial_domain[0]
     t_min, t_max = temporal_domain
-    
+
     idx = 0
-    
-    # 1. Residual points (uniform random in interior)
-    print(f"  Sampling {n_residual} residual points...")
-    x[idx:idx + n_residual, 0] = torch.rand(n_residual, device=device) * (x_max - x_min) + x_min
-    t[idx:idx + n_residual, 0] = torch.rand(n_residual, device=device) * (t_max - t_min) + t_min
+
+    # Residual: sample random grid indices
+    print(f"  Sampling {n_residual} residual points from grid...")
+    i_t = np.random.choice(nt, size=n_residual, replace=True)
+    i_x = np.random.choice(nx, size=n_residual, replace=True)
+    x[idx:idx + n_residual, 0] = torch.from_numpy(x_grid[i_x].astype(np.float32)).to(device)
+    t[idx:idx + n_residual, 0] = torch.from_numpy(t_grid[i_t].astype(np.float32)).to(device)
+    h_gt[idx:idx + n_residual, 0] = torch.from_numpy(h_solution[i_t, i_x].real.astype(np.float32)).to(device)
+    h_gt[idx:idx + n_residual, 1] = torch.from_numpy(h_solution[i_t, i_x].imag.astype(np.float32)).to(device)
     idx += n_residual
-    
-    # 2. Initial condition points (uniform random at t=0)
-    print(f"  Sampling {n_ic} initial condition points...")
-    x[idx:idx + n_ic, 0] = torch.rand(n_ic, device=device) * (x_max - x_min) + x_min
+
+    # IC: sample random x from grid, t=t_min
+    print(f"  Sampling {n_ic} initial condition points from grid...")
+    i_x_ic = np.random.choice(nx, size=n_ic, replace=True)
+    x[idx:idx + n_ic, 0] = torch.from_numpy(x_grid[i_x_ic].astype(np.float32)).to(device)
     t[idx:idx + n_ic, 0] = t_min
     idx += n_ic
-    
-    # 3. Boundary condition points (paired at x=-5 and x=+5)
-    print(f"  Sampling {n_bc} boundary condition points...")
+
+    # BC: paired points at x=x_min and x=x_max, sample random t from grid
+    print(f"  Sampling {n_bc} boundary condition points from grid...")
     n_bc_left = n_bc // 2
     n_bc_right = n_bc - n_bc_left
-    
-    # Sample times (enough for both boundaries to enforce pairing)
-    # Use max to handle odd n_bc
-    n_times = max(n_bc_left, n_bc_right)
-    t_bc = torch.rand(n_times, device=device) * (t_max - t_min) + t_min
-    
-    # Left boundary (x = x_min)
+    i_t_bc = np.random.choice(nt, size=max(n_bc_left, n_bc_right), replace=True)
+
     x[idx:idx + n_bc_left, 0] = x_min
-    t[idx:idx + n_bc_left, 0] = t_bc[:n_bc_left]
+    t[idx:idx + n_bc_left, 0] = torch.from_numpy(t_grid[i_t_bc[:n_bc_left]].astype(np.float32)).to(device)
+    # BC h_gt from solver: h_solution at (i_t, x=x_min) which is index 0
+    h_gt[idx:idx + n_bc_left, 0] = torch.from_numpy(h_solution[i_t_bc[:n_bc_left], 0].real.astype(np.float32)).to(device)
+    h_gt[idx:idx + n_bc_left, 1] = torch.from_numpy(h_solution[i_t_bc[:n_bc_left], 0].imag.astype(np.float32)).to(device)
     idx += n_bc_left
-    
-    # Right boundary (x = x_max)
+
     x[idx:idx + n_bc_right, 0] = x_max
-    t[idx:idx + n_bc_right, 0] = t_bc[:n_bc_right]  # Use same times
-    idx += n_bc_right
-    
-    # Create masks
+    t[idx:idx + n_bc_right, 0] = torch.from_numpy(t_grid[i_t_bc[:n_bc_right]].astype(np.float32)).to(device)
+    # For periodic grid x_max is not in the grid; use first index (periodicity)
+    h_gt[idx:idx + n_bc_right, 0] = torch.from_numpy(h_solution[i_t_bc[:n_bc_right], 0].real.astype(np.float32)).to(device)
+    h_gt[idx:idx + n_bc_right, 1] = torch.from_numpy(h_solution[i_t_bc[:n_bc_right], 0].imag.astype(np.float32)).to(device)
+
     mask_residual = torch.zeros(N, dtype=torch.bool, device=device)
     mask_residual[:n_residual] = True
-    
     mask_ic = torch.zeros(N, dtype=torch.bool, device=device)
     mask_ic[n_residual:n_residual + n_ic] = True
-    
     mask_bc = torch.zeros(N, dtype=torch.bool, device=device)
     mask_bc[n_residual + n_ic:] = True
-    
-    # Interpolate ground truth using NLSE solution
-    print("  Interpolating ground truth values...")
-    x_np = x.cpu().numpy()[:, 0]  # (N,)
-    t_np = t.cpu().numpy()[:, 0]  # (N,)
-    
-    h_interp = interpolator(x_np, t_np)  # (N,) complex
-    
-    # Convert to (real, imag) format: h = u + iv
-    h_gt = torch.zeros(N, 2, device=device, dtype=torch.float32)
-    h_gt[:, 0] = torch.from_numpy(h_interp.real.astype(np.float32)).to(device)
-    h_gt[:, 1] = torch.from_numpy(h_interp.imag.astype(np.float32)).to(device)
 
-    # Overwrite IC/BC with exact analytical values (no interpolation error)
+    # Overwrite IC with exact analytical values
     h_gt[mask_ic, 0] = (2.0 / torch.cosh(x[mask_ic, 0])).float()
     h_gt[mask_ic, 1] = 0.0
-    h_gt[mask_bc, :] = 0.0
 
     print("  Dataset generated successfully")
-    
+
     return {
-        "x": x,
-        "t": t,
-        "h_gt": h_gt,
-        "mask": {
-            "residual": mask_residual,
-            "IC": mask_ic,
-            "BC": mask_bc
-        }
+        "x": x, "t": t, "h_gt": h_gt,
+        "mask": {"residual": mask_residual, "IC": mask_ic, "BC": mask_bc},
     }
 
 
