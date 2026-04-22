@@ -119,6 +119,21 @@ def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     return _cached_solution
 
 
+def _get_interpolator(config: Dict):
+    """Return callable interp(x_flat, t_flat) -> values for ground truth."""
+    from scipy.interpolate import RegularGridInterpolator
+    x_grid, t_grid, h_solution = _get_solution_cached(config)
+    rgi = RegularGridInterpolator(
+        (t_grid, x_grid), h_solution, method='linear',
+        bounds_error=False, fill_value=None,
+    )
+
+    def _interp(x_flat, t_flat):
+        return rgi(np.column_stack([t_flat, x_flat]))
+
+    return _interp
+
+
 def generate_dataset(
     n_residual: int, n_ic: int, n_bc: int,
     device: torch.device, config: Dict,

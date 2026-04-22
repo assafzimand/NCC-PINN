@@ -212,7 +212,6 @@ def _generate_training_results_plot(parent_dir, df,
         'LR / Sched', 'Spawning']
     result_cols = [
         'Train\nLoss', 'Eval\nLoss',
-        'Train\nRel-L2', 'Train\nInf',
         'Eval\nRel-L2', 'Eval\nInf']
     col_labels = ['Experiment'] + info_cols + result_cols
     n_info = len(info_cols)

@@ -23,7 +23,7 @@ base_config:
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
   lr_schedule: exponential           # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
-  lr_warmup_steps: 0              # Steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
+  lr_warmup_steps: 1000              # Steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps.
   lr_decay_steps: 5000               # For exponential: how often (in optimizer steps) to decay.
 
@@ -243,7 +243,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 1000                      # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 2000                      # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -272,7 +272,7 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 1000                                # Phase 1: how many epochs to train base model before tree fitting
+      epochs: 2000                                # Phase 1: how many epochs to train base model before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
@@ -282,18 +282,18 @@ experiments:
   #   problem: ks
   #   base_architecture: [2, 256, 256, 256, 256, 256, 1]
 
-  # - name: schrodinger_full_tree_by_norm
-  #   problem: schrodinger
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  - name: schrodinger_full_tree_by_norm
+    problem: schrodinger
+    base_architecture: [2, 30, 30, 30, 30, 30, 2]
 
-  # - name: burgers1d_full_tree_by_norm
-  #   problem: burgers1d
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: burgers1d_full_tree_by_norm
+    problem: burgers1d
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
   - name: allen_cahn_full_tree_by_norm
     problem: allen_cahn
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  # - name: kdv_full_tree_by_norm
-  #   problem: kdv
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: kdv_full_tree_by_norm
+    problem: kdv
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
