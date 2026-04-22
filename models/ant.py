@@ -99,9 +99,17 @@ class ANT(nn.Module):
         self.output_dim = problem_config.get(
             'output_dim', 2
         )
-        self.wavelet_threshold = problem_config.get(
-            'wavelet_threshold', 1.0
-        )
+        
+        # Read variable_for_expert_size and corresponding threshold
+        self.variable_for_expert_size = adaptive_config.get('variable_for_expert_size', 'norm')
+        if self.variable_for_expert_size == 'norm':
+            self.expert_size_threshold = problem_config.get('wavelet_threshold', 1.0)
+        elif self.variable_for_expert_size == 'new_norm':
+            self.expert_size_threshold = problem_config.get('new_norm_threshold', 1.0)
+        elif self.variable_for_expert_size == 'smoothness':
+            self.expert_size_threshold = problem_config.get('tree_smoothness_threshold', 0.7)
+        else:
+            self.expert_size_threshold = 1.0
 
         self.base_model = create_network(
             base_architecture, activation, config,
@@ -210,8 +218,18 @@ class ANT(nn.Module):
         parent_act_dim = parent_model.get_activation_dim()
 
         if self.ant_threshold_width is not None:
+            # Get the metric value based on configured variable
+            if self.variable_for_expert_size == 'norm':
+                metric_value = region.wavelet_norm_squared
+            elif self.variable_for_expert_size == 'new_norm':
+                metric_value = region.new_wavelet_norm_squared
+            elif self.variable_for_expert_size == 'smoothness':
+                metric_value = region.smoothness_alpha if region.smoothness_alpha is not None else 0.0
+            else:
+                metric_value = region.wavelet_norm_squared
+            
             ratio = max(
-                region.wavelet_norm_squared / self.wavelet_threshold,
+                metric_value / self.expert_size_threshold,
                 1.0,
             )
             base_w = max(1, round(
