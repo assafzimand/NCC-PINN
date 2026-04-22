@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "full_tree_test_ks_new_features"
+experiment_name: "full_tree_test_NO_ks"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -232,9 +232,9 @@ base_config:
     boundary_train_ratio: 0.026      # ~260 BC points (with n_residual=20000). Papers use 200+.
     eval_train_ratio: 0.25           # eval = 25% of train (all types)
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
-    resample_every_epochs: 100        # Regenerate training data every N epochs. 0 = disabled. Papers use 500.
+    resample_every_epochs: 200        # Regenerate training data every N epochs. 0 = disabled. Papers use 500.
     adaptive_sampling:
-      enabled: true                 # true to mix uniform + residual-adaptive points (vRBA/RAR-D)
+      enabled: false                 # true to mix uniform + residual-adaptive points (vRBA/RAR-D)
                                      # NOTE: only active during resampling (model=None on first call → uniform)
       adaptive_ratio: 0.3            # fraction of residual_train points that are adaptive
       candidate_multiplier: 10       # candidates evaluated = n_adaptive * this (higher → better PDF approx)
@@ -244,12 +244,12 @@ base_config:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
     spawn_every_epochs: 1000                      # Check for spawning every N epochs (matches initial_train.epochs)
-    variable_for_node_accept: new_norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
+    variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
-    expert_type: piratenet                        # 'mlp' or 'resnet' -- architecture for base model and experts
+    expert_type: resnet                        # 'mlp' or 'resnet' -- architecture for base model and experts
     freeze_mode: none                          # "none" | "previous" | "base_only"
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
@@ -296,8 +296,4 @@ experiments:
 
   - name: kdv_full_tree_by_norm
     problem: kdv
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
-
-  - name: ks_full_tree_by_norm
-    problem: ks
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
