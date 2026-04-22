@@ -282,18 +282,18 @@ experiments:
   #   problem: ks
   #   base_architecture: [2, 256, 256, 256, 256, 256, 1]
 
-  - name: schrodinger_full_tree_by_norm
-    problem: schrodinger
-    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  # - name: schrodinger_full_tree_by_norm
+  #   problem: schrodinger
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 2]
 
-  - name: burgers1d_full_tree_by_norm
-    problem: burgers1d
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  # - name: burgers1d_full_tree_by_norm
+  #   problem: burgers1d
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
   - name: allen_cahn_full_tree_by_norm
     problem: allen_cahn
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  - name: kdv_full_tree_by_norm
-    problem: kdv
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  # - name: kdv_full_tree_by_norm
+  #   problem: kdv
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
