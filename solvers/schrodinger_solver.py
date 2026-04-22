@@ -148,6 +148,26 @@ def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     return _cached_solution
 
 
+def _get_interpolator(config: Dict):
+    """Return callable interp(x_flat, t_flat) -> complex values for ground truth."""
+    from scipy.interpolate import RegularGridInterpolator
+    x_grid, t_grid, h_solution = _get_solution_cached(config)
+    rgi_re = RegularGridInterpolator(
+        (t_grid, x_grid), h_solution.real, method='linear',
+        bounds_error=False, fill_value=None,
+    )
+    rgi_im = RegularGridInterpolator(
+        (t_grid, x_grid), h_solution.imag, method='linear',
+        bounds_error=False, fill_value=None,
+    )
+
+    def _interp(x_flat, t_flat):
+        pts = np.column_stack([t_flat, x_flat])
+        return rgi_re(pts) + 1j * rgi_im(pts)
+
+    return _interp
+
+
 def generate_dataset(
     n_residual: int,
     n_ic: int,
