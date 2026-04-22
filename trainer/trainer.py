@@ -34,202 +34,6 @@ class _NumpySafeEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def _build_expert_tree_from_pretrained(
-    model: nn.Module,
-    eval_data: Dict,
-    cfg: Dict,
-    run_dir: Path,
-    loss_fn: Callable
-) -> int:
-    """
-    Build the expert tree using single decision tree traversal.
-    (Pretrained case: build entire tree upfront)
-
-    Args:
-        model: AdaptiveExpertPINN with pretrained, frozen base model
-        eval_data: Evaluation data dictionary
-        cfg: Configuration dictionary
-        run_dir: Output directory for plots
-        loss_fn: Loss function (model, batch) -> scalar
-
-    Returns:
-        Number of experts spawned
-    """
-    print("\n" + "=" * 60)
-    print("PHASE 1: Building Expert Tree (Tree-Based Spawning)")
-    print("=" * 60)
-    print("  Base model is frozen - spawning decisions based ONLY on base predictions")
-    print("  Using single decision tree traversal (BFS)")
-    print("=" * 60)
-
-    adaptive_cfg = cfg.get('adaptive_pinn', {})
-    max_experts = adaptive_cfg.get('max_experts', 5)
-    problem_config = cfg.get(cfg['problem'], {})
-    wavelet_threshold = problem_config.get('wavelet_threshold', None)
-    tree_max_depth = adaptive_cfg.get('tree_max_depth', 15)
-    tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
-
-    # Import adaptive modules
-    from adaptive.region_detector import RegionDetector
-    from adaptive.visualization import (
-        plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
-        plot_expert_soft_weights
-    )
-    from adaptive.residual_utils import compute_loss_components
-    from adaptive.indicators import RegionDescriptor
-
-    device = next(model.parameters()).device
-    domain_bounds = model.get_domain_bounds()
-
-    # Prepare ground truth grid for visualization
-    gt_grid, gt_x, gt_t = prepare_ground_truth_grid(eval_data, domain_bounds)
-
-    # Create RegionDetector with n_estimators=1 (single tree)
-    region_detector = RegionDetector(
-        n_estimators=1,  # CRITICAL: single tree only
-        max_depth=tree_max_depth,
-        min_samples_leaf=tree_min_samples_leaf,
-        domain_bounds=domain_bounds
-    )
-
-    # Create directory for adaptive outputs
-    adaptive_plots_dir = run_dir / "adaptive_plots"
-    adaptive_plots_dir.mkdir(exist_ok=True)
-
-    # Get base model predictions on eval_data (frozen, won't change)
-    # CRITICAL: Always use eval_data, not train data
-    model.eval()
-    eval_inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
-
-    with torch.no_grad():
-        u_pred_base = model.base_model(eval_inputs)  # Base only (pretrained, frozen)
-
-    # Convert to numpy for RF
-    X_eval = eval_inputs.cpu().numpy()
-    y_eval = u_pred_base.cpu().numpy()
-
-    # Fit tree once on entire domain (using eval_data)
-    print(f"\nFitting single decision tree (max_depth={tree_max_depth}, min_samples_leaf={tree_min_samples_leaf})...")
-    region_detector.fit(X=X_eval, y=y_eval)
-
-    # Traverse tree (BFS) to get candidate regions
-    print(f"\nTraversing tree (BFS) to extract regions...")
-    traversal_result = region_detector.extract_regions_from_tree(
-        wavelet_threshold=wavelet_threshold,
-        verbose=True
-    )
-
-    if not traversal_result:
-        print(f"\nNo regions to spawn (all below threshold or tree is empty)")
-        return 0
-
-    # Build mapping from tree node IDs to expert indices
-    tree_node_to_expert = {-1: -1}  # Root/base maps to expert -1
-    experts_spawned = 0
-
-    print(f"\n{'='*60}")
-    print(f"Spawning experts (max_experts={max_experts})...")
-    print(f"{'='*60}")
-
-    # Spawn experts in BFS order
-    for node_info, parent_tree_node_id in traversal_result:
-        if experts_spawned >= max_experts:
-            print(f"\nMax experts reached ({max_experts}), stopping spawn process")
-            break
-
-        # Map parent tree node to expert index
-        if parent_tree_node_id == -1:
-            # Root node (base model)
-            parent_idx = -1
-            depth = 1
-        elif parent_tree_node_id in tree_node_to_expert:
-            parent_idx = tree_node_to_expert[parent_tree_node_id]
-            # Compute depth based on parent
-            if parent_idx == -1:
-                depth = 1
-            else:
-                parent_region = model.regions[parent_idx]
-                depth = parent_region.depth + 1
-        else:
-            # Parent wasn't spawned (shouldn't happen with correct traversal)
-            print(f"  WARNING: Parent tree node {parent_tree_node_id} not found, using base as parent")
-            parent_idx = -1
-            depth = 1
-
-        # Create RegionDescriptor
-        region = RegionDescriptor(
-            bounds_lower=node_info.bounds_lower,
-            bounds_upper=node_info.bounds_upper,
-            wavelet_norm_squared=node_info.wavelet_norm_squared,
-            spawn_epoch=0,  # Tree building phase
-            depth=depth,
-            parent_idx=parent_idx,
-            smoothness_alpha=node_info.smoothness_alpha,
-        )
-
-        # Spawn expert
-        expert_idx = model.spawn_expert(region)
-        if expert_idx >= 0:
-            # Track mapping for future children
-            tree_node_to_expert[node_info.node_id] = expert_idx
-            experts_spawned += 1
-        else:
-            print(f"  Failed to spawn expert for node {node_info.node_id}")
-            break
-
-    # Save tree building summary
-    print(f"\n{'='*60}")
-    print(f"PHASE 1 COMPLETE: Expert Tree Built (Tree-Based Spawning)")
-    print(f"  Total experts spawned: {model.num_experts}")
-    print(f"  Highest depth: {model.get_highest_depth()}")
-    print(f"{'='*60}")
-
-    # Visualize final tree structure
-    problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
-    plot_expert_regions(
-        regions=model.regions,
-        domain_bounds=domain_bounds,
-        output_path=adaptive_plots_dir / f"expert_regions_final.png",
-        problem_type=problem_type,
-        title=f"Expert Tree ({model.num_experts} experts)",
-        ground_truth=gt_grid,
-        grid_x=gt_x,
-        grid_t=gt_t
-    )
-
-    # Plot soft weights if using soft blending
-    if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
-        plot_expert_soft_weights(
-            model=model,
-            domain_bounds=domain_bounds,
-            output_path=adaptive_plots_dir / f"soft_weights_final.png",
-            title_prefix="Final Tree: "
-        )
-
-    # Save final tree structure
-    save_regions_metadata(
-        regions=model.regions,
-        output_path=adaptive_plots_dir / "expert_tree_structure.json"
-    )
-
-    # DIAGNOSTIC: Verify zero-initialization (configurable)
-    if adaptive_cfg.get('enable_gradient_diagnostics', False):
-        print(f"\n{'='*60}")
-        print("DIAGNOSTIC: Verifying Expert Initialization")
-        print(f"{'='*60}")
-        with torch.no_grad():
-            sample_inputs = eval_inputs[:100]  # Use eval data sample
-            for i, expert in enumerate(model.experts):
-                out = expert(sample_inputs)
-                out_norm = out.norm().item()
-                out_mean = out.abs().mean().item()
-                out_max = out.abs().max().item()
-                print(f"Expert {i}: norm={out_norm:.8f}, mean={out_mean:.8f}, max={out_max:.8f}")
-        print(f"{'='*60}\n")
-
-    return model.num_experts
-
-
 def _create_adam_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer:
     """Create Adam optimizer with config parameters.
     
@@ -591,6 +395,17 @@ def train(
     wavelet_threshold = problem_cfg.get('wavelet_threshold', 0.0)
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
     spawning_complete = False
+    
+    # Read configurable norm variables
+    variable_for_node_accept = adaptive_cfg.get('variable_for_node_accept', 'norm')
+    variable_for_expert_size = adaptive_cfg.get('variable_for_expert_size', 'norm')
+    
+    # Build thresholds dict
+    thresholds = {
+        'norm': problem_cfg.get('wavelet_threshold', 0.0),
+        'new_norm': problem_cfg.get('new_norm_threshold', 0.0),
+        'smoothness': problem_cfg.get('tree_smoothness_threshold', 0.7),
+    }
 
     if is_adaptive:
         tree_max_depth = adaptive_cfg.get('tree_max_depth', 15)
@@ -682,6 +497,7 @@ def train(
                 bounds_lower=nd['bounds_lower'],
                 bounds_upper=nd['bounds_upper'],
                 wavelet_norm_squared=nd['wavelet_norm_squared'],
+                new_wavelet_norm_squared=nd.get('new_wavelet_norm_squared', 0.0),
                 spawn_epoch=0,
                 depth=depth,
                 parent_idx=parent_expert_idx,
@@ -1298,6 +1114,7 @@ def train(
                             bounds_lower=child_node.bounds_lower,
                             bounds_upper=child_node.bounds_upper,
                             wavelet_norm_squared=child_node.wavelet_norm_squared,
+                            new_wavelet_norm_squared=child_node.new_wavelet_norm_squared,
                             spawn_epoch=epoch,
                             depth=child_depth,
                             parent_idx=parent_idx,
@@ -1398,11 +1215,31 @@ def train(
                         })
                         continue
 
-                    above = any(c.wavelet_norm_squared >= wavelet_threshold for c, _ in children)
+                    # Check acceptance based on configured variable
+                    def _get_child_metric_value(c):
+                        if variable_for_node_accept == 'norm':
+                            return c.wavelet_norm_squared
+                        elif variable_for_node_accept == 'new_norm':
+                            return c.new_wavelet_norm_squared
+                        elif variable_for_node_accept == 'smoothness':
+                            return c.smoothness_alpha if c.smoothness_alpha is not None else 0.0
+                        return c.wavelet_norm_squared
+                    
+                    threshold = thresholds.get(variable_for_node_accept, 0.0)
+                    
+                    if variable_for_node_accept == 'smoothness':
+                        # For smoothness: lower alpha = rougher = keep (alpha < threshold)
+                        above = any(_get_child_metric_value(c) < threshold and c.smoothness_r2 is not None and c.smoothness_r2 >= 0.5 for c, _ in children)
+                    else:
+                        # For norm/new_norm: higher = more variation = keep (value >= threshold)
+                        above = any(_get_child_metric_value(c) >= threshold for c, _ in children)
+                    
                     child_diags = [
                         {
                             'node_id': c.node_id,
                             'wavelet_norm_squared': c.wavelet_norm_squared,
+                            'new_wavelet_norm_squared': c.new_wavelet_norm_squared,
+                            'smoothness_alpha': c.smoothness_alpha,
                             'n_samples': c.n_samples,
                             'bounds_lower': c.bounds_lower,
                             'bounds_upper': c.bounds_upper,
@@ -1420,8 +1257,8 @@ def train(
                     })
 
                     if not above:
-                        print(f"    [Spawning] {leaf_str}: children below wavelet threshold "
-                              f"({wavelet_threshold}), skipping")
+                        print(f"    [Spawning] {leaf_str}: children below {variable_for_node_accept} threshold "
+                              f"({threshold}), skipping")
                         continue
 
                     child_depth = parent_depth + 1
@@ -1432,6 +1269,7 @@ def train(
                             bounds_lower=child_node.bounds_lower,
                             bounds_upper=child_node.bounds_upper,
                             wavelet_norm_squared=child_node.wavelet_norm_squared,
+                            new_wavelet_norm_squared=child_node.new_wavelet_norm_squared,
                             spawn_epoch=epoch,
                             depth=child_depth,
                             parent_idx=parent_idx,
@@ -1469,8 +1307,8 @@ def train(
                     region_detector.fit_full_tree_and_prune(
                         X=X_eval,
                         y=y_eval,
-                        loss_components=loss_components,
-                        wavelet_threshold=wavelet_threshold,
+                        variable_for_node_accept=variable_for_node_accept,
+                        thresholds=thresholds,
                         verbose=True,
                     )
 
@@ -1516,6 +1354,7 @@ def train(
                         bounds_lower=node.bounds_lower,
                         bounds_upper=node.bounds_upper,
                         wavelet_norm_squared=node.wavelet_norm_squared,
+                        new_wavelet_norm_squared=node.new_wavelet_norm_squared,
                         spawn_epoch=epoch,
                         depth=depth,
                         parent_idx=parent_expert_idx,

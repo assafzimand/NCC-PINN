@@ -57,9 +57,16 @@ class AToELeaves(nn.Module):
         self.input_dim = base_architecture[0]
         self.output_dim = problem_config.get('output_dim', 2)
         if self.atoe_threshold_capacity is not None:
-            self.wavelet_threshold = problem_config.get(
-                'wavelet_threshold', 1.0
-            )
+            # Read variable_for_expert_size and corresponding threshold
+            self.variable_for_expert_size = adaptive_config.get('variable_for_expert_size', 'norm')
+            if self.variable_for_expert_size == 'norm':
+                self.expert_size_threshold = problem_config.get('wavelet_threshold', 1.0)
+            elif self.variable_for_expert_size == 'new_norm':
+                self.expert_size_threshold = problem_config.get('new_norm_threshold', 1.0)
+            elif self.variable_for_expert_size == 'smoothness':
+                self.expert_size_threshold = problem_config.get('tree_smoothness_threshold', 0.7)
+            else:
+                self.expert_size_threshold = 1.0
 
         self.leaf_indices: Set[int] = {-1}
 
@@ -200,7 +207,18 @@ class AToELeaves(nn.Module):
             return self.config_base_architecture
 
         from models.architecture_bank import get_architecture_for_capacity
-        ratio = max(region.wavelet_norm_squared / self.wavelet_threshold, 1.0)
+        
+        # Get the metric value based on configured variable
+        if self.variable_for_expert_size == 'norm':
+            metric_value = region.wavelet_norm_squared
+        elif self.variable_for_expert_size == 'new_norm':
+            metric_value = region.new_wavelet_norm_squared
+        elif self.variable_for_expert_size == 'smoothness':
+            metric_value = region.smoothness_alpha if region.smoothness_alpha is not None else 0.0
+        else:
+            metric_value = region.wavelet_norm_squared
+        
+        ratio = max(metric_value / self.expert_size_threshold, 1.0)
         target_capacity = self.atoe_threshold_capacity * ratio
         return get_architecture_for_capacity(
             target_capacity, self.input_dim, self.output_dim

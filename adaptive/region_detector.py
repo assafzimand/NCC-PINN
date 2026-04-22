@@ -28,6 +28,7 @@ class TreeNodeInfo:
     prediction: np.ndarray  # Q_Ω(x) - local mean value, shape (d,) for d-dim output
     parent_prediction: Optional[np.ndarray]  # Q_Ω_parent(x), shape (d,) or None
     wavelet_norm_squared: float = 0.0  # ||Q_child - Q_parent||^2 * volume
+    new_wavelet_norm_squared: float = 0.0  # Sum of children's classic norms (internal) or temp tree result (leaf)
     # Local tree-Besov smoothness: slope of log(||ψ_ν||₂/|ν|^½) vs log(|ν|) over descendants
     # Larger α = smoother region; None = not enough descendants for reliable estimate
     smoothness_alpha: Optional[float] = None
@@ -291,16 +292,29 @@ class RegionDetector:
                 f"levels={n_levels}"
             )
 
-    def compute_wavelet_norms(self) -> List[TreeNodeInfo]:
+    def compute_wavelet_norms(
+        self,
+        X: Optional[np.ndarray] = None,
+        y: Optional[np.ndarray] = None,
+    ) -> List[TreeNodeInfo]:
         """
-        Compute geometric wavelet norms for all tree nodes.
+        Compute geometric wavelet norms for all tree nodes (two-pass algorithm).
+
+        Pass 1: Compute classic wavelet_norm_squared and smoothness_alpha for all nodes.
+        Pass 2: Compute new_wavelet_norm_squared:
+            - Internal nodes: sum of children's classic norms
+            - Leaf nodes: if X, y provided, fit depth-1 tree, compute sum of hypothetical children's classic norms
         
         Uses RF's internal node values (tree.value) as Q_Ω for each node.
         Supports multi-dimensional output (d > 1): Q is d-dimensional vector.
-        Wavelet norm = ||Q_child - Q_parent||^2 * Ω_volume
+        Classic wavelet norm = ||Q_child - Q_parent||^2 * Ω_volume
+        
+        Args:
+            X: Optional (N, n_dims) sample coordinates for leaf new_norm computation
+            y: Optional (N,) or (N, output_dim) target values for leaf new_norm computation
         
         Returns:
-            List of TreeNodeInfo with wavelet norms
+            List of TreeNodeInfo with both wavelet_norm_squared (classic) and new_wavelet_norm_squared
         """
         if self.rf is None:
             raise RuntimeError("Must call fit() before compute_wavelet_norms()")
@@ -311,6 +325,9 @@ class RegionDetector:
             tree = estimator.tree_
             tree_nodes: Dict[int, TreeNodeInfo] = {}
 
+            # ══════════════════════════════════════════════════════════════
+            # PASS 1: Compute classic wavelet_norm_squared and smoothness
+            # ══════════════════════════════════════════════════════════════
             for node_id in range(tree.node_count):
                 is_leaf = tree.children_left[node_id] == -1
 
@@ -351,270 +368,82 @@ class RegionDetector:
                     prediction=prediction,
                     parent_prediction=parent_prediction,
                     wavelet_norm_squared=wavelet_norm_squared,
+                    new_wavelet_norm_squared=0.0,  # Will be computed in Pass 2
                 )
                 tree_nodes[node_id] = node
 
             self._compute_smoothness_indices(
                 tree_nodes, tree.children_left, tree.children_right
             )
-            all_nodes.extend(tree_nodes.values())
 
-        return all_nodes
+            # ══════════════════════════════════════════════════════════════
+            # PASS 2: Compute new_wavelet_norm_squared
+            # ══════════════════════════════════════════════════════════════
+            # Get leaf assignments if we need them for leaf new_norm computation
+            leaf_ids = None
+            if X is not None and y is not None:
+                leaf_ids = estimator.apply(X)
 
-    def compute_new_wavelet_norm_squareds(
-        self,
-        X: np.ndarray,
-        y: np.ndarray,
-    ) -> List[TreeNodeInfo]:
-        """
-        Compute parent-assigned wavelet norms for all tree nodes.
-
-        NEW formula — norm is assigned to each node based on its own children:
-            norm(node) = ||Q_node - Q_left||^2 * volume_left
-                       + ||Q_node - Q_right||^2 * volume_right
-
-        For leaf nodes (no children in the fitted tree): a temporary
-        DecisionTreeRegressor(max_depth=1, min_samples_leaf=1) is fitted on
-        the samples that land in that leaf to obtain two hypothetical children.
-        The same formula is applied and the temporary tree is discarded.
-        If the leaf cannot be split, norm = 0.0.
-
-        Args:
-            X: (N, n_dims) sample coordinates — same array used to fit the tree
-            y: (N,) or (N, output_dim) target values
-
-        Returns:
-            List of TreeNodeInfo with wavelet_norm_squared set to the new formula value.
-            All other fields (bounds, n_samples, prediction, …) are identical
-            to what compute_wavelet_norms() would return.
-        """
-        if self.rf is None:
-            raise RuntimeError("Must call fit() before compute_new_wavelet_norm_squareds()")
-
-        all_nodes = []
-
-        for tree_idx, estimator in enumerate(self.rf.estimators_):
-            tree = estimator.tree_
-            tree_nodes: Dict[int, TreeNodeInfo] = {}
-
-            # leaf assignment for every sample (needed for the leaf split trick)
-            leaf_ids = estimator.apply(X)
-
-            for node_id in range(tree.node_count):
-                n_samples = int(tree.n_node_samples[node_id])
-                if n_samples < self.min_samples_leaf:
-                    continue
-
-                is_leaf = tree.children_left[node_id] == -1
-                bounds_lower, bounds_upper = self._get_node_bounds(tree, node_id)
-                parent_id = self._get_parent_id(tree, node_id)
-
-                prediction = tree.value[node_id, :, 0].copy()
-                parent_prediction = (
-                    tree.value[parent_id, :, 0].copy()
-                    if parent_id is not None else None
-                )
+            for node_id, node in tree_nodes.items():
+                is_leaf = node.is_leaf
+                new_norm = 0.0
 
                 if not is_leaf:
-                    # ── Internal node: compute directly from tree values ──
-                    l = tree.children_left[node_id]
-                    r = tree.children_right[node_id]
-                    Q_node  = tree.value[node_id, :, 0]
-                    Q_left  = tree.value[l, :, 0]
-                    Q_right = tree.value[r, :, 0]
-                    bounds_lower_left, bounds_upper_left = self._get_node_bounds(tree, l)
-                    bounds_lower_right, bounds_upper_right = self._get_node_bounds(tree, r)
-                    volume_left = float(np.prod(np.maximum(
-                        np.asarray(bounds_upper_left, dtype=float) - np.asarray(bounds_lower_left, dtype=float),1e-12)))
-                    volume_right = float(np.prod(np.maximum(
-                        np.asarray(bounds_upper_right, dtype=float) - np.asarray(bounds_lower_right, dtype=float),1e-12)))
-                    wavelet_norm_squared = (
-                        float(np.sum((Q_left  - Q_node) ** 2)) * volume_left
-                        + float(np.sum((Q_right - Q_node) ** 2)) * volume_right
-                    )
+                    # ── Internal node: sum of children's classic norms ──
+                    left_id = tree.children_left[node_id]
+                    right_id = tree.children_right[node_id]
+                    
+                    if left_id in tree_nodes:
+                        new_norm += tree_nodes[left_id].wavelet_norm_squared
+                    if right_id in tree_nodes:
+                        new_norm += tree_nodes[right_id].wavelet_norm_squared
                 else:
-                    # ── Leaf node: fit depth-1 subtree on this leaf's samples ──
-                    mask   = (leaf_ids == node_id)
-                    X_leaf = X[mask]
-                    y_leaf = y[mask]
+                    # ── Leaf node: fit depth-1 temp tree if X, y available ──
+                    if X is not None and y is not None and leaf_ids is not None:
+                        mask = (leaf_ids == node_id)
+                        X_leaf = X[mask]
+                        y_leaf = y[mask]
 
-                    wavelet_norm_squared = 0.0
-                    if len(X_leaf) >= 2:
-                        dt = DecisionTreeRegressor(
-                            max_depth=1, min_samples_leaf=1, random_state=42
-                        )
-                        try:
-                            dt.fit(X_leaf, y_leaf)
-                            sub = dt.tree_
-                            sub_l = sub.children_left[0]
-                            sub_r = sub.children_right[0]
-                            if sub_l != -1:
-                                Q_node  = sub.value[0,     :, 0]
-                                Q_hl    = sub.value[sub_l, :, 0]
-                                Q_hr    = sub.value[sub_r, :, 0]
-                                bounds_lower_l, bounds_upper_l = self._get_node_bounds(sub, sub_l)
-                                bounds_lower_r, bounds_upper_r = self._get_node_bounds(sub, sub_r)
-                                volume_l = float(np.prod(np.maximum(
-                                    np.asarray(bounds_upper_l, dtype=float) - np.asarray(bounds_lower_l, dtype=float),1e-12)))
-                                volume_r = float(np.prod(np.maximum(
-                                    np.asarray(bounds_upper_r, dtype=float) - np.asarray(bounds_lower_r, dtype=float),1e-12)))
-                                wavelet_norm_squared = (
-                                    float(np.sum((Q_hl - Q_node) ** 2)) * volume_l
-                                    + float(np.sum((Q_hr - Q_node) ** 2)) * volume_r
-                                )
-                        except Exception:
-                            pass
+                        if len(X_leaf) >= 2:
+                            dt = DecisionTreeRegressor(
+                                max_depth=1, min_samples_leaf=1, random_state=42
+                            )
+                            try:
+                                dt.fit(X_leaf, y_leaf)
+                                sub = dt.tree_
+                                sub_l = sub.children_left[0]
+                                sub_r = sub.children_right[0]
+                                
+                                if sub_l != -1:  # Successfully split
+                                    # Compute classic norms for the two hypothetical children
+                                    Q_parent = sub.value[0, :, 0]
+                                    Q_left = sub.value[sub_l, :, 0]
+                                    Q_right = sub.value[sub_r, :, 0]
+                                    
+                                    bounds_lower_l, bounds_upper_l = self._get_node_bounds(sub, sub_l)
+                                    bounds_lower_r, bounds_upper_r = self._get_node_bounds(sub, sub_r)
+                                    
+                                    volume_l = float(np.prod(np.maximum(
+                                        np.asarray(bounds_upper_l, dtype=float) - np.asarray(bounds_lower_l, dtype=float), 1e-12)))
+                                    volume_r = float(np.prod(np.maximum(
+                                        np.asarray(bounds_upper_r, dtype=float) - np.asarray(bounds_lower_r, dtype=float), 1e-12)))
+                                    
+                                    # Classic norm for left child
+                                    classic_norm_left = float(np.sum((Q_left - Q_parent) ** 2)) * volume_l
+                                    # Classic norm for right child
+                                    classic_norm_right = float(np.sum((Q_right - Q_parent) ** 2)) * volume_r
+                                    
+                                    # New norm = sum of children's classic norms
+                                    new_norm = classic_norm_left + classic_norm_right
+                            except Exception:
+                                pass  # Leave new_norm = 0.0
 
-                node = TreeNodeInfo(
-                    node_id=node_id,
-                    tree_idx=tree_idx,
-                    is_leaf=is_leaf,
-                    n_samples=n_samples,
-                    bounds_lower=bounds_lower,
-                    bounds_upper=bounds_upper,
-                    prediction=prediction,
-                    parent_prediction=parent_prediction,
-                    wavelet_norm_squared=wavelet_norm_squared,
-                )
-                tree_nodes[node_id] = node
+                # Update the node with new_norm
+                node.new_wavelet_norm_squared = new_norm
 
-            self._compute_smoothness_indices(
-                tree_nodes, tree.children_left, tree.children_right
-            )
             all_nodes.extend(tree_nodes.values())
 
         return all_nodes
-
-    def extract_regions_from_tree(
-        self,
-        wavelet_threshold: Optional[float] = None,
-        verbose: bool = True
-    ) -> List[Tuple[TreeNodeInfo, int]]:
-        """
-        Traverse a single decision tree (BFS) and extract spawnable regions.
-
-        Prerequisites:
-        - fit() must be called first with n_estimators=1
-
-        Args:
-            wavelet_threshold: Minimum wavelet norm to spawn (None = spawn all non-root)
-            verbose: Print diagnostic information
-
-        Returns:
-            List of (TreeNodeInfo, parent_tree_node_id) tuples in BFS order.
-            parent_tree_node_id is the tree node ID of nearest SPAWNED ancestor,
-            or -1 for base model.
-        """
-        from collections import deque
-
-        # Validation
-        if self.rf is None:
-            raise RuntimeError("Must call fit() before extract_regions_from_tree()")
-        if self.n_estimators != 1:
-            raise RuntimeError(f"extract_regions_from_tree requires n_estimators=1, got {self.n_estimators}")
-
-        # Get the single tree
-        tree = self.rf.estimators_[0].tree_
-
-        # Compute wavelet norms for all nodes
-        all_nodes = self.compute_wavelet_norms()
-
-        if not all_nodes:
-            if verbose:
-                print(f"    [Traverse] No nodes in tree")
-            return []
-
-        # Build node_id -> TreeNodeInfo lookup
-        node_lookup = {node.node_id: node for node in all_nodes}
-
-        # Result: list of (TreeNodeInfo, nearest_spawned_ancestor_tree_node_id)
-        result = []
-
-        # Tracking structure: maps tree_node_id -> whether it was spawned
-        spawned_nodes = {0: True}  # Root is always considered "spawned" (represents base model)
-
-        # BFS queue initialization
-        queue = deque([(0, -1)])  # (node_id, nearest_spawned_ancestor_id)
-        # -1 means "root" which maps to base model (parent_idx=-1 in RegionDescriptor)
-
-        visited_count = 0
-        spawned_count = 0
-        skipped_count = 0
-
-        if verbose:
-            print(f"\n  [Traverse] Starting BFS traversal of tree with {tree.node_count} nodes")
-
-        # Traverse the tree (BFS)
-        while queue:
-            current_id, nearest_spawned_ancestor = queue.popleft()
-            visited_count += 1
-
-            # Skip if node doesn't exist in lookup (too few samples)
-            if current_id not in node_lookup:
-                continue
-
-            node = node_lookup[current_id]
-
-            # Determine if this node should spawn
-            should_spawn = False
-            rejection_reason = None
-
-            if current_id == 0:
-                # Root node: skip (represents base model, not a spawnable expert)
-                should_spawn = False
-                rejection_reason = "root node"
-            elif node.parent_prediction is None:
-                # No parent (shouldn't happen except for root, but defensive)
-                should_spawn = False
-                rejection_reason = "no parent prediction"
-            elif wavelet_threshold is not None and node.wavelet_norm_squared < wavelet_threshold:
-                # Below threshold
-                should_spawn = False
-                rejection_reason = f"wavelet_norm_squared {node.wavelet_norm_squared:.6f} < threshold {wavelet_threshold}"
-            else:
-                # Passes all checks
-                should_spawn = True
-
-            # Update tracking
-            if should_spawn:
-                spawned_nodes[current_id] = True
-                result.append((node, nearest_spawned_ancestor))
-                spawned_count += 1
-
-                if verbose:
-                    parent_str = "Base" if nearest_spawned_ancestor == -1 else f"Node{nearest_spawned_ancestor}"
-                    print(f"    [Traverse] Node {current_id}: SPAWN (parent={parent_str}, "
-                          f"wavelet={node.wavelet_norm_squared:.6f}, samples={node.n_samples})")
-
-                # This node becomes the new nearest spawned ancestor for its children
-                next_nearest_spawned = current_id
-            else:
-                spawned_nodes[current_id] = False
-                skipped_count += 1
-
-                if verbose and rejection_reason:
-                    print(f"    [Traverse] Node {current_id}: SKIP ({rejection_reason})")
-
-                # Children inherit current nearest_spawned_ancestor (pass through)
-                next_nearest_spawned = nearest_spawned_ancestor
-
-            # Add children to queue
-            left_child = tree.children_left[current_id]
-            right_child = tree.children_right[current_id]
-
-            if left_child != -1:  # Not a leaf
-                queue.append((left_child, next_nearest_spawned))
-
-            if right_child != -1:  # Not a leaf
-                queue.append((right_child, next_nearest_spawned))
-
-        if verbose:
-            print(f"\n  [Traverse] Summary:")
-            print(f"    Visited nodes: {visited_count}")
-            print(f"    Spawnable nodes: {spawned_count}")
-            print(f"    Skipped nodes: {skipped_count}")
-
-        return result
 
     def spawn_children_for_node(
         self,
@@ -691,7 +520,7 @@ class RegionDetector:
         children = []
 
         # Compute all wavelet norms (includes root and both children)
-        all_nodes = self.compute_wavelet_norms()
+        all_nodes = self.compute_wavelet_norms(X=X_sub, y=y_sub)
         node_lookup = {node.node_id: node for node in all_nodes}
 
         for child_id in [left_child_id, right_child_id]:
@@ -710,8 +539,8 @@ class RegionDetector:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        wavelet_threshold: float = 0.0,
-        tree_smoothness_threshold: Optional[float] = None,
+        variable_for_node_accept: str = 'norm',
+        thresholds: Optional[Dict[str, float]] = None,
         verbose: bool = True,
         **kwargs,
     ) -> Tuple[List[Tuple[TreeNodeInfo, int]], Dict]:
@@ -719,23 +548,18 @@ class RegionDetector:
         Fit a full decision tree on the entire domain and prune via
         bottom-up sibling-pair thresholding.
 
-        Pruning criterion (smoothness-based, active):
-            A sibling pair is ACCEPTED if either node has smoothness_alpha < threshold
-            (rough region). Nodes with smoothness_alpha=None (too few descendants,
-            i.e. very fine leaves) are treated as smooth → pruned.
-            A pair is pruned only when both siblings are confirmed smooth.
-
-        Pruning criterion (wavelet-norm-based, commented out — kept for reference):
-            Was: accept if wavelet_norm_squared >= wavelet_threshold.
+        Pruning criterion:
+            A sibling pair is ACCEPTED based on the configured metric:
+            - 'norm': wavelet_norm_squared >= threshold
+            - 'new_norm': new_wavelet_norm_squared >= threshold
+            - 'smoothness': smoothness_alpha < threshold (rough regions)
 
         Args:
             X: (N, n_dims) coordinates
             y: (N,) or (N, output_dim) predictions
-            wavelet_threshold: kept for reference / future use (currently not used
-                for pruning decisions when tree_smoothness_threshold is set)
-            tree_smoothness_threshold: smoothness_alpha cutoff. Nodes with
-                alpha < threshold are rough → kept. None/missing alpha → pruned.
-                If None, falls back to wavelet_norm_squared thresholding.
+            variable_for_node_accept: 'norm' | 'new_norm' | 'smoothness'
+            thresholds: Dict mapping variable names to threshold values
+                {'norm': float, 'new_norm': float, 'smoothness': float}
             verbose: print diagnostics
             **kwargs: ignored (backward compat)
 
@@ -748,6 +572,9 @@ class RegionDetector:
         """
         from collections import deque
 
+        if thresholds is None:
+            thresholds = {'norm': 0.0, 'new_norm': 0.0, 'smoothness': 0.7}
+
         old_n_estimators = self.n_estimators
         self.n_estimators = 1
         try:
@@ -756,7 +583,7 @@ class RegionDetector:
             self.n_estimators = old_n_estimators
 
         tree = self.rf.estimators_[0].tree_
-        all_nodes = self.compute_wavelet_norms()
+        all_nodes = self.compute_wavelet_norms(X=X, y=y)
 
         if not all_nodes:
             if verbose:
@@ -794,22 +621,39 @@ class RegionDetector:
                     depth_to_sibling_pairs[child_depth] = []
                 depth_to_sibling_pairs[child_depth].append((l, r))
 
-        use_smoothness = tree_smoothness_threshold is not None
+        # Get threshold for configured variable
+        threshold = thresholds.get(variable_for_node_accept, 0.0)
 
-        # Helper: is a node rough enough to keep? (smoothness-based)
-        def _is_rough(nid: int) -> bool:
+        # Helper: extract the configured metric value from a node
+        def _get_metric_value(nid: int) -> Optional[float]:
             if nid not in node_lookup:
-                return False  # unknown node → treat as smooth → prune
-            alpha = node_lookup[nid].smoothness_alpha
-            if alpha is None:
-                return False  # too few descendants → treat as smooth → prune
-            return alpha < tree_smoothness_threshold
+                return None
+            node = node_lookup[nid]
+            if variable_for_node_accept == 'norm':
+                return node.wavelet_norm_squared
+            elif variable_for_node_accept == 'new_norm':
+                return node.new_wavelet_norm_squared
+            elif variable_for_node_accept == 'smoothness':
+                return node.smoothness_alpha
+            return None
 
-        def _smoothness_is_reliable(nid: int) -> bool:
-            if nid not in node_lookup:
-                return False
-            r2 = node_lookup[nid].smoothness_r2
-            return r2 is not None and r2 >= 0.5        
+        # Helper: is a node above threshold?
+        def _passes_threshold(nid: int) -> bool:
+            value = _get_metric_value(nid)
+            if value is None:
+                return False  # unknown/unreliable → prune
+            
+            if variable_for_node_accept == 'smoothness':
+                # For smoothness: lower alpha = rougher = keep (alpha < threshold)
+                # Also check r2 for reliability
+                if nid in node_lookup:
+                    r2 = node_lookup[nid].smoothness_r2
+                    if r2 is None or r2 < 0.5:
+                        return False  # unreliable smoothness estimate
+                return value < threshold
+            else:
+                # For norm/new_norm: higher = more variation = keep (value >= threshold)
+                return value >= threshold
 
         accepted = set()
         depth_stats = {}
@@ -820,49 +664,29 @@ class RegionDetector:
             n_by_threshold = 0
             n_by_child = 0
             n_rejected = 0
-            alphas_at_depth = []
+            metric_values_at_depth = []
 
             for left_id, right_id in pairs:
                 left_accepted = left_id in accepted
                 right_accepted = right_id in accepted
 
-                if use_smoothness:
-                    # ── Smoothness-based pruning (active) ────────────────────
-                    left_alpha = (node_lookup[left_id].smoothness_alpha
-                                  if left_id in node_lookup else None)
-                    right_alpha = (node_lookup[right_id].smoothness_alpha
-                                   if right_id in node_lookup else None)
-                    for a in (left_alpha, right_alpha):
-                        if a is not None:
-                            alphas_at_depth.append(a)
+                # Collect metric values for stats
+                left_val = _get_metric_value(left_id)
+                right_val = _get_metric_value(right_id)
+                for v in (left_val, right_val):
+                    if v is not None:
+                        metric_values_at_depth.append(v)
 
-                    if left_accepted or right_accepted:
-                        accept_pair = True
-                        n_by_child += 1
-                    elif ((_smoothness_is_reliable(left_id) and _is_rough(left_id)) or
-                        (_smoothness_is_reliable(right_id) and _is_rough(right_id))):
-                        accept_pair = True
-                        n_by_threshold += 1
-                    else:
-                        accept_pair = False
-                        n_rejected += 1
+                # Decision logic
+                if left_accepted or right_accepted:
+                    accept_pair = True
+                    n_by_child += 1
+                elif _passes_threshold(left_id) or _passes_threshold(right_id):
+                    accept_pair = True
+                    n_by_threshold += 1
                 else:
-                    # ── Wavelet-norm-based pruning (fallback) ──
-                    left_wn = (node_lookup[left_id].wavelet_norm_squared
-                               if left_id in node_lookup else 0.0)
-                    right_wn = (node_lookup[right_id].wavelet_norm_squared
-                                if right_id in node_lookup else 0.0)
-                    alphas_at_depth.extend([left_wn, right_wn])
-                    if left_accepted or right_accepted:
-                        accept_pair = True
-                        n_by_child += 1
-                    elif (left_wn >= wavelet_threshold
-                          or right_wn >= wavelet_threshold):
-                        accept_pair = True
-                        n_by_threshold += 1
-                    else:
-                        accept_pair = False
-                        n_rejected += 1
+                    accept_pair = False
+                    n_rejected += 1
 
                 if accept_pair:
                     for nid in (left_id, right_id):
@@ -874,22 +698,26 @@ class RegionDetector:
                                 break
                             accepted.add(cur)
 
-            if pairs and alphas_at_depth:
+            if pairs and metric_values_at_depth:
                 depth_stats[depth] = {
                     'n_pairs': len(pairs),
                     'accepted_by_threshold': n_by_threshold,
                     'accepted_by_child': n_by_child,
                     'rejected': n_rejected,
-                    'alpha_min': float(min(alphas_at_depth)),
-                    'alpha_max': float(max(alphas_at_depth)),
-                    'alpha_median': float(np.median(alphas_at_depth)),
+                    'metric_min': float(min(metric_values_at_depth)),
+                    'metric_max': float(max(metric_values_at_depth)),
+                    'metric_median': float(np.median(metric_values_at_depth)),
                 }
 
         # Root itself is not an expert (it is the base model)
         accepted.discard(0)
 
-        thr_label = (f"smoothness<{tree_smoothness_threshold}"
-                     if use_smoothness else f"norm>={wavelet_threshold}")
+        # Format threshold label for logging
+        if variable_for_node_accept == 'smoothness':
+            thr_label = f"{variable_for_node_accept}<{threshold}"
+        else:
+            thr_label = f"{variable_for_node_accept}>={threshold}"
+        
         if verbose:
             print(f"\n  [FullTree] Tree has {tree.node_count} nodes, "
                   f"max depth {max_depth_seen}")
@@ -904,9 +732,9 @@ class RegionDetector:
                     f"{s['accepted_by_threshold']:2d} by threshold | "
                     f"{s['accepted_by_child']:2d} by child | "
                     f"{s['rejected']:3d} rejected | "
-                    f"alpha [{s['alpha_min']:.3f}, "
-                    f"{s['alpha_median']:.3f}, "
-                    f"{s['alpha_max']:.3f}]"
+                    f"metric [{s['metric_min']:.3f}, "
+                    f"{s['metric_median']:.3f}, "
+                    f"{s['metric_max']:.3f}]"
                 )
 
         # Build result in BFS order with parent relationships
@@ -920,11 +748,12 @@ class RegionDetector:
                     node = node_lookup[nid]
                     anc_str = "Base" if nearest_ancestor == -1 else f"Node{nearest_ancestor}"
                     is_leaf_str = "leaf" if node.is_leaf else "internal"
-                    alpha_str = (f"{node.smoothness_alpha:.4f}"
-                                 if node.smoothness_alpha is not None else "None")
+                    metric_val = _get_metric_value(nid)
+                    metric_str = (f"{metric_val:.4f}"
+                                 if metric_val is not None else "None")
                     print(f"    [FullTree] Node {nid} ({is_leaf_str}): "
                           f"ACCEPT (parent={anc_str}, "
-                          f"alpha={alpha_str}, "
+                          f"{variable_for_node_accept}={metric_str}, "
                           f"samples={node.n_samples})")
                 next_ancestor = nid
             else:
