@@ -242,7 +242,7 @@ base_config:
     freeze_mode: none                          # "none" | "previous" | "base_only"
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
-    base_weight: 1.0                           # Uniform weight for base model (soft blending only)
+    base_weight: 0.3                           # Uniform weight for base model (soft blending only)
     base_everywhere: true                      # If false, u_0 has indicator = domain \ experts
     tree_max_depth: 15                         # Max depth of decision tree for region splitting
     tree_min_samples_leaf: 50                  # Min samples in tree leaf node
