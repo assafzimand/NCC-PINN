@@ -3,7 +3,7 @@
 Implements the algorithm to detect high-variation regions for spawning expert PINNs:
 1. Fit a Random Forest regressor to the current solution
 2. Compute geometric wavelets at each tree node (Q_child - Q_parent for d-dim output)
-3. Compute wavelet norm: ||Q_child - Q_parent||^2 * n_samples
+3. Compute wavelet norm: ||Q_child - Q_parent||^2 * volume
 4. Select / prune regions based on norm threshold
 """
 
@@ -27,7 +27,7 @@ class TreeNodeInfo:
     bounds_upper: List[float]
     prediction: np.ndarray  # Q_Ω(x) - local mean value, shape (d,) for d-dim output
     parent_prediction: Optional[np.ndarray]  # Q_Ω_parent(x), shape (d,) or None
-    wavelet_norm_squared: float = 0.0  # ||Q_child - Q_parent||^2 * n_samples
+    wavelet_norm_squared: float = 0.0  # ||Q_child - Q_parent||^2 * volume
     # Local tree-Besov smoothness: slope of log(||ψ_ν||₂/|ν|^½) vs log(|ν|) over descendants
     # Larger α = smoother region; None = not enough descendants for reliable estimate
     smoothness_alpha: Optional[float] = None
@@ -41,7 +41,7 @@ class RegionDetector:
     Algorithm:
     1. Fit RF to current PINN solution: f_RF(x,t) ≈ u(x,t)
     2. For each tree node, compute geometric wavelet: ψ = Q_child - Q_parent
-    3. Compute wavelet norm: ||ψ||^2 * n_samples
+    3. Compute wavelet norm: ||ψ||^2 * volume
     4. Return regions that pass the threshold
     
     Supports multi-dimensional output (e.g., Schrödinger's [u, v]).
