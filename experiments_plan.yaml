@@ -9,7 +9,7 @@ base_config:
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
   epochs: 1                          # No real training — just spawn experts and save
-  batch_size: 4096                    # Mini-batch size for Adam/SOAP training
+  batch_size: 2048                    # Mini-batch size for Adam/SOAP training
   patience_epochs: 3000              # Stop if eval Rel-L2 doesn't improve for 3000 epochs (~30k steps)
   min_epochs: 5000                      # No early-stop guard needed
 
@@ -23,9 +23,9 @@ base_config:
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
   lr_schedule: exponential           # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
-  lr_warmup_steps: 1000              # Steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
+  lr_warmup_steps: 0              # Steps to linearly ramp lr from ~0 to base lr. 0 = no warmup (paper default).
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps.
-  lr_decay_steps: 5000               # For exponential: how often (in optimizer steps) to decay.
+  lr_decay_steps: 10000               # For exponential: how often (in optimizer steps) to decay.
 
   # ── SOAP-specific (only used when optimizer_1 or _2 is 'soap') ──
   soap_betas: [0.95, 0.95]          # SOAP momentum parameters (beta1, beta2). Paper default.
@@ -147,9 +147,9 @@ base_config:
       phi: exponential               # quadratic | exponential | power
       phi_epsilon: 1.0               # scale ε for exponential phi
     causal_training:                 # Paper-recommended params (Wang et al. 2022)
-      enabled: false                 # set true to enable causal weighting
-      num_chunks: 50
-      tol_schedule: [0.1, 1.0, 10.0]
+      enabled: true                  # Causal weighting on residual loss — critical for chaotic KS (Wang et al. 2022)
+      num_chunks: 32                # Temporal bins (paper uses full temporal grid, ~100 time points)
+      tol_schedule: [0.01, 0.1, 1.0]  # Capped schedule for short runs. Full paper: [0.01, 0.1, 1.0, 10.0, 100.0] (needs 60k+ epochs).
       min_weight_threshold: 0.99
 
   kdv:
@@ -243,7 +243,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 20                     # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 10000                      # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -272,15 +272,15 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 20                                # Phase 1: how many epochs to train base model before tree fitting
+      epochs: 10000                                # Phase 1: how many epochs to train base model before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
 # ===== Experiments to run =====
 experiments:
-  # - name: ks_full_tree_by_norm
-  #   problem: ks
-  #   base_architecture: [2, 256, 256, 256, 256, 256, 1]
+  - name: ks_full_tree_by_norm
+    problem: ks
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
 
   # - name: schrodinger_full_tree_by_norm
   #   problem: schrodinger
@@ -292,7 +292,7 @@ experiments:
 
   - name: allen_cahn_full_tree_by_norm
     problem: allen_cahn
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 128, 128, 128, 128, 128, 1]
 
   # - name: kdv_full_tree_by_norm
   #   problem: kdv
