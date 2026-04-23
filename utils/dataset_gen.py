@@ -319,81 +319,177 @@ def _compute_phi_pdf(residuals: torch.Tensor, phi_cfg: Dict) -> torch.Tensor:
 
 
 def _sample_adaptive_residual_points(
-    model,
+    cached_residuals: list,
     config: Dict,
     device: torch.device,
     n_points: int,
-    cand_mult: int,
     phi_cfg: Dict,
+    run_dir=None,
+    epoch=None,
 ) -> tuple:
-    """Sample residual points biased toward high-residual regions (vRBA/RAR-D).
+    """Sample residual points biased toward high-residual regions using cached PDE residuals.
 
-    Generates n_points * cand_mult uniform candidate points, evaluates the
-    model residual magnitude at each, builds a PDF via Φ(|r|), and draws
-    n_points samples.
+    Uses particle-filter-style resampling: draws from cached coordinates weighted by
+    their actual PDE residual magnitude, then adds small Gaussian noise to avoid duplicates.
 
     Args:
-        model: PINN model (called with no_grad for residual estimation).
-        config: Full config dict.
-        device: Target device.
-        n_points: Number of adaptive points to return.
-        cand_mult: Candidate multiplier (candidates = n_points * cand_mult).
-        phi_cfg: Dict with phi type and parameters.
+        cached_residuals: List of (x, t, r²) tuples from previous epoch's training batches
+        config: Full config dict
+        device: Target device
+        n_points: Number of adaptive points to return
+        phi_cfg: Dict with phi type and parameters
+        run_dir: Optional path to save diagnostic heatmap
+        epoch: Current epoch (for heatmap filename)
 
     Returns:
-        (x_adaptive, t_adaptive): tensors of shape (n_points, spatial_dim)
-        and (n_points, 1).
+        (x_adaptive, t_adaptive): tensors of shape (n_points, spatial_dim) and (n_points, 1)
     """
-    import torch.nn.functional as F
-
     problem = config['problem']
     pc = config[problem]
     spatial_dim = pc['spatial_dim']
     spatial_domain = pc['spatial_domain']
     t_min, t_max = pc['temporal_domain']
 
-    n_cand = n_points * cand_mult
-
-    # Sample uniform candidates
-    x_cand = torch.zeros(n_cand, spatial_dim, device=device)
+    # Concatenate all cached residuals
+    x_cached_list = []
+    t_cached_list = []
+    r2_cached_list = []
+    
+    for x_batch, t_batch, r2_batch in cached_residuals:
+        x_cached_list.append(x_batch)
+        t_cached_list.append(t_batch)
+        r2_cached_list.append(r2_batch)
+    
+    x_cached = torch.cat(x_cached_list, dim=0)
+    t_cached = torch.cat(t_cached_list, dim=0)
+    r2_cached = torch.cat(r2_cached_list, dim=0)
+    
+    # Compute sampling probability from residual magnitudes
+    residuals = torch.sqrt(r2_cached + 1e-10)  # sqrt to get |r| from r²
+    probs = _compute_phi_pdf(residuals, phi_cfg)
+    
+    # Draw n_points indices (with replacement) weighted by residual
+    indices = torch.multinomial(probs, num_samples=n_points, replacement=True)
+    
+    # Get selected coordinates
+    x_selected = x_cached[indices]
+    t_selected = t_cached[indices]
+    
+    # Add Gaussian noise to avoid exact duplicates
+    # Noise std = domain_range / sqrt(n_cached) as a reasonable perturbation scale
+    n_cached = len(x_cached)
     for d in range(spatial_dim):
         lo, hi = spatial_domain[d]
-        x_cand[:, d] = torch.rand(n_cand, device=device) * (hi - lo) + lo
-    t_cand = torch.rand(n_cand, 1, device=device) * (t_max - t_min) + t_min
+        domain_range = hi - lo
+        noise_std = domain_range / (n_cached ** 0.5)
+        x_selected[:, d] += torch.randn(n_points, device=device) * noise_std
+        # Clamp to domain bounds
+        x_selected[:, d] = torch.clamp(x_selected[:, d], min=lo, max=hi)
+    
+    t_range = t_max - t_min
+    t_noise_std = t_range / (n_cached ** 0.5)
+    t_selected += torch.randn(n_points, 1, device=device) * t_noise_std
+    t_selected = torch.clamp(t_selected, min=t_min, max=t_max)
+    
+    # Diagnostic logging
+    r_min = residuals.min().item()
+    r_max = residuals.max().item()
+    r_mean = residuals.mean().item()
+    print(f"  [Resample] Adaptive: residual_pdf min={r_min:.6f}, max={r_max:.6f}, mean={r_mean:.6f} (from cached PDE residuals)")
+    
+    # Save diagnostic heatmap (only for 1D spatial problems)
+    if run_dir is not None and epoch is not None and spatial_dim == 1:
+        _save_adaptive_sampling_heatmap(
+            x_cached, t_cached, r2_cached,
+            x_selected, t_selected,
+            run_dir, epoch, config
+        )
+    
+    return x_selected, t_selected
 
-    # Estimate residual magnitude at candidates (no gradients needed for PDF)
-    with torch.no_grad():
-        xt_cand = torch.cat([x_cand, t_cand], dim=1)
-        try:
-            h_cand = model(xt_cand)
-            # Use L1 of prediction as a cheap surrogate for residual magnitude
-            # (true residual requires autograd which breaks no_grad context)
-            # Instead: compute std of predictions as local variation proxy
-            # Actually best we can do without autograd: use abs(model output)
-            # For single-output: abs(h), for multi-output: norm of h
-            residuals = h_cand.abs().mean(dim=-1)  # (n_cand,)
-        except Exception:
-            # Fallback: uniform sampling
-            return x_cand[:n_points], t_cand[:n_points]
 
-    # Build PDF and sample
-    probs = _compute_phi_pdf(residuals, phi_cfg)
-    indices = torch.multinomial(probs, num_samples=n_points, replacement=False)
-
-    return x_cand[indices], t_cand[indices]
+def _save_adaptive_sampling_heatmap(
+    x_cached, t_cached, r2_cached,
+    x_sampled, t_sampled,
+    run_dir, epoch, config
+):
+    """Save two-panel diagnostic heatmap for adaptive sampling."""
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from pathlib import Path
+        
+        # Create output directory
+        output_dir = Path(run_dir) / "adaptive_sampling"
+        output_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Move to CPU for plotting
+        x_cached_np = x_cached[:, 0].cpu().numpy()
+        t_cached_np = t_cached[:, 0].cpu().numpy()
+        r2_cached_np = r2_cached.cpu().numpy()
+        x_sampled_np = x_sampled[:, 0].cpu().numpy()
+        t_sampled_np = t_sampled[:, 0].cpu().numpy()
+        
+        # Use log scale for residual coloring
+        log_r2 = np.log10(r2_cached_np + 1e-10)
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+        
+        # Left panel: cached residuals
+        sc1 = ax1.scatter(x_cached_np, t_cached_np, c=log_r2, cmap='hot', s=1, alpha=0.6)
+        ax1.set_xlabel('x')
+        ax1.set_ylabel('t')
+        ax1.set_title(f'Cached PDE Residuals (epoch {epoch-1})')
+        plt.colorbar(sc1, ax=ax1, label='log10(r²)')
+        
+        # Right panel: newly sampled adaptive points
+        sc2 = ax2.scatter(x_sampled_np, t_sampled_np, c='blue', s=3, alpha=0.4, label='Adaptive points')
+        ax2.set_xlabel('x')
+        ax2.set_ylabel('t')
+        ax2.set_title(f'Newly Sampled Adaptive Points (epoch {epoch})')
+        ax2.legend()
+        
+        # Match axes limits
+        problem = config['problem']
+        pc = config[problem]
+        spatial_domain = pc['spatial_domain']
+        t_min, t_max = pc['temporal_domain']
+        x_lo, x_hi = spatial_domain[0]
+        for ax in [ax1, ax2]:
+            ax.set_xlim(x_lo, x_hi)
+            ax.set_ylim(t_min, t_max)
+        
+        plt.tight_layout()
+        output_path = output_dir / f"resample_epoch_{epoch}.png"
+        plt.savefig(output_path, dpi=100, bbox_inches='tight')
+        plt.close(fig)
+        
+    except Exception as e:
+        # Don't crash training if plotting fails
+        print(f"  [Warning] Failed to save adaptive sampling heatmap: {e}")
 
 
 def regenerate_training_data(
     config: Dict,
     device: torch.device,
     resample_seed: int = 0,
-    model=None,
+    cached_residuals: list = None,
+    run_dir=None,
+    epoch=None,
 ) -> Dict[str, torch.Tensor]:
     """Lightweight resampling: fresh random coordinates + analytical IC/BC.
 
     Unlike the initial dataset generation this does **not** run any
     numerical solver — only random (x, t) sampling plus trivial
     analytical formulas for IC and BC ground truth.
+    
+    Args:
+        config: Full configuration dict
+        device: Target device
+        resample_seed: Random seed for reproducibility
+        cached_residuals: Optional list of (x, t, r²) tuples from previous epoch's training
+        run_dir: Optional path for saving diagnostic plots
+        epoch: Current epoch (for diagnostic filenames)
     """
     problem = config['problem']
     pc = config[problem]
@@ -413,9 +509,8 @@ def regenerate_training_data(
     # Adaptive sampling config (global sampling section)
     as_global = config.get('sampling', {}).get('adaptive_sampling', {})
     as_problem = config.get(problem, {}).get('adaptive_sampling', {})
-    as_enabled = as_global.get('enabled', False) and model is not None
+    as_enabled = as_global.get('enabled', False) and cached_residuals is not None and len(cached_residuals) > 0
     as_ratio = as_global.get('adaptive_ratio', 0.5)
-    as_cand_mult = as_global.get('candidate_multiplier', 10)
     # phi config comes from per-problem section
     phi_cfg = {
         'phi': as_problem.get('phi', 'quadratic'),
@@ -440,12 +535,13 @@ def regenerate_training_data(
         idx += n_uniform
         # Adaptive residual points
         x_adap, t_adap = _sample_adaptive_residual_points(
-            model, config, device, n_adaptive, as_cand_mult, phi_cfg)
+            cached_residuals, config, device, n_adaptive, phi_cfg, run_dir, epoch)
         x[idx:idx + n_adaptive] = x_adap
         t[idx:idx + n_adaptive] = t_adap
         idx += n_adaptive
+        print(f"  [Resample] n_residual={n_res} (uniform={n_uniform} + adaptive={n_adaptive})")
     else:
-        # All uniform (default behavior, also used on first call when model=None)
+        # All uniform (default behavior, also used when no cached residuals)
         for d in range(spatial_dim):
             lo, hi = spatial_domain[d]
             x[idx:idx + n_res, d] = torch.rand(n_res, device=device) * (hi - lo) + lo

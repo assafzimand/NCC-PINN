@@ -609,13 +609,20 @@ def build_loss(**cfg) -> Callable:
             # Need h for |h|² term
             h_f = torch.complex(u_f, v_f)
             residual = pde_residual(h_f, h_t, h_xx)
-            
+
             # Per-sample squared residual
             residual_squared = residual.real ** 2 + residual.imag ** 2
-            
+
             if for_tree_spawning:
                 residual_per_sample[masks['residual']] = residual_squared
             else:
+                # Cache residuals for adaptive sampling (no-op when disabled)
+                if getattr(model, '_residual_cache_enabled', False):
+                    model._residual_cache.append((
+                        x_f.detach().clone(),
+                        t_f.detach().clone(),
+                        residual_squared.detach().clone(),
+                    ))
                 mse_residual = compute_causal_residual(residual_squared, t_f, causal_state)
         else:
             if not for_tree_spawning:
