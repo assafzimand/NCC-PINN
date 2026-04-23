@@ -354,10 +354,18 @@ def train(
     # LRA: adaptive loss component weighting
     lra_cfg = cfg.get('lra', {})
     lra_enabled = lra_cfg.get('enabled', False)
-    lra_weights = LRAWeights(
-        alpha=lra_cfg.get('alpha', 0.1),
-        update_every=lra_cfg.get('update_every', 100),
-    ) if lra_enabled else None
+    if lra_enabled:
+        # Initialize LRA weights from problem's loss_weights
+        problem = cfg.get('problem', '')
+        problem_cfg = cfg.get(problem, {})
+        initial_loss_weights = problem_cfg.get('loss_weights', {})
+        lra_weights = LRAWeights(
+            alpha=lra_cfg.get('alpha', 0.1),
+            update_every=lra_cfg.get('update_every', 100),
+            initial_weights=initial_loss_weights,
+        )
+    else:
+        lra_weights = None
 
     # Wrap loss_fn to apply LRA weights when enabled
     if lra_weights is not None:
@@ -605,34 +613,101 @@ def train(
 
     resample_every = cfg.get('sampling', {}).get('resample_every_epochs', 0)
     base_seed = cfg.get('seed', 42)
-    if resample_every > 0:
-        print(f"  Dataset resampling enabled: every {resample_every} epochs")
-
+    
+    # Consolidated feature summary
+    print("\n" + "=" * 60)
+    print("FEATURE SUMMARY")
+    print("=" * 60)
+    
+    # Fourier Features
+    ff_cfg = cfg.get('fourier_features', {})
+    ff_enabled = ff_cfg.get('enabled', False)
+    if ff_enabled:
+        ff_dim = ff_cfg.get('dim', 64)
+        ff_scale = ff_cfg.get('scale', 1.0)
+        print(f"  Fourier Features: enabled (dim={ff_dim}, scale={ff_scale}, output_dim={2*ff_dim})")
+    else:
+        print(f"  Fourier Features: disabled")
+    
+    # RWF
+    rwf_enabled = cfg.get('rwf', False)
+    if rwf_enabled:
+        print(f"  RWF: enabled")
+    else:
+        print(f"  RWF: disabled")
+    
+    # Causal Training
     _cs_init = getattr(loss_fn, 'causal_state', None)
     if _cs_init is not None:
-        print(f"  Causal training enabled: "
-              f"schedule={_cs_init['schedule']}, "
-              f"chunks={_cs_init['num_chunks']}, "
-              f"threshold={_cs_init['threshold']}")
-
+        print(f"  Causal Training: enabled (schedule={_cs_init['schedule']}, chunks={_cs_init['num_chunks']}, threshold={_cs_init['threshold']})")
+    else:
+        print(f"  Causal Training: disabled")
+    
+    # LRA
     if lra_enabled:
-        print(f"  LRA enabled: update_every={lra_weights.update_every} epochs, "
-              f"alpha={lra_weights.alpha}")
-
+        init_w = lra_weights.weights
+        print(f"  LRA: enabled (alpha={lra_weights.alpha}, update_every={lra_weights.update_every}, "
+              f"init_weights={{res={init_w['residual']:.1f}, ic={init_w['ic']:.1f}, bc={init_w['bc']:.1f}}})")
+    else:
+        print(f"  LRA: disabled")
+    
+    # Resampling & Adaptive Sampling
+    adaptive_sampling_enabled = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('enabled', False)
+    if resample_every > 0:
+        if adaptive_sampling_enabled:
+            as_ratio = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('adaptive_ratio', 0.5)
+            print(f"  Resampling: every {resample_every} epochs (adaptive: enabled, ratio={as_ratio})")
+        else:
+            print(f"  Resampling: every {resample_every} epochs (adaptive: disabled)")
+    else:
+        print(f"  Resampling: disabled")
+    
+    # Optimizer schedule
+    opt1_name = cfg.get('optimizer_1', cfg.get('optimizer', 'adam'))
+    opt2_name = cfg.get('optimizer_2', 'null')
+    if opt2_name and opt2_name != 'null':
+        switch_epoch = cfg.get('optimizer_switch_epoch', total_epochs + 1)
+        print(f"  Optimizer: {opt1_name} → {opt2_name} at epoch {switch_epoch}")
+    else:
+        print(f"  Optimizer: {opt1_name}")
+    
+    # Early stopping
     if patience_epochs > 0:
-        print(f"  Early stopping enabled: patience={patience_epochs} epochs, "
-              f"min_epochs={min_epochs}")
+        print(f"  Early stopping: enabled (patience={patience_epochs}, min_epochs={min_epochs})")
+    else:
+        print(f"  Early stopping: disabled")
+    
+    print("=" * 60 + "\n")
 
     epoch = 0
     while epoch < total_epochs:
         epoch += 1
         timer.start_epoch(epoch, num_experts=model.num_experts if (is_adaptive and hasattr(model, 'num_experts')) else 0)
 
+        # Enable residual caching for adaptive sampling if needed
+        # Cache THIS epoch's residuals for NEXT epoch's resampling
+        adaptive_sampling_enabled = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('enabled', False)
+        will_cache_for_resample = (
+            adaptive_sampling_enabled and resample_every > 0
+            and epoch > 0 and epoch % resample_every == 0
+        )
+        if will_cache_for_resample:
+            model._residual_cache = []
+            model._residual_cache_enabled = True
+
         # Resample training data periodically (in-memory, no disk I/O)
         if resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0:
             resample_seed = base_seed + epoch
             print(f"  [Resample] Regenerating training data (epoch {epoch}, seed {resample_seed})...")
-            train_data = regenerate_training_data(cfg, device, resample_seed=resample_seed, model=model)
+            # Get cached residuals from previous epoch (if available)
+            cached_residuals = getattr(model, '_residual_cache', [])
+            model._residual_cache_enabled = False
+            train_data = regenerate_training_data(
+                cfg, device, resample_seed=resample_seed,
+                cached_residuals=cached_residuals,
+                run_dir=run_dir,
+                epoch=epoch
+            )
             train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
 
         # Train phase
@@ -900,6 +975,39 @@ def train(
                   f"Eval Rel-L2: {eval_rel_l2:.6f} | "
                   f"Eval Inf: {eval_inf_norm:.6f}")
 
+            # DIAGNOSTIC: Causal weight progression
+            causal_state = getattr(loss_fn, 'causal_state', None)
+            if causal_state is not None:
+                cs = causal_state
+                stage_str = f"{cs['schedule_idx']+1}/{len(cs['schedule'])}"
+                print(f"  [Causal] tol={cs['tol']:.2f}, stage={stage_str}, min_weight={cs['min_weight']:.6f}")
+
+            # DIAGNOSTIC: LRA weights and gradient norms
+            if lra_weights is not None:
+                w = lra_weights.weights
+                g = lra_weights.last_grad_norms
+                print(f"  [LRA] weights: res={w['residual']:.4f}, ic={w['ic']:.4f}, bc={w['bc']:.4f} | "
+                      f"grad_norms: res={g.get('residual', 0):.6f}, ic={g.get('ic', 0):.6f}, bc={g.get('bc', 0):.6f}")
+
+            # DIAGNOSTIC: Unweighted loss component breakdown
+            # Compute on a sample eval batch
+            try:
+                sample_batch = next(iter(eval_loader))
+                # Get the original loss function (unwrap LRA if present)
+                orig_loss_fn = getattr(loss_fn, '__wrapped__', loss_fn)
+                if hasattr(orig_loss_fn, '__self__'):  # It's a method/closure
+                    # For the LRA wrapper, we need to access _orig_loss_fn from the closure
+                    if '_orig_loss_fn' in dir(loss_fn):
+                        orig_loss_fn = loss_fn.__code__.co_consts  # This won't work, need different approach
+                # Actually, just call with return_components=True which the wrapper forwards
+                with torch.no_grad():
+                    components = loss_fn(model, sample_batch, return_components=True)
+                    print(f"  [Loss] components: residual={components['residual']:.6f}, "
+                          f"ic={components['ic']:.6f}, bc={components['bc']:.6f} (unweighted)")
+            except Exception as e:
+                # Don't crash if component breakdown fails
+                pass
+
             # DIAGNOSTIC: Print expert contributions (configurable)
             enable_grad_diag = adaptive_cfg.get('enable_gradient_diagnostics', False) if is_adaptive else False
             if enable_grad_diag and is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0 and hasattr(model, '_diag_data') and model._diag_data:
@@ -937,7 +1045,7 @@ def train(
                 epochs_without_improvement += 1
             if (epoch >= min_epochs
                     and epochs_without_improvement >= patience_epochs):
-                print(f"\n  [EarlyStop] No Rel-L2 improvement "
+                print(f"\n  [EarlyStop] No train loss improvement "
                       f"for {epochs_without_improvement} epochs "
                       f"(best={best_train_loss:.6f}). "
                       f"Stopping at epoch {epoch}.")

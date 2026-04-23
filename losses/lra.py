@@ -31,15 +31,34 @@ class LRAWeights:
         update_every: How often (in epochs) to recompute weights.
                       Each update requires 3 separate backward passes —
                       keep this at least 50-100 for efficiency.
+        initial_weights: Optional dict of initial weights {'residual': float, 'ic': float, 'bc': float}.
+                        If None, defaults to all 1.0.
     """
 
-    def __init__(self, alpha: float = 0.1, update_every: int = 100):
+    def __init__(
+        self,
+        alpha: float = 0.1,
+        update_every: int = 100,
+        initial_weights: Dict[str, float] = None,
+    ):
         self.alpha = alpha
         self.update_every = update_every
-        self.weights: Dict[str, float] = {
-            'residual': 1.0,
-            'ic': 1.0,
-            'bc': 1.0,
+        if initial_weights is not None:
+            self.weights: Dict[str, float] = {
+                'residual': initial_weights.get('residual', 1.0),
+                'ic': initial_weights.get('ic', 1.0),
+                'bc': initial_weights.get('bc', 1.0),
+            }
+        else:
+            self.weights: Dict[str, float] = {
+                'residual': 1.0,
+                'ic': 1.0,
+                'bc': 1.0,
+            }
+        self.last_grad_norms: Dict[str, float] = {
+            'residual': 0.0,
+            'ic': 0.0,
+            'bc': 0.0,
         }
 
     def update(
@@ -77,6 +96,9 @@ class LRAWeights:
                 g.norm() ** 2 for g in grads if g is not None
             )
             grad_norms[key] = float(norm_sq.sqrt().clamp(min=1e-8))
+
+        # Store gradient norms for diagnostics
+        self.last_grad_norms = grad_norms.copy()
 
         # Zero gradients accumulated during grad norm computation
         model.zero_grad()
