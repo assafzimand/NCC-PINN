@@ -21,6 +21,7 @@ IMPORTANT DESIGN CHOICE - Decomposed Derivatives:
     See line ~485: use_decomposed = False (forced, not configurable).
 """
 
+import math
 import torch
 import torch.nn as nn
 from typing import Dict, Callable, Tuple
@@ -575,7 +576,7 @@ def build_loss(**cfg) -> Callable:
 
             # Separate BC points by x-coordinate (works correctly after shuffle)
             x_min_val = 0.0
-            x_max_val = 2.0 * np.pi
+            x_max_val = 2.0 * math.pi
             x_mid = (x_min_val + x_max_val) / 2.0
             
             left_mask = x_b[:, 0] < x_mid
