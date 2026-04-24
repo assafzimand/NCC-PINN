@@ -245,7 +245,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 10000                      # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 4000                      # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -279,12 +279,7 @@ base_config:
 
 
 # ===== Experiments to run =====
-experiments:
-  - name: ks_full_tree_by_norm
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 1]
-    fourier_features:
-      scale: 1.5                     # KS-specific: moderate scale for distributed frequency content
+experiments:             # KS-specific: moderate scale for distributed frequency content
 
   # - name: schrodinger_full_tree_by_norm
   #   problem: schrodinger
@@ -294,11 +289,17 @@ experiments:
   #   problem: burgers1d
   #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  # - name: allen_cahn_full_tree_by_norm
-  #   problem: allen_cahn
-  #   base_architecture: [2, 128, 128, 128, 128, 128, 1]
-  #   fourier_features:
-  #     scale: 3.0                     # Allen-Cahn specific: high scale for sharp interfaces (D=0.0001)
+  - name: allen_cahn_full_tree_by_norm
+    problem: allen_cahn
+    base_architecture: [2, 128, 128, 128, 128, 128, 1]
+    fourier_features:
+      scale: 3.0                     # Allen-Cahn specific: high scale for sharp interfaces (D=0.0001)
+
+  - name: ks_full_tree_by_norm
+    problem: ks
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
+    fourier_features:
+      scale: 1.5        
 
   # - name: kdv_full_tree_by_norm
   #   problem: kdv
