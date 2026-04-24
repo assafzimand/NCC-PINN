@@ -341,7 +341,10 @@ def train(
         'epochs': [],              # Evaluation epochs only
         'eval_loss': [],
         'eval_rel_l2': [],
-        'eval_inf_norm': []
+        'eval_inf_norm': [],
+        'causal_history': [],      # Causal training state (tol, min_weight, stage) at eval epochs
+        'lra_history': [],         # LRA weights and grad norms at eval epochs
+        'resample_events': []      # Track resampling/skipping events
     }
 
     best_eval_loss = float('inf')
@@ -707,7 +710,9 @@ def train(
                 print(f"  [Adaptive Sampling] Activated at epoch {epoch} (causal training reached final stage)")
 
         # Resample training data periodically (in-memory, no disk I/O)
-        if resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0:
+        # Skip resampling during L-BFGS/SSBroyden (they need stable loss landscape)
+        allow_resample_optimizer = current_optimizer_name not in ('LBFGS', 'SSBroyden')
+        if resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0 and allow_resample_optimizer:
             resample_seed = base_seed + epoch
             print(f"  [Resample] Regenerating training data (epoch {epoch}, seed {resample_seed})...")
             # Get cached residuals from previous epoch (if available)
@@ -720,6 +725,24 @@ def train(
                 epoch=epoch
             )
             train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
+            # Save resample event to metrics
+            metrics['resample_events'].append({
+                'epoch': epoch,
+                'action': 'resampled',
+                'optimizer': current_optimizer_name
+            })
+        elif resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0 and not allow_resample_optimizer:
+            # Log when resampling is skipped due to optimizer
+            if not hasattr(model, '_resample_skip_logged'):
+                model._resample_skip_logged = True
+                print(f"  [Resample] Skipping resampling during {current_optimizer_name} (loss landscape stability required)")
+            # Save skip event to metrics
+            metrics['resample_events'].append({
+                'epoch': epoch,
+                'action': 'skipped',
+                'optimizer': current_optimizer_name,
+                'reason': 'optimizer_stability'
+            })
 
         # Train phase
         model.train()
@@ -992,6 +1015,15 @@ def train(
                 cs = causal_state
                 stage_str = f"{cs['schedule_idx']+1}/{len(cs['schedule'])}"
                 print(f"  [Causal] tol={cs['tol']:.2f}, stage={stage_str}, min_weight={cs['min_weight']:.6f}")
+                # Save to metrics
+                metrics['causal_history'].append({
+                    'epoch': epoch,
+                    'tol': float(cs['tol']),
+                    'stage': int(cs['schedule_idx']),
+                    'stage_total': len(cs['schedule']),
+                    'min_weight': float(cs['min_weight']),
+                    'threshold': float(cs['threshold'])
+                })
 
             # DIAGNOSTIC: LRA weights and gradient norms
             if lra_weights is not None:
@@ -999,6 +1031,20 @@ def train(
                 g = lra_weights.last_grad_norms
                 print(f"  [LRA] weights: res={w['residual']:.4f}, ic={w['ic']:.4f}, bc={w['bc']:.4f} | "
                       f"grad_norms: res={g.get('residual', 0):.6f}, ic={g.get('ic', 0):.6f}, bc={g.get('bc', 0):.6f}")
+                # Save to metrics
+                metrics['lra_history'].append({
+                    'epoch': epoch,
+                    'weights': {
+                        'residual': float(w['residual']),
+                        'ic': float(w['ic']),
+                        'bc': float(w['bc'])
+                    },
+                    'grad_norms': {
+                        'residual': float(g.get('residual', 0)),
+                        'ic': float(g.get('ic', 0)),
+                        'bc': float(g.get('bc', 0))
+                    }
+                })
 
             # DIAGNOSTIC: Unweighted loss component breakdown
             # Compute on a sample eval batch
