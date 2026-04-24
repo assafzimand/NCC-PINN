@@ -1,0 +1,19 @@
+Training Summary
+============================================================
+
+Problem: allen_cahn
+Architecture: [2, 128, 128, 128, 128, 128, 1]
+Activation: tanh
+Epochs: 4000
+Batch size: 2048
+Learning rate: 0.001
+Device: cuda
+
+Final train loss: 0.000000
+Final eval loss: 0.000000
+Final eval rel-L2: 0.002277
+Final eval inf-norm: 0.019407
+Best eval loss: 0.000000
+
+Best checkpoint: outputs/allen_cahn-2-128-128-128-128-128-1-tanh/20260423_170445/checkpoints/best_model.pt
+Final checkpoint: outputs/allen_cahn-2-128-128-128-128-128-1-tanh/20260423_170445/checkpoints/final_model.pt
