@@ -686,14 +686,25 @@ def train(
 
         # Enable residual caching for adaptive sampling if needed
         # Cache THIS epoch's residuals for NEXT epoch's resampling
+        # Only activate adaptive sampling when causal training reaches final stage (Option B)
         adaptive_sampling_enabled = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('enabled', False)
+        causal_state = getattr(loss_fn, 'causal_state', None)
+        causal_at_final_stage = True  # default if causal disabled
+        if causal_state is not None:
+            causal_at_final_stage = (causal_state['schedule_idx'] >= len(causal_state['schedule']) - 1)
+        
         will_cache_for_resample = (
-            adaptive_sampling_enabled and resample_every > 0
+            adaptive_sampling_enabled and causal_at_final_stage
+            and resample_every > 0
             and epoch > 0 and epoch % resample_every == 0
         )
         if will_cache_for_resample:
             model._residual_cache = []
             model._residual_cache_enabled = True
+            # Log when adaptive sampling first activates
+            if not hasattr(model, '_adaptive_sampling_activated'):
+                model._adaptive_sampling_activated = True
+                print(f"  [Adaptive Sampling] Activated at epoch {epoch} (causal training reached final stage)")
 
         # Resample training data periodically (in-memory, no disk I/O)
         if resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0:
