@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "full_tree_test_NO_ks"
+experiment_name: "full_tree_test_ks"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -17,7 +17,7 @@ base_config:
   # ── Optimizer configuration ──
   optimizer_1: soap                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
   optimizer_2: lbfgs                 # Second optimizer: 'lbfgs' | 'adam' | 'soap' | 'ssbroyden' | null (null = no switch)
-  optimizer_switch_epoch: 3500       # Epoch to switch optimizer_1 → optimizer_2
+  optimizer_switch_epoch: 4000       # Epoch to switch optimizer_1 → optimizer_2
   lr: 0.001                          # Base (peak) learning rate
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
@@ -57,7 +57,7 @@ base_config:
 
   # ── LRA (Loss Rate Annealing) ──
   lra:
-    enabled: true                    # Adaptively weight residual/IC/BC losses
+    enabled: false                    # Adaptively weight residual/IC/BC losses
     update_every: 100                # Epochs between weight updates (3 extra backward passes each)
     alpha: 0.1                       # EMA smoothing factor for weight updates
 
@@ -218,13 +218,13 @@ base_config:
     tree_smoothness_threshold: 0.3
     loss_weights:
       residual: 1.0
-      ic: 100.0                      # Strong IC (was 50.0) — chaotic system is very IC-sensitive
-      bc: 10.0                       # Periodic BC matters for KS stability
+      ic: 200.0                      # Strong IC (was 100.0) — chaotic system is critically IC-sensitive
+      bc: 20.0                       # Periodic BC matters for KS stability (was 10.0)
     causal_training:
       enabled: true                  # Causal weighting on residual loss — critical for chaotic KS (Wang et al. 2022)
       num_chunks: 32                 # Temporal bins (keep 32, enough for 20k points)
-      tol_schedule: [0.01, 0.1, 1.0, 10.0]  # Extended from [0.01, 0.1, 1.0] for 4000 epochs
-      min_weight_threshold: 0.99     # Advance epsilon when min(w_i) > this (paper: delta=0.99)
+      tol_schedule: [0.1, 1.0, 10.0]  # Dropped 0.01 (instant), keep 3 stages for 6000 epochs
+      min_weight_threshold: 0.90     # Lowered from 0.99 — allow advancement during SOAP (was stuck at stage 2)
     fourier_features:
       scale: 1.5                     # Moderate — KS has distributed frequency content, not as sharp as Allen-Cahn
 
@@ -245,7 +245,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 4000                      # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 6000                      # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -274,7 +274,7 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 4000                                # Phase 1: train base model for 4000 epochs before tree fitting
+      epochs: 6000                                # Phase 1: train base model for 4000 epochs before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
@@ -289,11 +289,11 @@ experiments:             # KS-specific: moderate scale for distributed frequency
   #   problem: burgers1d
   #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
 
-  - name: allen_cahn_full_tree_by_norm
-    problem: allen_cahn
-    base_architecture: [2, 128, 128, 128, 128, 128, 1]
-    fourier_features:
-      scale: 3.0                     # Allen-Cahn specific: high scale for sharp interfaces (D=0.0001)
+  # - name: allen_cahn_full_tree_by_norm
+  #   problem: allen_cahn
+  #   base_architecture: [2, 128, 128, 128, 128, 128, 1]
+  #   fourier_features:
+  #     scale: 3.0                     # Allen-Cahn specific: high scale for sharp interfaces (D=0.0001)
 
   - name: ks_full_tree_by_norm
     problem: ks

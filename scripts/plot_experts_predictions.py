@@ -23,6 +23,8 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 
 _TS_RE = re.compile(r'\d{8}_\d{6}$')
 
