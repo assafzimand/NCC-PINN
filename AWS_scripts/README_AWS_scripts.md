@@ -7,15 +7,23 @@ This folder contains helper scripts to run NCC-PINN experiments on an AWS EC2 GP
 ## Quick Start
 
 1. **SSH into your EC2 instance**
-2. **Run setup** (first time): `bash ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh`
-3. **Run experiments with auto-shutdown**:
+2. **First time only**: Run setup script
+   ```bash
+   bash ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh
+   ```
+3. **Activate venv** (every time you connect):
+   ```bash
+   source ~/.venv_ncc_pinn/bin/activate
+   cd ~/NCC-PINN
+   ```
+4. **Run experiments with auto-shutdown**:
    ```bash
    screen -S ncc_experiment
    bash ~/NCC-PINN/AWS_scripts/run_and_terminate.sh
    # Detach: Ctrl+A, then D
    ```
-4. **After experiments complete**: Instance auto-stops → no more charges!
-5. **Download results**: Restart instance, run `download_AWS_results.ps1`
+5. **After experiments complete**: Instance auto-stops → no more charges!
+6. **Download results**: Restart instance, SSH in, activate venv, run download script
 
 ---
 
@@ -117,7 +125,7 @@ Copy the **Public IPv4 address** from EC2 Console.
 
 ### 1. `prepare_AWS_run.sh` – Setup on EC2
 
-Run this after SSHing into EC2:
+Run this **the first time** after SSHing into EC2:
 
 ```bash
 bash ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh
@@ -127,7 +135,16 @@ This will:
 - Install Python, venv, git, screen
 - Create virtualenv at `~/.venv_ncc_pinn`
 - Clone/update the NCC-PINN repo from GitHub
-- Install requirements.txt
+- **Install all dependencies** from `requirements.txt` (including `torchmin` for SSBroyden optimizer)
+
+**Important**: The script activates the venv **during setup only**. After the script finishes, you need to **manually activate** the venv:
+
+```bash
+source ~/.venv_ncc_pinn/bin/activate
+cd ~/NCC-PINN
+```
+
+**You'll see `(.venv_ncc_pinn)` in your prompt when activated.**
 
 ### 2. `run_and_terminate.sh` – Run Experiments with Auto-Shutdown
 
@@ -166,14 +183,21 @@ ssh -i .\NCC-PINN-ASSAF.pem ubuntu@13.60.229.209
 ```
 
 ```bash
-# On EC2 - Run experiments
-bash ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh  # Only if needed
-screen -S ncc_experiment
+# On EC2 - First time setup (if needed)
+bash ~/NCC-PINN/AWS_scripts/prepare_AWS_run.sh
+
+# Activate venv (REQUIRED every time you reconnect!)
 source ~/.venv_ncc_pinn/bin/activate
+cd ~/NCC-PINN
+
+# Run experiments in screen (safe to disconnect)
+screen -S ncc_experiment
 bash ~/NCC-PINN/AWS_scripts/run_and_terminate.sh
 # Press Ctrl+A, then D to detach
 exit  # Disconnect from SSH - experiments continue!
 ```
+
+**Note**: The venv activation step is **mandatory** every time you SSH in. You'll see `(.venv_ncc_pinn)` in your prompt when it's active.
 
 ### Later: Instance Stopped Automatically
 - Go to AWS Console to verify instance is "Stopped"
