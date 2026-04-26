@@ -8,7 +8,7 @@ base_config:
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 10000                          # Phase 3 duration (just spawn for testing, or set via initial_train.epochs)
+  epochs: 1                          # Phase 3 duration (just spawn for testing, or set via initial_train.epochs)
   batch_size: 4096                    # Mini-batch size for Adam/SOAP training
   patience_epochs: 12000             # High value for 10k epoch runs (effectively disabled)
   min_epochs: 2000                   # Minimum epochs before early stopping can trigger
@@ -17,7 +17,7 @@ base_config:
   # ── Optimizer configuration ──
   optimizer_1: soap                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
   optimizer_2: lbfgs                 # Second optimizer: 'lbfgs' | 'adam' | 'soap' | 'ssbroyden' | null (null = no switch)
-  optimizer_switch_epoch: 8001       # Epoch to switch optimizer_1 → optimizer_2 (for 10k runs)
+  optimizer_switch_epoch: 8000       # Epoch to switch optimizer_1 → optimizer_2 (for 10k runs)
   lr: 0.001                          # Base (peak) learning rate
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
@@ -245,7 +245,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 1000                   # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 10000                   # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -262,10 +262,10 @@ base_config:
     enable_timing: false                       # Enable epoch timing profiling (can slow down training)
     inner_metrics_calculation: false            # Disable NCC/probes during training (complex with experts)
     enable_gradient_diagnostics: false          # Enable detailed gradient flow diagnostics (verbose)
-    use_decomposed_derivatives: false
+    use_decomposed_derivatives: true
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
-    spawning_method: accept_split_by_norm       # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
+    spawning_method: full_tree_by_norm       # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
     perfect_trees_path: perfect_tree_examples/classic_norm/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
     # ── 3-Phase training config ──
@@ -284,7 +284,9 @@ experiments:
   # Experiment A: Baseline with fixes (SOAP → L-BFGS, no adaptive sampling, resampling only during SOAP)
   - name: ks_A_soap_lbfgs_baseline
     problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
+    initial_train:
+      epochs: 10000
     optimizer_1: soap
     optimizer_2: lbfgs
     optimizer_switch_epoch: 8000
@@ -302,7 +304,9 @@ experiments:
   # Experiment B: Like A but gentler causal training (cap at tol=0.5 to avoid zero weights)
   - name: ks_B_soap_lbfgs_gentle_causal
     problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
+    initial_train:
+      epochs: 10000
     optimizer_1: soap
     optimizer_2: lbfgs
     optimizer_switch_epoch: 8000
@@ -320,7 +324,9 @@ experiments:
   # Experiment C: Like A but with SSBroyden instead of L-BFGS
   - name: ks_C_soap_ssbroyden
     problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
+    initial_train:
+      epochs: 10000
     optimizer_1: soap
     optimizer_2: ssbroyden
     optimizer_switch_epoch: 8000
@@ -338,7 +344,9 @@ experiments:
   # Experiment D: B+C combined (SSBroyden + gentle causal)
   - name: ks_D_soap_ssbroyden_gentle_causal
     problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
+    initial_train:
+      epochs: 10000
     optimizer_1: soap
     optimizer_2: ssbroyden
     optimizer_switch_epoch: 8000
@@ -356,7 +364,9 @@ experiments:
   # Experiment E: Vanilla SOAP baseline (no causal, no second optimizer)
   - name: ks_E_soap_only_vanilla
     problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
+    initial_train:
+      epochs: 10000
     optimizer_1: soap
     optimizer_2: null                     # No second optimizer
     fourier_features:
@@ -370,7 +380,9 @@ experiments:
   # Experiment F: Like B but with high Fourier scale (Allen-Cahn's successful param)
   - name: ks_F_lbfgs_gentle_causal_ff3
     problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
+    initial_train:
+      epochs: 10000
     optimizer_1: soap
     optimizer_2: lbfgs
     optimizer_switch_epoch: 8000

@@ -1,23 +1,23 @@
 # Experiment plan configuration
-experiment_name: "ks_tuning_6exp"
+experiment_name: "create_capacity_maps_AToELeaves_fixed_piratenet"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: schrodinger
-  model: AToE                        # 'AToE' | 'AToELeaves' | 'ANT'
+  model: ANT                        # 'AToE' | 'AToELeaves' | 'ANT'
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 10000                          # Phase 3 duration (just spawn for testing, or set via initial_train.epochs)
+  epochs: 1                          # Phase 3 duration (just spawn for testing, or set via initial_train.epochs)
   batch_size: 4096                    # Mini-batch size for Adam/SOAP training
-  patience_epochs: 12000             # High value for 10k epoch runs (effectively disabled)
+  patience_epochs: 3000          # High value for 10k epoch runs (effectively disabled)
   min_epochs: 2000                   # Minimum epochs before early stopping can trigger
 
   # ── Primary optimizer ──
   # ── Optimizer configuration ──
   optimizer_1: soap                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
-  optimizer_2: lbfgs                 # Second optimizer: 'lbfgs' | 'adam' | 'soap' | 'ssbroyden' | null (null = no switch)
-  optimizer_switch_epoch: 8001       # Epoch to switch optimizer_1 → optimizer_2 (for 10k runs)
+  optimizer_2: null                 # Second optimizer: 'lbfgs' | 'adam' | 'soap' | 'ssbroyden' | null (null = no switch)
+  optimizer_switch_epoch: 1500    # Epoch to switch optimizer_1 → optimizer_2 (for 10k runs)
   lr: 0.001                          # Base (peak) learning rate
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
@@ -47,11 +47,11 @@ base_config:
   adam_eps: 1.0e-8                   # Adam epsilon for numerical stability.
 
   # ── RWF (Random Weight Factorization) ──
-  rwf: true                          # Apply W_eff = diag(exp(s)) @ W to all hidden layers
+  rwf: false                          # Apply W_eff = diag(exp(s)) @ W to all hidden layers
 
   # ── Fourier Features ──
   fourier_features:
-    enabled: true                    # Map input → [cos(Bz), sin(Bz)] before network
+    enabled: false                    # Map input → [cos(Bz), sin(Bz)] before network
     dim: 128                         # Number of Fourier features (output = 2*dim = 256)
     scale: 1.0                       # Std of random projection matrix B (per-problem override)
 
@@ -235,7 +235,7 @@ base_config:
     boundary_train_ratio: 0.026      # ~260 BC points (with n_residual=20000). Papers use 200+.
     eval_train_ratio: 0.25           # eval = 25% of train (all types)
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
-    resample_every_epochs: 500       # Regenerate training data every N epochs. Papers use 500.
+    resample_every_epochs: 100     # Regenerate training data every N epochs. Papers use 500.
     adaptive_sampling:
       enabled: true                  # Mix uniform + residual-adaptive points (vRBA/RAR-D)
       adaptive_ratio: 0.3            # Fraction of residual_train points that are adaptive
@@ -245,13 +245,13 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 1000                   # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 2000                # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
-    expert_type: resnet                        # 'mlp' or 'resnet' -- architecture for base model and experts
+    expert_type: piratenet                        # 'mlp' or 'resnet' -- architecture for base model and experts
     freeze_mode: none                          # "none" | "previous" | "base_only"
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
@@ -262,10 +262,10 @@ base_config:
     enable_timing: false                       # Enable epoch timing profiling (can slow down training)
     inner_metrics_calculation: false            # Disable NCC/probes during training (complex with experts)
     enable_gradient_diagnostics: false          # Enable detailed gradient flow diagnostics (verbose)
-    use_decomposed_derivatives: false
+    use_decomposed_derivatives: true
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
-    spawning_method: accept_split_by_norm       # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
+    spawning_method: use_perfect_trees       # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
     perfect_trees_path: perfect_tree_examples/classic_norm/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
     # ── 3-Phase training config ──
@@ -274,113 +274,43 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 10000                               # Phase 1: train base model for 10000 epochs before tree fitting
+      epochs: 2000                            # Phase 1: train base model for 10000 epochs before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
 # ===== Experiments to run =====
 experiments:
 
-  # Experiment A: Baseline with fixes (SOAP → L-BFGS, no adaptive sampling, resampling only during SOAP)
-  - name: ks_A_soap_lbfgs_baseline
-    problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
-    optimizer_1: soap
-    optimizer_2: lbfgs
-    optimizer_switch_epoch: 8000
-    fourier_features:
-      scale: 1.5
-    sampling:
-      adaptive_sampling:
-        enabled: false                    # Disabled — not helping for KS
-    causal_training:
+  - name: allen_cahn_AToELeaves_fixed
+    problem: allen_cahn
+    model: AToELeaves
+    base_architecture: [2, 64, 64, 64, 64, 64, 64, 64, 64, 64, 1]
+    lra:
       enabled: true
-      num_chunks: 32
-      tol_schedule: [0.1, 1.0, 10.0]
-      min_weight_threshold: 0.90
-
-  # Experiment B: Like A but gentler causal training (cap at tol=0.5 to avoid zero weights)
-  - name: ks_B_soap_lbfgs_gentle_causal
-    problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
-    optimizer_1: soap
-    optimizer_2: lbfgs
-    optimizer_switch_epoch: 8000
+      alpha: 0.1
+      update_every: 100
     fourier_features:
-      scale: 1.5
-    sampling:
-      adaptive_sampling:
-        enabled: false
-    causal_training:
       enabled: true
-      num_chunks: 32
-      tol_schedule: [0.1, 0.5]            # Stop at 0.5 instead of 10.0
-      min_weight_threshold: 0.85          # Lower threshold for faster advancement
+      dim: 128
+      scale: 3.0
+    rwf: true
 
-  # Experiment C: Like A but with SSBroyden instead of L-BFGS
-  - name: ks_C_soap_ssbroyden
-    problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
-    optimizer_1: soap
-    optimizer_2: ssbroyden
-    optimizer_switch_epoch: 8000
-    fourier_features:
-      scale: 1.5
-    sampling:
-      adaptive_sampling:
-        enabled: false
-    causal_training:
-      enabled: true
-      num_chunks: 32
-      tol_schedule: [0.1, 1.0, 10.0]
-      min_weight_threshold: 0.90
+  - name: kdv_AToELeaves_fixed
+    model: AToELeaves
+    problem: kdv
+    base_architecture: [2, 64, 64, 64, 64, 64, 64, 64, 64, 64, 1]
 
-  # Experiment D: B+C combined (SSBroyden + gentle causal)
-  - name: ks_D_soap_ssbroyden_gentle_causal
-    problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
-    optimizer_1: soap
-    optimizer_2: ssbroyden
-    optimizer_switch_epoch: 8000
-    fourier_features:
-      scale: 1.5
-    sampling:
-      adaptive_sampling:
-        enabled: false
-    causal_training:
-      enabled: true
-      num_chunks: 32
-      tol_schedule: [0.1, 0.5]            # Gentle causal
-      min_weight_threshold: 0.85
+  - name: schrodinger_AToELeaves_fixed
+    model: AToELeaves
+    problem: schrodinger
+    base_architecture: [2, 64, 64, 64, 64, 64, 64, 64, 64, 64, 2]
 
-  # Experiment E: Vanilla SOAP baseline (no causal, no second optimizer)
-  - name: ks_E_soap_only_vanilla
-    problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
-    optimizer_1: soap
-    optimizer_2: null                     # No second optimizer
-    fourier_features:
-      scale: 1.5
-    sampling:
-      adaptive_sampling:
-        enabled: false
-    causal_training:
-      enabled: false                      # Disabled — test if causal helps at all
+  - name: burgers1d_AToELeaves_fixed
+    model: AToELeaves
+    problem: burgers1d
+    base_architecture: [2, 64, 64, 64, 64, 64, 64, 64, 64, 64, 1]
 
-  # Experiment F: Like B but with high Fourier scale (Allen-Cahn's successful param)
-  - name: ks_F_lbfgs_gentle_causal_ff3
+  - name: ks_AToELeaves_fixed
+    model: AToELeaves
     problem: ks
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
-    optimizer_1: soap
-    optimizer_2: lbfgs
-    optimizer_switch_epoch: 8000
-    fourier_features:
-      scale: 3.0                          # High scale like Allen-Cahn (was 1.5)
-    sampling:
-      adaptive_sampling:
-        enabled: false
-    causal_training:
-      enabled: true
-      num_chunks: 32
-      tol_schedule: [0.1, 0.5]            # Gentle causal
-      min_weight_threshold: 0.85
+    base_architecture: [2, 64, 64, 64, 64, 64, 64, 64, 64, 64, 1]
