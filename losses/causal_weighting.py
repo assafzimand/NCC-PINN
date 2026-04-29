@@ -41,7 +41,7 @@ def create_causal_state(
         'schedule': list(schedule),
         'schedule_idx': 0,
         'tol': float(schedule[0]),
-        'min_weight': 1.0,
+        'min_weight': 0.0,  # Start at 0.0 to prevent premature advancement
         'threshold': causal_cfg.get(
             'min_weight_threshold', 0.99),
     }
@@ -72,13 +72,20 @@ def compute_causal_residual(
     residual_squared: torch.Tensor,
     t_residual: torch.Tensor,
     causal_state: Optional[Dict],
+    update_state: bool = True,
 ) -> torch.Tensor:
     """
     Compute residual MSE, optionally with causal weighting.
 
     When causal_state is None (disabled), returns plain mean.
     Otherwise applies temporal causal weights and updates
-    causal_state['min_weight'] for the annealing check.
+    causal_state['min_weight'] for the annealing check (if update_state=True).
+    
+    Args:
+        residual_squared: Squared residuals
+        t_residual: Time values for residual points
+        causal_state: Causal training state dict (or None if disabled)
+        update_state: If False, don't update causal_state (use during eval)
     """
     if causal_state is None:
         return torch.mean(residual_squared)
@@ -87,7 +94,7 @@ def compute_causal_residual(
         t_residual,
         causal_state['num_chunks'],
         causal_state['tol'],
-        causal_state,
+        causal_state if update_state else None,
     )
 
 

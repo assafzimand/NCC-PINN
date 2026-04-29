@@ -970,7 +970,7 @@ def train(
                 # even during evaluation (for computing derivatives in PDE residuals).
                 # We still use model.eval() to disable dropout/batchnorm training behavior.
                 timer.start('eval.loss_fn')
-                loss = loss_fn(model, batch)
+                loss = loss_fn(model, batch, update_causal_state=False)
                 timer.stop('eval.loss_fn')
 
                 with torch.no_grad():

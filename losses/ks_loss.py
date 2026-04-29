@@ -469,7 +469,8 @@ def build_loss(**cfg) -> Callable:
 
     def loss_fn(model: nn.Module, batch: Dict[str, torch.Tensor],
                 for_tree_spawning: bool = False,
-                return_components: bool = False):
+                return_components: bool = False,
+                update_causal_state: bool = True):
         """
         Compute physics-informed loss for the KS equation.
 
@@ -477,6 +478,8 @@ def build_loss(**cfg) -> Callable:
             model: Neural network model (output_dim=1)
             batch: Dictionary with keys 'x', 't', 'h_gt', 'mask'
             for_tree_spawning: If True, return per-sample loss components dict
+            return_components: If True, return dict of unweighted loss components
+            update_causal_state: If False, don't update causal state (use during eval)
         """
         x = batch['x']
         t = batch['t']
@@ -549,7 +552,8 @@ def build_loss(**cfg) -> Callable:
                         t_f.detach().clone(),
                         residual_squared.detach().clone(),
                     ))
-                mse_residual = compute_causal_residual(residual_squared, t_f, causal_state)
+                mse_residual = compute_causal_residual(
+                    residual_squared, t_f, causal_state, update_state=update_causal_state)
         else:
             if not for_tree_spawning:
                 mse_residual = torch.tensor(0.0, device=device)
