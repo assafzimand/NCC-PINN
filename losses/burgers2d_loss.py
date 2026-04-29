@@ -454,7 +454,8 @@ def build_loss(**cfg) -> Callable:
     
     def loss_fn(model: nn.Module, batch: Dict[str, torch.Tensor],
                 for_tree_spawning: bool = False,
-                return_components: bool = False):
+                return_components: bool = False,
+                update_causal_state: bool = True):
         """
         Compute physics-informed loss for 2D viscous Burgers equation.
         
@@ -543,7 +544,7 @@ def build_loss(**cfg) -> Callable:
                         t_f.detach().clone(),
                         residual_squared.detach().clone(),
                     ))
-                mse_residual = compute_causal_residual(residual_squared, t_f, causal_state)
+                mse_residual = compute_causal_residual(residual_squared, t_f, causal_state, update_state=update_causal_state)
         else:
             if not for_tree_spawning:
                 mse_residual = torch.tensor(0.0, device=device)
