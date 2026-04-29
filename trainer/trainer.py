@@ -374,12 +374,13 @@ def train(
     if lra_weights is not None:
         _orig_loss_fn = loss_fn
 
-        def _lra_loss_fn(model, batch, for_tree_spawning=False, return_components=False):
+        def _lra_loss_fn(model, batch, for_tree_spawning=False, return_components=False, update_causal_state=True):
             if for_tree_spawning or return_components:
                 return _orig_loss_fn(model, batch,
                                      for_tree_spawning=for_tree_spawning,
-                                     return_components=return_components)
-            comps = _orig_loss_fn(model, batch, return_components=True)
+                                     return_components=return_components,
+                                     update_causal_state=update_causal_state)
+            comps = _orig_loss_fn(model, batch, return_components=True, update_causal_state=update_causal_state)
             w = lra_weights.weights
             return (w.get('residual', 1.0) * comps['residual']
                     + w.get('ic', 1.0) * comps['ic']
