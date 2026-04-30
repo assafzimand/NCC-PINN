@@ -22,9 +22,9 @@ base_config:
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
   lr_schedule: exponential                # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
-  lr_warmup_steps: 200               # Short warmup for 4000 epochs (200 steps)
+  lr_warmup_steps: 5000               # Short warmup for 4000 epochs (200 steps)
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps
-  lr_decay_steps: 5000               # Decay every 5k steps (~slow decay over 4000 epochs)
+  lr_decay_steps: 8000               # Decay every 5k steps (~slow decay over 4000 epochs)
 
   # ── SOAP-specific (only used when optimizer_1 or _2 is 'soap') ──
   soap_betas: [0.95, 0.95]          # SOAP momentum parameters (beta1, beta2). Paper default.
@@ -223,7 +223,7 @@ base_config:
     causal_training:
       enabled: true
       num_chunks: 16                 # Fewer chunks = each chunk is bigger = smoother weight transitions
-      tol_schedule: [0.01, 0.1, 1.0, 10.0, 100.0]  # Full paper schedule (Wang et al. 2022) — bug is fixed
+      tol_schedule: [1.0]  # Full paper schedule (Wang et al. 2022) — bug is fixed
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
     fourier_features:
       scale: 1.0                     # Conservative — KS has broadband content, not sharp interfaces
@@ -292,4 +292,8 @@ experiments:
         enabled: false
       resample_every_epochs: 500
     lra:
-      enabled: false
+      enabled: true
+      fourier_features:
+    enabled: true                    # Map input → [cos(Bz), sin(Bz)] before network
+    dim: 128                         # Number of Fourier features (output = 2*dim = 256)
+    scale: 2.0  
