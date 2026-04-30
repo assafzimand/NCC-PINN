@@ -293,8 +293,7 @@ experiments:
       scale: 2.0
     sampling:
       adaptive_sampling:
-        enabled: false
+        enabled: true
       resample_every_epochs: 500
     lra:
-      enabled: true
-      alpha: 0.1
+      enabled: false
