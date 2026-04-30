@@ -63,7 +63,7 @@ def advance_causal_schedule(causal_state: Optional[Dict]) -> bool:
     if causal_state['min_weight'] > causal_state['threshold']:
         causal_state['schedule_idx'] = idx + 1
         causal_state['tol'] = float(schedule[idx + 1])
-        causal_state['min_weight'] = 1.0
+        causal_state['min_weight'] = 0.0
         return True
     return False
 

@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "ks_tuning_6exp"
+experiment_name: "ks_best_shot"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -10,21 +10,21 @@ base_config:
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
   epochs: 1                          # Phase 3 duration (just spawn for testing, or set via initial_train.epochs)
   batch_size: 4096                    # Mini-batch size for Adam/SOAP training
-  patience_epochs: 2000             # High value for 10k epoch runs (effectively disabled)
-  min_epochs: 2000                   # Minimum epochs before early stopping can trigger
+  patience_epochs: 5000              # Effectively disabled for 4000 epoch run
+  min_epochs: 3000                   # Don't early stop before 3000
 
   # ── Primary optimizer ──
   # ── Optimizer configuration ──
   optimizer_1: soap                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
-  optimizer_2: lbfgs                 # Second optimizer: 'lbfgs' | 'adam' | 'soap' | 'ssbroyden' | null (null = no switch)
-  optimizer_switch_epoch: 8001       # Epoch to switch optimizer_1 → optimizer_2 (for 10k runs)
+  optimizer_2: null                  # No second optimizer — let SOAP run full duration
+  optimizer_switch_epoch: 5000       # Unused (no switch)
   lr: 0.001                          # Base (peak) learning rate
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
   lr_schedule: exponential                # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
-  lr_warmup_steps: 500               # Steps to linearly ramp lr from ~0 to base lr (prevents early instability)
+  lr_warmup_steps: 200               # Short warmup for 4000 epochs (200 steps)
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps
-  lr_decay_steps: 10000              # For exponential: how often (in optimizer steps) to decay
+  lr_decay_steps: 5000               # Decay every 5k steps (~slow decay over 4000 epochs)
 
   # ── SOAP-specific (only used when optimizer_1 or _2 is 'soap') ──
   soap_betas: [0.95, 0.95]          # SOAP momentum parameters (beta1, beta2). Paper default.
@@ -218,15 +218,15 @@ base_config:
     tree_smoothness_threshold: 0.3
     loss_weights:
       residual: 1.0
-      ic: 100.0                      # Moderate IC weight (lowered from 200 to settle down)
-      bc: 10.0                       # Moderate BC weight (lowered from 20)
+      ic: 50.0                       # Moderate IC weight — papers use 20-100 per window, we have full [0,1]
+      bc: 1.0                        # Periodic BC is soft — low weight, FF can help enforce periodicity
     causal_training:
-      enabled: true                  # Causal weighting on residual loss — critical for chaotic KS (Wang et al. 2022)
-      num_chunks: 32                 # Temporal bins (keep 32, enough for 20k points)
-      tol_schedule: [0.1, 1.0, 10.0]  # Dropped 0.01 (instant), keep 3 stages for 6000 epochs
-      min_weight_threshold: 0.90     # Lowered from 0.99 — allow advancement during SOAP (was stuck at stage 2)
+      enabled: true
+      num_chunks: 16                 # Fewer chunks = each chunk is bigger = smoother weight transitions
+      tol_schedule: [0.01, 0.1, 1.0, 10.0, 100.0]  # Full paper schedule (Wang et al. 2022) — bug is fixed
+      min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
     fourier_features:
-      scale: 1.5                     # Moderate — KS has distributed frequency content, not as sharp as Allen-Cahn
+      scale: 1.0                     # Conservative — KS has broadband content, not sharp interfaces
 
   # ── Dataset sampling ratios ──
   sampling:
@@ -281,118 +281,17 @@ base_config:
 # ===== Experiments to run =====
 experiments:
 
-  # Experiment A: Baseline (32 chunks, gentle schedule, threshold=0.85)
-  - name: ks_A_soap_lbfgs_baseline
+  # "Best shot" KS: full causal schedule (bug-fixed), SOAP-only, moderate IC/BC, 4000 epochs
+  - name: ks_best_shot_causal_fixed
     problem: ks
     base_architecture: [2, 256, 256, 256, 256, 256, 1]
     initial_train:
-      epochs: 2000
+      epochs: 4000
     optimizer_1: soap
-    optimizer_2: lbfgs
-    optimizer_switch_epoch: 1500
-    fourier_features:
-      scale: 1.5
+    optimizer_2: null
     sampling:
       adaptive_sampling:
         enabled: false
-    causal_training:
-      enabled: true
-      num_chunks: 32
-      tol_schedule: [0.1, 0.5]            # Gentle schedule
-      min_weight_threshold: 0.85
-
-  # Experiment B: GPT suggestion (16 chunks, aggressive schedule, threshold=0.99)
-  - name: ks_B_soap_lbfgs_gpt_causal
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 1]
-    initial_train:
-      epochs: 2000
-    optimizer_1: soap
-    optimizer_2: lbfgs
-    optimizer_switch_epoch: 1500
-    fourier_features:
-      scale: 1.5
-    sampling:
-      adaptive_sampling:
-        enabled: false
-    causal_training:
-      enabled: true
-      num_chunks: 16                      # GPT suggestion: fewer chunks
-      tol_schedule: [0.1, 1.0]            # GPT suggestion: gentle but longer
-      min_weight_threshold: 0.99          # GPT suggestion: strict threshold
-
-  # Experiment C: Fixed causal (16 chunks, fixed tol=0.1, threshold=0.99)
-  - name: ks_C_soap_lbfgs_fixed_causal
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 1]
-    initial_train:
-      epochs: 2000
-    optimizer_1: soap
-    optimizer_2: lbfgs
-    optimizer_switch_epoch: 1500
-    fourier_features:
-      scale: 1.5
-    sampling:
-      adaptive_sampling:
-        enabled: false
-    causal_training:
-      enabled: true
-      num_chunks: 16                      # GPT suggestion
-      tol_schedule: [0.1]                 # Fixed epsilon (never advance)
-      min_weight_threshold: 0.99
-
-  # Experiment D: SSBroyden with gentle causal (32 chunks, gentle schedule)
-  - name: ks_D_soap_ssbroyden
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 1]
-    initial_train:
-      epochs: 2000
-    optimizer_1: soap
-    optimizer_2: ssbroyden
-    optimizer_switch_epoch: 1500
-    fourier_features:
-      scale: 1.5
-    sampling:
-      adaptive_sampling:
-        enabled: false
-    causal_training:
-      enabled: true
-      num_chunks: 32
-      tol_schedule: [0.1, 0.5]
-      min_weight_threshold: 0.85
-
-  # Experiment E: Vanilla SOAP baseline (NO causal, NO second optimizer)
-  - name: ks_E_soap_only_vanilla
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 1]
-    initial_train:
-      epochs: 2000
-    optimizer_1: soap
-    optimizer_2: null                     # No second optimizer
-    fourier_features:
-      scale: 1.5
-    sampling:
-      adaptive_sampling:
-        enabled: false
-    causal_training:
-      enabled: false                      # NO causal training
-
-  # Experiment F: High Fourier scale + gentle causal (Allen-Cahn trick)
-  - name: ks_F_lbfgs_gentle_causal_ff3
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 1]
-    initial_train:
-      epochs: 2000
-    optimizer_1: soap
-    optimizer_2: lbfgs
-    optimizer_switch_epoch: 1500
-    fourier_features:
-      scale: 3.0                          # High scale like Allen-Cahn
-    sampling:
-      adaptive_sampling:
-        enabled: false
-    causal_training:
-      enabled: true
-      num_chunks: 32
-      tol_schedule: [0.1, 0.5]
-      min_weight_threshold: 0.85
+      resample_every_epochs: 500
+    lra:
+      enabled: false
