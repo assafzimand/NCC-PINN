@@ -53,7 +53,7 @@ base_config:
   fourier_features:
     enabled: true                    # Map input → [cos(Bz), sin(Bz)] before network
     dim: 128                         # Number of Fourier features (output = 2*dim = 256)
-    scale: 1.0                       # Std of random projection matrix B (per-problem override)
+    scale: 2.0                       # Std of random projection matrix B (per-problem override)
 
   # ── LRA (Loss Rate Annealing) ──
   lra:
