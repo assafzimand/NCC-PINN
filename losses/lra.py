@@ -1,17 +1,14 @@
 """Loss Rate Annealing (LRA) for adaptive loss component weighting.
 
-Adaptively weights residual/IC/BC loss components based on gradient norms so
-that all components contribute equally to training. Every `update_every` epochs
-the weights are updated using an EMA-smoothed inverse-proportion rule.
+Implements the original Wang et al. (2021) algorithm from
+"Understanding and mitigating gradient flow pathologies in PINNs":
 
-Algorithm (Wang et al. 2022 — "When and why PINNs fail to train"):
-    1. Compute gradient norm for each loss component:
-           g_i = ||∇_θ L_i||₂
-    2. Compute target weight (inverse-proportion, normalized to mean=1):
-           λ_i* = (Σ_j g_j) / g_i
-           λ_i* → λ_i* * n / Σ_j λ_j*     (normalize so mean=1)
+    1. Residual weight is FIXED (anchored) — never changes.
+    2. For each non-residual term i (IC, BC), compute:
+           λ_i = max_θ |∂L_res/∂θ| / mean_θ |∂L_i/∂θ|
+       This BOOSTS IC/BC to match the dominant residual gradient.
     3. Apply EMA:
-           λ_i ← (1 - α) * λ_i + α * λ_i*
+           λ_i ← (1 - α) * λ_i + α * λ_i_new
 
 The loss function must support `return_components=True` which returns a dict
     {'residual': scalar, 'ic': scalar, 'bc': scalar}
@@ -19,20 +16,26 @@ of unweighted scalar MSE values.
 """
 
 import torch
-from typing import Dict, Callable, Optional
+from typing import Dict, Callable
 
 
 class LRAWeights:
     """Adaptive loss component weights via Loss Rate Annealing.
 
+    The residual weight is always fixed at its initial value.
+    Only IC and BC weights are adapted to match the residual
+    gradient magnitude, following Wang et al. (2021).
+
     Args:
         alpha: EMA smoothing factor. 0 = no update, 1 = instant update.
-               Paper recommends 0.1 (slow, stable adaptation).
+               Original paper uses beta=0.9 (equivalent to alpha=0.1).
         update_every: How often (in epochs) to recompute weights.
-                      Each update requires 3 separate backward passes —
+                      Each update requires backward passes —
                       keep this at least 50-100 for efficiency.
-        initial_weights: Optional dict of initial weights {'residual': float, 'ic': float, 'bc': float}.
+        initial_weights: Optional dict of initial weights
+                        {'residual': float, 'ic': float, 'bc': float}.
                         If None, defaults to all 1.0.
+                        The residual weight is frozen at its initial value.
     """
 
     def __init__(
@@ -55,6 +58,7 @@ class LRAWeights:
                 'ic': 1.0,
                 'bc': 1.0,
             }
+        self.fixed_residual_weight = self.weights['residual']
         self.last_grad_norms: Dict[str, float] = {
             'residual': 0.0,
             'ic': 0.0,
@@ -69,9 +73,12 @@ class LRAWeights:
     ) -> None:
         """Recompute LRA weights from current gradient norms.
 
-        Runs 3 separate backward passes (one per loss component) with
-        retain_graph=True, then zeros gradients. Caller must ensure the
-        optimizer is zero-grad'd before calling this.
+        Wang et al. (2021) algorithm:
+          - Compute max(|grad_res|) across all parameters
+          - For each of IC, BC: compute mean(|grad_i|) across all parameters
+          - Set lambda_i = max_grad_res / mean_grad_i
+          - EMA smooth the lambda values
+          - Residual weight stays fixed
 
         Args:
             model: The PINN model.
@@ -79,43 +86,43 @@ class LRAWeights:
             batch: Training batch dict (x, t, h_gt, mask).
         """
         components = loss_fn(model, batch, return_components=True)
-
-        grad_norms: Dict[str, float] = {}
         trainable_params = [p for p in model.parameters() if p.requires_grad]
+
+        grad_stats: Dict[str, float] = {}
 
         for key, loss_val in components.items():
             if not isinstance(loss_val, torch.Tensor) or not loss_val.requires_grad:
-                grad_norms[key] = 1e-8
+                grad_stats[key] = 1e-8
                 continue
             grads = torch.autograd.grad(
                 loss_val, trainable_params,
                 retain_graph=True,
                 allow_unused=True,
             )
-            norm_sq = sum(
-                g.norm() ** 2 for g in grads if g is not None
-            )
-            grad_norms[key] = float(norm_sq.sqrt().clamp(min=1e-8))
+            if key == 'residual':
+                max_abs = max(
+                    g.abs().max().item() for g in grads if g is not None
+                )
+                grad_stats[key] = max(max_abs, 1e-8)
+            else:
+                mean_abs = torch.mean(torch.stack([
+                    g.abs().mean() for g in grads if g is not None
+                ])).item()
+                grad_stats[key] = max(mean_abs, 1e-8)
 
-        # Store gradient norms for diagnostics
-        self.last_grad_norms = grad_norms.copy()
-
-        # Zero gradients accumulated during grad norm computation
+        self.last_grad_norms = grad_stats.copy()
         model.zero_grad()
 
-        # Compute inverse-proportion target weights, normalized to mean=1
-        total = sum(grad_norms.values())
-        n = len(grad_norms)
-        raw_targets = {k: total / v for k, v in grad_norms.items()}
-        raw_sum = sum(raw_targets.values())
-        targets = {k: v * n / raw_sum for k, v in raw_targets.items()}
+        max_grad_res = grad_stats['residual']
 
-        # Apply EMA
-        for key in self.weights:
+        for key in ['ic', 'bc']:
+            target = max_grad_res / grad_stats[key]
             self.weights[key] = (
                 (1.0 - self.alpha) * self.weights[key]
-                + self.alpha * targets[key]
+                + self.alpha * target
             )
+
+        self.weights['residual'] = self.fixed_residual_weight
 
     def get(self, key: str) -> float:
         """Return current weight for a loss component."""

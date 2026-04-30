@@ -1031,7 +1031,7 @@ def train(
                 w = lra_weights.weights
                 g = lra_weights.last_grad_norms
                 print(f"  [LRA] weights: res={w['residual']:.4f}, ic={w['ic']:.4f}, bc={w['bc']:.4f} | "
-                      f"grad_norms: res={g.get('residual', 0):.6f}, ic={g.get('ic', 0):.6f}, bc={g.get('bc', 0):.6f}")
+                      f"grads: max|res|={g.get('residual', 0):.6f}, mean|ic|={g.get('ic', 0):.6f}, mean|bc|={g.get('bc', 0):.6f}")
                 # Save to metrics
                 metrics['lra_history'].append({
                     'epoch': epoch,
