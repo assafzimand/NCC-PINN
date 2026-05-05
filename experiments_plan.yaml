@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "ks_best_shot_piratenet"
+experiment_name: "ks_best_shot"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -218,10 +218,10 @@ base_config:
     tree_smoothness_threshold: 0.3
     loss_weights:
       residual: 1.0
-      ic: 1000.0                       # Moderate IC weight — papers use 20-100 per window, we have full [0,1]
+      ic: 100.0                       # Moderate IC weight — papers use 20-100 per window, we have full [0,1]
       bc: 1.0                        # Periodic BC is soft — low weight, FF can help enforce periodicity
     causal_training:
-      enabled: true
+      enabled: false
       num_chunks: 16                 # Fewer chunks = each chunk is bigger = smoother weight transitions
       tol_schedule: [0.1]  # Full paper schedule (Wang et al. 2022) — bug is fixed
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
@@ -237,7 +237,7 @@ base_config:
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
     resample_every_epochs: 500       # Regenerate training data every N epochs. Papers use 500.
     adaptive_sampling:
-      enabled: false              # Mix uniform + residual-adaptive points (vRBA/RAR-D)
+      enabled: true              # Mix uniform + residual-adaptive points (vRBA/RAR-D)
       adaptive_ratio: 0.3            # Fraction of residual_train points that are adaptive
       candidate_multiplier: 10       # No longer used (was for candidate pool approach)
 
@@ -251,7 +251,7 @@ base_config:
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
-    expert_type: piratenet                # 'mlp' or 'resnet' -- architecture for base model and experts
+    expert_type: resnet                # 'mlp' or 'resnet' -- architecture for base model and experts
     freeze_mode: none                          # "none" | "previous" | "base_only"
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
@@ -281,10 +281,9 @@ base_config:
 # ===== Experiments to run =====
 experiments:
 
-  # KS with fixed Wang LRA, causal tol=1.0, FF scale 2.0, warmup 1000
   - name: ks_best_shot_causal_fixed
     problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]
     initial_train:
       epochs: 4000
     optimizer_1: soap
@@ -293,7 +292,7 @@ experiments:
       scale: 1.0
     sampling:
       adaptive_sampling:
-        enabled: false
+        enabled: true
       resample_every_epochs: 500
     lra:
       enabled: false
