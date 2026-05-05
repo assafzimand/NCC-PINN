@@ -1,27 +1,36 @@
 """PirateNet backbone for PINN expert networks.
 
-Architecture:
+Architecture (Wang et al., JMLR 2024, Eqs. 4.1-4.7):
     1. Fourier Feature embedding: FF(z) = [cos(Bz), sin(Bz)]
-    2. Input projection: h0 = σ(W_in * FF(z))
-    3. Gating streams (fixed, computed once per forward):
-           U = σ(W_U * FF(z))
-           V = σ(W_V * FF(z))
-    4. Residual layers with UV-gating and trainable α skip:
-           h_k = σ(W_k * h_{k-1}) ⊙ (1 - U) + h_{k-1} ⊙ V + α_k * h_{k-1}
-       where α_k is a per-layer scalar initialized at 0 (pure UV-gating at start)
-    5. Output projection: W_out * h_last (no activation)
+    2. Gating streams (fixed, computed once per forward):
+           U = σ(W_U · FF(z) + b_U)
+           V = σ(W_V · FF(z) + b_V)
+    3. Input projection: x⁰ = σ(W_in · FF(z) + b_in)
+    4. L residual blocks, each with 3 Dense layers and 2 UV-gating ops:
+           f  = σ(W₁ · x + b₁)
+           z₁ = f ⊙ U + (1-f) ⊙ V
+           g  = σ(W₂ · z₁ + b₂)
+           z₂ = g ⊙ U + (1-g) ⊙ V
+           h  = σ(W₃ · z₂ + b₃)
+           x_next = α·h + (1-α)·x       (α initialized at 0 → identity at start)
+    5. Output projection: W_out · x^L (no activation)
+
+When the requested number of hidden layers is not divisible by 3, we round
+to the nearest block count (adding or removing at most 1 layer) so each
+block always has exactly 3 Dense layers.
 
 Optional:
     - RWF: applies W_eff = diag(exp(s)) @ W on hidden layers (enabled via config['rwf'])
     - Least-squares init of output layer (piratenet.ls_init=true, expensive)
 
-Reference: Fang (2023) "PirateNets: Physics-informed Deep Learning with
-Residual Adaptive Networks."
+Reference: Wang et al. (2024) "PirateNets: Physics-informed Deep Learning with
+Residual Adaptive Networks." JMLR.
 
 Constructor signature matches FCNet/ResNetModel for drop-in factory use.
 Architecture: layers = [input_dim, h, h, ..., h, output_dim]
   - hidden_dim = layers[1] (uniform width required)
-  - n_layers = len(layers) - 2
+  - n_hidden = len(layers) - 2, rounded to nearest multiple of 3 (min 3)
+  - n_blocks = n_hidden // 3
 
 Fourier features are read from config['fourier_features'] (same key as FCNet/ResNet).
 RWF is read from config['rwf'] (same key).
@@ -51,12 +60,37 @@ def _get_activation(name: str) -> nn.Module:
     return activations[name]
 
 
+class PirateBlock(nn.Module):
+    """Single PirateNet residual block (Eqs. 4.1-4.6).
+
+    Contains 3 Dense layers, 2 UV-gating operations, and an adaptive
+    residual skip with trainable α (initialized at 0 → identity mapping).
+    """
+
+    def __init__(self, h: int, activation: nn.Module, LinearCls):
+        super().__init__()
+        self.W1 = LinearCls(h, h)
+        self.W2 = LinearCls(h, h)
+        self.W3 = LinearCls(h, h)
+        self.alpha = nn.Parameter(torch.zeros(1))
+        self.activation = activation
+
+    def forward(self, x: torch.Tensor, U: torch.Tensor, V: torch.Tensor):
+        f = self.activation(self.W1(x))
+        z1 = f * U + (1 - f) * V
+        g = self.activation(self.W2(z1))
+        z2 = g * U + (1 - g) * V
+        h = self.activation(self.W3(z2))
+        return self.alpha * h + (1 - self.alpha) * x
+
+
 class PirateNet(nn.Module):
     """PirateNet: Physics-informed Residual Adaptive Network.
 
     Args:
         layers: [input_dim, h, h, ..., h, output_dim]. All hidden dims must
-                be equal. At least 1 hidden layer required.
+                be equal. At least 1 hidden layer required. The number of
+                hidden layers is rounded to the nearest multiple of 3 (min 3).
         activation: Activation function name.
         config: Full project config dict (reads 'fourier_features', 'rwf',
                 'piratenet' sub-keys).
@@ -68,7 +102,6 @@ class PirateNet(nn.Module):
         super().__init__()
 
         self.is_base = is_base
-        self.layers = layers
         self.activation_name = activation
         self.config = config
 
@@ -96,9 +129,19 @@ class PirateNet(nn.Module):
 
         input_dim = layers[0]
         h = hidden[0]
-        n_layers = len(hidden)
+        n_requested = len(hidden)
+
+        n_blocks = max(1, round(n_requested / 3))
+        n_actual = n_blocks * 3
+
+        if n_actual != n_requested:
+            print(f"  [PirateNet] Requested {n_requested} hidden layers, "
+                  f"adjusted to {n_actual} (= {n_blocks} blocks × 3 layers/block)")
+
+        self.layers = [layers[0]] + [h] * n_actual + [layers[-1]]
         self.hidden_dim = h
-        self.n_layers = n_layers
+        self.n_blocks = n_blocks
+        self.n_layers = n_actual
 
         # Fourier Feature embedding
         ff_cfg = config.get('fourier_features', {})
@@ -109,8 +152,6 @@ class PirateNet(nn.Module):
             self.ff_emb = FourierFeatureEmbedding(input_dim, ff_dim, ff_scale)
             ff_out = self.ff_emb.output_dim
         else:
-            # No FF: use a fallback dim so architecture still makes sense
-            # (input goes directly to projections)
             self.ff_emb = None
             ff_out = input_dim
 
@@ -120,19 +161,17 @@ class PirateNet(nn.Module):
 
         self.activation = _get_activation(activation)
 
-        # Three projections from FF space → hidden space
-        self.input_proj = LinearCls(ff_out, h)   # h0 = σ(input_proj(FF(z)))
-        self.U_proj = LinearCls(ff_out, h)        # U gating stream
-        self.V_proj = LinearCls(ff_out, h)        # V gating stream
+        # U, V projections from FF space → hidden space
+        self.U_proj = LinearCls(ff_out, h)
+        self.V_proj = LinearCls(ff_out, h)
 
-        # Residual hidden layers
-        self.hidden_layers = nn.ModuleList(
-            [LinearCls(h, h) for _ in range(n_layers)]
-        )
+        # Input projection: x⁰ = σ(W_in · FF(z))
+        self.input_proj = LinearCls(ff_out, h)
 
-        # Per-layer adaptive skip scalars, initialized at 0 (pure UV-gating)
-        self.alphas = nn.ParameterList(
-            [nn.Parameter(torch.zeros(1)) for _ in range(n_layers)]
+        # Residual blocks (3 Dense layers each)
+        self.blocks = nn.ModuleList(
+            [PirateBlock(h, self.activation, LinearCls)
+             for _ in range(n_blocks)]
         )
 
         # Output projection — always plain nn.Linear for output scale stability
@@ -141,7 +180,7 @@ class PirateNet(nn.Module):
         # Least-squares init of output layer (optional)
         pirate_cfg = config.get('piratenet', {})
         if pirate_cfg.get('ls_init', False):
-            self._ls_init_pending = True  # deferred until first forward with IC data
+            self._ls_init_pending = True
         else:
             self._ls_init_pending = False
 
@@ -154,28 +193,23 @@ class PirateNet(nn.Module):
 
         Args:
             x: Input tensor (N, input_dim).
-            return_activation: Ignored for PirateNet (not needed by AToE/AToELeaves).
+            return_activation: If True, also returns the last hidden state.
 
         Returns:
-            Output tensor (N, output_dim).
+            Output tensor (N, output_dim), or (output, hidden) if return_activation.
         """
-        # Apply FF embedding if enabled
         if self.ff_emb is not None:
             z = self.ff_emb(x)
         else:
             z = x
 
-        # Compute gating streams (fixed for this forward pass)
-        U = self.activation(self.U_proj(z))   # (N, h)
-        V = self.activation(self.V_proj(z))   # (N, h)
+        U = self.activation(self.U_proj(z))
+        V = self.activation(self.V_proj(z))
 
-        # Input projection
-        h = self.activation(self.input_proj(z))  # (N, h)
+        h = self.activation(self.input_proj(z))
 
-        # Residual layers with UV-gating and adaptive α
-        for layer, alpha in zip(self.hidden_layers, self.alphas):
-            h_new = self.activation(layer(h))
-            h = h_new * (1 - U) + h * V + alpha * h
+        for block in self.blocks:
+            h = block(h, U, V)
 
         if return_activation:
             return self.output_proj(h), h
@@ -204,7 +238,8 @@ class PirateNet(nn.Module):
             f"PirateNet(\n"
             f"  architecture: {self.layers}\n"
             f"  activation: {self.activation_name}\n"
-            f"  hidden_dim: {self.hidden_dim}, n_layers: {self.n_layers}\n"
+            f"  hidden_dim: {self.hidden_dim}, n_blocks: {self.n_blocks}, "
+            f"n_layers: {self.n_layers}\n"
             f"  {ff_info}, rwf={isinstance(self.input_proj, RWFLinear)}\n"
             f")"
         )
