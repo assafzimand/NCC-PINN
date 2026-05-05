@@ -750,6 +750,12 @@ def train(
         train_loss = 0.0
         n_train_batches = 0
 
+        # Reset causal min_weight so it accumulates the true minimum
+        # across all batches within this epoch
+        _cs_epoch = getattr(loss_fn, 'causal_state', None)
+        if _cs_epoch is not None:
+            _cs_epoch['min_weight'] = 1.0
+
         if current_optimizer_name in ('Adam', 'SOAP'):
             # Adam/SOAP: Mini-batch training (GPU parallelized)
             for batch in train_loader:

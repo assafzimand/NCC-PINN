@@ -74,6 +74,12 @@ log_info "Starting experiments..."
 echo "============================================================================="
 echo ""
 
+# Set PyTorch CUDA memory allocator to use expandable segments
+# This helps avoid memory fragmentation during training with high-order derivatives
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+log_info "CUDA memory allocator: expandable_segments enabled"
+echo ""
+
 EXPERIMENT_SUCCESS=true
 python run_experiments.py || EXPERIMENT_SUCCESS=false
 

@@ -107,6 +107,7 @@ echo "To launch experiments with screen (recommended for long runs):"
 echo "  screen -S ncc_experiment"
 echo "  source $VENV_DIR/bin/activate"
 echo "  cd $REPO_DIR"
+echo "  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
 echo "  python run_experiments.py"
 echo "  # Press Ctrl+A then D to detach and disconnect safely"
 echo
@@ -116,7 +117,11 @@ echo
 echo "To list all screen sessions:"
 echo "  screen -ls"
 echo
+echo "Or use run_and_terminate.sh (includes auto-shutdown):"
+echo "  bash ~/NCC-PINN/AWS_scripts/run_and_terminate.sh"
+echo
 echo "Or run directly without screen (will stop if you disconnect):"
+echo "  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
 echo "  python run_experiments.py"
 
 

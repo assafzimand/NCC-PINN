@@ -6,9 +6,11 @@ Implements the causal training strategy from
 sort residual collocation points by time, split into temporal
 chunks, and apply exponentially decaying weights:
 
-    w_i = exp(-epsilon * sum_{j<i} L_j)
+    w_i = exp(-epsilon * sum_{j<i} L̃_j)
 
-so the network learns earlier times before later ones.
+where L̃_j = L_j / mean(L) is the scale-normalized chunk loss.
+This normalization makes epsilon scale-independent: the same
+schedule works regardless of PDE residual magnitude.
 
 The paper recommends an annealing schedule for epsilon:
     [0.01, 0.1, 1, 10, 100]
@@ -41,7 +43,7 @@ def create_causal_state(
         'schedule': list(schedule),
         'schedule_idx': 0,
         'tol': float(schedule[0]),
-        'min_weight': 0.0,  # Start at 0.0 to prevent premature advancement
+        'min_weight': 0.0,
         'threshold': causal_cfg.get(
             'min_weight_threshold', 0.99),
     }
@@ -129,14 +131,22 @@ def _apply_causal_weights(
 
     chunk_losses_t = torch.stack(chunk_losses)
 
-    cumsum = torch.cumsum(chunk_losses_t, dim=0)
+    # Scale-normalize chunk losses before computing weights so that
+    # epsilon is independent of PDE residual magnitude.  Without this,
+    # PDEs with large residuals (e.g. KS) cause exp(-ε * cumsum) to
+    # collapse to zero for all but the first chunk.
+    chunk_mean = chunk_losses_t.mean().detach().clamp(min=1e-8)
+    chunk_normed = chunk_losses_t / chunk_mean
+
+    cumsum = torch.cumsum(chunk_normed, dim=0)
     zero = torch.zeros(1, device=cumsum.device)
     shifted = torch.cat([zero, cumsum[:-1]])
     weights = torch.exp(-causal_tol * shifted).detach()
 
     if causal_state is not None:
-        causal_state['min_weight'] = weights.min().item()
+        batch_min = weights.min().item()
+        causal_state['min_weight'] = min(
+            causal_state.get('min_weight', 1.0), batch_min)
 
-    weighted = (torch.sum(weights * chunk_losses_t)
-                / weights.sum())
+    weighted = torch.sum(weights * chunk_losses_t) / num_chunks
     return weighted
