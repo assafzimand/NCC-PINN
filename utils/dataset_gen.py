@@ -326,6 +326,7 @@ def _sample_adaptive_residual_points(
     phi_cfg: Dict,
     run_dir=None,
     epoch=None,
+    causal_state: dict = None,
 ) -> tuple:
     """Sample residual points biased toward high-residual regions using cached PDE residuals.
 
@@ -402,7 +403,8 @@ def _sample_adaptive_residual_points(
         _save_adaptive_sampling_heatmap(
             x_cached, t_cached, r2_cached,
             x_selected, t_selected,
-            run_dir, epoch, config
+            run_dir, epoch, config,
+            causal_state=causal_state,
         )
     
     return x_selected, t_selected
@@ -411,51 +413,93 @@ def _sample_adaptive_residual_points(
 def _save_adaptive_sampling_heatmap(
     x_cached, t_cached, r2_cached,
     x_sampled, t_sampled,
-    run_dir, epoch, config
+    run_dir, epoch, config,
+    causal_state=None,
 ):
-    """Save two-panel diagnostic heatmap for adaptive sampling."""
+    """Save three-panel diagnostic heatmap for adaptive sampling."""
     try:
         import matplotlib.pyplot as plt
         import numpy as np
         from pathlib import Path
         
-        # Create output directory
         output_dir = Path(run_dir) / "adaptive_sampling"
         output_dir.mkdir(exist_ok=True, parents=True)
         
-        # Move to CPU for plotting
         x_cached_np = x_cached[:, 0].cpu().numpy()
         t_cached_np = t_cached[:, 0].cpu().numpy()
         r2_cached_np = r2_cached.cpu().numpy()
         x_sampled_np = x_sampled[:, 0].cpu().numpy()
         t_sampled_np = t_sampled[:, 0].cpu().numpy()
         
-        # Use log scale for residual coloring
         log_r2 = np.log10(r2_cached_np + 1e-10)
         
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+        # Compute causal-weighted residuals if causal training is active
+        has_causal = (causal_state is not None and causal_state.get('enabled', False))
+        n_panels = 3 if has_causal else 2
+        fig, axes = plt.subplots(1, n_panels, figsize=(7 * n_panels, 5))
+        if n_panels == 2:
+            ax1, ax2 = axes
+            ax3 = None
+        else:
+            ax1, ax2, ax3 = axes
         
-        # Left panel: cached residuals
+        # Panel 1: raw (pure) PDE residuals
         sc1 = ax1.scatter(x_cached_np, t_cached_np, c=log_r2, cmap='hot', s=1, alpha=0.6)
         ax1.set_xlabel('x')
         ax1.set_ylabel('t')
-        ax1.set_title(f'Cached PDE Residuals (epoch {epoch-1})')
+        ax1.set_title(f'Pure PDE Residual (epoch {epoch-1})')
         plt.colorbar(sc1, ax=ax1, label='log10(r²)')
         
-        # Right panel: newly sampled adaptive points
-        sc2 = ax2.scatter(x_sampled_np, t_sampled_np, c='blue', s=3, alpha=0.4, label='Adaptive points')
+        # Panel 2: adaptive sampling points (driven by pure residual)
+        sc2 = ax2.scatter(x_sampled_np, t_sampled_np, c='blue', s=3, alpha=0.4)
         ax2.set_xlabel('x')
         ax2.set_ylabel('t')
-        ax2.set_title(f'Newly Sampled Adaptive Points (epoch {epoch})')
-        ax2.legend()
+        ax2.set_title(f'Adaptive Sampling by Pure Residual (epoch {epoch})')
         
-        # Match axes limits
+        # Panel 3: causal-weighted residuals (what we actually train on)
+        if has_causal and ax3 is not None:
+            num_chunks = causal_state.get('num_chunks', 16)
+            causal_tol = causal_state.get('tol', 1.0)
+            
+            t_flat = t_cached[:, 0].cpu()
+            r2_flat = r2_cached.cpu()
+            N = len(t_flat)
+            sort_idx = torch.argsort(t_flat)
+            r2_sorted = r2_flat[sort_idx]
+            
+            chunk_size = max(1, N // num_chunks)
+            per_point_weights = torch.ones(N)
+            chunk_losses = []
+            for i in range(num_chunks):
+                start = i * chunk_size
+                end = start + chunk_size if i < num_chunks - 1 else N
+                chunk_losses.append(r2_sorted[start:end].mean().item())
+            
+            cumsum = np.cumsum(chunk_losses)
+            shifted = np.concatenate([[0.0], cumsum[:-1]])
+            chunk_weights = np.exp(-causal_tol * shifted)
+            
+            for i in range(num_chunks):
+                start = i * chunk_size
+                end = start + chunk_size if i < num_chunks - 1 else N
+                per_point_weights[sort_idx[start:end]] = chunk_weights[i]
+            
+            weighted_r2 = r2_flat.numpy() * per_point_weights.numpy()
+            log_weighted = np.log10(weighted_r2 + 1e-10)
+            
+            sc3 = ax3.scatter(x_cached_np, t_cached_np, c=log_weighted, cmap='hot', s=1, alpha=0.6)
+            ax3.set_xlabel('x')
+            ax3.set_ylabel('t')
+            tol_str = f'{causal_tol:.4g}'
+            ax3.set_title(f'Causal-Weighted Residual (ε={tol_str}, epoch {epoch-1})')
+            plt.colorbar(sc3, ax=ax3, label='log10(w·r²)')
+        
         problem = config['problem']
         pc = config[problem]
         spatial_domain = pc['spatial_domain']
         t_min, t_max = pc['temporal_domain']
         x_lo, x_hi = spatial_domain[0]
-        for ax in [ax1, ax2]:
+        for ax in [a for a in [ax1, ax2, ax3] if a is not None]:
             ax.set_xlim(x_lo, x_hi)
             ax.set_ylim(t_min, t_max)
         
@@ -465,7 +509,6 @@ def _save_adaptive_sampling_heatmap(
         plt.close(fig)
         
     except Exception as e:
-        # Don't crash training if plotting fails
         print(f"  [Warning] Failed to save adaptive sampling heatmap: {e}")
 
 
@@ -476,6 +519,7 @@ def regenerate_training_data(
     cached_residuals: list = None,
     run_dir=None,
     epoch=None,
+    causal_state: dict = None,
 ) -> Dict[str, torch.Tensor]:
     """Lightweight resampling: fresh random coordinates + analytical IC/BC.
 
@@ -490,6 +534,7 @@ def regenerate_training_data(
         cached_residuals: Optional list of (x, t, r²) tuples from previous epoch's training
         run_dir: Optional path for saving diagnostic plots
         epoch: Current epoch (for diagnostic filenames)
+        causal_state: Optional causal training state dict for diagnostic heatmaps
     """
     problem = config['problem']
     pc = config[problem]
@@ -535,7 +580,8 @@ def regenerate_training_data(
         idx += n_uniform
         # Adaptive residual points
         x_adap, t_adap = _sample_adaptive_residual_points(
-            cached_residuals, config, device, n_adaptive, phi_cfg, run_dir, epoch)
+            cached_residuals, config, device, n_adaptive, phi_cfg, run_dir, epoch,
+            causal_state=causal_state)
         x[idx:idx + n_adaptive] = x_adap
         t[idx:idx + n_adaptive] = t_adap
         idx += n_adaptive

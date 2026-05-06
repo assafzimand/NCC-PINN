@@ -690,15 +690,11 @@ def train(
 
         # Enable residual caching for adaptive sampling if needed
         # Cache THIS epoch's residuals for NEXT epoch's resampling
-        # Only activate adaptive sampling when causal training reaches final stage (Option B)
         adaptive_sampling_enabled = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('enabled', False)
         causal_state = getattr(loss_fn, 'causal_state', None)
-        causal_at_final_stage = True  # default if causal disabled
-        if causal_state is not None:
-            causal_at_final_stage = (causal_state['schedule_idx'] >= len(causal_state['schedule']) - 1)
         
         will_cache_for_resample = (
-            adaptive_sampling_enabled and causal_at_final_stage
+            adaptive_sampling_enabled
             and resample_every > 0
             and epoch > 0 and epoch % resample_every == 0
         )
@@ -723,7 +719,8 @@ def train(
                 cfg, device, resample_seed=resample_seed,
                 cached_residuals=cached_residuals,
                 run_dir=run_dir,
-                epoch=epoch
+                epoch=epoch,
+                causal_state=causal_state,
             )
             train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
             # Save resample event to metrics
