@@ -936,13 +936,16 @@ def train(
 
         # Causal weighting: check if epsilon should advance
         causal_state = getattr(loss_fn, 'causal_state', None)
+        causal_epoch_min_weight = None
+        if causal_state is not None:
+            causal_epoch_min_weight = causal_state['min_weight']
         if advance_causal_schedule(causal_state):
             cs = loss_fn.causal_state
             print(f"  [Causal] epsilon advanced to "
                   f"{cs['tol']:.2f} "
                   f"(stage {cs['schedule_idx']+1}/"
                   f"{len(cs['schedule'])}, "
-                  f"min_w={cs['min_weight']:.4f})")
+                  f"prev_min_w={causal_epoch_min_weight:.6f})")
         # Reset min_weight for the next epoch's batch accumulation.
         # Must happen AFTER advance check so it sees the true minimum
         # from this epoch's batches, not the fresh reset value.
@@ -1013,18 +1016,16 @@ def train(
                   f"Eval Inf: {eval_inf_norm:.6f}")
 
             # DIAGNOSTIC: Causal weight progression
-            causal_state = getattr(loss_fn, 'causal_state', None)
-            if causal_state is not None:
+            if causal_state is not None and causal_epoch_min_weight is not None:
                 cs = causal_state
                 stage_str = f"{cs['schedule_idx']+1}/{len(cs['schedule'])}"
-                print(f"  [Causal] tol={cs['tol']:.2f}, stage={stage_str}, min_weight={cs['min_weight']:.6f}")
-                # Save to metrics
+                print(f"  [Causal] tol={cs['tol']:.2f}, stage={stage_str}, min_weight={causal_epoch_min_weight:.6f}")
                 metrics['causal_history'].append({
                     'epoch': epoch,
                     'tol': float(cs['tol']),
                     'stage': int(cs['schedule_idx']),
                     'stage_total': len(cs['schedule']),
-                    'min_weight': float(cs['min_weight']),
+                    'min_weight': float(causal_epoch_min_weight),
                     'threshold': float(cs['threshold'])
                 })
 

@@ -288,7 +288,7 @@ experiments:
     base_architecture: [2, 256, 256, 256, 256, 256, 1]
     initial_train:
       epochs: 4000
-    optimizer_1: soap
+    optimizer_1: adam
     optimizer_2: null
     fourier_features:
       scale: 1.0
@@ -314,7 +314,7 @@ experiments:
     base_architecture: [2, 256, 256, 256, 256, 256, 1]
     initial_train:
       epochs: 4000
-    optimizer_1: soap
+    optimizer_1: adam
     optimizer_2: null
     fourier_features:
       scale: 1.0
@@ -340,7 +340,7 @@ experiments:
     base_architecture: [2, 256, 256, 256, 256, 256, 1]
     initial_train:
       epochs: 4000
-    optimizer_1: soap
+    optimizer_1: adam
     optimizer_2: null
     fourier_features:
       scale: 1.0
