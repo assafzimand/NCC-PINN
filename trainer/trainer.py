@@ -747,12 +747,6 @@ def train(
         train_loss = 0.0
         n_train_batches = 0
 
-        # Reset causal min_weight so it accumulates the true minimum
-        # across all batches within this epoch
-        _cs_epoch = getattr(loss_fn, 'causal_state', None)
-        if _cs_epoch is not None:
-            _cs_epoch['min_weight'] = 1.0
-
         if current_optimizer_name in ('Adam', 'SOAP'):
             # Adam/SOAP: Mini-batch training (GPU parallelized)
             for batch in train_loader:
@@ -949,6 +943,11 @@ def train(
                   f"(stage {cs['schedule_idx']+1}/"
                   f"{len(cs['schedule'])}, "
                   f"min_w={cs['min_weight']:.4f})")
+        # Reset min_weight for the next epoch's batch accumulation.
+        # Must happen AFTER advance check so it sees the true minimum
+        # from this epoch's batches, not the fresh reset value.
+        if causal_state is not None:
+            causal_state['min_weight'] = 1.0
 
         # Compute evaluation metrics only every print_every epochs or last epoch
         # This speeds up training significantly for physics-informed losses
