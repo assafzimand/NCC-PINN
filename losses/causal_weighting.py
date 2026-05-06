@@ -6,16 +6,17 @@ Implements the causal training strategy from
 sort residual collocation points by time, split into temporal
 chunks, and apply exponentially decaying weights:
 
-    w_i = exp(-epsilon * sum_{j<i} L̃_j)
+    w_i = exp(-epsilon * sum_{j<i} L_j)
 
-where L̃_j = L_j / mean(L) is the scale-normalized chunk loss.
-This normalization makes epsilon scale-independent: the same
-schedule works regardless of PDE residual magnitude.
+where L_j is the raw mean-squared residual of chunk j.
+As training reduces losses, min(w_i) rises toward 1.0,
+triggering advancement to the next epsilon level.
 
 The paper recommends an annealing schedule for epsilon:
     [0.01, 0.1, 1, 10, 100]
-advancing to the next level when min(w_i) > delta (e.g. 0.99),
-meaning all temporal chunks have converged.
+advancing to the next level when min(w_i) > delta (e.g. 0.99).
+Epsilon values must be tuned per-PDE since they depend on
+residual magnitude (smaller for PDEs with large residuals).
 """
 
 import torch
@@ -131,14 +132,7 @@ def _apply_causal_weights(
 
     chunk_losses_t = torch.stack(chunk_losses)
 
-    # Scale-normalize chunk losses before computing weights so that
-    # epsilon is independent of PDE residual magnitude.  Without this,
-    # PDEs with large residuals (e.g. KS) cause exp(-ε * cumsum) to
-    # collapse to zero for all but the first chunk.
-    chunk_mean = chunk_losses_t.mean().detach().clamp(min=1e-8)
-    chunk_normed = chunk_losses_t / chunk_mean
-
-    cumsum = torch.cumsum(chunk_normed, dim=0)
+    cumsum = torch.cumsum(chunk_losses_t.detach(), dim=0)
     zero = torch.zeros(1, device=cumsum.device)
     shifted = torch.cat([zero, cumsum[:-1]])
     weights = torch.exp(-causal_tol * shifted).detach()
