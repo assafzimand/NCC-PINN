@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "ks_causal_schedule_3exp"
+experiment_name: "ks_piratenet_soap_ablation"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -237,7 +237,7 @@ base_config:
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
     resample_every_epochs: 500       # Regenerate training data every N epochs. Papers use 500.
     adaptive_sampling:
-      enabled: true              # Mix uniform + residual-adaptive points (vRBA/RAR-D)
+      enabled: false              # Mix uniform + residual-adaptive points (vRBA/RAR-D)
       adaptive_ratio: 0.1            # Fraction of residual_train points that are adaptive
       candidate_multiplier: 10       # No longer used (was for candidate pool approach)
 
@@ -274,89 +274,119 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 4000                               # Phase 1: train base model for 10000 epochs before tree fitting
+      epochs: 10000                               # Phase 1: train base model for 10000 epochs before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
 # ===== Experiments to run =====
-# Causal training with paper-correct raw weights (no normalization).
-# Schedule advances when min_weight > threshold as losses decrease.
+# Ablation: PirateNet 9-layer + SOAP baseline, then +one feature at a time.
+# Goal: identify which feature (LRA / adaptive sampling / causal) breaks the 0.93 plateau.
+# IC=100 for clean/adaptive/causal runs (10x prior value, compensates for large KS residuals).
+# IC=1.0 initial for LRA run — let LRA determine the true gradient ratio from scratch.
 experiments:
 
-  - name: ks_causal_16chunks_4stage
+  - name: ks_clean
     problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]
     initial_train:
-      epochs: 4000
-    optimizer_1: adam
+      epochs: 10000
+    optimizer_1: soap
     optimizer_2: null
     fourier_features:
       scale: 1.0
     sampling:
       adaptive_sampling:
-        enabled: true
+        enabled: false
       resample_every_epochs: 500
     lra:
       enabled: false
+    adaptive_pinn:
+      expert_type: piratenet
     ks:
       loss_weights:
         residual: 1.0
-        ic: 10.0
+        ic: 100.0
         bc: 1.0
       causal_training:
-        enabled: true
-        num_chunks: 16
-        tol_schedule: [0.001, 0.01, 0.1, 1.0]
-        min_weight_threshold: 0.99
+        enabled: false
 
-  - name: ks_causal_8chunks_3stage
+  - name: ks_clean_lra
     problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]
     initial_train:
-      epochs: 4000
-    optimizer_1: adam
+      epochs: 10000
+    optimizer_1: soap
+    optimizer_2: null
+    fourier_features:
+      scale: 1.0
+    sampling:
+      adaptive_sampling:
+        enabled: false
+      resample_every_epochs: 500
+    lra:
+      enabled: true
+      alpha: 0.1
+      update_every: 100
+    adaptive_pinn:
+      expert_type: piratenet
+    ks:
+      loss_weights:
+        residual: 1.0
+        ic: 1.0
+        bc: 1.0
+      causal_training:
+        enabled: false
+
+  - name: ks_clean_adaptive
+    problem: ks
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]
+    initial_train:
+      epochs: 10000
+    optimizer_1: soap
     optimizer_2: null
     fourier_features:
       scale: 1.0
     sampling:
       adaptive_sampling:
         enabled: true
+        adaptive_ratio: 0.5
       resample_every_epochs: 500
     lra:
       enabled: false
+    adaptive_pinn:
+      expert_type: piratenet
     ks:
       loss_weights:
         residual: 1.0
-        ic: 10.0
+        ic: 100.0
+        bc: 1.0
+      causal_training:
+        enabled: false
+
+  - name: ks_clean_causal
+    problem: ks
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]
+    initial_train:
+      epochs: 10000
+    optimizer_1: soap
+    optimizer_2: null
+    fourier_features:
+      scale: 1.0
+    sampling:
+      adaptive_sampling:
+        enabled: false
+      resample_every_epochs: 500
+    lra:
+      enabled: false
+    adaptive_pinn:
+      expert_type: piratenet
+    ks:
+      loss_weights:
+        residual: 1.0
+        ic: 100.0
         bc: 1.0
       causal_training:
         enabled: true
         num_chunks: 8
-        tol_schedule: [0.01, 0.1, 1.0]
-        min_weight_threshold: 0.99
-
-  - name: ks_causal_8chunks_4stage
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 1]
-    initial_train:
-      epochs: 4000
-    optimizer_1: adam
-    optimizer_2: null
-    fourier_features:
-      scale: 1.0
-    sampling:
-      adaptive_sampling:
-        enabled: true
-      resample_every_epochs: 500
-    lra:
-      enabled: false
-    ks:
-      loss_weights:
-        residual: 1.0
-        ic: 10.0
-        bc: 1.0
-      causal_training:
-        enabled: true
-        num_chunks: 8
-        tol_schedule: [0.001, 0.01, 0.1, 1.0]
+        tol_schedule: [0.1]
         min_weight_threshold: 0.99

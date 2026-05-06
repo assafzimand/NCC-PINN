@@ -379,7 +379,7 @@ def train(
                 return _orig_loss_fn(model, batch,
                                      for_tree_spawning=for_tree_spawning,
                                      return_components=return_components,
-                                     update_causal_state=update_causal_state)
+                                     update_causal_state=False)
             comps = _orig_loss_fn(model, batch, return_components=True, update_causal_state=update_causal_state)
             w = lra_weights.weights
             return (w.get('residual', 1.0) * comps['residual']
@@ -923,7 +923,7 @@ def train(
         metrics['train_loss'].append(train_loss)
 
         # LRA: update adaptive loss weights periodically
-        if lra_weights is not None and epoch % lra_weights.update_every == 0:
+        if lra_weights is not None and epoch > 0 and epoch % lra_weights.update_every == 0:
             try:
                 batch_for_lra = next(iter(train_loader))
                 lra_weights.update(model, loss_fn, batch_for_lra)
