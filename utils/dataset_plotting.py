@@ -126,59 +126,107 @@ def plot_dataset(data: Dict[str, torch.Tensor], save_path: str, title: str = "Da
 
 
 def save_spawn_prediction_plot(
-    x: np.ndarray,
-    t: np.ndarray,
-    y_pred: np.ndarray,
-    y_gt: np.ndarray,
+    model,
+    domain_bounds,
+    gt_grid: np.ndarray,
+    grid_x: np.ndarray,
+    grid_t: np.ndarray,
     output_path,
     epoch: int,
+    cfg: dict,
     output_names=None,
+    resolution: int = 200,
 ) -> None:
-    """Save GT vs prediction scatter plot at the moment of expert spawning.
+    """Save GT vs prediction continuous heatmap at the moment of expert spawning.
+
+    Evaluates the model on a regular (resolution x resolution) grid and plots
+    GT | Pred | |Error| using pcolormesh for each output component.
 
     Args:
-        x: Spatial coords [N, spatial_dim].
-        t: Temporal coords [N, 1].
-        y_pred: Model predictions [N, output_dim].
-        y_gt: Ground truth [N, output_dim].
+        model: The PINN model (torch.nn.Module), will be called in eval+no_grad.
+        domain_bounds: {'lower': [x_min, t_min], 'upper': [x_max, t_max]}.
+        gt_grid: Ground truth on grid [nx, nt] (first output component norm).
+        grid_x: 1-D x coords of the GT grid [nx].
+        grid_t: 1-D t coords of the GT grid [nt].
         output_path: File path to save the PNG.
-        epoch: Current epoch (used in title only).
-        output_names: Optional list of component names, e.g. ['u', 'v'].
+        epoch: Current epoch (used in title).
+        cfg: Full config dict (used to infer device and output_dim).
+        output_names: Optional component names, e.g. ['u', 'v'].
+        resolution: Grid resolution for model evaluation.
     """
-    output_dim = y_pred.shape[1]
+    from scipy.interpolate import griddata as scipy_griddata
+
+    problem = cfg.get('problem', '')
+    output_dim = cfg.get(problem, {}).get('output_dim', 1)
     if output_names is None:
         output_names = [f'u{i}' if output_dim > 1 else 'u' for i in range(output_dim)]
 
-    x0 = x[:, 0]
-    t0 = t[:, 0]
+    device = next(model.parameters()).device
+
+    x_min, t_min = domain_bounds['lower']
+    x_max, t_max = domain_bounds['upper']
+    gx = np.linspace(x_min, x_max, resolution)
+    gt = np.linspace(t_min, t_max, resolution)
+    X_grid, T_grid = np.meshgrid(gx, gt, indexing='ij')  # [nx, nt]
+
+    x_flat = X_grid.ravel().astype(np.float32)
+    t_flat = T_grid.ravel().astype(np.float32)
+    inputs = torch.from_numpy(np.stack([x_flat, t_flat], axis=1)).to(device)
+
+    model.eval()
+    with torch.no_grad():
+        pred = model(inputs).detach().cpu().numpy()  # [nx*nt, output_dim]
+
+    # Interpolate gt_grid (already on a coarser grid) onto the finer eval grid
+    # gt_grid shape: [len(grid_x), len(grid_t)] — use pcolormesh directly at its own res
+    # For pred use pcolormesh at evaluation resolution
 
     n_cols = 3  # GT | Pred | |Error|
     n_rows = output_dim
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows), squeeze=False)
 
     for i in range(output_dim):
-        gt_i = y_gt[:, i]
-        pr_i = y_pred[:, i]
-        err_i = np.abs(pr_i - gt_i)
-        vmin, vmax = gt_i.min(), gt_i.max()
+        pred_grid_i = pred[:, i].reshape(resolution, resolution)  # [nx, nt]
 
-        sc = axes[i, 0].scatter(x0, t0, c=gt_i, s=2, cmap='viridis', vmin=vmin, vmax=vmax)
+        if output_dim == 1 or i == 0:
+            gt_grid_i = gt_grid  # already [nx_gt, nt_gt] — first component norm
+        else:
+            gt_grid_i = gt_grid  # fallback: reuse (multi-component GT grid not pre-computed)
+
+        vmin = float(np.nanmin(gt_grid_i))
+        vmax = float(np.nanmax(gt_grid_i))
+
+        im = axes[i, 0].pcolormesh(grid_x, grid_t, gt_grid_i.T,
+                                    shading='auto', cmap='viridis', vmin=vmin, vmax=vmax)
         axes[i, 0].set_title(f'GT  {output_names[i]}')
         axes[i, 0].set_xlabel('x')
         axes[i, 0].set_ylabel('t')
-        plt.colorbar(sc, ax=axes[i, 0])
+        plt.colorbar(im, ax=axes[i, 0])
 
-        sc = axes[i, 1].scatter(x0, t0, c=pr_i, s=2, cmap='viridis', vmin=vmin, vmax=vmax)
+        im = axes[i, 1].pcolormesh(gx, gt, pred_grid_i.T,
+                                    shading='auto', cmap='viridis', vmin=vmin, vmax=vmax)
         axes[i, 1].set_title(f'Pred  {output_names[i]}')
         axes[i, 1].set_xlabel('x')
         axes[i, 1].set_ylabel('t')
-        plt.colorbar(sc, ax=axes[i, 1])
+        plt.colorbar(im, ax=axes[i, 1])
 
-        sc = axes[i, 2].scatter(x0, t0, c=err_i, s=2, cmap='hot_r')
+        # Error: interpolate gt onto the same fine grid for a fair diff
+        gt_pts_x = np.repeat(grid_x, len(grid_t))
+        gt_pts_t = np.tile(grid_t, len(grid_x))
+        gt_vals = gt_grid_i.ravel()
+        gt_fine = scipy_griddata(
+            np.stack([gt_pts_x, gt_pts_t], axis=1),
+            gt_vals,
+            np.stack([x_flat, t_flat], axis=1),
+            method='linear', fill_value=float(np.nanmean(gt_vals))
+        ).reshape(resolution, resolution)
+        err_grid_i = np.abs(pred_grid_i - gt_fine)
+
+        im = axes[i, 2].pcolormesh(gx, gt, err_grid_i.T, shading='auto', cmap='hot_r')
         axes[i, 2].set_title(f'|Error|  {output_names[i]}')
         axes[i, 2].set_xlabel('x')
         axes[i, 2].set_ylabel('t')
-        plt.colorbar(sc, ax=axes[i, 2])
+        plt.colorbar(im, ax=axes[i, 2])
 
     plt.suptitle(f'Spawn diagnostic — epoch {epoch}', fontsize=13)
     plt.tight_layout()
