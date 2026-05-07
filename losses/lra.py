@@ -1,18 +1,19 @@
-"""Loss Rate Annealing (LRA) for adaptive loss component weighting.
+"""Adaptive loss component weighting for PINNs.
 
-Implements the original Wang et al. (2021) algorithm from
-"Understanding and mitigating gradient flow pathologies in PINNs":
+Two schemes:
+  'lra'       — Loss Rate Annealing (Wang et al. 2021): residual weight is
+                fixed; IC and BC are boosted to match residual gradient scale.
+                λ_i = max_θ|∂L_res/∂θ| / mean_θ|∂L_i/∂θ|
+                Known failure mode: when IC/BC are quickly satisfied their
+                gradients collapse → weights explode without bound.
 
-    1. Residual weight is FIXED (anchored) — never changes.
-    2. For each non-residual term i (IC, BC), compute:
-           λ_i = max_θ |∂L_res/∂θ| / mean_θ |∂L_i/∂θ|
-       This BOOSTS IC/BC to match the dominant residual gradient.
-    3. Apply EMA:
-           λ_i ← (1 - α) * λ_i + α * λ_i_new
-
-The loss function must support `return_components=True` which returns a dict
-    {'residual': scalar, 'ic': scalar, 'bc': scalar}
-of unweighted scalar MSE values.
+  'grad_norm' — Symmetric gradient-norm balancing (jaxpi / Wang et al. 2024):
+                ALL weights adapt so each term's weighted gradient has the
+                same L2 norm.
+                λ_i = mean_j(‖∇L_j‖₂) / ‖∇L_i‖₂
+                No anchoring, no runaway: if IC is well-satisfied its weight
+                grows but residual weight also adapts symmetrically, keeping
+                all three contributions equal.
 """
 
 import torch
@@ -20,22 +21,14 @@ from typing import Dict, Callable
 
 
 class LRAWeights:
-    """Adaptive loss component weights via Loss Rate Annealing.
-
-    The residual weight is always fixed at its initial value.
-    Only IC and BC weights are adapted to match the residual
-    gradient magnitude, following Wang et al. (2021).
+    """Adaptive loss weights supporting 'lra' and 'grad_norm' schemes.
 
     Args:
-        alpha: EMA smoothing factor. 0 = no update, 1 = instant update.
-               Original paper uses beta=0.9 (equivalent to alpha=0.1).
-        update_every: How often (in epochs) to recompute weights.
-                      Each update requires backward passes —
-                      keep this at least 50-100 for efficiency.
-        initial_weights: Optional dict of initial weights
-                        {'residual': float, 'ic': float, 'bc': float}.
-                        If None, defaults to all 1.0.
-                        The residual weight is frozen at its initial value.
+        alpha: EMA factor. 0 = frozen, 1 = instant update. Paper default 0.1.
+        update_every: Epochs between updates (each costs 3 backward passes).
+        initial_weights: Starting weights {'residual', 'ic', 'bc'}.
+        scheme: 'lra' (Wang 2021, residual anchored) or
+                'grad_norm' (jaxpi, all terms symmetric).
     """
 
     def __init__(
@@ -43,9 +36,12 @@ class LRAWeights:
         alpha: float = 0.1,
         update_every: int = 100,
         initial_weights: Dict[str, float] = None,
+        scheme: str = 'grad_norm',
     ):
         self.alpha = alpha
         self.update_every = update_every
+        self.scheme = scheme
+
         if initial_weights is not None:
             self.weights: Dict[str, float] = {
                 'residual': initial_weights.get('residual', 1.0),
@@ -54,15 +50,12 @@ class LRAWeights:
             }
         else:
             self.weights: Dict[str, float] = {
-                'residual': 1.0,
-                'ic': 1.0,
-                'bc': 1.0,
+                'residual': 1.0, 'ic': 1.0, 'bc': 1.0,
             }
+
         self.fixed_residual_weight = self.weights['residual']
         self.last_grad_norms: Dict[str, float] = {
-            'residual': 0.0,
-            'ic': 0.0,
-            'bc': 0.0,
+            'residual': 0.0, 'ic': 0.0, 'bc': 0.0,
         }
 
     def update(
@@ -71,67 +64,68 @@ class LRAWeights:
         loss_fn: Callable,
         batch: Dict[str, torch.Tensor],
     ) -> None:
-        """Recompute LRA weights from current gradient norms.
-
-        Wang et al. (2021) algorithm:
-          - Compute max(|grad_res|) across all parameters
-          - For each of IC, BC: compute mean(|grad_i|) across all parameters
-          - Set lambda_i = max_grad_res / mean_grad_i
-          - EMA smooth the lambda values
-          - Residual weight stays fixed
-
-        Args:
-            model: The PINN model.
-            loss_fn: Loss function supporting `return_components=True`.
-            batch: Training batch dict (x, t, h_gt, mask).
-        """
         components = loss_fn(model, batch, return_components=True)
         trainable_params = [p for p in model.parameters() if p.requires_grad]
 
-        grad_stats: Dict[str, float] = {}
+        grad_norms: Dict[str, float] = {}
 
         for key, loss_val in components.items():
             if not isinstance(loss_val, torch.Tensor) or not loss_val.requires_grad:
-                grad_stats[key] = 1e-8
+                grad_norms[key] = 1e-8
                 continue
             grads = torch.autograd.grad(
                 loss_val, trainable_params,
                 retain_graph=True,
                 allow_unused=True,
             )
-            if key == 'residual':
-                max_abs = max(
-                    g.abs().max().item() for g in grads if g is not None
-                )
-                grad_stats[key] = max(max_abs, 1e-8)
+            if self.scheme == 'grad_norm':
+                # Full L2 norm of the gradient vector (jaxpi formula)
+                flat = torch.cat([g.flatten() for g in grads if g is not None])
+                grad_norms[key] = max(flat.norm().item(), 1e-8)
             else:
-                mean_abs = torch.mean(torch.stack([
-                    g.abs().mean() for g in grads if g is not None
-                ])).item()
-                grad_stats[key] = max(mean_abs, 1e-8)
+                # LRA: max|grad| for residual, mean|grad| for others
+                if key == 'residual':
+                    grad_norms[key] = max(
+                        max(g.abs().max().item() for g in grads if g is not None),
+                        1e-8,
+                    )
+                else:
+                    grad_norms[key] = max(
+                        torch.mean(torch.stack([
+                            g.abs().mean() for g in grads if g is not None
+                        ])).item(),
+                        1e-8,
+                    )
 
-        self.last_grad_norms = grad_stats.copy()
+        self.last_grad_norms = grad_norms.copy()
         model.zero_grad()
 
-        max_grad_res = grad_stats['residual']
-
-        for key in ['ic', 'bc']:
-            target = max_grad_res / grad_stats[key]
-            self.weights[key] = (
-                (1.0 - self.alpha) * self.weights[key]
-                + self.alpha * target
-            )
-
-        self.weights['residual'] = self.fixed_residual_weight
+        if self.scheme == 'grad_norm':
+            mean_norm = sum(grad_norms.values()) / len(grad_norms)
+            for key in ['residual', 'ic', 'bc']:
+                target = mean_norm / grad_norms[key]
+                self.weights[key] = (
+                    (1.0 - self.alpha) * self.weights[key]
+                    + self.alpha * target
+                )
+        else:
+            # LRA: only IC and BC adapt; residual stays fixed
+            max_grad_res = grad_norms['residual']
+            for key in ['ic', 'bc']:
+                target = max_grad_res / grad_norms[key]
+                self.weights[key] = (
+                    (1.0 - self.alpha) * self.weights[key]
+                    + self.alpha * target
+                )
+            self.weights['residual'] = self.fixed_residual_weight
 
     def get(self, key: str) -> float:
-        """Return current weight for a loss component."""
         return self.weights.get(key, 1.0)
 
     def __repr__(self) -> str:
         w = self.weights
         return (
-            f"LRAWeights(residual={w['residual']:.4f}, "
-            f"ic={w['ic']:.4f}, bc={w['bc']:.4f}, "
+            f"LRAWeights(scheme={self.scheme}, "
+            f"residual={w['residual']:.4f}, ic={w['ic']:.4f}, bc={w['bc']:.4f}, "
             f"alpha={self.alpha}, update_every={self.update_every})"
         )

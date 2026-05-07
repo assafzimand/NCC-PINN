@@ -366,6 +366,7 @@ def train(
             alpha=lra_cfg.get('alpha', 0.1),
             update_every=lra_cfg.get('update_every', 100),
             initial_weights=initial_loss_weights,
+            scheme=lra_cfg.get('scheme', 'grad_norm'),
         )
     else:
         lra_weights = None
@@ -650,7 +651,7 @@ def train(
     # LRA
     if lra_enabled:
         init_w = lra_weights.weights
-        print(f"  LRA: enabled (alpha={lra_weights.alpha}, update_every={lra_weights.update_every}, "
+        print(f"  LRA: enabled (scheme={lra_weights.scheme}, alpha={lra_weights.alpha}, update_every={lra_weights.update_every}, "
               f"init_weights={{res={init_w['residual']:.1f}, ic={init_w['ic']:.1f}, bc={init_w['bc']:.1f}}})")
     else:
         print(f"  LRA: disabled")
@@ -720,28 +721,10 @@ def train(
         if resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0 and allow_resample_optimizer:
             resample_seed = base_seed + epoch
             print(f"  [Resample] Regenerating training data (epoch {epoch}, seed {resample_seed})...")
-            # Get cached residuals from previous epoch (if available)
             cached_residuals = getattr(model, '_residual_cache', [])
             model._residual_cache_enabled = False
-            train_data = regenerate_training_data(
-                cfg, device, resample_seed=resample_seed,
-                cached_residuals=cached_residuals,
-                run_dir=run_dir,
-                epoch=epoch,
-                causal_state=causal_state,
-            )
-            train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
-            # Save resample event to metrics
-            metrics['resample_events'].append({
-                'epoch': epoch,
-                'action': 'resampled',
-                'optimizer': current_optimizer_name
-            })
-        elif resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0 and allow_resample_optimizer and not adaptive_sampling_enabled:
-            # Adaptive sampling off but we still have cached residuals — save diagnostic heatmap only
-            cached_residuals = getattr(model, '_residual_cache', [])
-            model._residual_cache_enabled = False
-            if cached_residuals and _problem_spatial_dim == 1:
+            # Save residual heatmap when adaptive sampling is off (adaptive path saves it internally)
+            if not adaptive_sampling_enabled and cached_residuals and _problem_spatial_dim == 1:
                 all_x = torch.cat([r[0] for r in cached_residuals], dim=0)
                 all_t = torch.cat([r[1] for r in cached_residuals], dim=0)
                 all_r2 = torch.cat([r[2] for r in cached_residuals], dim=0)
@@ -751,6 +734,19 @@ def train(
                     run_dir, epoch, cfg,
                     causal_state=causal_state,
                 )
+            train_data = regenerate_training_data(
+                cfg, device, resample_seed=resample_seed,
+                cached_residuals=cached_residuals,
+                run_dir=run_dir,
+                epoch=epoch,
+                causal_state=causal_state,
+            )
+            train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
+            metrics['resample_events'].append({
+                'epoch': epoch,
+                'action': 'resampled',
+                'optimizer': current_optimizer_name
+            })
         elif resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0 and not allow_resample_optimizer:
             # Log when resampling is skipped due to optimizer
             if not hasattr(model, '_resample_skip_logged'):
