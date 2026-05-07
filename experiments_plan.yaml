@@ -8,7 +8,7 @@ base_config:
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 10000                          # Phase 3 duration (just spawn for testing, or set via initial_train.epochs)
+  epochs: 20000                          # Phase 3 duration (just spawn for testing, or set via initial_train.epochs)
   batch_size: 4096                    # Mini-batch size for Adam/SOAP training
   patience_epochs: 5000              # Effectively disabled for 4000 epoch run
   min_epochs: 3000                   # Don't early stop before 3000
