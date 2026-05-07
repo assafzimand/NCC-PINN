@@ -15,7 +15,7 @@ from trainer.timing import EpochTimer
 from models.atoe import AToE
 from models.atoe_leaves import AToELeaves
 from models.ant import ANT
-from utils.dataset_gen import regenerate_training_data
+from utils.dataset_gen import regenerate_training_data, _save_adaptive_sampling_heatmap
 from losses.causal_weighting import advance_causal_schedule
 from losses.lra import LRAWeights
 
@@ -698,11 +698,19 @@ def train(
             and resample_every > 0
             and epoch > 0 and epoch % resample_every == 0
         )
-        if will_cache_for_resample:
+        # Cache residuals for the diagnostic heatmap even when adaptive sampling is off
+        _problem_spatial_dim = cfg.get(cfg.get('problem', ''), {}).get('spatial_dim', 0)
+        will_cache_for_plot = (
+            not adaptive_sampling_enabled
+            and resample_every > 0
+            and epoch > 0 and epoch % resample_every == 0
+            and _problem_spatial_dim == 1
+        )
+        if will_cache_for_resample or will_cache_for_plot:
             model._residual_cache = []
             model._residual_cache_enabled = True
             # Log when adaptive sampling first activates
-            if not hasattr(model, '_adaptive_sampling_activated'):
+            if will_cache_for_resample and not hasattr(model, '_adaptive_sampling_activated'):
                 model._adaptive_sampling_activated = True
                 print(f"  [Adaptive Sampling] Activated at epoch {epoch} (causal training reached final stage)")
 
@@ -729,6 +737,20 @@ def train(
                 'action': 'resampled',
                 'optimizer': current_optimizer_name
             })
+        elif resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0 and allow_resample_optimizer and not adaptive_sampling_enabled:
+            # Adaptive sampling off but we still have cached residuals — save diagnostic heatmap only
+            cached_residuals = getattr(model, '_residual_cache', [])
+            model._residual_cache_enabled = False
+            if cached_residuals and _problem_spatial_dim == 1:
+                all_x = torch.cat([r[0] for r in cached_residuals], dim=0)
+                all_t = torch.cat([r[1] for r in cached_residuals], dim=0)
+                all_r2 = torch.cat([r[2] for r in cached_residuals], dim=0)
+                _save_adaptive_sampling_heatmap(
+                    all_x, all_t, all_r2,
+                    None, None,
+                    run_dir, epoch, cfg,
+                    causal_state=causal_state,
+                )
         elif resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0 and not allow_resample_optimizer:
             # Log when resampling is skipped due to optimizer
             if not hasattr(model, '_resample_skip_logged'):
