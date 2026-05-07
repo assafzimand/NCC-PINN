@@ -125,6 +125,69 @@ def plot_dataset(data: Dict[str, torch.Tensor], save_path: str, title: str = "Da
     print(f"  Dataset visualization saved to {save_path}")
 
 
+def save_spawn_prediction_plot(
+    x: np.ndarray,
+    t: np.ndarray,
+    y_pred: np.ndarray,
+    y_gt: np.ndarray,
+    output_path,
+    epoch: int,
+    output_names=None,
+) -> None:
+    """Save GT vs prediction scatter plot at the moment of expert spawning.
+
+    Args:
+        x: Spatial coords [N, spatial_dim].
+        t: Temporal coords [N, 1].
+        y_pred: Model predictions [N, output_dim].
+        y_gt: Ground truth [N, output_dim].
+        output_path: File path to save the PNG.
+        epoch: Current epoch (used in title only).
+        output_names: Optional list of component names, e.g. ['u', 'v'].
+    """
+    output_dim = y_pred.shape[1]
+    if output_names is None:
+        output_names = [f'u{i}' if output_dim > 1 else 'u' for i in range(output_dim)]
+
+    x0 = x[:, 0]
+    t0 = t[:, 0]
+
+    n_cols = 3  # GT | Pred | |Error|
+    n_rows = output_dim
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows), squeeze=False)
+
+    for i in range(output_dim):
+        gt_i = y_gt[:, i]
+        pr_i = y_pred[:, i]
+        err_i = np.abs(pr_i - gt_i)
+        vmin, vmax = gt_i.min(), gt_i.max()
+
+        sc = axes[i, 0].scatter(x0, t0, c=gt_i, s=2, cmap='viridis', vmin=vmin, vmax=vmax)
+        axes[i, 0].set_title(f'GT  {output_names[i]}')
+        axes[i, 0].set_xlabel('x')
+        axes[i, 0].set_ylabel('t')
+        plt.colorbar(sc, ax=axes[i, 0])
+
+        sc = axes[i, 1].scatter(x0, t0, c=pr_i, s=2, cmap='viridis', vmin=vmin, vmax=vmax)
+        axes[i, 1].set_title(f'Pred  {output_names[i]}')
+        axes[i, 1].set_xlabel('x')
+        axes[i, 1].set_ylabel('t')
+        plt.colorbar(sc, ax=axes[i, 1])
+
+        sc = axes[i, 2].scatter(x0, t0, c=err_i, s=2, cmap='hot_r')
+        axes[i, 2].set_title(f'|Error|  {output_names[i]}')
+        axes[i, 2].set_xlabel('x')
+        axes[i, 2].set_ylabel('t')
+        plt.colorbar(sc, ax=axes[i, 2])
+
+    plt.suptitle(f'Spawn diagnostic — epoch {epoch}', fontsize=13)
+    plt.tight_layout()
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  [SpawnPlot] Saved prediction diagnostic to {output_path}")
+
+
 def plot_dataset_statistics(data: Dict[str, torch.Tensor], save_path: str) -> None:
     """
     Plot statistical information about the dataset.
