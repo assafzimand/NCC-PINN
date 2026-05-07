@@ -416,45 +416,51 @@ def _save_adaptive_sampling_heatmap(
     run_dir, epoch, config,
     causal_state=None,
 ):
-    """Save three-panel diagnostic heatmap for adaptive sampling."""
+    """Save diagnostic heatmap for residual distribution (and adaptive sampling if active).
+
+    x_sampled / t_sampled may be None when adaptive sampling is disabled —
+    in that case the sampled-points panel is omitted.
+    """
     try:
         import matplotlib.pyplot as plt
         import numpy as np
         from pathlib import Path
-        
+
         output_dir = Path(run_dir) / "adaptive_sampling"
         output_dir.mkdir(exist_ok=True, parents=True)
-        
+
         x_cached_np = x_cached[:, 0].cpu().numpy()
         t_cached_np = t_cached[:, 0].cpu().numpy()
         r2_cached_np = r2_cached.cpu().numpy()
-        x_sampled_np = x_sampled[:, 0].cpu().numpy()
-        t_sampled_np = t_sampled[:, 0].cpu().numpy()
-        
+
         log_r2 = np.log10(r2_cached_np + 1e-10)
-        
-        # Compute causal-weighted residuals if causal training is active
+
+        has_adaptive = x_sampled is not None and t_sampled is not None
         has_causal = (causal_state is not None and causal_state.get('enabled', False))
-        n_panels = 3 if has_causal else 2
+        n_panels = 1 + int(has_adaptive) + int(has_causal)
         fig, axes = plt.subplots(1, n_panels, figsize=(7 * n_panels, 5))
-        if n_panels == 2:
-            ax1, ax2 = axes
-            ax3 = None
-        else:
-            ax1, ax2, ax3 = axes
-        
+        if n_panels == 1:
+            axes = [axes]
+        panel_iter = iter(axes)
+        ax1 = next(panel_iter)
+        ax2 = next(panel_iter) if has_adaptive else None
+        ax3 = next(panel_iter) if has_causal else None
+
         # Panel 1: raw (pure) PDE residuals
         sc1 = ax1.scatter(x_cached_np, t_cached_np, c=log_r2, cmap='hot', s=1, alpha=0.6)
         ax1.set_xlabel('x')
         ax1.set_ylabel('t')
         ax1.set_title(f'Pure PDE Residual (epoch {epoch-1})')
         plt.colorbar(sc1, ax=ax1, label='log10(r²)')
-        
-        # Panel 2: adaptive sampling points (driven by pure residual)
-        sc2 = ax2.scatter(x_sampled_np, t_sampled_np, c='blue', s=3, alpha=0.4)
-        ax2.set_xlabel('x')
-        ax2.set_ylabel('t')
-        ax2.set_title(f'Adaptive Sampling by Pure Residual (epoch {epoch})')
+
+        # Panel 2: adaptive sampling points (only when adaptive sampling is active)
+        if has_adaptive and ax2 is not None:
+            x_sampled_np = x_sampled[:, 0].cpu().numpy()
+            t_sampled_np = t_sampled[:, 0].cpu().numpy()
+            ax2.scatter(x_sampled_np, t_sampled_np, c='blue', s=3, alpha=0.4)
+            ax2.set_xlabel('x')
+            ax2.set_ylabel('t')
+            ax2.set_title(f'Adaptive Sampling by Pure Residual (epoch {epoch})')
         
         # Panel 3: causal-weighted residuals (what we actually train on)
         if has_causal and ax3 is not None:
