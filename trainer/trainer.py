@@ -252,7 +252,7 @@ def train(
 
     # ── 3-phase logic for full_tree_by_norm / use_perfect_trees ──
     adaptive_cfg_init = cfg.get('adaptive_pinn', {})
-    spawning_method_init = adaptive_cfg_init.get('spawning_method', 'by_mean_loss')
+    spawning_method_init = adaptive_cfg_init.get('spawning_method', 'by_mean_residual')
     initial_train_cfg = adaptive_cfg_init.get('initial_train', None)
     use_three_phase = (spawning_method_init == 'full_tree_by_norm' and initial_train_cfg is not None)
     use_perfect_trees = (spawning_method_init == 'use_perfect_trees')
@@ -403,7 +403,7 @@ def train(
     region_detector = None
     spawn_every = adaptive_cfg.get('spawn_every_epochs', 2000)
     max_experts = adaptive_cfg.get('max_experts', 5)
-    spawning_method = adaptive_cfg.get('spawning_method', 'by_mean_loss')
+    spawning_method = adaptive_cfg.get('spawning_method', 'by_mean_residual')
     problem_cfg = cfg.get(cfg['problem'], {})
     wavelet_threshold = problem_cfg.get('wavelet_threshold', 0.0)
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
@@ -1191,9 +1191,9 @@ def train(
             X_eval = eval_inputs.cpu().numpy()
             y_eval = u_pred.cpu().numpy()
 
-            # Only compute per-sample losses for by_mean_loss (expensive)
+            # Only compute per-sample losses for by_mean_residual (expensive)
             loss_components = None
-            if spawning_method == 'by_mean_loss':
+            if spawning_method == 'by_mean_residual':
                 problem = cfg.get('problem', 'schrodinger')
                 loss_weights = cfg[problem].get('loss_weights', {})
                 loss_components = compute_loss_components(
@@ -1221,15 +1221,10 @@ def train(
             # Dispatch on spawning_method
             # =============================================================
 
-            if spawning_method == 'by_mean_loss':
-                # Pick the single leaf with highest mean loss, split it
+            if spawning_method == 'by_mean_residual':
+                # Pick the single leaf with highest mean residual, split it
                 _spawned_children_diag = []
-                w_res = loss_components['weights'].get('residual', 1.0)
-                w_ic  = loss_components['weights'].get('ic', 1.0)
-                w_bc  = loss_components['weights'].get('bc', 1.0)
-                per_sample_total = (w_res * loss_components['residual']
-                                    + w_ic * loss_components['ic']
-                                    + w_bc * loss_components['bc'])
+                per_sample_total = loss_components['residual']
 
                 leaf_mean_losses = []
                 for leaf_region, leaf_idx in leaf_nodes:
@@ -1339,10 +1334,10 @@ def train(
                         print(f"      [Spawning] Spawned {experts_spawned_this_step} children from {candidate_str}")
                     break
 
-                # Save diagnostics for by_mean_loss
+                # Save diagnostics for by_mean_residual
                 diag = {
                     'epoch': epoch,
-                    'method': 'by_mean_loss',
+                    'method': 'by_mean_residual',
                     'evaluated_leaves': [
                         {
                             'leaf_idx': idx,

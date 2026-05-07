@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "ks_piratenet_soap_ablation"
+experiment_name: "ks_split_on_the_go"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -8,7 +8,7 @@ base_config:
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 1                          # Phase 3 duration (just spawn for testing, or set via initial_train.epochs)
+  epochs: 10000                          # Phase 3 duration (just spawn for testing, or set via initial_train.epochs)
   batch_size: 4096                    # Mini-batch size for Adam/SOAP training
   patience_epochs: 5000              # Effectively disabled for 4000 epoch run
   min_epochs: 3000                   # Don't early stop before 3000
@@ -53,7 +53,7 @@ base_config:
   fourier_features:
     enabled: true                    # Map input → [cos(Bz), sin(Bz)] before network
     dim: 128                         # Number of Fourier features (output = 2*dim = 256)
-    scale: 1.0                       # Std of random projection matrix B (per-problem override)
+    scale: 2.0                       # Std of random projection matrix B (per-problem override)
 
   # ── LRA (Loss Rate Annealing) ──
   lra:
@@ -218,7 +218,7 @@ base_config:
     tree_smoothness_threshold: 0.3
     loss_weights:
       residual: 1.0
-      ic: 1.0                       # Moderate IC weight — papers use 20-100 per window, we have full [0,1]
+      ic: 100.0                       # Moderate IC weight — papers use 20-100 per window, we have full [0,1]
       bc: 1.0                        # Periodic BC is soft — low weight, FF can help enforce periodicity
     causal_training:
       enabled: false
@@ -226,7 +226,7 @@ base_config:
       tol_schedule: [0.1]  # Full paper schedule (Wang et al. 2022) — bug is fixed
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
     fourier_features:
-      scale: 1.0                     # Conservative — KS has broadband content, not sharp interfaces
+      scale: 2.0                     # Conservative — KS has broadband content, not sharp interfaces
 
   # ── Dataset sampling ratios ──
   sampling:
@@ -245,7 +245,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 2000                   # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 500                   # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -265,7 +265,7 @@ base_config:
     use_decomposed_derivatives: false
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
-    spawning_method: full_tree_by_norm       # "by_mean_loss" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
+    spawning_method: by_mean_residual       # "by_mean_residual" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
     perfect_trees_path: perfect_tree_examples/classic_norm/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
     # ── 3-Phase training config ──
@@ -283,9 +283,7 @@ experiments:
 
   - name: ks_lra_resnet
     problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 1]
-    initial_train:
-      epochs: 2000
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
     optimizer_1: soap
     optimizer_2: null
     soap_betas: [0.95, 0.95]
@@ -298,14 +296,14 @@ experiments:
         enabled: false
       resample_every_epochs: 500
     lra:
-      enabled: true
+      enabled: false
       scheme: grad_norm
       alpha: 0.1
       update_every: 100
     ks:
       loss_weights:
         residual: 1.0
-        ic: 50.0
+        ic: 100.0
         bc: 1.0
       causal_training:
         enabled: false
