@@ -16,6 +16,7 @@ from models.atoe import AToE
 from models.atoe_leaves import AToELeaves
 from models.ant import ANT
 from utils.dataset_gen import regenerate_training_data, _save_adaptive_sampling_heatmap
+from utils.dataset_plotting import save_spawn_prediction_plot
 from losses.causal_weighting import advance_causal_schedule
 from losses.lra import LRAWeights
 
@@ -1659,6 +1660,17 @@ def train(
                     grid_x=gt_x,
                     grid_t=gt_t
                 )
+
+                if _problem_spatial_dim == 1 and 'h_gt' in eval_data:
+                    _gt_np = eval_data['h_gt'].cpu().numpy()
+                    save_spawn_prediction_plot(
+                        x=eval_data['x'].cpu().numpy(),
+                        t=eval_data['t'].cpu().numpy(),
+                        y_pred=y_eval,
+                        y_gt=_gt_np,
+                        output_path=adaptive_plots_dir / f"spawn_pred_epoch_{epoch}.png",
+                        epoch=epoch,
+                    )
 
                 if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
                     leaf_indices_set = (
