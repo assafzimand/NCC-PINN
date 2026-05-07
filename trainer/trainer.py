@@ -1662,10 +1662,10 @@ def train(
                 )
 
                 if _problem_spatial_dim == 1 and 'h_gt' in eval_data:
-                    _gt_np = eval_data['h_gt'].cpu().numpy()
+                    _gt_np = eval_data['h_gt'].detach().cpu().numpy()
                     save_spawn_prediction_plot(
-                        x=eval_data['x'].cpu().numpy(),
-                        t=eval_data['t'].cpu().numpy(),
+                        x=eval_data['x'].detach().cpu().numpy(),
+                        t=eval_data['t'].detach().cpu().numpy(),
                         y_pred=y_eval,
                         y_gt=_gt_np,
                         output_path=adaptive_plots_dir / f"spawn_pred_epoch_{epoch}.png",
