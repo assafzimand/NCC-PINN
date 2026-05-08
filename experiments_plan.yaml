@@ -256,7 +256,7 @@ base_config:
     ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
     expert_type: resnet                # 'mlp' or 'resnet' -- architecture for base model and experts
-    freeze_mode: none                          # "none" | "previous" | "base_only"
+    freeze_mode: previous                      # "none" | "previous" | "base_only" — Fix 2 uses this; 'previous' = freeze base+old experts post-spawn
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
     base_weight: 0.3                           # Uniform weight for base model (soft blending only)
@@ -285,7 +285,7 @@ base_config:
     # Keep spawn_plateau_epochs < resample_every_epochs to avoid resampling jumps confusing the check.
     spawn_require_plateau: true
     spawn_plateau_epochs: 300      # look-back window in epochs
-    spawn_plateau_delta: 0.03     # spawn only if training loss improved <0.5% over the window
+    spawn_plateau_delta: 0.03     # spawn only if training loss improved <1% over the window
 
     # ── 3-Phase training config ──
     # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
