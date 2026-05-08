@@ -296,7 +296,7 @@ experiments:
         enabled: false
       resample_every_epochs: 500
     lra:
-      enabled: false
+      enabled: true
       scheme: grad_norm
       alpha: 0.1
       update_every: 100
