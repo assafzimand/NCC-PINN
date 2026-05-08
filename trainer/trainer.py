@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from pathlib import Path
 from typing import Dict, Callable, Optional, Tuple
 import json
+import math
 import time
 import numpy as np
 
@@ -985,6 +986,39 @@ def train(
         metrics['train_loss_epochs'].append(epoch)
         metrics['train_loss'].append(train_loss)
 
+        # NaN early-stop: save everything and break so the next experiment can run
+        if math.isnan(train_loss) or math.isinf(train_loss):
+            print(f"\n{'!'*60}")
+            print(f"  [NaN] Training diverged at epoch {epoch} — saving diagnostics and stopping.")
+
+            # Diagnose which loss component went NaN
+            try:
+                with torch.no_grad():
+                    _diag_batch = next(iter(train_loader))
+                    _comps = loss_fn(model, _diag_batch, return_components=True)
+                    print(f"  [NaN] Loss components: " +
+                          ", ".join(f"{k}={v.item():.6g}" for k, v in _comps.items()))
+                    metrics['nan_components'] = {k: float(v.item()) for k, v in _comps.items()}
+            except Exception as _e:
+                print(f"  [NaN] Could not compute loss components: {_e}")
+
+            metrics['nan_divergence'] = {'epoch': epoch, 'train_loss': train_loss}
+            metrics['training_time_seconds'] = time.time() - start_time
+
+            # Save metrics JSON so the run is inspectable
+            _nan_metrics_path = run_dir / "metrics.json"
+            with open(_nan_metrics_path, 'w') as _f:
+                json.dump(metrics, _f, indent=2, cls=_NumpySafeEncoder)
+            print(f"  [NaN] Metrics saved to {_nan_metrics_path}")
+
+            # Save a NaN-state checkpoint for post-mortem inspection
+            _nan_ckpt_path = checkpoint_dir / f"nan_checkpoint_epoch_{epoch}.pt"
+            _save_checkpoint(_nan_ckpt_path, model, optimizer, current_optimizer_name,
+                             epoch, train_loss, eval_loss, cfg, metrics)
+            print(f"  [NaN] Checkpoint saved to {_nan_ckpt_path}")
+            print(f"{'!'*60}\n")
+            break
+
         # LRA: update adaptive loss weights periodically
         if lra_weights is not None and epoch > 0 and epoch % lra_weights.update_every == 0:
             try:
@@ -1223,18 +1257,20 @@ def train(
                 # Check training-loss plateau over the look-back window
                 _lookback = max(1, _spawn_plateau_epochs // max(1, cfg.get('print_every', 100)))
                 _recent = metrics['train_loss'][-_lookback:]
-                if len(_recent) >= 2:
-                    _rel_drop = (_recent[0] - _recent[-1]) / (abs(_recent[0]) + 1e-8)
+                _recent_valid = [r for r in _recent if not math.isnan(r) and not math.isinf(r)]
+                if len(_recent_valid) >= 2:
+                    _rel_drop = (_recent_valid[0] - _recent_valid[-1]) / (abs(_recent_valid[0]) + 1e-8)
                     _plateau_met = _rel_drop <= _spawn_plateau_delta
                 else:
-                    _plateau_met = False  # not enough history yet
+                    _plateau_met = False  # not enough valid history yet
 
                 if not _plateau_met:
                     spawn_check_triggered = False
                     # Only print once per 100 epochs to avoid spam
                     if epoch % 100 == 0:
+                        _drop_str = f"{_rel_drop*100:.2f}%" if len(_recent_valid) >= 2 else "n/a (no valid history)"
                         print(f"  [Plateau] Spawn deferred — loss still dropping "
-                              f"({_rel_drop*100:.2f}% over last {_spawn_plateau_epochs} epochs, "
+                              f"({_drop_str} over last {_spawn_plateau_epochs} epochs, "
                               f"threshold={_spawn_plateau_delta*100:.2f}%)")
                 else:
                     spawn_check_triggered = True

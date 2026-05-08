@@ -222,7 +222,7 @@ base_config:
     tree_smoothness_threshold: 0.3
     loss_weights:
       residual: 1.0
-      ic: 20.0                       # Moderate IC weight — papers use 20-100 per window, we have full [0,1]
+      ic: 100.0                       # Moderate IC weight — papers use 20-100 per window, we have full [0,1]
       bc: 1.0                        # Periodic BC is soft — low weight, FF can help enforce periodicity
     causal_training:
       enabled: false
