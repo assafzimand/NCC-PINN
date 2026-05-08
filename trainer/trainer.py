@@ -347,7 +347,12 @@ def train(
         'eval_inf_norm': [],
         'causal_history': [],      # Causal training state (tol, min_weight, stage) at eval epochs
         'lra_history': [],         # LRA weights and grad norms at eval epochs
-        'resample_events': []      # Track resampling/skipping events
+        'resample_events': [],     # Track resampling/skipping events
+        'freeze_events': [],       # Freeze/unfreeze events with epoch and reason
+        'plateau_events': [],      # Plateau check outcomes (deferred / triggered)
+        'optimizer_events': [],    # Optimizer switch events
+        'loss_components_history': [],  # Per-component losses at eval epochs
+        'exception_events': [],    # Caught Python exceptions with traceback
     }
 
     best_eval_loss = float('inf')
@@ -702,6 +707,33 @@ def train(
     print("=" * 60 + "\n")
 
     epoch = 0
+
+    # Emergency save: fires on any unhandled exception (or process exit) so metrics.json
+    # is never lost even if the training loop crashes with a Python exception.
+    import atexit as _atexit
+
+    def _emergency_metrics_save():
+        if _emergency_metrics_save.done:
+            return
+        import traceback as _tb_mod
+        exc = _tb_mod.format_exc()
+        metrics['exception_events'].append({
+            'epoch': epoch,
+            'note': 'process_exit_or_exception',
+            'traceback': exc if exc.strip() != 'NoneType: None' else None,
+        })
+        metrics['training_time_seconds'] = time.time() - start_time
+        _p = run_dir / "metrics.json"
+        try:
+            with open(_p, 'w') as _f:
+                json.dump(metrics, _f, indent=2, cls=_NumpySafeEncoder)
+            print(f"\n[Emergency] Metrics saved to {_p}")
+        except Exception as _se:
+            print(f"\n[Emergency] Could not save metrics: {_se}")
+
+    _emergency_metrics_save.done = False
+    _atexit.register(_emergency_metrics_save)
+
     while epoch < total_epochs:
         epoch += 1
         timer.start_epoch(epoch, num_experts=model.num_experts if (is_adaptive and hasattr(model, 'num_experts')) else 0)
@@ -709,6 +741,7 @@ def train(
         # Unfreeze old experts after freeze_epochs_after_spawn has elapsed (Fix 2)
         if _unfreeze_at_epoch is not None and epoch == _unfreeze_at_epoch:
             print(f"\n  [Freeze] Unfreezing all models at epoch {epoch} — restoring full training")
+            metrics['freeze_events'].append({'epoch': epoch, 'action': 'unfreeze', 'reason': 'freeze_epochs_elapsed'})
             _unfreeze_at_epoch = None
             adaptive_cfg['freeze_mode'] = adaptive_cfg.get('freeze_mode', 'none')
             model.freeze_models()  # applies the original freeze_mode (likely 'none')
@@ -975,12 +1008,18 @@ def train(
             print(f"\n{'='*60}")
             print(f"OPTIMIZER SWITCH: {current_optimizer_name} -> {optimizer_2_name.upper()} at epoch {epoch}")
             print(f"{'='*60}\n")
+            _prev_opt = current_optimizer_name
             optimizer, current_optimizer_name = _create_optimizer_by_name(
                 optimizer_2_name, model, active_cfg)
             lr_scheduler = None  # optimizer_2 uses its own LR / line search
             # Reset patience counter at switch point
             epochs_without_improvement = 0
             best_train_loss = float('inf')
+            metrics['optimizer_events'].append({
+                'epoch': epoch,
+                'from': _prev_opt,
+                'to': current_optimizer_name,
+            })
         
         # Store train loss every epoch
         metrics['train_loss_epochs'].append(epoch)
@@ -1162,6 +1201,12 @@ def train(
                     components = loss_fn(model, sample_batch, return_components=True)
                     print(f"  [Loss] components: residual={components['residual']:.6f}, "
                           f"ic={components['ic']:.6f}, bc={components['bc']:.6f} (unweighted)")
+                    metrics['loss_components_history'].append({
+                        'epoch': epoch,
+                        'residual': float(components['residual'].item()),
+                        'ic': float(components['ic'].item()),
+                        'bc': float(components['bc'].item()),
+                    })
             except Exception as e:
                 # Don't crash if component breakdown fails
                 pass
@@ -1266,14 +1311,26 @@ def train(
 
                 if not _plateau_met:
                     spawn_check_triggered = False
+                    _drop_str = f"{_rel_drop*100:.2f}%" if len(_recent_valid) >= 2 else "n/a"
                     # Only print once per 100 epochs to avoid spam
                     if epoch % 100 == 0:
-                        _drop_str = f"{_rel_drop*100:.2f}%" if len(_recent_valid) >= 2 else "n/a (no valid history)"
                         print(f"  [Plateau] Spawn deferred — loss still dropping "
                               f"({_drop_str} over last {_spawn_plateau_epochs} epochs, "
                               f"threshold={_spawn_plateau_delta*100:.2f}%)")
+                    metrics['plateau_events'].append({
+                        'epoch': epoch,
+                        'action': 'deferred',
+                        'rel_drop_pct': float(_rel_drop * 100) if len(_recent_valid) >= 2 else None,
+                        'threshold_pct': float(_spawn_plateau_delta * 100),
+                    })
                 else:
                     spawn_check_triggered = True
+                    metrics['plateau_events'].append({
+                        'epoch': epoch,
+                        'action': 'triggered',
+                        'rel_drop_pct': float(_rel_drop * 100) if len(_recent_valid) >= 2 else None,
+                        'threshold_pct': float(_spawn_plateau_delta * 100),
+                    })
             else:
                 spawn_check_triggered = False  # minimum interval not yet elapsed
         else:
@@ -1764,6 +1821,14 @@ def train(
                 if freeze_epochs_after_spawn > 0:
                     _saved_freeze_mode = adaptive_cfg.get('freeze_mode', 'none')
                     adaptive_cfg['freeze_mode'] = 'previous'
+                    metrics['freeze_events'].append({
+                        'epoch': epoch,
+                        'action': 'freeze',
+                        'reason': 'post_spawn',
+                        'freeze_mode_applied': 'previous',
+                        'unfreeze_at': epoch + freeze_epochs_after_spawn,
+                        'experts_spawned': experts_spawned_this_step,
+                    })
 
                 model.freeze_models()
 
@@ -1823,6 +1888,10 @@ def train(
                 print(f"\n  [Spawning] No experts spawned this step")
 
             model.train()
+
+    # Loop exited normally — disable emergency save
+    _emergency_metrics_save.done = True
+    _atexit.unregister(_emergency_metrics_save)
 
     # Save final model
     final_checkpoint_path = checkpoint_dir / "final_model.pt"
