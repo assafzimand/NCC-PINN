@@ -101,7 +101,8 @@ def _create_ssbroyden_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Opti
             trainable_params,
             lr=cfg.get('lr', 1e-3),
             history_size=cfg.get('ssbroyden_history_size', 10),
-            max_iter=cfg.get('ssbroyden_max_iter', 1),
+            max_iter=cfg.get('ssbroyden_max_iter', 20),
+            line_search=cfg.get('ssbroyden_line_search', 'strong-wolfe'),
         )
     except ImportError:
         print("  [Warning] torchmin not installed — SSBroyden unavailable, falling back to LBFGS.")
@@ -619,6 +620,20 @@ def train(
 
     resample_every = cfg.get('sampling', {}).get('resample_every_epochs', 0)
     base_seed = cfg.get('seed', 42)
+    grad_clip_norm = cfg.get('grad_clip_norm', None)  # None = disabled
+
+    # Freeze-after-spawn state (Fix 2)
+    freeze_epochs_after_spawn = adaptive_cfg.get('freeze_epochs_after_spawn', 0) if is_adaptive else 0
+    _unfreeze_at_epoch = None       # set after each spawn
+    _opt_state_snapshot = None      # saved optimizer moments before freeze
+
+    # Plateau-gated spawning state (Fix 3)
+    # spawn_every acts as minimum interval; once elapsed, plateau is checked every epoch until met.
+    _spawn_require_plateau = adaptive_cfg.get('spawn_require_plateau', False) if is_adaptive else False
+    _spawn_plateau_epochs = adaptive_cfg.get('spawn_plateau_epochs', 300)
+    _spawn_plateau_delta = adaptive_cfg.get('spawn_plateau_delta', 0.005)
+    _plateau_check_active = False   # True once spawn_every interval has elapsed
+    _last_spawn_epoch = 0           # epoch of last successful spawn
     
     # Consolidated feature summary
     print("\n" + "=" * 60)
@@ -689,6 +704,26 @@ def train(
     while epoch < total_epochs:
         epoch += 1
         timer.start_epoch(epoch, num_experts=model.num_experts if (is_adaptive and hasattr(model, 'num_experts')) else 0)
+
+        # Unfreeze old experts after freeze_epochs_after_spawn has elapsed (Fix 2)
+        if _unfreeze_at_epoch is not None and epoch == _unfreeze_at_epoch:
+            print(f"\n  [Freeze] Unfreezing all models at epoch {epoch} — restoring full training")
+            _unfreeze_at_epoch = None
+            adaptive_cfg['freeze_mode'] = adaptive_cfg.get('freeze_mode', 'none')
+            model.freeze_models()  # applies the original freeze_mode (likely 'none')
+            # Rebuild optimizer to include all now-trainable params
+            optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
+            lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
+            step_count = 0
+            # Restore saved optimizer moments for params that existed before the freeze
+            if _opt_state_snapshot is not None:
+                for pg in optimizer.param_groups:
+                    for p in pg['params']:
+                        saved = _opt_state_snapshot.get(id(p))
+                        if saved:
+                            optimizer.state[p] = saved
+                _opt_state_snapshot = None
+                print(f"  [Freeze] Optimizer moments restored for previously frozen params")
 
         # Enable residual caching for adaptive sampling if needed
         # Cache THIS epoch's residuals for NEXT epoch's resampling
@@ -791,6 +826,9 @@ def train(
                             print(f"  Expert {i}: first_layer.grad={'None' if first_grad is None else f'norm={first_grad.norm().item():.6f}'}, "
                                   f"final_layer.grad={'None' if final_grad is None else f'norm={final_grad.norm().item():.6f}'}")
 
+                if grad_clip_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for p in model.parameters() if p.requires_grad], grad_clip_norm)
                 timer.start('train.optim_step')
                 optimizer.step()
                 timer.stop('train.optim_step')
@@ -842,6 +880,9 @@ def train(
                 # Single forward pass with ALL training data at once
                 loss = loss_fn(model, train_data)
                 loss.backward()
+                if grad_clip_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for p in model.parameters() if p.requires_grad], grad_clip_norm)
                 return loss
             
             try:
@@ -917,6 +958,9 @@ def train(
                     batch = next(iter(train_loader))
                     loss = loss_fn(model, batch)
                     loss.backward()
+                    if grad_clip_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(
+                            [p for p in model.parameters() if p.requires_grad], grad_clip_norm)
                     optimizer.step()
                     train_loss = loss.item()
                     n_train_batches = 1
@@ -1161,15 +1205,44 @@ def train(
                 metrics['freq_history'].append((epoch, freq_metrics))
 
         # Adaptive PINN: Hierarchical expert spawning from leaf nodes
+        # With spawn_require_plateau=True: spawn_every is a minimum interval; once elapsed,
+        # the plateau is checked every epoch until met, then spawn fires immediately.
         if spawning_method in ('full_tree_by_norm', 'use_perfect_trees'):
-            spawn_check_triggered = (is_adaptive and
-                                     epoch % spawn_every == 0 and
-                                     not spawning_complete)
+            _base_spawn_eligible = is_adaptive and not spawning_complete
         else:
-            spawn_check_triggered = (is_adaptive and
-                                     epoch % spawn_every == 0 and
-                                     hasattr(model, 'num_experts') and
-                                     model.num_experts < max_experts)
+            _base_spawn_eligible = (is_adaptive and
+                                    hasattr(model, 'num_experts') and
+                                    model.num_experts < max_experts)
+
+        if _base_spawn_eligible and _spawn_require_plateau:
+            # Activate plateau checking once the minimum interval since last spawn has passed
+            if not _plateau_check_active and (epoch - _last_spawn_epoch) >= spawn_every:
+                _plateau_check_active = True
+
+            if _plateau_check_active:
+                # Check training-loss plateau over the look-back window
+                _lookback = max(1, _spawn_plateau_epochs // max(1, cfg.get('print_every', 100)))
+                _recent = metrics['train_loss'][-_lookback:]
+                if len(_recent) >= 2:
+                    _rel_drop = (_recent[0] - _recent[-1]) / (abs(_recent[0]) + 1e-8)
+                    _plateau_met = _rel_drop <= _spawn_plateau_delta
+                else:
+                    _plateau_met = False  # not enough history yet
+
+                if not _plateau_met:
+                    spawn_check_triggered = False
+                    # Only print once per 100 epochs to avoid spam
+                    if epoch % 100 == 0:
+                        print(f"  [Plateau] Spawn deferred — loss still dropping "
+                              f"({_rel_drop*100:.2f}% over last {_spawn_plateau_epochs} epochs, "
+                              f"threshold={_spawn_plateau_delta*100:.2f}%)")
+                else:
+                    spawn_check_triggered = True
+            else:
+                spawn_check_triggered = False  # minimum interval not yet elapsed
+        else:
+            # Original epoch-based trigger (no plateau gating)
+            spawn_check_triggered = _base_spawn_eligible and (epoch % spawn_every == 0)
         
         if spawn_check_triggered:
             print(f"\n{'='*60}")
@@ -1609,6 +1682,9 @@ def train(
 
             if experts_spawned_this_step > 0:
                 print(f"\n  [Spawning] Spawned {experts_spawned_this_step} experts in this step")
+                # Reset plateau state so next spawn waits another spawn_every interval
+                _plateau_check_active = False
+                _last_spawn_epoch = epoch
 
                 # ── 3-phase: reinitialize base + transition to Phase 3 ──
                 if use_three_phase and spawning_complete and current_phase == 1:
@@ -1633,14 +1709,37 @@ def train(
                     print(f"  [3-Phase] Total epochs now: {total_epochs} (Phase 1: {epoch}, Phase 3: {phase3_epochs})")
                     print(f"  [3-Phase] Optimizer: {_p3_opt1}, lr: {active_cfg.get('lr')}, schedule: {active_cfg.get('lr_schedule', 'exponential')}")
 
+                # Save optimizer moments before rebuild so they can be restored on unfreeze
+                if freeze_epochs_after_spawn > 0:
+                    import copy
+                    _opt_state_snapshot = {
+                        id(p): copy.deepcopy(s)
+                        for p, s in zip(
+                            [p for pg in optimizer.param_groups for p in pg['params']],
+                            [optimizer.state.get(p, {}) for pg in optimizer.param_groups for p in pg['params']]
+                        )
+                    }
+                    _unfreeze_at_epoch = epoch + freeze_epochs_after_spawn
+                    print(f"  [Freeze] Freezing old experts/base for {freeze_epochs_after_spawn} epochs "
+                          f"(unfreeze at epoch {_unfreeze_at_epoch})")
+
+                # Rebuild optimizer (only trainable params — determined by freeze_models below)
+                # If freeze_epochs_after_spawn is set, override freeze_mode to 'previous' temporarily
+                if freeze_epochs_after_spawn > 0:
+                    _saved_freeze_mode = adaptive_cfg.get('freeze_mode', 'none')
+                    adaptive_cfg['freeze_mode'] = 'previous'
+
+                model.freeze_models()
+
+                if freeze_epochs_after_spawn > 0:
+                    adaptive_cfg['freeze_mode'] = _saved_freeze_mode  # restore for future calls
+
                 optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
                 if current_phase == 3:
                     lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_p3)
                 else:
                     lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
                 step_count = 0
-
-                model.freeze_models()
 
                 problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
                 num_experts_str = f" ({model.num_experts} experts)" if hasattr(model, 'num_experts') else ""
@@ -1921,6 +2020,7 @@ def train(
 
     total_model_params = sum(p.numel() for p in model.parameters())
     metrics['total_params'] = total_model_params
+    metrics['training_time_seconds'] = time.time() - start_time
 
     # Save metrics to JSON
     metrics_path = run_dir / "metrics.json"
