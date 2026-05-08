@@ -743,8 +743,7 @@ def train(
             print(f"\n  [Freeze] Unfreezing all models at epoch {epoch} — restoring full training")
             metrics['freeze_events'].append({'epoch': epoch, 'action': 'unfreeze', 'reason': 'freeze_epochs_elapsed'})
             _unfreeze_at_epoch = None
-            adaptive_cfg['freeze_mode'] = adaptive_cfg.get('freeze_mode', 'none')
-            model.freeze_models()  # applies the original freeze_mode (likely 'none')
+            model.freeze_models(mode='none')  # explicitly unfreeze all params
             # Rebuild optimizer to include all now-trainable params
             optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
             lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
@@ -1816,11 +1815,9 @@ def train(
                     print(f"  [Freeze] Freezing old experts/base for {freeze_epochs_after_spawn} epochs "
                           f"(unfreeze at epoch {_unfreeze_at_epoch})")
 
-                # Rebuild optimizer (only trainable params — determined by freeze_models below)
-                # If freeze_epochs_after_spawn is set, override freeze_mode to 'previous' temporarily
+                # Freeze base + old experts so only the newest expert trains during warmup.
+                # Always use explicit mode='previous' regardless of config freeze_mode.
                 if freeze_epochs_after_spawn > 0:
-                    _saved_freeze_mode = adaptive_cfg.get('freeze_mode', 'none')
-                    adaptive_cfg['freeze_mode'] = 'previous'
                     metrics['freeze_events'].append({
                         'epoch': epoch,
                         'action': 'freeze',
@@ -1829,11 +1826,9 @@ def train(
                         'unfreeze_at': epoch + freeze_epochs_after_spawn,
                         'experts_spawned': experts_spawned_this_step,
                     })
-
-                model.freeze_models()
-
-                if freeze_epochs_after_spawn > 0:
-                    adaptive_cfg['freeze_mode'] = _saved_freeze_mode  # restore for future calls
+                    model.freeze_models(mode='previous')
+                else:
+                    model.freeze_models()  # applies configured freeze_mode (likely 'none' or 'previous')
 
                 optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
                 if current_phase == 3:
