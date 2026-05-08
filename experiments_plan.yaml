@@ -39,12 +39,16 @@ base_config:
   lbfgs_tolerance_change: 0.0        # Loss change tolerance for L-BFGS convergence. 0 = disabled.
 
   # ── SSBroyden-specific (only used when optimizer_1 or _2 is 'ssbroyden') ──
-  ssbroyden_history_size: 10         # Number of correction pairs stored.
-  ssbroyden_max_iter: 1              # Steps per call (similar to lbfgs_max_iter).
+  ssbroyden_history_size: 10         # Number of correction pairs stored. Paper uses default (~10).
+  ssbroyden_max_iter: 20             # Inner iterations per closure call. Paper: 20k-30k total iters full-batch.
+  ssbroyden_line_search: strong-wolfe  # Line search. Paper (vRBA 2025): Strong Wolfe.
 
   # ── Adam hyperparameters (only used when optimizer_1 or _2 is 'adam') ──
   adam_betas: [0.9, 0.999]           # Adam momentum parameters (beta1, beta2). Standard default.
   adam_eps: 1.0e-8                   # Adam epsilon for numerical stability.
+
+  # ── Gradient clipping (applied before every optimizer.step) ──
+  grad_clip_norm: 1.0              # Max gradient norm. null = disabled.
 
   # ── RWF (Random Weight Factorization) ──
   rwf: true                          # Apply W_eff = diag(exp(s)) @ W to all hidden layers
@@ -245,7 +249,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 500                   # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 800                   # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -265,8 +269,23 @@ base_config:
     use_decomposed_derivatives: false
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
-    spawning_method: by_mean_residual       # "by_mean_residual" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
+    spawning_method: accept_split_by_norm       # "by_mean_residual" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
     perfect_trees_path: perfect_tree_examples/classic_norm/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
+
+    # ── Post-spawn freeze (Fix 2) ──
+    # After spawning, freeze base+old experts for N epochs so only the newest expert trains.
+    # Should be ~2x warmup-in-epochs: lr_warmup_steps / (n_residual/batch_size) = 1000/5 = 200ep → set 400.
+    # 0 = disabled (all models train together immediately after spawn).
+    freeze_epochs_after_spawn: 400
+
+    # ── Plateau-gated spawning (Fix 3) ──
+    # spawn_every_epochs = minimum interval between spawns.
+    # Once that interval elapses, plateau is checked every epoch until met, then spawn fires.
+    # Plateau measured on training loss to avoid using ground truth (pure PINN spirit).
+    # Keep spawn_plateau_epochs < resample_every_epochs to avoid resampling jumps confusing the check.
+    spawn_require_plateau: true
+    spawn_plateau_epochs: 300      # look-back window in epochs
+    spawn_plateau_delta: 0.03     # spawn only if training loss improved <0.5% over the window
 
     # ── 3-Phase training config ──
     # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
@@ -279,34 +298,90 @@ base_config:
 
 
 # ===== Experiments to run =====
+# All KS runs share: grad_clip=1.0, freeze_epochs_after_spawn=400, spawn_require_plateau=true
+# (set in base_config adaptive_pinn block above).
+# Resampling auto-disabled during SSBroyden/LBFGS phase (allow_resample_optimizer gate in trainer).
+# Run order: R1 → verify no NaN → R2 → R3 → R4
 experiments:
 
-  - name: ks
+  # ── R1: SOAP only, no LRA ──
+  # Mini-batch baseline with all 3 stability fixes. Run first to confirm no NaN.
+  - name: ks_r1_soap
     problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
+    epochs: 8000
     optimizer_1: soap
     optimizer_2: null
+    optimizer_switch_epoch: 9999
     soap_betas: [0.95, 0.95]
     lr_warmup_steps: 1000
     lr_decay_steps: 8000
-    fourier_features:
-      scale: 2.0
+    lra:
+      enabled: false
     sampling:
       adaptive_sampling:
         enabled: false
       resample_every_epochs: 500
+
+  # ── R2: SOAP → SSBroyden @ 2000, no LRA ──
+  # Paper Case 3 style: mini-batch warmup → full-batch quasi-Newton with Strong Wolfe.
+  - name: ks_r2_soap_ssbroyden
+    problem: ks
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
+    epochs: 8000
+    optimizer_1: soap
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 6000
+    soap_betas: [0.95, 0.95]
+    lr_warmup_steps: 1000
+    lr_decay_steps: 8000
+    lra:
+      enabled: false
+    sampling:
+      adaptive_sampling:
+        enabled: false
+      resample_every_epochs: 500
+
+  # ── R3: SOAP → LBFGS @ 2000, no LRA ──
+  # Compare SSBroyden vs LBFGS in the quasi-Newton phase.
+  - name: ks_r3_soap_lbfgs
+    problem: ks
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
+    epochs: 8000
+    optimizer_1: soap
+    optimizer_2: lbfgs
+    optimizer_switch_epoch: 6000
+    soap_betas: [0.95, 0.95]
+    lr_warmup_steps: 1000
+    lr_decay_steps: 8000
+    lra:
+      enabled: false
+    sampling:
+      adaptive_sampling:
+        enabled: false
+      resample_every_epochs: 500
+
+  # ── R4: SOAP → SSBroyden @ 2000, + LRA grad_norm ──
+  # Best optimizer flow from R2/R3 + symmetric gradient-norm loss weighting.
+  - name: ks_r4_soap_ssbroyden_lra
+    problem: ks
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
+    epochs: 8000
+    optimizer_1: soap
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 6000
+    soap_betas: [0.95, 0.95]
+    lr_warmup_steps: 1000
+    lr_decay_steps: 8000
     lra:
       enabled: true
       scheme: grad_norm
       alpha: 0.1
       update_every: 100
-    ks:
-      loss_weights:
-        residual: 1.0
-        ic: 100.0
-        bc: 1.0
-      causal_training:
+    sampling:
+      adaptive_sampling:
         enabled: false
+      resample_every_epochs: 500
 
 # ── Parked experiments ──
 #  - name: ks_clean_lra
