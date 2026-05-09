@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "ks_full_tree_init_ablation"
+experiment_name: "ks_split_on_the_go"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -8,10 +8,10 @@ base_config:
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 1                          # Phase 3 duration — 1 epoch (spawn-and-check); experiments don't override
+  epochs: 1                          # Phase 3 duration (just spawn for testing, or set via initial_train.epochs)
   batch_size: 4096                    # Mini-batch size for Adam/SOAP training
-  patience_epochs: 50000             # Effectively disabled
-  min_epochs: 1                      # No early-stop floor
+  patience_epochs: 5000              # Effectively disabled for 4000 epoch run
+  min_epochs: 3000                   # Don't early stop before 3000
 
   # ── Primary optimizer ──
   # ── Optimizer configuration ──
@@ -48,8 +48,7 @@ base_config:
   adam_eps: 1.0e-8                   # Adam epsilon for numerical stability.
 
   # ── Gradient clipping (applied before every optimizer.step) ──
-  # null = disabled (clean baseline). Ablation experiments override with 1.0.
-  grad_clip_norm: null
+  grad_clip_norm: 1.0              # Max gradient norm. null = disabled.
 
   # ── RWF (Random Weight Factorization) ──
   rwf: true                          # Apply W_eff = diag(exp(s)) @ W to all hidden layers
@@ -68,7 +67,7 @@ base_config:
   # output: zero   → Zero-initialize output layer (useful standalone when output: ls is off).
   init:
     hidden: glorot                  # 'default' (kaiming) | 'glorot'
-    output: ls                      # 'default' | 'zero' | 'ls'
+    output: ls                  # 'default' | 'zero' | 'ls'
     ls_use_bias: true                # Include bias column in LS system
 
   # ── LRA (Loss Rate Annealing) ──
@@ -234,15 +233,12 @@ base_config:
     tree_smoothness_threshold: 0.3
     loss_weights:
       residual: 1.0
-      # PirateNets paper (Wang et al. JMLR 2024) uses ic=1 on KS with LS-init.
-      # We use 10 as a conservative choice: LS-init satisfies IC at epoch 0,
-      # so extreme ic weighting (100) is no longer needed.
-      ic: 10.0
+      ic: 100.0                       # Moderate IC weight — papers use 20-100 per window, we have full [0,1]
       bc: 1.0                        # Periodic BC is soft — low weight, FF can help enforce periodicity
     causal_training:
       enabled: false
       num_chunks: 16                 # Fewer chunks = each chunk is bigger = smoother weight transitions
-      tol_schedule: [0.1, 1.0, 10.0]
+      tol_schedule: [0.1]  # Full paper schedule (Wang et al. 2022) — bug is fixed
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
     fourier_features:
       scale: 2.0                     # Conservative — KS has broadband content, not sharp interfaces
@@ -270,7 +266,7 @@ base_config:
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
-    expert_type: resnet                # 'mlp' or 'resnet' or 'piratenet' -- architecture for base model and experts
+    expert_type: resnet                # 'mlp' or 'resnet' -- architecture for base model and experts
     freeze_mode: none                      # "none" | "previous" | "base_only" — Fix 2 uses this; 'previous' = freeze base+old experts post-spawn
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
@@ -284,7 +280,7 @@ base_config:
     use_decomposed_derivatives: false
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
-    spawning_method: full_tree_by_norm         # "by_mean_residual" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
+    spawning_method: full_tree_by_norm       # "by_mean_residual" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
     perfect_trees_path: perfect_tree_examples/classic_norm/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
     # ── Post-spawn freeze (Fix 2) ──
@@ -298,9 +294,9 @@ base_config:
     # Once that interval elapses, plateau is checked every epoch until met, then spawn fires.
     # Plateau measured on training loss to avoid using ground truth (pure PINN spirit).
     # Keep spawn_plateau_epochs < resample_every_epochs to avoid resampling jumps confusing the check.
-    spawn_require_plateau: false     # Disabled: full_tree_by_norm spawns deterministically every spawn_every_epochs
+    spawn_require_plateau: false
     spawn_plateau_epochs: 300      # look-back window in epochs
-    spawn_plateau_delta: 0.01     # spawn only if training loss improved <1% over the window
+    spawn_plateau_delta: 0.03     # spawn only if training loss improved <1% over the window
 
     # ── 3-Phase training config ──
     # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
@@ -308,112 +304,132 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 4000                               # Phase 1: train base model before tree fitting
+      epochs: 4000                               # Phase 1: train base model for 10000 epochs before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
 # ===== Experiments to run =====
-# All runs share: full_tree_by_norm, Phase 1=4k epochs, Phase 3=1 epoch (spawn-and-check),
-# glorot+ls init, ic=10, no grad_clip, SOAP [0.9,0.999], no plateau gate.
-# Architecture: 6 hidden layers × 256 width = [2, 256×6, 1].
-# Ablation: one feature added per pair of runs (resnet vs piratenet).
-# Optimizer comparison: adam→ssbroyden/lbfgs, switch at epoch 3000 of Phase 1.
+# All KS runs share: grad_clip=1.0, freeze_epochs_after_spawn=400, spawn_require_plateau=true
+# (set in base_config adaptive_pinn block above).
+# Resampling auto-disabled during SSBroyden/LBFGS phase (allow_resample_optimizer gate in trainer).
+# Run order: R1 → verify no NaN → R2 → R3 → R4
 experiments:
 
-  # ── Pair 1: Clean baseline — SOAP, no extras ──
-  - name: ks_resnet_clean
+  # ── R1: SOAP only, no LRA ──
+  # Mini-batch baseline with all 3 stability fixes. Run first to confirm no NaN.
+  - name: ks_r1_soap
     problem: ks
     base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-
-  - name: ks_piratenet_clean
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    adaptive_pinn:
-      expert_type: piratenet
-
-  # ── Pair 2: LRA — gradient-norm balanced loss weights ──
-  - name: ks_resnet_lra
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
+    epochs: 8000
+    optimizer_1: soap
+    optimizer_2: null
+    optimizer_switch_epoch: 9999
+    soap_betas: [0.95, 0.95]
+    lr_warmup_steps: 1000
+    lr_decay_steps: 8000
+    init:
+      hidden: glorot
+      output: ls
     lra:
-      enabled: true
-      scheme: grad_norm
-      alpha: 0.1
-      update_every: 100
-
-  - name: ks_piratenet_lra
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    lra:
-      enabled: true
-      scheme: grad_norm
-      alpha: 0.1
-      update_every: 100
-    adaptive_pinn:
-      expert_type: piratenet
-
-  # ── Pair 3: Gradient clipping (norm=1.0) ──
-  - name: ks_resnet_clipgrad
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    grad_clip_norm: 1.0
-
-  - name: ks_piratenet_clipgrad
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    grad_clip_norm: 1.0
-    adaptive_pinn:
-      expert_type: piratenet
-
-  # ── Pair 4: Adaptive sampling — residual-guided collocation ──
-  - name: ks_resnet_adaptive_sampling
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
+      enabled: false
     sampling:
       adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.5
+        enabled: false
+      resample_every_epochs: 500
 
-  - name: ks_piratenet_adaptive_sampling
+  # ── R2: SOAP → SSBroyden @ 2000, no LRA ──
+  # Paper Case 3 style: mini-batch warmup → full-batch quasi-Newton with Strong Wolfe.
+  - name: ks_r2_soap_ssbroyden
     problem: ks
     base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    sampling:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.5
-    adaptive_pinn:
-      expert_type: piratenet
-
-  # ── Pair 5: Causal training — temporal curriculum (Wang et al. 2022) ──
-  - name: ks_resnet_causal
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    ks:
-      causal_training:
-        enabled: true
-
-  - name: ks_piratenet_causal
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    ks:
-      causal_training:
-        enabled: true
-    adaptive_pinn:
-      expert_type: piratenet
-
-  # ── Optimizer comparison: Adam warmup → quasi-Newton (resnet, clean) ──
-  # Phase 1 = 4000 epochs; switch at epoch 3000 (75% Adam, 25% quasi-Newton on base model).
-
-  - name: ks_resnet_adam_ssbroyden
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    optimizer_1: adam
+    epochs: 8000
+    optimizer_1: soap
     optimizer_2: ssbroyden
-    optimizer_switch_epoch: 3000
+    optimizer_switch_epoch: 6000
+    soap_betas: [0.95, 0.95]
+    lr_warmup_steps: 1000
+    lr_decay_steps: 8000
+    init:
+      hidden: glorot
+      output: ls
+    lra:
+      enabled: false
+    sampling:
+      adaptive_sampling:
+        enabled: false
+      resample_every_epochs: 500
 
-  - name: ks_resnet_adam_lbfgs
+  # ── R3: SOAP → LBFGS @ 2000, no LRA ──
+  # Compare SSBroyden vs LBFGS in the quasi-Newton phase.
+  - name: ks_r3_soap_lbfgs
     problem: ks
     base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    optimizer_1: adam
+    epochs: 8000
+    optimizer_1: soap
     optimizer_2: lbfgs
-    optimizer_switch_epoch: 3000
+    optimizer_switch_epoch: 6000
+    soap_betas: [0.95, 0.95]
+    lr_warmup_steps: 1000
+    lr_decay_steps: 8000
+    init:
+      hidden: glorot
+      output: ls
+    lra:
+      enabled: false
+    sampling:
+      adaptive_sampling:
+        enabled: false
+      resample_every_epochs: 500
+
+  # ── R4: SOAP → SSBroyden @ 2000, + LRA grad_norm ──
+  # Best optimizer flow from R2/R3 + symmetric gradient-norm loss weighting.
+  - name: ks_r4_soap_ssbroyden_lra
+    problem: ks
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
+    epochs: 8000
+    optimizer_1: soap
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 6000
+    soap_betas: [0.95, 0.95]
+    lr_warmup_steps: 1000
+    lr_decay_steps: 8000
+    init:
+      hidden: glorot
+      output: ls
+    lra:
+      enabled: true
+      scheme: grad_norm
+      alpha: 0.1
+      update_every: 100
+    sampling:
+      adaptive_sampling:
+        enabled: false
+      resample_every_epochs: 500
+
+# ── Parked experiments ──
+#  - name: ks_clean_lra
+#    problem: ks
+#    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]
+#    initial_train:
+#      epochs: 10000
+#    optimizer_1: soap
+#    optimizer_2: null
+#    fourier_features:
+#      scale: 1.0
+#    sampling:
+#      adaptive_sampling:
+#        enabled: false
+#      resample_every_epochs: 500
+#    lra:
+#      enabled: true
+#      alpha: 0.1
+#      update_every: 100
+#    adaptive_pinn:
+#      expert_type: piratenet
+#    ks:
+#      loss_weights:
+#        residual: 1.0
+#        ic: 1.0
+#        bc: 1.0
+#      causal_training:
+#        enabled: false

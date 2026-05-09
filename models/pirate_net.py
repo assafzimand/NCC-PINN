@@ -177,13 +177,6 @@ class PirateNet(nn.Module):
         # Output projection — always plain nn.Linear for output scale stability
         self.output_proj = nn.Linear(h, layers[-1])
 
-        # Least-squares init of output layer (optional)
-        pirate_cfg = config.get('piratenet', {})
-        if pirate_cfg.get('ls_init', False):
-            self._ls_init_pending = True
-        else:
-            self._ls_init_pending = False
-
         # Empty NCC hooks interface (not supported for PirateNet)
         self.activations: Dict[str, torch.Tensor] = {}
         self.hook_handles = []

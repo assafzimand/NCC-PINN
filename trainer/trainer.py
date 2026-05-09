@@ -706,6 +706,16 @@ def train(
     
     print("=" * 60 + "\n")
 
+    # Smart initialization (Glorot hidden + zero/LS output) — base model only
+    from trainer.init import apply_hidden_init, apply_output_init, apply_expert_init
+    _init_target = model.base_model if is_adaptive else model
+    _init_cfg = cfg.get('init', {})
+    if _init_cfg.get('hidden', 'default') != 'default' or _init_cfg.get('output', 'default') != 'default':
+        print("[Init] Applying smart initialization to base model...")
+        apply_hidden_init(_init_target, cfg)
+        apply_output_init(_init_target, train_data, cfg, device)
+        print()
+
     epoch = 0
 
     # Emergency save: fires on any unhandled exception (or process exit) so metrics.json
@@ -734,6 +744,7 @@ def train(
     _emergency_metrics_save.done = False
     _atexit.register(_emergency_metrics_save)
 
+    _nan_detected = False
     while epoch < total_epochs:
         epoch += 1
         timer.start_epoch(epoch, num_experts=model.num_experts if (is_adaptive and hasattr(model, 'num_experts')) else 0)
@@ -1055,6 +1066,7 @@ def train(
                              epoch, train_loss, eval_loss, cfg, metrics)
             print(f"  [NaN] Checkpoint saved to {_nan_ckpt_path}")
             print(f"{'!'*60}\n")
+            _nan_detected = True
             break
 
         # LRA: update adaptive loss weights periodically
@@ -1299,7 +1311,7 @@ def train(
 
             if _plateau_check_active:
                 # Check training-loss plateau over the look-back window
-                _lookback = max(1, _spawn_plateau_epochs // max(1, cfg.get('print_every', 100)))
+                _lookback = max(1, _spawn_plateau_epochs)  # train_loss stored every epoch
                 _recent = metrics['train_loss'][-_lookback:]
                 _recent_valid = [r for r in _recent if not math.isnan(r) and not math.isinf(r)]
                 if len(_recent_valid) >= 2:
@@ -1778,6 +1790,10 @@ def train(
                 _plateau_check_active = False
                 _last_spawn_epoch = epoch
 
+                # Apply smart init to newly spawned experts (Glorot hidden + zero output)
+                for _new_exp in model.experts[-experts_spawned_this_step:]:
+                    apply_expert_init(_new_exp, cfg)
+
                 # ── 3-phase: reinitialize base + transition to Phase 3 ──
                 if use_three_phase and spawning_complete and current_phase == 1:
                     if reinit_base_after_spawn:
@@ -1884,9 +1900,13 @@ def train(
 
             model.train()
 
-    # Loop exited normally — disable emergency save
+    # Disable emergency save (loop done or NaN exit)
     _emergency_metrics_save.done = True
     _atexit.unregister(_emergency_metrics_save)
+
+    if _nan_detected:
+        print("[NaN] Skipping post-training cleanup — moving to next experiment.")
+        return
 
     # Save final model
     final_checkpoint_path = checkpoint_dir / "final_model.pt"
