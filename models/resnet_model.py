@@ -5,7 +5,7 @@ import torch.nn as nn
 from typing import List, Dict, Optional
 from torch.utils.hooks import RemovableHandle
 from models.rwf_layer import RWFLinear
-from models.fourier_features import FourierFeatureEmbedding
+from models.fourier_features import FourierFeatureEmbedding, PeriodicSpatialFourierEmbedding
 
 
 class ResBlock(nn.Module):
@@ -92,13 +92,18 @@ class ResNetModel(nn.Module):
         # Fourier Features: embed input before input_proj
         ff_cfg = config.get('fourier_features', {})
         use_ff = ff_cfg.get('enabled', False)
+        use_periodic = ff_cfg.get('periodic', False)
         self.ff_emb: Optional[FourierFeatureEmbedding] = None
         effective_input_dim = layers[0]
         if use_ff:
             ff_dim = ff_cfg.get('dim', 64)
             ff_scale = ff_cfg.get('scale', 1.0)
-            self.ff_emb = FourierFeatureEmbedding(layers[0], ff_dim, ff_scale)
-            effective_input_dim = self.ff_emb.output_dim  # 2 * ff_dim
+            if use_periodic:
+                L = problem_config['spatial_domain'][0][1]
+                self.ff_emb = PeriodicSpatialFourierEmbedding(spatial_dim, ff_dim, ff_scale, L)
+            else:
+                self.ff_emb = FourierFeatureEmbedding(layers[0], ff_dim, ff_scale)
+            effective_input_dim = self.ff_emb.output_dim
 
         h = hidden[0]
         LinearCls = RWFLinear if use_rwf else nn.Linear

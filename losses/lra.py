@@ -43,20 +43,12 @@ class LRAWeights:
         self.scheme = scheme
 
         if initial_weights is not None:
-            self.weights: Dict[str, float] = {
-                'residual': initial_weights.get('residual', 1.0),
-                'ic': initial_weights.get('ic', 1.0),
-                'bc': initial_weights.get('bc', 1.0),
-            }
+            self.weights: Dict[str, float] = dict(initial_weights)
         else:
-            self.weights: Dict[str, float] = {
-                'residual': 1.0, 'ic': 1.0, 'bc': 1.0,
-            }
+            self.weights: Dict[str, float] = {'residual': 1.0, 'ic': 1.0}
 
-        self.fixed_residual_weight = self.weights['residual']
-        self.last_grad_norms: Dict[str, float] = {
-            'residual': 0.0, 'ic': 0.0, 'bc': 0.0,
-        }
+        self.fixed_residual_weight = self.weights.get('residual', 1.0)
+        self.last_grad_norms: Dict[str, float] = {k: 0.0 for k in self.weights}
 
     def update(
         self,
@@ -102,19 +94,21 @@ class LRAWeights:
 
         if self.scheme == 'grad_norm':
             mean_norm = sum(grad_norms.values()) / len(grad_norms)
-            for key in ['residual', 'ic', 'bc']:
+            for key in grad_norms:
                 target = mean_norm / grad_norms[key]
                 self.weights[key] = (
-                    (1.0 - self.alpha) * self.weights[key]
+                    (1.0 - self.alpha) * self.weights.get(key, 1.0)
                     + self.alpha * target
                 )
         else:
-            # LRA: only IC and BC adapt; residual stays fixed
+            # LRA: only non-residual terms adapt; residual stays fixed
             max_grad_res = grad_norms['residual']
-            for key in ['ic', 'bc']:
+            for key in grad_norms:
+                if key == 'residual':
+                    continue
                 target = max_grad_res / grad_norms[key]
                 self.weights[key] = (
-                    (1.0 - self.alpha) * self.weights[key]
+                    (1.0 - self.alpha) * self.weights.get(key, 1.0)
                     + self.alpha * target
                 )
             self.weights['residual'] = self.fixed_residual_weight
@@ -123,9 +117,8 @@ class LRAWeights:
         return self.weights.get(key, 1.0)
 
     def __repr__(self) -> str:
-        w = self.weights
+        w_str = ', '.join(f'{k}={v:.4f}' for k, v in self.weights.items())
         return (
-            f"LRAWeights(scheme={self.scheme}, "
-            f"residual={w['residual']:.4f}, ic={w['ic']:.4f}, bc={w['bc']:.4f}, "
+            f"LRAWeights(scheme={self.scheme}, {w_str}, "
             f"alpha={self.alpha}, update_every={self.update_every})"
         )

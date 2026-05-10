@@ -465,6 +465,10 @@ def build_loss(**cfg) -> Callable:
     beta = problem_config.get('beta', 100.0 / 16.0 ** 2)
     gamma_val = problem_config.get('gamma', 100.0 / 16.0 ** 4)
 
+    # Disable soft BC penalty when periodic Fourier embedding is used — BC is
+    # enforced exactly by the embedding so the MSE term is redundant noise.
+    use_bc = not cfg.get('fourier_features', {}).get('periodic', False)
+
     causal_state = create_causal_state(problem_config)
 
     def loss_fn(model: nn.Module, batch: Dict[str, torch.Tensor],
@@ -581,7 +585,8 @@ def build_loss(**cfg) -> Callable:
 
         # MSE_b: Boundary Condition Loss (Periodic)
         # h(0,t) = h(2*pi,t) and h_x(0,t) = h_x(2*pi,t)
-        if masks['BC'].sum() > 0:
+        # Skipped when periodic Fourier embedding is active (use_bc=False).
+        if use_bc and masks['BC'].sum() > 0:
             x_b = x[masks['BC']].contiguous()
             t_b = t[masks['BC']].contiguous()
 
@@ -690,13 +695,14 @@ def build_loss(**cfg) -> Callable:
                 'bc': bc_per_sample,
             }
         elif return_components:
-            return {'residual': mse_residual, 'ic': mse_ic, 'bc': mse_bc}
+            comps = {'residual': mse_residual, 'ic': mse_ic}
+            if use_bc:
+                comps['bc'] = mse_bc
+            return comps
         else:
-            total_loss = (
-                weight_residual * mse_residual
-                + weight_ic * mse_ic
-                + weight_bc * mse_bc
-            )
+            total_loss = weight_residual * mse_residual + weight_ic * mse_ic
+            if use_bc:
+                total_loss = total_loss + weight_bc * mse_bc
             return total_loss
 
     loss_fn.causal_state = causal_state

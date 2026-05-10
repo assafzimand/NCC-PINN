@@ -1,5 +1,5 @@
 # Experiment plan configuration
-experiment_name: "ks_full_tree_init_ablation"
+experiment_name: "ks_full_tree_mimic_paper"
 
 # Base configuration (will be used for all experiments)
 base_config:
@@ -264,7 +264,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 4000                   # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 1000                   # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -308,112 +308,42 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 4000                               # Phase 1: train base model before tree fitting
+      epochs: 1000                               # Phase 1: train base model before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
-# ===== Experiments to run =====
-# All runs share: full_tree_by_norm, Phase 1=4k epochs, Phase 3=1 epoch (spawn-and-check),
-# glorot+ls init, ic=10, no grad_clip, SOAP [0.9,0.999], no plateau gate.
-# Architecture: 6 hidden layers × 256 width = [2, 256×6, 1].
-# Ablation: one feature added per pair of runs (resnet vs piratenet).
-# Optimizer comparison: adam→ssbroyden/lbfgs, switch at epoch 3000 of Phase 1.
 experiments:
 
-  # ── Pair 1: Clean baseline — SOAP, no extras ──
-  - name: ks_resnet_clean
+  # ── Paper mimic: single global PirateNet, ~100k gradient steps ──
+  # Reproduces gradient-alignment 2025 setup: T=0.8, causal tol=1.0,
+  # periodic Fourier embedding (exact periodic BC), LRA, RWF, SOAP.
+  # Run 1 (smoke): epochs=1000. Run 2 (full): epochs=33000.
+  - name: ks_paper_mimic_v1
     problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-
-  - name: ks_piratenet_clean
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]  # 9 hidden layers
+    batch_size: 8192
     adaptive_pinn:
-      expert_type: piratenet
-
-  # ── Pair 2: LRA — gradient-norm balanced loss weights ──
-  - name: ks_resnet_lra
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
+      enabled: false                # single model, no experts
+      expert_type: piratenet        # controls base model architecture when enabled=false
+    fourier_features:
+      enabled: true
+      periodic: true                # exact periodic BC; disables soft BC loss term
+      dim: 64                       # K=64 → output_dim=256 (2*64 spatial + 2*64 temporal)
+      scale: 2.0
+    rwf: true
     lra:
       enabled: true
       scheme: grad_norm
       alpha: 0.1
       update_every: 100
-
-  - name: ks_piratenet_lra
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    lra:
-      enabled: true
-      scheme: grad_norm
-      alpha: 0.1
-      update_every: 100
-    adaptive_pinn:
-      expert_type: piratenet
-
-  # ── Pair 3: Gradient clipping (norm=1.0) ──
-  - name: ks_resnet_clipgrad
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    grad_clip_norm: 1.0
-
-  - name: ks_piratenet_clipgrad
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    grad_clip_norm: 1.0
-    adaptive_pinn:
-      expert_type: piratenet
-
-  # ── Pair 4: Adaptive sampling — residual-guided collocation ──
-  - name: ks_resnet_adaptive_sampling
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    sampling:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.5
-
-  - name: ks_piratenet_adaptive_sampling
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    sampling:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.5
-    adaptive_pinn:
-      expert_type: piratenet
-
-  # ── Pair 5: Causal training — temporal curriculum (Wang et al. 2022) ──
-  - name: ks_resnet_causal
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
     ks:
+      temporal_domain: [0.0, 0.8]
+      loss_weights:
+        residual: 1.0
+        ic: 1.0                     # LS-init handles IC; no need for high weight
+        bc: 1.0                     # ignored (periodic=true disables BC term)
       causal_training:
         enabled: true
-
-  - name: ks_piratenet_causal
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    ks:
-      causal_training:
-        enabled: true
-    adaptive_pinn:
-      expert_type: piratenet
-
-  # ── Optimizer comparison: Adam warmup → quasi-Newton (resnet, clean) ──
-  # Phase 1 = 4000 epochs; switch at epoch 3000 (75% Adam, 25% quasi-Newton on base model).
-
-  - name: ks_resnet_adam_ssbroyden
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    optimizer_1: adam
-    optimizer_2: ssbroyden
-    optimizer_switch_epoch: 3000
-
-  - name: ks_resnet_adam_lbfgs
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    optimizer_1: adam
-    optimizer_2: lbfgs
-    optimizer_switch_epoch: 3000
+        num_chunks: 16
+        tol_schedule: [1.0]         # fixed ε=1.0, no annealing (matches paper)
+        min_weight_threshold: 0.99

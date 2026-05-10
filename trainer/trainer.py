@@ -391,9 +391,7 @@ def train(
                                      update_causal_state=False)
             comps = _orig_loss_fn(model, batch, return_components=True, update_causal_state=update_causal_state)
             w = lra_weights.weights
-            return (w.get('residual', 1.0) * comps['residual']
-                    + w.get('ic', 1.0) * comps['ic']
-                    + w.get('bc', 1.0) * comps['bc'])
+            return sum(w.get(k, 1.0) * v for k, v in comps.items())
 
         _lra_loss_fn.causal_state = getattr(loss_fn, 'causal_state', None)
         loss_fn = _lra_loss_fn
@@ -673,8 +671,9 @@ def train(
     # LRA
     if lra_enabled:
         init_w = lra_weights.weights
+        init_w_str = ', '.join(f'{k}={v:.1f}' for k, v in init_w.items())
         print(f"  LRA: enabled (scheme={lra_weights.scheme}, alpha={lra_weights.alpha}, update_every={lra_weights.update_every}, "
-              f"init_weights={{res={init_w['residual']:.1f}, ic={init_w['ic']:.1f}, bc={init_w['bc']:.1f}}})")
+              f"init_weights={{{init_w_str}}})")
     else:
         print(f"  LRA: disabled")
     
@@ -1075,9 +1074,8 @@ def train(
                 batch_for_lra = next(iter(train_loader))
                 lra_weights.update(model, loss_fn, batch_for_lra)
                 if epoch % print_every == 0:
-                    print(f"  [LRA] weights: residual={lra_weights.weights['residual']:.4f}, "
-                          f"ic={lra_weights.weights['ic']:.4f}, "
-                          f"bc={lra_weights.weights['bc']:.4f}")
+                    w_str = ', '.join(f'{k}={v:.4f}' for k, v in lra_weights.weights.items())
+                    print(f"  [LRA] weights: {w_str}")
             except Exception as e:
                 print(f"  [LRA] Weight update failed at epoch {epoch}: {e}")
 
@@ -1180,21 +1178,14 @@ def train(
             if lra_weights is not None:
                 w = lra_weights.weights
                 g = lra_weights.last_grad_norms
-                print(f"  [LRA] weights: res={w['residual']:.4f}, ic={w['ic']:.4f}, bc={w['bc']:.4f} | "
-                      f"grads: max|res|={g.get('residual', 0):.6f}, mean|ic|={g.get('ic', 0):.6f}, mean|bc|={g.get('bc', 0):.6f}")
+                w_str = ', '.join(f'{k}={v:.4f}' for k, v in w.items())
+                g_str = ', '.join(f'{k}={g.get(k, 0):.6f}' for k in w)
+                print(f"  [LRA] weights: {w_str} | grads: {g_str}")
                 # Save to metrics
                 metrics['lra_history'].append({
                     'epoch': epoch,
-                    'weights': {
-                        'residual': float(w['residual']),
-                        'ic': float(w['ic']),
-                        'bc': float(w['bc'])
-                    },
-                    'grad_norms': {
-                        'residual': float(g.get('residual', 0)),
-                        'ic': float(g.get('ic', 0)),
-                        'bc': float(g.get('bc', 0))
-                    }
+                    'weights': {k: float(v) for k, v in w.items()},
+                    'grad_norms': {k: float(g.get(k, 0)) for k in w},
                 })
 
             # DIAGNOSTIC: Unweighted loss component breakdown
@@ -1210,8 +1201,8 @@ def train(
                 # Actually, just call with return_components=True which the wrapper forwards
                 with torch.no_grad():
                     components = loss_fn(model, sample_batch, return_components=True)
-                    print(f"  [Loss] components: residual={components['residual']:.6f}, "
-                          f"ic={components['ic']:.6f}, bc={components['bc']:.6f} (unweighted)")
+                    comps_str = ', '.join(f'{k}={v:.6f}' for k, v in components.items())
+                    print(f"  [Loss] components: {comps_str} (unweighted)")
                     metrics['loss_components_history'].append({
                         'epoch': epoch,
                         'residual': float(components['residual'].item()),
@@ -1817,16 +1808,20 @@ def train(
                     print(f"  [3-Phase] Total epochs now: {total_epochs} (Phase 1: {epoch}, Phase 3: {phase3_epochs})")
                     print(f"  [3-Phase] Optimizer: {_p3_opt1}, lr: {active_cfg.get('lr')}, schedule: {active_cfg.get('lr_schedule', 'exponential')}")
 
-                # Save optimizer moments before rebuild so they can be restored on unfreeze
+                # Always snapshot optimizer state before rebuild.
+                # Pre-existing params (base + old experts) that survive into the new optimizer
+                # get their state restored immediately below. Params that are frozen post-spawn
+                # are not in the new optimizer, so their state is deferred and restored at unfreeze.
+                # New expert params have no prior state and are intentionally left fresh.
+                import copy
+                _spawn_state_snapshot = {
+                    id(p): copy.deepcopy(optimizer.state.get(p, {}))
+                    for pg in optimizer.param_groups for p in pg['params']
+                }
+
                 if freeze_epochs_after_spawn > 0:
-                    import copy
-                    _opt_state_snapshot = {
-                        id(p): copy.deepcopy(s)
-                        for p, s in zip(
-                            [p for pg in optimizer.param_groups for p in pg['params']],
-                            [optimizer.state.get(p, {}) for pg in optimizer.param_groups for p in pg['params']]
-                        )
-                    }
+                    # Keep reference alive for the deferred unfreeze restore (same dict, no extra copy).
+                    _opt_state_snapshot = _spawn_state_snapshot
                     _unfreeze_at_epoch = epoch + freeze_epochs_after_spawn
                     print(f"  [Freeze] Freezing old experts/base for {freeze_epochs_after_spawn} epochs "
                           f"(unfreeze at epoch {_unfreeze_at_epoch})")
@@ -1852,6 +1847,21 @@ def train(
                 else:
                     lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
                 step_count = 0
+
+                # Immediately restore state for pre-existing params now in the new optimizer.
+                # freeze==0: all params here → full restore now (no deferred step).
+                # freeze>0: only new expert params here → snapshot lookup misses (they're new) → noop,
+                #           frozen params restored later at unfreeze via _opt_state_snapshot.
+                _restored_now = 0
+                for _pg in optimizer.param_groups:
+                    for _p in _pg['params']:
+                        _saved = _spawn_state_snapshot.get(id(_p))
+                        if _saved:
+                            optimizer.state[_p] = _saved
+                            _restored_now += 1
+                if _restored_now:
+                    print(f"  [Spawn] Optimizer state restored immediately for {_restored_now} "
+                          f"pre-existing param tensors")
 
                 problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
                 num_experts_str = f" ({model.num_experts} experts)" if hasattr(model, 'num_experts') else ""

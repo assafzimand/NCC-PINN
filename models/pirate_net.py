@@ -41,7 +41,7 @@ import torch
 import torch.nn as nn
 from typing import List, Dict
 from models.rwf_layer import RWFLinear
-from models.fourier_features import FourierFeatureEmbedding
+from models.fourier_features import FourierFeatureEmbedding, PeriodicSpatialFourierEmbedding
 
 
 def _get_activation(name: str) -> nn.Module:
@@ -146,10 +146,15 @@ class PirateNet(nn.Module):
         # Fourier Feature embedding
         ff_cfg = config.get('fourier_features', {})
         use_ff = ff_cfg.get('enabled', False)
+        use_periodic = ff_cfg.get('periodic', False)
         if use_ff:
             ff_dim = ff_cfg.get('dim', 64)
             ff_scale = ff_cfg.get('scale', 1.0)
-            self.ff_emb = FourierFeatureEmbedding(input_dim, ff_dim, ff_scale)
+            if use_periodic:
+                L = problem_config['spatial_domain'][0][1]
+                self.ff_emb = PeriodicSpatialFourierEmbedding(spatial_dim, ff_dim, ff_scale, L)
+            else:
+                self.ff_emb = FourierFeatureEmbedding(input_dim, ff_dim, ff_scale)
             ff_out = self.ff_emb.output_dim
         else:
             self.ff_emb = None
@@ -226,7 +231,7 @@ class PirateNet(nn.Module):
         self.hook_handles = []
 
     def __repr__(self) -> str:
-        ff_info = f"ff_dim={self.ff_emb.B.shape[0]}" if self.ff_emb else "no_ff"
+        ff_info = f"ff_out={self.ff_emb.output_dim}" if self.ff_emb else "no_ff"
         return (
             f"PirateNet(\n"
             f"  architecture: {self.layers}\n"
