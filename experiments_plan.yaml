@@ -332,10 +332,7 @@ experiments:
       scale: 2.0
     rwf: true
     lra:
-      enabled: true
-      scheme: grad_norm
-      alpha: 0.1
-      update_every: 100
+      enabled: false                  # LS-init makes IC loss ≈ 0 → IC gradient ≈ 0 → LRA ic_weight → ∞
     ks:
       temporal_domain: [0.0, 0.8]
       loss_weights:

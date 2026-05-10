@@ -650,7 +650,10 @@ def train(
     if ff_enabled:
         ff_dim = ff_cfg.get('dim', 64)
         ff_scale = ff_cfg.get('scale', 1.0)
-        print(f"  Fourier Features: enabled (dim={ff_dim}, scale={ff_scale}, output_dim={2*ff_dim})")
+        _base_for_ff = model.base_model if hasattr(model, 'base_model') else model
+        _ff_out = _base_for_ff.ff_emb.output_dim if (hasattr(_base_for_ff, 'ff_emb') and _base_for_ff.ff_emb is not None) else 2 * ff_dim
+        _periodic = ff_cfg.get('periodic', False)
+        print(f"  Fourier Features: enabled (dim={ff_dim}, scale={ff_scale}, output_dim={_ff_out}, periodic={_periodic})")
     else:
         print(f"  Fourier Features: disabled")
     
