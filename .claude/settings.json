@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:jmlr.org)",
+      "Bash(xargs grep *)",
+      "Bash(xargs ls *)",
+      "Bash(python3 -c \"import numpy as np; domain = [0, 2*np.pi]; time = [0, 1]; v = \\(domain[1]-domain[0]\\) * \\(time[1]-time[0]\\); d = 1 + 1; ratio = 35; n_res = 20000; calc_ratio = \\(n_res ** \\(1/d\\)\\) / \\(v ** \\(1/d\\)\\); print\\(f'Domain: {domain}, Time: {time}'\\); print\\(f'Volume V = {v:.4f}'\\); print\\(f'Dimensionality d = {d}'\\); print\\(f'Target ratio = {ratio}'\\); print\\(f'n_residual = {n_res}'\\); print\\(f'Calculated ratio = {calc_ratio:.2f}'\\); steps_per_epoch = n_res / 4096; epochs_needed = 100000 / steps_per_epoch; print\\(f'batch_size = 4096: steps_per_epoch = {steps_per_epoch:.1f}, epochs_needed for 100k steps = {epochs_needed:.0f}'\\)\")"
+    ]
+  }
+}

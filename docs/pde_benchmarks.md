@@ -228,7 +228,7 @@ $$h_t + \alpha\, h\, h_x + \beta\, h_{xx} + \gamma\, h_{xxxx} = 0$$
 | Property | Value |
 |----------|-------|
 | **Spatial domain** | $x \in [0, 2\pi]$ |
-| **Temporal domain** | $t \in [0, 1]$ |
+| **Temporal domain** | $t \in [0, 0.8]$ |
 | **Parameters** | $\alpha = 100/16 = 6.25$, $\beta = 100/16^2 = 0.390625$, $\gamma = 100/16^4 \approx 1.526 \times 10^{-3}$ |
 | **Initial condition** | $h(x, 0) = \cos(x)(1 + \sin(x))$ |
 | **Boundary conditions** | Periodic: $h(0,t) = h(2\pi,t)$, $h_x(0,t) = h_x(2\pi,t)$ |
