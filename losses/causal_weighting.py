@@ -44,7 +44,7 @@ def create_causal_state(
         'schedule': list(schedule),
         'schedule_idx': 0,
         'tol': float(schedule[0]),
-        'min_weight': 0.0,
+        'min_weight': 1.0,
         'threshold': causal_cfg.get(
             'min_weight_threshold', 0.99),
     }

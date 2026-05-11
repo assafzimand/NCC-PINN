@@ -95,7 +95,10 @@ class LRAWeights:
         if self.scheme == 'grad_norm':
             mean_norm = sum(grad_norms.values()) / len(grad_norms)
             for key in grad_norms:
-                target = mean_norm / grad_norms[key]
+                # epsilon prevents division-by-zero when a loss term is already
+                # well-satisfied (e.g. IC after LS-init). Matches jaxpi formula:
+                # w = mean_norm / (norm + 1e-5 * mean_norm), max weight ~ 1e5.
+                target = mean_norm / (grad_norms[key] + 1e-5 * mean_norm)
                 self.weights[key] = (
                     (1.0 - self.alpha) * self.weights.get(key, 1.0)
                     + self.alpha * target
@@ -106,7 +109,7 @@ class LRAWeights:
             for key in grad_norms:
                 if key == 'residual':
                     continue
-                target = max_grad_res / grad_norms[key]
+                target = max_grad_res / (grad_norms[key] + 1e-5 * max_grad_res)
                 self.weights[key] = (
                     (1.0 - self.alpha) * self.weights.get(key, 1.0)
                     + self.alpha * target
