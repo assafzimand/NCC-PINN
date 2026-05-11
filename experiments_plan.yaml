@@ -323,6 +323,9 @@ experiments:
     base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]  # 9 hidden layers
     batch_size: 8192
     lr_schedule: none               # paper uses schedule-free SOAP; constant LR avoids decay to 5e-6
+    grad_clip_norm: 1.0             # paper applies clip_by_global_norm(1.0) inside schedule_free SOAP chain
+    sampling:
+      resample_every_epochs: 1      # paper samples fresh at every gradient step; every-epoch refresh approximates this
     adaptive_pinn:
       enabled: false                # single model, no experts
       expert_type: piratenet        # controls base model architecture when enabled=false
