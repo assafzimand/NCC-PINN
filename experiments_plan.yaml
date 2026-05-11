@@ -264,7 +264,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 1000                   # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 33000                   # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -322,6 +322,7 @@ experiments:
     problem: ks
     base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]  # 9 hidden layers
     batch_size: 8192
+    lr_schedule: none               # paper uses schedule-free SOAP; constant LR avoids decay to 5e-6
     adaptive_pinn:
       enabled: false                # single model, no experts
       expert_type: piratenet        # controls base model architecture when enabled=false
@@ -332,12 +333,13 @@ experiments:
       scale: 2.0
     rwf: true
     lra:
-      enabled: false                  # LS-init makes IC loss ≈ 0 → IC gradient ≈ 0 → LRA ic_weight → ∞
+      enabled: true                   # safe now: epsilon in denominator caps max weight at ~1e5
+      scheme: grad_norm
     ks:
       temporal_domain: [0.0, 0.8]
       loss_weights:
         residual: 1.0
-        ic: 1.0                     # LS-init handles IC; no need for high weight
+        ic: 1000.0                  # matches jaxpi init_weights; keeps IC well-satisfied after LS-init
         bc: 1.0                     # ignored (periodic=true disables BC term)
       causal_training:
         enabled: true
