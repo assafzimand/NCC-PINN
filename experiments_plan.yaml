@@ -344,6 +344,6 @@ experiments:
         bc: 1.0
       causal_training:
         enabled: true
-        num_chunks: 64
+        num_chunks: 32
         tol_schedule: [1.0]
         min_weight_threshold: 0.99
