@@ -67,8 +67,8 @@ base_config:
   #                   Raises error if IC points < hidden_dim+1.
   # output: zero   → Zero-initialize output layer (useful standalone when output: ls is off).
   init:
-    hidden: default                  # 'default' (kaiming) | 'glorot'
-    output: default                      # 'default' | 'zero' | 'ls'
+    hidden: glorot                  # 'default' (kaiming) | 'glorot'
+    output: ls                      # 'default' | 'zero' | 'ls'
     ls_use_bias: true                # Include bias column in LS system
 
   # ── LRA (Loss Rate Annealing) ──
@@ -254,7 +254,7 @@ base_config:
     boundary_train_ratio: 0.026      # ~260 BC points (with n_residual=20000). Papers use 200+.
     eval_train_ratio: 0.25           # eval = 25% of train (all types)
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
-    resample_every_epochs: 500       # Regenerate training data every N epochs. Papers use 500.
+    resample_every_epochs: 100       # Regenerate training data every N epochs. Papers use 500.
     adaptive_sampling:
       enabled: false              # Mix uniform + residual-adaptive points (vRBA/RAR-D)
       adaptive_ratio: 0.1            # Fraction of residual_train points that are adaptive
@@ -332,7 +332,7 @@ experiments:
       scale: 2.0
 
     lra:
-      enabled: true
+      enabled: false
       scheme: grad_norm
       alpha: 0.3
       update_every: 100
