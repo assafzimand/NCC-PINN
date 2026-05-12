@@ -8,7 +8,7 @@ base_config:
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 1                          # Phase 3 duration — 1 epoch (spawn-and-check); experiments don't override
+  epochs: 4000                          # Phase 3 duration — 1 epoch (spawn-and-check); experiments don't override
   batch_size: 4096                    # Mini-batch size for Adam/SOAP training
   patience_epochs: 50000             # Effectively disabled
   min_epochs: 1                      # No early-stop floor
@@ -264,7 +264,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 4000                   # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 1000                   # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -284,7 +284,7 @@ base_config:
     use_decomposed_derivatives: false
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
-    spawning_method: full_tree_by_norm         # "by_mean_residual" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
+    spawning_method: accept_split_by_norm         # "by_mean_residual" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
     perfect_trees_path: perfect_tree_examples/classic_norm/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
     # ── Post-spawn freeze (Fix 2) ──
