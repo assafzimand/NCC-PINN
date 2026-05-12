@@ -340,10 +340,10 @@ experiments:
     ks:
       loss_weights:
         residual: 1.0
-        ic: 50.0
+        ic: 10.0
         bc: 1.0
       causal_training:
         enabled: true
-        num_chunks: 16
+        num_chunks: 64
         tol_schedule: [1.0]
         min_weight_threshold: 0.99
