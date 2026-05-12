@@ -332,7 +332,7 @@ experiments:
     fourier_features:
       enabled: true
       periodic: true                # exact periodic BC; disables soft BC loss term
-      dim: 64                       # K=64 → output_dim=256 (2*64 spatial + 2*64 temporal)
+      dim: 128                      # output_dim = 2*dim = 256 (matches jaxpi embed_dim=256)
       scale: 2.0
     rwf: true
     lra:
