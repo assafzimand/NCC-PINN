@@ -61,23 +61,22 @@ class FourierFeatureEmbedding(nn.Module):
 
 
 class PeriodicSpatialFourierEmbedding(nn.Module):
-    """Exact-periodic Fourier embedding for problems with periodic spatial BCs.
+    """Periodic Fourier embedding matching jaxpi (Wang et al. 2024).
 
-    Spatial dimensions are encoded with integer-frequency features
-    [cos(2π/L · k · x), sin(2π/L · k · x)] for k = 1..K, which are exactly
-    periodic with spatial period L. This enforces periodicity in the network
-    input itself — no soft BC penalty is needed.
+    Step 1 — Periodic transform: x → [cos(2π/L · x), sin(2π/L · x)].
+             One harmonic per spatial axis, exactly periodic with period L.
+             No BC penalty needed.
 
-    Temporal dimension uses standard random Fourier features (same as
-    FourierFeatureEmbedding) so high-frequency temporal content is captured.
+    Step 2 — Random Fourier features: apply standard random projection B to
+             the combined input [t, cos(2πx/L), sin(2πx/L)], creating
+             space-time cross-terms so the network can learn t-dependent dynamics.
 
-    Output dim = 4 * fourier_dim  (2K spatial + 2K temporal).
+    Output dim = 2 * fourier_dim.
 
     Args:
         spatial_dim: Number of spatial input dimensions (1 for KS).
-        fourier_dim: K — number of frequency components for each of spatial
-                     and temporal parts.
-        scale: Std of random temporal frequencies (controls temporal freq band).
+        fourier_dim: Number of random Fourier features. Output = 2 * fourier_dim.
+        scale: Std of random B matrix (controls frequency band).
         L: Spatial period (e.g., 2π for KS on [0, 2π]).
     """
 
@@ -85,43 +84,42 @@ class PeriodicSpatialFourierEmbedding(nn.Module):
                  L: float = 2 * math.pi):
         super().__init__()
         self.spatial_dim = spatial_dim
-        # Integer frequencies k=1..K scaled by 2π/L so features are periodic with period L
-        k = torch.arange(1, fourier_dim + 1, dtype=torch.float32) * (2 * math.pi / L)
-        self.register_buffer('k', k)            # (K,)
-        # Random temporal frequencies; shape (K, 1) for 1D time
-        B_t = torch.randn(fourier_dim, 1) * scale
-        self.register_buffer('B_t', B_t)        # (K, 1)
+        self.L = L
+        # After periodic transform: [t (1), cos(x) (spatial_dim), sin(x) (spatial_dim)]
+        transformed_dim = 1 + 2 * spatial_dim
+        B = torch.randn(fourier_dim, transformed_dim) * scale
+        self.register_buffer('B', B)    # (fourier_dim, 1 + 2*spatial_dim)
 
     @property
     def output_dim(self) -> int:
-        """Output dimensionality: 4 * fourier_dim."""
-        return 4 * self.k.shape[0]
+        """Output dimensionality: 2 * fourier_dim."""
+        return 2 * self.B.shape[0]
 
     def forward(self, xt: torch.Tensor) -> torch.Tensor:
-        """Map (x, t) input to periodic-spatial Fourier features.
+        """Map (x, t) input to periodic Fourier features.
 
         Args:
-            xt: Input tensor (N, spatial_dim + 1).
+            xt: Input tensor (N, spatial_dim + 1). Last column is t.
 
         Returns:
-            Feature tensor (N, 4 * fourier_dim).
+            Feature tensor (N, 2 * fourier_dim).
         """
         x = xt[:, :self.spatial_dim]   # (N, spatial_dim)
         t = xt[:, self.spatial_dim:]   # (N, 1)
 
-        # Spatial: (N, spatial_dim) @ (spatial_dim, K) — for 1D: (N,1)·(1,K) = (N,K)
-        phi_x = x @ self.k.unsqueeze(0)    # (N, K)
-        # Temporal: (N, 1) @ (1, K) = (N, K)
-        phi_t = t @ self.B_t.T             # (N, K)
+        # Step 1: periodic transform — one harmonic per spatial axis
+        freq = 2 * math.pi / self.L
+        cos_x = torch.cos(freq * x)    # (N, spatial_dim)
+        sin_x = torch.sin(freq * x)    # (N, spatial_dim)
 
-        return torch.cat([
-            torch.cos(phi_x), torch.sin(phi_x),
-            torch.cos(phi_t), torch.sin(phi_t),
-        ], dim=-1)  # (N, 4K)
+        # Step 2: random Fourier features on [t, cos(x), sin(x)]
+        z = torch.cat([t, cos_x, sin_x], dim=-1)   # (N, 1+2*spatial_dim)
+        proj = z @ self.B.T                          # (N, fourier_dim)
+        return torch.cat([torch.cos(proj), torch.sin(proj)], dim=-1)
 
     def extra_repr(self) -> str:
-        K = self.k.shape[0]
+        fourier_dim = self.B.shape[0]
         return (
-            f"spatial_dim={self.spatial_dim}, fourier_dim={K}, "
-            f"output_dim={self.output_dim}, periodic=True"
+            f"spatial_dim={self.spatial_dim}, fourier_dim={fourier_dim}, "
+            f"output_dim={self.output_dim}, L={self.L:.4f}, periodic=True"
         )
