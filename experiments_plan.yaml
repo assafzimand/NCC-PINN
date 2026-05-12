@@ -67,8 +67,8 @@ base_config:
   #                   Raises error if IC points < hidden_dim+1.
   # output: zero   → Zero-initialize output layer (useful standalone when output: ls is off).
   init:
-    hidden: glorot                  # 'default' (kaiming) | 'glorot'
-    output: ls                      # 'default' | 'zero' | 'ls'
+    hidden: default                  # 'default' (kaiming) | 'glorot'
+    output: default                      # 'default' | 'zero' | 'ls'
     ls_use_bias: true                # Include bias column in LS system
 
   # ── LRA (Loss Rate Annealing) ──
@@ -264,13 +264,13 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 4000                   # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 1000                   # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
-    expert_type: piratenet                # 'mlp' or 'resnet' or 'piratenet' -- architecture for base model and experts
+    expert_type: resnet                # 'mlp' or 'resnet' or 'piratenet' -- architecture for base model and experts
     freeze_mode: none                      # "none" | "previous" | "base_only" — Fix 2 uses this; 'previous' = freeze base+old experts post-spawn
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
@@ -308,7 +308,7 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 4000                               # Phase 1: train base model before tree fitting
+      epochs: 1000                               # Phase 1: train base model before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
@@ -325,18 +325,17 @@ experiments:
     lr_warmup_steps: 1000
     lr_decay_steps: 8000
 
+    fourier_features:
+      enabled: true
+      periodic: false                  # explicit — no periodic BC enforcement
+      dim: 128
+      scale: 2.0
+
     lra:
       enabled: true
       scheme: grad_norm
-      alpha: 0.1
+      alpha: 0.3
       update_every: 100
-
-    adaptive_pinn:
-      expert_type: resnet
-      spawning_method: full_tree_by_norm
-      initial_train:
-        epochs: 4000
-      spawn_every_epochs: 4000
 
     ks:
       loss_weights:
