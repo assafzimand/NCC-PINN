@@ -264,7 +264,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 33000                   # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 4000                   # Check for spawning every N epochs (matches initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -308,44 +308,43 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     initial_train:
-      epochs: 33000                               # Phase 1: train base model before tree fitting
+      epochs: 4000                               # Phase 1: train base model before tree fitting
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
 experiments:
 
-  # ── Paper mimic: single global PirateNet, ~100k gradient steps ──
-  # Reproduces gradient-alignment 2025 setup: T=0.8, causal tol=1.0,
-  # periodic Fourier embedding (exact periodic BC), LRA, RWF, SOAP.
-  # Run 1 (smoke): epochs=1000. Run 2 (full): epochs=33000.
-  - name: ks_paper_mimic_v1
+  # ── AToE KS reproduction of ks_best_shot_causal_fixed (commit adf4564d) ──
+  # Base ResNet trains 4k epochs, then full_tree_by_norm spawns experts.
+  # No periodic embedding — clean baseline to confirm codebase parity.
+  - name: ks_atoe_repro
     problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]  # 9 hidden layers
-    batch_size: 8192
-    lr_schedule: none               # paper uses schedule-free SOAP; constant LR avoids decay to 5e-6
-    grad_clip_norm: 1.0             # paper applies clip_by_global_norm(1.0) inside schedule_free SOAP chain
-    sampling:
-      resample_every_epochs: 1      # paper samples fresh at every gradient step; every-epoch refresh approximates this
-    adaptive_pinn:
-      enabled: false                # single model, no experts
-      expert_type: piratenet        # controls base model architecture when enabled=false
-    fourier_features:
-      enabled: true
-      periodic: true                # exact periodic BC; disables soft BC loss term
-      dim: 128                      # output_dim = 2*dim = 256 (matches jaxpi embed_dim=256)
-      scale: 2.0
-    rwf: true
+    base_architecture: [2, 256, 256, 256, 256, 256, 1]  # 5 hidden × 256 (same as old run)
+
+    soap_betas: [0.95, 0.95]
+    lr_warmup_steps: 1000
+    lr_decay_steps: 8000
+
     lra:
-      enabled: true                   # safe now: epsilon in denominator caps max weight at ~1e5
+      enabled: true
       scheme: grad_norm
+      alpha: 0.1
+      update_every: 100
+
+    adaptive_pinn:
+      expert_type: resnet
+      spawning_method: full_tree_by_norm
+      initial_train:
+        epochs: 4000
+      spawn_every_epochs: 4000
+
     ks:
-      temporal_domain: [0.0, 0.8]
       loss_weights:
         residual: 1.0
-        ic: 1000.0                  # matches jaxpi init_weights; keeps IC well-satisfied after LS-init
-        bc: 1.0                     # ignored (periodic=true disables BC term)
+        ic: 50.0
+        bc: 1.0
       causal_training:
         enabled: true
         num_chunks: 16
-        tol_schedule: [1.0]         # fixed ε=1.0, no annealing (matches paper)
+        tol_schedule: [1.0]
         min_weight_threshold: 0.99
