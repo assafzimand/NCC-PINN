@@ -1,14 +1,15 @@
 # Experiment plan configuration
-experiment_name: "ks_accept_split_by_norm"
+experiment_name: "ks_day_ablation"
 
 # Base configuration (will be used for all experiments)
 base_config:
-  problem: schrodinger
+  problem: ks
   model: AToE                        # 'AToE' | 'AToELeaves' | 'ANT'
   activation: tanh                   # Activation function for all networks
+  base_architecture: [2, 256, 256, 256, 1]  # 3 hidden × 256 — default for all KS ablation runs
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 4000                          # Phase 3 duration — 1 epoch (spawn-and-check); experiments don't override
+  epochs: 5000                          # Total training epochs (accept_split_by_norm ignores initial_train)
   batch_size: 4096                    # Mini-batch size for Adam/SOAP training
   patience_epochs: 50000             # Effectively disabled
   min_epochs: 1                      # No early-stop floor
@@ -22,12 +23,12 @@ base_config:
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
   lr_schedule: exponential                # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
-  lr_warmup_steps: 5000               # Moderate warmup (~200 epochs at batch 4096 on 20k points)
+  lr_warmup_steps: 1000               # ~200 epochs at 5 steps/epoch (20k points / batch 4096)
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps
-  lr_decay_steps: 2000               # Decay every 5k steps (~slow decay over 4000 epochs)
+  lr_decay_steps: 8000               # Slow decay over 5000 epochs
 
   # ── SOAP-specific (only used when optimizer_1 or _2 is 'soap') ──
-  soap_betas: [0.9, 0.999]         # SOAP momentum parameters (beta1, beta2). Paper default.
+  soap_betas: [0.95, 0.95]          # KS-tuned: symmetric betas work better for chaotic dynamics
   soap_precondition_frequency: 10    # How often SOAP updates its Shampoo-style preconditioner.
 
   # ── L-BFGS specific (only used when optimizer_1 or _2 is 'lbfgs') ──
@@ -48,8 +49,8 @@ base_config:
   adam_eps: 1.0e-8                   # Adam epsilon for numerical stability.
 
   # ── Gradient clipping (applied before every optimizer.step) ──
-  # null = disabled (clean baseline). Ablation experiments override with 1.0.
-  grad_clip_norm: null
+  # Always on — prevents post-spawn NaN divergence when multiple experts are added.
+  grad_clip_norm: 1.0
 
   # ── RWF (Random Weight Factorization) ──
   rwf: true                          # Apply W_eff = diag(exp(s)) @ W to all hidden layers
@@ -240,9 +241,9 @@ base_config:
       ic: 10.0
       bc: 1.0                        # Periodic BC is soft — low weight, FF can help enforce periodicity
     causal_training:
-      enabled: false
-      num_chunks: 16                 # Fewer chunks = each chunk is bigger = smoother weight transitions
-      tol_schedule: [0.1, 1.0, 10.0]
+      enabled: true                  # Always on for KS — essential for learning chaotic dynamics
+      num_chunks: 64                 # Fine-grained temporal bins — smoother causal progression
+      tol_schedule: [1.0]            # Single-stage: moderate causal pressure throughout training
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
     fourier_features:
       scale: 2.0                     # Conservative — KS has broadband content, not sharp interfaces
@@ -289,7 +290,8 @@ base_config:
 
     # ── Post-spawn freeze (Fix 2) ──
     # After spawning, freeze base+old experts for N epochs so only the newest expert trains.
-    # Should be ~2x warmup-in-epochs: lr_warmup_steps / (n_residual/batch_size) = 1000/5 = 200ep → set 400.
+    # Calibration: warmup_epochs = lr_warmup_steps / (n_residual/batch_size) = 1000/5 = 200ep.
+    # freeze_400 = 2× warmup. With spawn_every=500 this gives ~400ep solo + ~100ep joint before next check.
     # 0 = disabled (all models train together immediately after spawn).
     freeze_epochs_after_spawn: 400
 
@@ -297,10 +299,12 @@ base_config:
     # spawn_every_epochs = minimum interval between spawns.
     # Once that interval elapses, plateau is checked every epoch until met, then spawn fires.
     # Plateau measured on training loss to avoid using ground truth (pure PINN spirit).
-    # Keep spawn_plateau_epochs < resample_every_epochs to avoid resampling jumps confusing the check.
-    spawn_require_plateau: false     # Disabled: full_tree_by_norm spawns deterministically every spawn_every_epochs
-    spawn_plateau_epochs: 300      # look-back window in epochs
-    spawn_plateau_delta: 0.01     # spawn only if training loss improved <1% over the window
+    # spawn_plateau_epochs should be a multiple of resample_every_epochs (currently 100) so both
+    # ends of the look-back window fall at the same phase in the resampling cycle (apples-to-apples).
+    # 300 = 3 × 100 ✓. With spawn_every=500 this fits well within one spawn interval.
+    spawn_require_plateau: false     # Disabled by default; plateau experiments enable this
+    spawn_plateau_epochs: 300        # look-back window (3× resample_every = fair loss comparison)
+    spawn_plateau_delta: 0.01        # spawn only if training loss improved <1% over the window
 
     # ── 3-Phase training config ──
     # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
@@ -314,36 +318,142 @@ base_config:
 
 experiments:
 
-  # ── AToE KS reproduction of ks_best_shot_causal_fixed (commit adf4564d) ──
-  # Base ResNet trains 4k epochs, then full_tree_by_norm spawns experts.
-  # No periodic embedding — clean baseline to confirm codebase parity.
-  - name: ks_atoe_repro
+  # ════════════════════════════════════════════════════════════════════════════
+  # KS Day Ablation — 14 experiments, 5k epochs each, spawn every 500
+  # All inherit base_config: [2,256,256,256,1], grad_clip=1.0, causal=on (64 chunks)
+  # Axes: freeze duration | plateau gating | blending (base_weight × sigma) | adaptive sampling
+  # ════════════════════════════════════════════════════════════════════════════
+
+  # ── Group B: Freeze Ablation ─────────────────────────────────────────────
+  # How long to freeze base+old experts after each spawn?
+
+  - name: ks_freeze_0
     problem: ks
-    base_architecture: [2, 256, 256, 256, 1]  # 5 hidden × 256 (same as old run)
+    adaptive_pinn:
+      freeze_epochs_after_spawn: 0    # All models train jointly immediately after spawn
 
-    soap_betas: [0.95, 0.95]
-    lr_warmup_steps: 1000
-    lr_decay_steps: 8000
+  - name: ks_freeze_400
+    problem: ks
+    # freeze_epochs_after_spawn: 400 inherited from base_config (2× LR warmup in epochs)
 
-    fourier_features:
-      enabled: true
-      periodic: false                  # explicit — no periodic BC enforcement
-      dim: 128
-      scale: 2.0
+  - name: ks_freeze_perm
+    problem: ks
+    adaptive_pinn:
+      freeze_epochs_after_spawn: 99999  # Permanent: only the newest expert trains, others frozen forever
 
-    lra:
-      enabled: false
-      scheme: grad_norm
-      alpha: 0.3
-      update_every: 100
+  # ── Group C: Plateau-Gated Spawning ──────────────────────────────────────
+  # Require training loss to plateau before spawning — prevents wasting experts on unconverged states.
+  # spawn_every_epochs=500 is the minimum interval; plateau check fires each epoch after that.
 
-    ks:
-      loss_weights:
-        residual: 1.0
-        ic: 10.0
-        bc: 1.0
-      causal_training:
+  - name: ks_plateau_strict
+    problem: ks
+    adaptive_pinn:
+      spawn_require_plateau: true
+      spawn_plateau_epochs: 300       # Look-back window (< resample_every=100 * 3)
+      spawn_plateau_delta: 0.01       # Spawn when <1% loss improvement in the window
+
+  - name: ks_plateau_loose
+    problem: ks
+    adaptive_pinn:
+      spawn_require_plateau: true
+      spawn_plateau_epochs: 300
+      spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
+
+  # ── Group D: Blending Parameters ─────────────────────────────────────────
+  # base_weight (unnormalized base share) × sigma_fraction (boundary softness).
+  # Default is (0.3, 0.2). Test higher base weight and/or sharper boundaries.
+
+  - name: ks_blend_std_sharp
+    problem: ks
+    adaptive_pinn:
+      base_weight: 0.3                # Default base weight
+      sigma_fraction: 0.1             # Sharper expert boundaries (vs default 0.2)
+
+  - name: ks_blend_hi_sharp
+    problem: ks
+    adaptive_pinn:
+      base_weight: 0.6                # Strong base dominance
+      sigma_fraction: 0.1             # Hard expert boundaries
+
+  - name: ks_blend_hi_soft
+    problem: ks
+    adaptive_pinn:
+      base_weight: 0.6                # Strong base dominance
+      sigma_fraction: 0.2             # Soft boundaries (default sigma)
+
+  # ── Group E: Adaptive Sampling ────────────────────────────────────────────
+  # Focus a fraction of residual collocation points on high-error regions.
+
+  - name: ks_adaptive_40
+    problem: ks
+    sampling:
+      adaptive_sampling:
         enabled: true
-        num_chunks: 32
-        tol_schedule: [1.0]
-        min_weight_threshold: 0.99
+        adaptive_ratio: 0.4           # 40% of residual points are adaptively placed
+
+  # ── Group F: Combined Best-Guess ─────────────────────────────────────────
+  # Mix plateau + blending + adaptive in different combinations.
+
+  - name: ks_best_A
+    problem: ks
+    # freeze: 400 (default), blend: default (0.3, 0.2)
+    adaptive_pinn:
+      spawn_require_plateau: true
+      spawn_plateau_epochs: 300
+      spawn_plateau_delta: 0.01
+    sampling:
+      adaptive_sampling:
+        enabled: true
+        adaptive_ratio: 0.4
+
+  - name: ks_best_B
+    problem: ks
+    # freeze: perm, blend: hi+sharp
+    adaptive_pinn:
+      spawn_require_plateau: true
+      spawn_plateau_epochs: 300
+      spawn_plateau_delta: 0.01
+      freeze_epochs_after_spawn: 99999
+      base_weight: 0.6
+      sigma_fraction: 0.1
+    sampling:
+      adaptive_sampling:
+        enabled: true
+        adaptive_ratio: 0.4
+
+  - name: ks_best_C
+    problem: ks
+    # freeze: 400, blend: hi+soft, NO adaptive sampling
+    adaptive_pinn:
+      spawn_require_plateau: true
+      spawn_plateau_epochs: 300
+      spawn_plateau_delta: 0.05
+      base_weight: 0.6
+      sigma_fraction: 0.2
+
+  - name: ks_best_D
+    problem: ks
+    # freeze: perm, blend: default, loose plateau, adaptive
+    adaptive_pinn:
+      spawn_require_plateau: true
+      spawn_plateau_epochs: 300
+      spawn_plateau_delta: 0.05
+      freeze_epochs_after_spawn: 99999
+    sampling:
+      adaptive_sampling:
+        enabled: true
+        adaptive_ratio: 0.4
+
+  - name: ks_best_E
+    problem: ks
+    # freeze: 400, blend: std+sharp, strict plateau, adaptive
+    adaptive_pinn:
+      spawn_require_plateau: true
+      spawn_plateau_epochs: 300
+      spawn_plateau_delta: 0.01
+      base_weight: 0.3
+      sigma_fraction: 0.1
+    sampling:
+      adaptive_sampling:
+        enabled: true
+        adaptive_ratio: 0.4
