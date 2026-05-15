@@ -241,7 +241,7 @@ base_config:
       bc: 1.0                        # Periodic BC is soft — low weight, FF can help enforce periodicity
     causal_training:
       enabled: true                  # Always on for KS — essential for learning chaotic dynamics
-      num_chunks: 64                 # Fine-grained temporal bins — smoother causal progression
+      num_chunks: 32                 # Fine-grained temporal bins — smoother causal progression
       tol_schedule: [1.0]            # Single-stage: moderate causal pressure throughout training
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
     fourier_features:
@@ -326,39 +326,41 @@ experiments:
   # ── Group B: Freeze Ablation ─────────────────────────────────────────────
   # How long to freeze base+old experts after each spawn?
 
-  - name: ks_freeze_0
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
-    adaptive_pinn:
-      freeze_epochs_after_spawn: 0    # All models train jointly immediately after spawn
+  # - name: ks_freeze_0
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 1]
+  #   adaptive_pinn:
+  #     freeze_epochs_after_spawn: 0    # All models train jointly immediately after spawn
 
-  - name: ks_freeze_400
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
-    # freeze_epochs_after_spawn: 400 inherited from base_config (2× LR warmup in epochs)
+  # - name: ks_freeze_400
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 1]
+  #   # freeze_epochs_after_spawn: 400 inherited from base_config (2× LR warmup in epochs)
 
   - name: ks_freeze_perm
     problem: ks
     base_architecture: [2, 256, 256, 256, 1]
     adaptive_pinn:
+      freeze_mode: previous
       freeze_epochs_after_spawn: 99999  # Permanent: only the newest expert trains, others frozen forever
 
   # ── Group C: Plateau-Gated Spawning ──────────────────────────────────────
   # Require training loss to plateau before spawning — prevents wasting experts on unconverged states.
   # spawn_every_epochs=500 is the minimum interval; plateau check fires each epoch after that.
 
-  - name: ks_plateau_strict
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
-    adaptive_pinn:
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 300       # 3× resample_every — fair loss comparison across resampling
-      spawn_plateau_delta: 0.01       # Spawn when <1% loss improvement in the window
+  # - name: ks_plateau_strict
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 1]
+  #   adaptive_pinn:
+  #     spawn_require_plateau: true
+  #     spawn_plateau_epochs: 300       # 3× resample_every — fair loss comparison across resampling
+  #     spawn_plateau_delta: 0.01       # Spawn when <1% loss improvement in the window
 
   - name: ks_plateau_loose
     problem: ks
     base_architecture: [2, 256, 256, 256, 1]
     adaptive_pinn:
+      freeze_mode: previous
       spawn_require_plateau: true
       spawn_plateau_epochs: 300
       spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
@@ -367,80 +369,80 @@ experiments:
   # base_weight (unnormalized base share) × sigma_fraction (boundary softness).
   # Default is (0.3, 0.2). Test higher base weight and/or sharper boundaries.
 
-  - name: ks_blend_std_sharp
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
-    adaptive_pinn:
-      base_weight: 0.3                # Default base weight
-      sigma_fraction: 0.1             # Sharper expert boundaries (vs default 0.2)
+  # - name: ks_blend_std_sharp
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 1]
+  #   adaptive_pinn:
+  #     base_weight: 0.3                # Default base weight
+  #     sigma_fraction: 0.1             # Sharper expert boundaries (vs default 0.2)
 
-  - name: ks_blend_hi_sharp
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
-    adaptive_pinn:
-      base_weight: 0.6                # Strong base dominance
-      sigma_fraction: 0.1             # Hard expert boundaries
+  # - name: ks_blend_hi_sharp
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 1]
+  #   adaptive_pinn:
+  #     base_weight: 0.6                # Strong base dominance
+  #     sigma_fraction: 0.1             # Hard expert boundaries
 
-  - name: ks_blend_hi_soft
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
-    adaptive_pinn:
-      base_weight: 0.6                # Strong base dominance
-      sigma_fraction: 0.2             # Soft boundaries (default sigma)
+  # - name: ks_blend_hi_soft
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 1]
+  #   adaptive_pinn:
+  #     base_weight: 0.6                # Strong base dominance
+  #     sigma_fraction: 0.2             # Soft boundaries (default sigma)
 
-  # ── Group E: Adaptive Sampling ────────────────────────────────────────────
-  # Focus a fraction of residual collocation points on high-error regions.
+  # # ── Group E: Adaptive Sampling ────────────────────────────────────────────
+  # # Focus a fraction of residual collocation points on high-error regions.
 
-  - name: ks_adaptive_40
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
-    sampling:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.4           # 40% of residual points are adaptively placed
+  # - name: ks_adaptive_40
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 1]
+  #   sampling:
+  #     adaptive_sampling:
+  #       enabled: true
+  #       adaptive_ratio: 0.4           # 40% of residual points are adaptively placed
 
-  # ── Group F: Combined Best-Guess ─────────────────────────────────────────
-  # Mix plateau + blending + adaptive in different combinations.
+  # # ── Group F: Combined Best-Guess ─────────────────────────────────────────
+  # # Mix plateau + blending + adaptive in different combinations.
 
-  - name: ks_best_A
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
-    # freeze: 400 (default), blend: default (0.3, 0.2)
-    adaptive_pinn:
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 300
-      spawn_plateau_delta: 0.01
-    sampling:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.4
+  # - name: ks_best_A
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 1]
+  #   # freeze: 400 (default), blend: default (0.3, 0.2)
+  #   adaptive_pinn:
+  #     spawn_require_plateau: true
+  #     spawn_plateau_epochs: 300
+  #     spawn_plateau_delta: 0.01
+  #   sampling:
+  #     adaptive_sampling:
+  #       enabled: true
+  #       adaptive_ratio: 0.4
 
-  - name: ks_best_B
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
-    # freeze: perm, blend: hi+sharp
-    adaptive_pinn:
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 300
-      spawn_plateau_delta: 0.01
-      freeze_epochs_after_spawn: 99999
-      base_weight: 0.6
-      sigma_fraction: 0.1
-    sampling:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.4
+  # - name: ks_best_B
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 1]
+  #   # freeze: perm, blend: hi+sharp
+  #   adaptive_pinn:
+  #     spawn_require_plateau: true
+  #     spawn_plateau_epochs: 300
+  #     spawn_plateau_delta: 0.01
+  #     freeze_epochs_after_spawn: 99999
+  #     base_weight: 0.6
+  #     sigma_fraction: 0.1
+  #   sampling:
+  #     adaptive_sampling:
+  #       enabled: true
+  #       adaptive_ratio: 0.4
 
-  - name: ks_best_C
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
-    # freeze: 400, blend: hi+soft, NO adaptive sampling
-    adaptive_pinn:
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 300
-      spawn_plateau_delta: 0.05
-      base_weight: 0.6
-      sigma_fraction: 0.2
+  # - name: ks_best_C
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 1]
+  #   # freeze: 400, blend: hi+soft, NO adaptive sampling
+  #   adaptive_pinn:
+  #     spawn_require_plateau: true
+  #     spawn_plateau_epochs: 300
+  #     spawn_plateau_delta: 0.05
+  #     base_weight: 0.6
+  #     sigma_fraction: 0.2
 
   - name: ks_best_D
     problem: ks
@@ -451,22 +453,23 @@ experiments:
       spawn_plateau_epochs: 300
       spawn_plateau_delta: 0.05
       freeze_epochs_after_spawn: 99999
+      freeze_mode: previous
     sampling:
       adaptive_sampling:
         enabled: true
         adaptive_ratio: 0.4
 
-  - name: ks_best_E
-    problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
-    # freeze: 400, blend: std+sharp, strict plateau, adaptive
-    adaptive_pinn:
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 300
-      spawn_plateau_delta: 0.01
-      base_weight: 0.3
-      sigma_fraction: 0.1
-    sampling:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.4
+  # - name: ks_best_E
+  #   problem: ks
+  #   base_architecture: [2, 256, 256, 256, 1]
+  #   # freeze: 400, blend: std+sharp, strict plateau, adaptive
+  #   adaptive_pinn:
+  #     spawn_require_plateau: true
+  #     spawn_plateau_epochs: 300
+  #     spawn_plateau_delta: 0.01
+  #     base_weight: 0.3
+  #     sigma_fraction: 0.1
+  #   sampling:
+  #     adaptive_sampling:
+  #       enabled: true
+  #       adaptive_ratio: 0.4
