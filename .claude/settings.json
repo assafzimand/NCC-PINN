@@ -9,7 +9,9 @@
       "WebFetch(domain:github.com)",
       "Read(//c/Users/assaf/**)",
       "Bash(gh api *)",
-      "WebFetch(domain:api.github.com)"
+      "WebFetch(domain:api.github.com)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\assaf\\\\Desktop\\\\Coding\\\\Msc\\\\Master\\\\NCC-PINN\" -Recurse -Filter \"*.py\")",
+      "Bash(Select-Object -First 30 FullName)"
     ]
   }
 }

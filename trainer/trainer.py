@@ -18,7 +18,7 @@ from models.atoe_leaves import AToELeaves
 from models.ant import ANT
 from utils.dataset_gen import regenerate_training_data, _save_adaptive_sampling_heatmap
 from utils.dataset_plotting import save_spawn_prediction_plot
-from losses.causal_weighting import advance_causal_schedule
+from losses.causal_weighting import advance_causal_schedule, create_causal_state
 from losses.lra import LRAWeights
 
 
@@ -394,6 +394,7 @@ def train(
             return sum(w.get(k, 1.0) * v for k, v in comps.items())
 
         _lra_loss_fn.causal_state = getattr(loss_fn, 'causal_state', None)
+        _lra_loss_fn._leaf_state = getattr(loss_fn, '_leaf_state', None)
         loss_fn = _lra_loss_fn
 
     checkpoint_dir = run_dir / "checkpoints"
@@ -414,6 +415,9 @@ def train(
     wavelet_threshold = problem_cfg.get('wavelet_threshold', 0.0)
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
     spawning_complete = False
+    _stop_if_no_spawn = adaptive_cfg.get('stop_if_no_spawn', False)
+    _per_leaf_causal = problem_cfg.get('causal_training', {}).get('per_leaf_causal', False)
+    _per_leaf_sampling = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('per_leaf_sampling', False)
     
     # Read configurable norm variables
     variable_for_node_accept = adaptive_cfg.get('variable_for_node_accept', 'norm')
@@ -816,12 +820,16 @@ def train(
                     run_dir, epoch, cfg,
                     causal_state=causal_state,
                 )
+            _leaf_info_for_sampling = None
+            if _per_leaf_sampling and is_adaptive and hasattr(model, 'get_leaf_info'):
+                _leaf_info_for_sampling = model.get_leaf_info()
             train_data = regenerate_training_data(
                 cfg, device, resample_seed=resample_seed,
                 cached_residuals=cached_residuals,
                 run_dir=run_dir,
                 epoch=epoch,
                 causal_state=causal_state,
+                leaf_info=_leaf_info_for_sampling,
             )
             train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
             metrics['resample_events'].append({
@@ -1085,20 +1093,43 @@ def train(
         # Causal weighting: check if epsilon should advance
         causal_state = getattr(loss_fn, 'causal_state', None)
         causal_epoch_min_weight = None
-        if causal_state is not None:
-            causal_epoch_min_weight = causal_state['min_weight']
-        if advance_causal_schedule(causal_state):
-            cs = loss_fn.causal_state
-            print(f"  [Causal] epsilon advanced to "
-                  f"{cs['tol']:.2f} "
-                  f"(stage {cs['schedule_idx']+1}/"
-                  f"{len(cs['schedule'])}, "
-                  f"prev_min_w={causal_epoch_min_weight:.6f})")
-        # Reset min_weight for the next epoch's batch accumulation.
-        # Must happen AFTER advance check so it sees the true minimum
-        # from this epoch's batches, not the fresh reset value.
-        if causal_state is not None:
-            causal_state['min_weight'] = 1.0
+        if _per_leaf_causal and hasattr(loss_fn, '_leaf_state'):
+            leaf_states = loss_fn._leaf_state.get('causal_states', {})
+            if leaf_states:
+                for _expert_idx, _leaf_cs in leaf_states.items():
+                    causal_epoch_min_weight = min(
+                        causal_epoch_min_weight if causal_epoch_min_weight is not None else 1.0,
+                        _leaf_cs.get('min_weight', 1.0))
+                    if advance_causal_schedule(_leaf_cs):
+                        print(f"  [PerLeafCausal] Expert {_expert_idx}: epsilon advanced to "
+                              f"{_leaf_cs['tol']:.2f} "
+                              f"(stage {_leaf_cs['schedule_idx']+1}/{len(_leaf_cs['schedule'])})")
+                    _leaf_cs['min_weight'] = 1.0
+            else:
+                # No leaves yet (pre-first-spawn); fall back to global causal
+                if causal_state is not None:
+                    causal_epoch_min_weight = causal_state['min_weight']
+                if advance_causal_schedule(causal_state):
+                    cs = loss_fn.causal_state
+                    print(f"  [Causal] epsilon advanced to "
+                          f"{cs['tol']:.2f} "
+                          f"(stage {cs['schedule_idx']+1}/{len(cs['schedule'])}, "
+                          f"prev_min_w={causal_epoch_min_weight:.6f})")
+                if causal_state is not None:
+                    causal_state['min_weight'] = 1.0
+        else:
+            if causal_state is not None:
+                causal_epoch_min_weight = causal_state['min_weight']
+            if advance_causal_schedule(causal_state):
+                cs = loss_fn.causal_state
+                print(f"  [Causal] epsilon advanced to "
+                      f"{cs['tol']:.2f} "
+                      f"(stage {cs['schedule_idx']+1}/"
+                      f"{len(cs['schedule'])}, "
+                      f"prev_min_w={causal_epoch_min_weight:.6f})")
+            # Reset min_weight AFTER advance check so it sees the true minimum.
+            if causal_state is not None:
+                causal_state['min_weight'] = 1.0
 
         # Compute evaluation metrics only every print_every epochs or last epoch
         # This speeds up training significantly for physics-informed losses
@@ -1910,6 +1941,30 @@ def train(
                     )
             else:
                 print(f"\n  [Spawning] No experts spawned this step")
+                if _stop_if_no_spawn:
+                    print(f"  [StopIfNoSpawn] Zero experts spawned — saving final checkpoint and stopping.")
+                    final_checkpoint_path = checkpoint_dir / "final_model.pt"
+                    _save_checkpoint(final_checkpoint_path, model, optimizer,
+                                     current_optimizer_name, epoch,
+                                     train_loss, eval_loss, cfg, metrics)
+                    model.train()
+                    break
+
+            # Per-leaf causal: update leaf causal states after successful spawn
+            if experts_spawned_this_step > 0 and _per_leaf_causal and hasattr(loss_fn, '_leaf_state'):
+                if hasattr(model, 'get_leaf_info'):
+                    _new_leaf_info = model.get_leaf_info()
+                    _existing_leaf_states = loss_fn._leaf_state.get('causal_states', {})
+                    _new_states = {}
+                    for _region, _expert_idx in _new_leaf_info:
+                        if _expert_idx in _existing_leaf_states:
+                            _new_states[_expert_idx] = _existing_leaf_states[_expert_idx]
+                        else:
+                            _new_states[_expert_idx] = create_causal_state(problem_cfg)
+                    loss_fn._leaf_state['causal_states'] = _new_states
+                    loss_fn._leaf_state['leaf_info'] = _new_leaf_info
+                    print(f"  [PerLeafCausal] Updated leaf states: "
+                          f"{list(_new_states.keys())} ({len(_new_states)} leaves)")
 
             model.train()
 

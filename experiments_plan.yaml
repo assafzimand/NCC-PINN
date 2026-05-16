@@ -245,6 +245,7 @@ base_config:
       num_chunks: 8                 # Fine-grained temporal bins — smoother causal progression
       tol_schedule: [1.0]            # Single-stage: moderate causal pressure throughout training
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
+      per_leaf_causal: true          # Feature B: each leaf gets its own independent causal state
     fourier_features:
       scale: 2.0                     # Conservative — KS has broadband content, not sharp interfaces
 
@@ -305,6 +306,7 @@ base_config:
     spawn_require_plateau: false     # Disabled by default; plateau experiments enable this
     spawn_plateau_epochs: 300        # look-back window (3× resample_every = fair loss comparison)
     spawn_plateau_delta: 0.01        # spawn only if training loss improved <1% over the window
+    stop_if_no_spawn: true           # Feature A: stop training when a spawn attempt yields 0 new experts
 
     # ── 3-Phase training config ──
     # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
@@ -359,7 +361,7 @@ experiments:
 
   - name: ks_plateau_loose
     problem: ks
-    base_architecture: [2, 128, 128, 128, 1]
+    base_architecture: [2, 64, 64, 64, 1]
     adaptive_pinn:
       freeze_mode: none
       spawn_require_plateau: true
@@ -447,7 +449,7 @@ experiments:
 
   - name: ks_best_D
     problem: ks
-    base_architecture: [2, 128, 128, 128, 1]
+    base_architecture: [2, 64, 64, 64, 1]
     # freeze: perm, blend: default, loose plateau, adaptive
     adaptive_pinn:
       spawn_require_plateau: true
@@ -459,6 +461,7 @@ experiments:
       adaptive_sampling:
         enabled: true
         adaptive_ratio: 0.4
+        per_leaf_sampling: true      # Feature C: each leaf gets N/L adaptive samples from its own residual distribution
 
   # - name: ks_best_E
   #   problem: ks
