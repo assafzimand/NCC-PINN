@@ -631,7 +631,10 @@ def train(
     grad_clip_norm = cfg.get('grad_clip_norm', None)  # None = disabled
 
     # Freeze-after-spawn state (Fix 2)
+    # freeze_mode: none takes priority — if explicitly set to none, disable post-spawn freeze entirely.
     freeze_epochs_after_spawn = adaptive_cfg.get('freeze_epochs_after_spawn', 0) if is_adaptive else 0
+    if adaptive_cfg.get('freeze_mode', 'none') == 'none':
+        freeze_epochs_after_spawn = 0
     _unfreeze_at_epoch = None       # set after each spawn
     _opt_state_snapshot = None      # saved optimizer moments before freeze
 
