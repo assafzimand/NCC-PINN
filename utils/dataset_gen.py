@@ -318,6 +318,34 @@ def _compute_phi_pdf(residuals: torch.Tensor, phi_cfg: Dict) -> torch.Tensor:
     return w / w.sum()
 
 
+def _filter_cache_to_region(cached_residuals: list, region) -> list:
+    """Filter (x, t, r²) cache tuples to points within region's spatial+temporal bounds."""
+    filtered = []
+    for x_batch, t_batch, r2_batch in cached_residuals:
+        spatial_dim = x_batch.shape[1]
+        mask = torch.ones(x_batch.shape[0], dtype=torch.bool, device=x_batch.device)
+        for d in range(spatial_dim):
+            mask &= (x_batch[:, d] >= region.bounds_lower[d]) & \
+                    (x_batch[:, d] < region.bounds_upper[d])
+        mask &= (t_batch[:, 0] >= region.bounds_lower[spatial_dim]) & \
+                (t_batch[:, 0] < region.bounds_upper[spatial_dim])
+        if mask.sum() > 0:
+            filtered.append((x_batch[mask], t_batch[mask], r2_batch[mask]))
+    return filtered
+
+
+def _uniform_in_region(region, n_points: int, spatial_dim: int, device) -> tuple:
+    """Sample uniform (x, t) points within region's bounds (fallback for empty leaf cache)."""
+    x = torch.zeros(n_points, spatial_dim, device=device)
+    for d in range(spatial_dim):
+        lo, hi = region.bounds_lower[d], region.bounds_upper[d]
+        x[:, d] = torch.rand(n_points, device=device) * (hi - lo) + lo
+    t_lo = region.bounds_lower[spatial_dim]
+    t_hi = region.bounds_upper[spatial_dim]
+    t = torch.rand(n_points, 1, device=device) * (t_hi - t_lo) + t_lo
+    return x, t
+
+
 def _sample_adaptive_residual_points(
     cached_residuals: list,
     config: Dict,
@@ -526,13 +554,14 @@ def regenerate_training_data(
     run_dir=None,
     epoch=None,
     causal_state: dict = None,
+    leaf_info=None,
 ) -> Dict[str, torch.Tensor]:
     """Lightweight resampling: fresh random coordinates + analytical IC/BC.
 
     Unlike the initial dataset generation this does **not** run any
     numerical solver — only random (x, t) sampling plus trivial
     analytical formulas for IC and BC ground truth.
-    
+
     Args:
         config: Full configuration dict
         device: Target device
@@ -541,6 +570,7 @@ def regenerate_training_data(
         run_dir: Optional path for saving diagnostic plots
         epoch: Current epoch (for diagnostic filenames)
         causal_state: Optional causal training state dict for diagnostic heatmaps
+        leaf_info: Optional list of (region, expert_idx) for per-leaf adaptive sampling
     """
     problem = config['problem']
     pc = config[problem]
@@ -562,6 +592,7 @@ def regenerate_training_data(
     as_problem = config.get(problem, {}).get('adaptive_sampling', {})
     as_enabled = as_global.get('enabled', False) and cached_residuals is not None and len(cached_residuals) > 0
     as_ratio = as_global.get('adaptive_ratio', 0.5)
+    per_leaf_sampling = as_global.get('per_leaf_sampling', False)
     # phi config comes from per-problem section
     phi_cfg = {
         'phi': as_problem.get('phi', 'quadratic'),
@@ -584,10 +615,27 @@ def regenerate_training_data(
             x[idx:idx + n_uniform, d] = torch.rand(n_uniform, device=device) * (hi - lo) + lo
         t[idx:idx + n_uniform, 0] = torch.rand(n_uniform, device=device) * (t_max - t_min) + t_min
         idx += n_uniform
-        # Adaptive residual points
-        x_adap, t_adap = _sample_adaptive_residual_points(
-            cached_residuals, config, device, n_adaptive, phi_cfg, run_dir, epoch,
-            causal_state=causal_state)
+        # Adaptive residual points — global or per-leaf
+        if per_leaf_sampling and leaf_info is not None and len(leaf_info) > 0:
+            n_leaves = len(leaf_info)
+            n_per_leaf = max(1, n_adaptive // n_leaves)
+            x_parts, t_parts = [], []
+            for _region, _expert_idx in leaf_info:
+                leaf_cached = _filter_cache_to_region(cached_residuals, _region)
+                if leaf_cached:
+                    x_leaf, t_leaf = _sample_adaptive_residual_points(
+                        leaf_cached, config, device, n_per_leaf, phi_cfg)
+                else:
+                    x_leaf, t_leaf = _uniform_in_region(_region, n_per_leaf, spatial_dim, device)
+                x_parts.append(x_leaf)
+                t_parts.append(t_leaf)
+            x_adap = torch.cat(x_parts, dim=0)[:n_adaptive]
+            t_adap = torch.cat(t_parts, dim=0)[:n_adaptive]
+            print(f"  [Resample] Per-leaf adaptive: {n_leaves} leaves × {n_per_leaf} pts = {len(x_adap)} adaptive")
+        else:
+            x_adap, t_adap = _sample_adaptive_residual_points(
+                cached_residuals, config, device, n_adaptive, phi_cfg, run_dir, epoch,
+                causal_state=causal_state)
         x[idx:idx + n_adaptive] = x_adap
         t[idx:idx + n_adaptive] = t_adap
         idx += n_adaptive
