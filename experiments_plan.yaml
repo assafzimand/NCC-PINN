@@ -339,9 +339,9 @@ experiments:
 
   - name: ks_freeze_perm
     problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
+    base_architecture: [2, 64, 64, 64, 1]
     adaptive_pinn:
-      freeze_mode: previous
+      freeze_mode: none
       freeze_epochs_after_spawn: 99999  # Permanent: only the newest expert trains, others frozen forever
 
   # ── Group C: Plateau-Gated Spawning ──────────────────────────────────────
@@ -358,9 +358,9 @@ experiments:
 
   - name: ks_plateau_loose
     problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
+    base_architecture: [2, 64, 64, 64, 1]
     adaptive_pinn:
-      freeze_mode: previous
+      freeze_mode: none
       spawn_require_plateau: true
       spawn_plateau_epochs: 300
       spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
@@ -446,14 +446,14 @@ experiments:
 
   - name: ks_best_D
     problem: ks
-    base_architecture: [2, 256, 256, 256, 1]
+    base_architecture: [2, 64, 64, 64, 1]
     # freeze: perm, blend: default, loose plateau, adaptive
     adaptive_pinn:
       spawn_require_plateau: true
       spawn_plateau_epochs: 300
       spawn_plateau_delta: 0.05
       freeze_epochs_after_spawn: 99999
-      freeze_mode: previous
+      freeze_mode: none
     sampling:
       adaptive_sampling:
         enabled: true
