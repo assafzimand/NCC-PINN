@@ -361,7 +361,7 @@ experiments:
 
   - name: ks_plateau_loose
     problem: ks
-    base_architecture: [2, 64, 64, 64, 1]
+    base_architecture: [2, 128, 128, 128, 1]
     adaptive_pinn:
       freeze_mode: none
       spawn_require_plateau: true
@@ -449,7 +449,7 @@ experiments:
 
   - name: ks_best_D
     problem: ks
-    base_architecture: [2, 64, 64, 64, 1]
+    base_architecture: [2, 128, 128, 128, 1]
     # freeze: perm, blend: default, loose plateau, adaptive
     adaptive_pinn:
       spawn_require_plateau: true
