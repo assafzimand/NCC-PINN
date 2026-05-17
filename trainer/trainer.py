@@ -1976,7 +1976,14 @@ def train(
     _atexit.unregister(_emergency_metrics_save)
 
     if _nan_detected:
-        print("[NaN] Skipping post-training cleanup — moving to next experiment.")
+        print("[NaN] Generating partial training curves before exit...")
+        try:
+            training_plots_dir = run_dir / "training_plots"
+            switch_epoch_to_plot = switch_epoch if (optimizer_2_name is not None and switch_epoch <= epochs) else None
+            plot_training_curves(metrics, training_plots_dir, optimizer_switch_epoch=switch_epoch_to_plot)
+        except Exception as _plot_err:
+            print(f"  [NaN] Could not generate training curves: {_plot_err}")
+        print("[NaN] Skipping remaining post-training cleanup — moving to next experiment.")
         return
 
     # Save final model
