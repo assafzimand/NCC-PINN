@@ -590,12 +590,18 @@ def main():
     # Run each experiment
     for i, exp in enumerate(plan['experiments'], 1):
         print(f"\n[{i}/{len(plan['experiments'])}]")
-        result = run_single_experiment(
-            exp, 
-            plan['base_config'],
-            exp['name'],
-            parent_dir
-        )
+        try:
+            result = run_single_experiment(
+                exp,
+                plan['base_config'],
+                exp['name'],
+                parent_dir
+            )
+        except Exception as _exp_err:
+            print(f"\n[ERROR] Experiment {exp['name']} raised an exception: {_exp_err}")
+            import traceback
+            traceback.print_exc()
+            result = None
         results[exp['name']] = result
     
     # Generate comparison report using the shared regenerate script
