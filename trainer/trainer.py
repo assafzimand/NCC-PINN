@@ -767,7 +767,8 @@ def train(
             # Rebuild optimizer to include all now-trainable params
             optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
             lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
-            step_count = 0
+            # Do NOT reset step_count — LR scheduler continues from current position to avoid
+            # warmup restart disrupting already-trained params on unfreeze.
             # Restore saved optimizer moments for params that existed before the freeze
             if _opt_state_snapshot is not None:
                 for pg in optimizer.param_groups:
@@ -1883,7 +1884,8 @@ def train(
                     lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_p3)
                 else:
                     lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
-                step_count = 0
+                # Do NOT reset step_count — LR scheduler continues from current position so warmup
+                # is not restarted for already-trained params after each spawn.
 
                 # Immediately restore state for pre-existing params now in the new optimizer.
                 # freeze==0: all params here → full restore now (no deferred step).

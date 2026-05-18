@@ -135,7 +135,7 @@ def _apply_causal_weights(
     cumsum = torch.cumsum(chunk_losses_t.detach(), dim=0)
     zero = torch.zeros(1, device=cumsum.device)
     shifted = torch.cat([zero, cumsum[:-1]])
-    weights = torch.exp(-causal_tol * shifted).detach()
+    weights = torch.exp(-causal_tol * shifted).clamp(min=1e-8).detach()
 
     if causal_state is not None:
         batch_min = weights.min().item()

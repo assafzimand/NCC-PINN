@@ -217,6 +217,10 @@ def main():
     else:
         # Single model mode - standard naming
         run_dir = make_run_dir(problem, architecture, activation)
+        # Record run_dir for run_experiments.py to find without mtime search
+        _run_dir_record = Path("outputs") / ".last_run_dir.txt"
+        _run_dir_record.parent.mkdir(parents=True, exist_ok=True)
+        _run_dir_record.write_text(str(run_dir.resolve()))
     print(f"  Run directory: {run_dir}")
 
     # Save config to run directory

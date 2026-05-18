@@ -130,10 +130,11 @@ class SOAP(optim.Optimizer):
                                                max_precond_dim=group['max_precond_dim'],
                                                merge_dims=group["merge_dims"],
                                                precondition_1d=group["precondition_1d"])
-                    continue
-
-                grad_projected = self.project(grad, state, merge_dims=group["merge_dims"],
-                                              max_precond_dim=group['max_precond_dim'])
+                    # First step: preconditioner just initialized, use raw gradient (no projection yet)
+                    grad_projected = grad
+                else:
+                    grad_projected = self.project(grad, state, merge_dims=group["merge_dims"],
+                                                  max_precond_dim=group['max_precond_dim'])
 
                 exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
                 beta1, beta2 = group["betas"]

@@ -243,7 +243,7 @@ base_config:
     causal_training:
       enabled: true                  # Always on for KS — essential for learning chaotic dynamics
       num_chunks: 16                 # Fine-grained temporal bins — smoother causal progression
-      tol_schedule: [1.0]            # Single-stage: moderate causal pressure throughout training
+      tol_schedule: [0.01, 0.1, 1.0]  # Annealing schedule (Wang et al. 2022): start soft, harden as network learns
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
       per_leaf_causal: true          # Feature B: each leaf gets its own independent causal state
     fourier_features:

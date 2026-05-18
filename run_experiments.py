@@ -161,102 +161,109 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             num_analysis_steps += 1
         
         # Move outputs to experiment directory
-        # Find latest architecture directory matching this experiment
         outputs_root = Path("outputs")
-        if outputs_root.exists():
-            # Build pattern to match architecture folder
-            layers_str = "-".join(map(str, config['base_architecture']))
-            arch_folder_name = f"{config['problem']}-{layers_str}-{config['activation']}"
+        layers_str = "-".join(map(str, config['base_architecture']))
+        arch_folder_name = f"{config['problem']}-{layers_str}-{config['activation']}"
+
+        if skip_inner_metrics:
+            # Primary: use the run_dir recorded by run_ncc.py to avoid mtime races
+            ncc_dir = None
+            _run_dir_record = outputs_root / ".last_run_dir.txt"
+            if _run_dir_record.exists():
+                _recorded = Path(_run_dir_record.read_text().strip())
+                print(f"  [Move] Recorded run_dir: {_recorded}")
+                if _recorded.exists():
+                    ncc_dir = _recorded
+                else:
+                    print(f"  [Move] WARNING: recorded run_dir missing on disk: {_recorded}")
+
+            # Fallback: mtime search
+            if ncc_dir is None:
+                print(f"  [Move] Falling back to mtime search for {arch_folder_name}")
+                arch_dir = outputs_root / arch_folder_name
+                print(f"  [Move] arch_dir exists={arch_dir.exists()}")
+                if arch_dir.exists():
+                    ts_dirs = sorted(
+                        [d for d in arch_dir.glob("*/") if d.is_dir()],
+                        key=lambda x: x.stat().st_mtime
+                    )
+                    print(f"  [Move] Found {len(ts_dirs)} dirs: {[d.name for d in ts_dirs]}")
+                    if ts_dirs:
+                        ncc_dir = ts_dirs[-1]
+
+            if ncc_dir is None:
+                print(f"  [Move] ERROR: could not find output dir for {exp_name}")
+                return None
+
+            exp_output_dir.mkdir(parents=True, exist_ok=True)
+            dest_dir = exp_output_dir / ncc_dir.name
+            print(f"  [Move] Moving {ncc_dir} -> {dest_dir}")
+            if dest_dir.exists():
+                shutil.rmtree(dest_dir)
+            shutil.move(str(ncc_dir), str(dest_dir))
+            return dest_dir
+
+        else:
+            # All four analysis steps ran — need 4 most-recent dirs from arch_dir
             arch_dir = outputs_root / arch_folder_name
-            
-            if arch_dir.exists():
-                # Find the latest timestamp directories based on how many analysis steps ran
-                timestamp_dirs = sorted(
-                    [d for d in arch_dir.glob("*/") if d.is_dir()], 
-                    key=lambda x: x.stat().st_mtime
-                )
-                
-                if len(timestamp_dirs) >= num_analysis_steps:
-                    # Create experiment output directory
-                    exp_output_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    if skip_inner_metrics:
-                        # Only NCC ran - just move that directory
-                        ncc_dir = timestamp_dirs[-1]  # Most recent (only one)
-                        dest_dir = exp_output_dir / ncc_dir.name
-                        
-                        if dest_dir.exists():
-                            shutil.rmtree(dest_dir)
-                        shutil.move(str(ncc_dir), str(dest_dir))
-                    else:
-                        # All four analysis steps ran
-                        ncc_dir = timestamp_dirs[-4]    # Fourth to last (NCC ran first)
-                        probe_dir = timestamp_dirs[-3]  # Third to last (Probes ran second)
-                        deriv_dir = timestamp_dirs[-2]  # Second to last (Derivatives ran third)
-                        freq_dir = timestamp_dirs[-1]   # Last (Frequency ran fourth)
-                        
-                        dest_dir = exp_output_dir / ncc_dir.name
-                        
-                        # Move NCC results
-                        if dest_dir.exists():
-                            shutil.rmtree(dest_dir)
-                        shutil.move(str(ncc_dir), str(dest_dir))
-                        
-                        # Merge probe results into the same directory (preserving epoch subdirs)
-                        probe_plots_src = probe_dir / "probe_plots"
-                        if probe_plots_src.exists():
-                            probe_plots_dest = dest_dir / "probe_plots"
-                            probe_plots_dest.mkdir(parents=True, exist_ok=True)
-                            
-                            # Copy files (not subdirs) from source to dest
-                            # Only copy metrics.json, preserve plot files from training (shaded versions)
-                            for item in probe_plots_src.iterdir():
-                                if item.is_file():
-                                    # Only copy JSON files, skip plot images to preserve shaded versions
-                                    if item.suffix == '.json':
-                                        shutil.copy2(item, probe_plots_dest / item.name)
-                        
-                        # Clean up the probe directory (we've copied what we need)
-                        if probe_dir.exists():
-                            shutil.rmtree(probe_dir)
-                        
-                        # Merge derivatives results into the same directory (preserving epoch subdirs)
-                        deriv_plots_src = deriv_dir / "derivatives_plots"
-                        if deriv_plots_src.exists():
-                            deriv_plots_dest = dest_dir / "derivatives_plots"
-                            deriv_plots_dest.mkdir(parents=True, exist_ok=True)
-                            
-                            # Copy files (not subdirs) from source to dest
-                            # Only copy metrics.json, preserve plot files from training (shaded versions)
-                            for item in deriv_plots_src.iterdir():
-                                if item.is_file():
-                                    # Only copy JSON files, skip plot images to preserve shaded versions
-                                    if item.suffix == '.json':
-                                        shutil.copy2(item, deriv_plots_dest / item.name)
-                        
-                        # Clean up the derivatives directory
-                        if deriv_dir.exists():
-                            shutil.rmtree(deriv_dir)
-                        
-                        # Merge frequency results into the same directory
-                        freq_plots_src = freq_dir / "frequency_plots"
-                        if freq_plots_src.exists():
-                            freq_plots_dest = dest_dir / "frequency_plots"
-                            freq_plots_dest.mkdir(parents=True, exist_ok=True)
-                            
-                            # Copy files (not subdirs) from source to dest
-                            for item in freq_plots_src.iterdir():
-                                if item.is_file():
-                                    if item.suffix == '.json':
-                                        shutil.copy2(item, freq_plots_dest / item.name)
-                        
-                        # Clean up the frequency directory
-                        if freq_dir.exists():
-                            shutil.rmtree(freq_dir)
-                    
-                    # Return the moved timestamp directory
-                    return dest_dir
-        
+            if not arch_dir.exists():
+                print(f"  [Move] ERROR: arch_dir not found: {arch_dir}")
+                return None
+            timestamp_dirs = sorted(
+                [d for d in arch_dir.glob("*/") if d.is_dir()],
+                key=lambda x: x.stat().st_mtime
+            )
+            if len(timestamp_dirs) < num_analysis_steps:
+                print(f"  [Move] ERROR: expected {num_analysis_steps} dirs, found {len(timestamp_dirs)}")
+                return None
+
+            exp_output_dir.mkdir(parents=True, exist_ok=True)
+            ncc_dir = timestamp_dirs[-4]
+            probe_dir = timestamp_dirs[-3]
+            deriv_dir = timestamp_dirs[-2]
+            freq_dir = timestamp_dirs[-1]
+
+            dest_dir = exp_output_dir / ncc_dir.name
+
+            if dest_dir.exists():
+                shutil.rmtree(dest_dir)
+            shutil.move(str(ncc_dir), str(dest_dir))
+
+            # Merge probe results
+            probe_plots_src = probe_dir / "probe_plots"
+            if probe_plots_src.exists():
+                probe_plots_dest = dest_dir / "probe_plots"
+                probe_plots_dest.mkdir(parents=True, exist_ok=True)
+                for item in probe_plots_src.iterdir():
+                    if item.is_file() and item.suffix == '.json':
+                        shutil.copy2(item, probe_plots_dest / item.name)
+            if probe_dir.exists():
+                shutil.rmtree(probe_dir)
+
+            # Merge derivatives results
+            deriv_plots_src = deriv_dir / "derivatives_plots"
+            if deriv_plots_src.exists():
+                deriv_plots_dest = dest_dir / "derivatives_plots"
+                deriv_plots_dest.mkdir(parents=True, exist_ok=True)
+                for item in deriv_plots_src.iterdir():
+                    if item.is_file() and item.suffix == '.json':
+                        shutil.copy2(item, deriv_plots_dest / item.name)
+            if deriv_dir.exists():
+                shutil.rmtree(deriv_dir)
+
+            # Merge frequency results
+            freq_plots_src = freq_dir / "frequency_plots"
+            if freq_plots_src.exists():
+                freq_plots_dest = dest_dir / "frequency_plots"
+                freq_plots_dest.mkdir(parents=True, exist_ok=True)
+                for item in freq_plots_src.iterdir():
+                    if item.is_file() and item.suffix == '.json':
+                        shutil.copy2(item, freq_plots_dest / item.name)
+            if freq_dir.exists():
+                shutil.rmtree(freq_dir)
+
+            return dest_dir
+
         return None
         
     finally:
