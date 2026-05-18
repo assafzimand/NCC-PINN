@@ -320,35 +320,6 @@ base_config:
 
 experiments:
 
-  - name: ks_plateau_no_freeze
-    problem: ks
-    base_architecture: [2, 128, 128, 128, 128, 1]
-    adaptive_pinn:
-      freeze_mode: none
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 300
-      spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
-
-  - name: ks_with_plateau_perm_freeze
-    problem: ks
-    base_architecture: [2, 128, 128, 128, 128, 1]
-    adaptive_pinn:
-      freeze_mode: previous
-      freeze_epochs_after_spawn: 9999
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 300
-      spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
-
-  - name: ks_plateau_semi_freeze
-    problem: ks
-    base_architecture: [2, 128, 128, 128, 128, 1]
-    adaptive_pinn:
-      freeze_mode: previous
-      freeze_epochs_after_spawn: 400
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 300
-      spawn_plateau_delta: 0.05  
-  
   - name: ks_plateau_adaptive_no_freeze
     problem: ks
     base_architecture: [2, 128, 128, 128, 128, 1]
@@ -393,3 +364,33 @@ experiments:
         enabled: true
         adaptive_ratio: 0.4
         per_leaf_sampling: true   
+
+
+  - name: ks_plateau_no_freeze
+    problem: ks
+    base_architecture: [2, 128, 128, 128, 128, 1]
+    adaptive_pinn:
+      freeze_mode: none
+      spawn_require_plateau: true
+      spawn_plateau_epochs: 300
+      spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
+
+  - name: ks_with_plateau_perm_freeze
+    problem: ks
+    base_architecture: [2, 128, 128, 128, 128, 1]
+    adaptive_pinn:
+      freeze_mode: previous
+      freeze_epochs_after_spawn: 9999
+      spawn_require_plateau: true
+      spawn_plateau_epochs: 300
+      spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
+
+  - name: ks_plateau_semi_freeze
+    problem: ks
+    base_architecture: [2, 128, 128, 128, 128, 1]
+    adaptive_pinn:
+      freeze_mode: previous
+      freeze_epochs_after_spawn: 400
+      spawn_require_plateau: true
+      spawn_plateau_epochs: 300
+      spawn_plateau_delta: 0.05  
