@@ -826,7 +826,11 @@ def train(
                 )
             _leaf_info_for_sampling = None
             if _per_leaf_sampling and is_adaptive and hasattr(model, 'get_leaf_info'):
-                _leaf_info_for_sampling = model.get_leaf_info()
+                # Filter out base model entry (region=None); only pass real expert leaf regions.
+                # Before first spawn, get_leaf_info() returns [(None, -1)] — passing that to
+                # regenerate_training_data would crash when accessing region.bounds_lower.
+                _raw_leaf_info = model.get_leaf_info()
+                _leaf_info_for_sampling = [(r, idx) for r, idx in _raw_leaf_info if r is not None] or None
             train_data = regenerate_training_data(
                 cfg, device, resample_seed=resample_seed,
                 cached_residuals=cached_residuals,

@@ -49,7 +49,7 @@ base_config:
 
   # ── Gradient clipping (applied before every optimizer.step) ──
   # Always on — prevents post-spawn NaN divergence when multiple experts are added.
-  grad_clip_norm: 0.001
+  grad_clip_norm: 0.0001
 
   # ── RWF (Random Weight Factorization) ──
   rwf: true                          # Apply W_eff = diag(exp(s)) @ W to all hidden layers
@@ -306,7 +306,7 @@ base_config:
     spawn_require_plateau: false     # Disabled by default; plateau experiments enable this
     spawn_plateau_epochs: 300        # look-back window (3× resample_every = fair loss comparison)
     spawn_plateau_delta: 0.01        # spawn only if training loss improved <1% over the window
-    stop_if_no_spawn: true           # Feature A: stop training when a spawn attempt yields 0 new experts
+    stop_if_no_spawn: false           # Feature A: stop training when a spawn attempt yields 0 new experts
 
     # ── 3-Phase training config ──
     # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
@@ -332,7 +332,7 @@ experiments:
     sampling:
       adaptive_sampling:
         enabled: true
-        adaptive_ratio: 0.4
+        adaptive_ratio: 0.3
         per_leaf_sampling: true
 
   - name: ks_plateau_adaptive_freeze_semi
@@ -347,7 +347,7 @@ experiments:
     sampling:
       adaptive_sampling:
         enabled: true
-        adaptive_ratio: 0.4
+        adaptive_ratio: 0.3
         per_leaf_sampling: true   
 
   - name: ks_plateau_adaptive_freeze_perm
@@ -362,7 +362,7 @@ experiments:
     sampling:
       adaptive_sampling:
         enabled: true
-        adaptive_ratio: 0.4
+        adaptive_ratio: 0.3
         per_leaf_sampling: true   
 
 
