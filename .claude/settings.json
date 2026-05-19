@@ -14,7 +14,9 @@
       "Bash(Select-Object -First 30 FullName)",
       "Bash(Get-ChildItem \"c:\\\\Users\\\\assaf\\\\Desktop\\\\Coding\\\\Msc\\\\Master\\\\NCC-PINN\\\\outputs\\\\experiments\")",
       "Bash(Sort-Object LastWriteTime -Descending)",
-      "Bash(Select-Object Name, LastWriteTime)"
+      "Bash(Select-Object Name, LastWriteTime)",
+      "Bash(python3 -c ' *)",
+      "Bash(grep -o '[0-9]*$')"
     ]
   }
 }
