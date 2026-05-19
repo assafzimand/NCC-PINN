@@ -71,11 +71,10 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             yaml.dump(config, f, default_flow_style=False)
         
         result = subprocess.run([sys.executable, 'run_ncc.py'])
-        
+
         if result.returncode != 0:
-            print(f"\nERROR in {exp_name} NCC: Process exited with code {result.returncode}")
-            return None
-        
+            print(f"\nWARNING: {exp_name} exited with code {result.returncode} — attempting to save partial output anyway.")
+
         # Find the checkpoint inside the run's output dir
         outputs_root = Path("outputs")
         arch_folder_name = f"{config['problem']}-{layers_str}-{config['activation']}"

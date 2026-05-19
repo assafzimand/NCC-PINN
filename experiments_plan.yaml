@@ -49,7 +49,7 @@ base_config:
 
   # ── Gradient clipping (applied before every optimizer.step) ──
   # Always on — prevents post-spawn NaN divergence when multiple experts are added.
-  grad_clip_norm: 1.0
+  grad_clip_norm: 0.001
 
   # ── RWF (Random Weight Factorization) ──
   rwf: true                          # Apply W_eff = diag(exp(s)) @ W to all hidden layers
@@ -243,7 +243,7 @@ base_config:
     causal_training:
       enabled: true                  # Always on for KS — essential for learning chaotic dynamics
       num_chunks: 16                 # Fine-grained temporal bins — smoother causal progression
-      tol_schedule: [0.01, 0.1, 1.0]  # Annealing schedule (Wang et al. 2022): start soft, harden as network learns
+      tol_schedule: [1.0]  # Annealing schedule (Wang et al. 2022): start soft, harden as network learns
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
       per_leaf_causal: true          # Feature B: each leaf gets its own independent causal state
     fourier_features:
