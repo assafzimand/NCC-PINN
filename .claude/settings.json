@@ -16,7 +16,8 @@
       "Bash(Sort-Object LastWriteTime -Descending)",
       "Bash(Select-Object Name, LastWriteTime)",
       "Bash(python3 -c ' *)",
-      "Bash(grep -o '[0-9]*$')"
+      "Bash(grep -o '[0-9]*$')",
+      "WebFetch(domain:arxiv.abs)"
     ]
   }
 }
