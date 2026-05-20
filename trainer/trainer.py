@@ -176,6 +176,27 @@ def _create_lr_scheduler(optimizer, cfg, total_steps):
         return SequentialLR(optimizer, schedulers=schedulers, milestones=milestones)
 
 
+def _get_optimizer_snapshot(optimizer, lr_scheduler, step_count):
+    """Return a compact dict of optimizer/scheduler state for metrics logging at key events."""
+    lrs = [pg['lr'] for pg in optimizer.param_groups]
+    sched_type = type(lr_scheduler).__name__ if lr_scheduler is not None else None
+    sched_last_epoch = getattr(lr_scheduler, 'last_epoch', None) if lr_scheduler is not None else None
+    sched_base_lrs = None
+    if lr_scheduler is not None:
+        sched_base_lrs = getattr(lr_scheduler, 'base_lrs', None)
+        if sched_base_lrs is None:
+            first_sub = (getattr(lr_scheduler, '_schedulers', None) or [None])[0]
+            sched_base_lrs = getattr(first_sub, 'base_lrs', None) if first_sub else None
+    return {
+        'step_count': step_count,
+        'num_param_groups': len(optimizer.param_groups),
+        'lr_per_group': lrs,
+        'scheduler_type': sched_type,
+        'scheduler_last_epoch': sched_last_epoch,
+        'scheduler_base_lrs': sched_base_lrs,
+    }
+
+
 def train(
     model: nn.Module,
     loss_fn: Callable,
@@ -351,6 +372,7 @@ def train(
         'freeze_events': [],       # Freeze/unfreeze events with epoch and reason
         'plateau_events': [],      # Plateau check outcomes (deferred / triggered)
         'optimizer_events': [],    # Optimizer switch events
+        'optimizer_snapshots': [],  # Optimizer/scheduler state at spawn, freeze, unfreeze, resample
         'loss_components_history': [],  # Per-component losses at eval epochs
         'exception_events': [],    # Caught Python exceptions with traceback
     }
@@ -778,6 +800,11 @@ def train(
                             optimizer.state[p] = saved
                 _opt_state_snapshot = None
                 print(f"  [Freeze] Optimizer moments restored for previously frozen params")
+            metrics['optimizer_snapshots'].append({
+                'epoch': epoch,
+                'event': 'unfreeze',
+                **_get_optimizer_snapshot(optimizer, lr_scheduler, step_count),
+            })
 
         # Enable residual caching for adaptive sampling if needed
         # Cache THIS epoch's residuals for NEXT epoch's resampling
@@ -844,6 +871,11 @@ def train(
                 'epoch': epoch,
                 'action': 'resampled',
                 'optimizer': current_optimizer_name
+            })
+            metrics['optimizer_snapshots'].append({
+                'epoch': epoch,
+                'event': 'resample',
+                **_get_optimizer_snapshot(optimizer, lr_scheduler, step_count),
             })
         elif resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0 and not allow_resample_optimizer:
             # Log when resampling is skipped due to optimizer
@@ -1850,27 +1882,23 @@ def train(
                     print(f"  [3-Phase] Total epochs now: {total_epochs} (Phase 1: {epoch}, Phase 3: {phase3_epochs})")
                     print(f"  [3-Phase] Optimizer: {_p3_opt1}, lr: {active_cfg.get('lr')}, schedule: {active_cfg.get('lr_schedule', 'exponential')}")
 
-                # Always snapshot optimizer state before rebuild.
-                # Pre-existing params (base + old experts) that survive into the new optimizer
-                # get their state restored immediately below. Params that are frozen post-spawn
-                # are not in the new optimizer, so their state is deferred and restored at unfreeze.
-                # New expert params have no prior state and are intentionally left fresh.
+                # Collect new expert parameters before any freeze/optimizer logic.
                 import copy
-                _spawn_state_snapshot = {
-                    id(p): copy.deepcopy(optimizer.state.get(p, {}))
-                    for pg in optimizer.param_groups for p in pg['params']
-                }
+                _new_expert_params = [
+                    p for _exp in model.experts[-experts_spawned_this_step:]
+                    for p in _exp.parameters() if p.requires_grad
+                ]
 
                 if freeze_epochs_after_spawn > 0:
-                    # Keep reference alive for the deferred unfreeze restore (same dict, no extra copy).
-                    _opt_state_snapshot = _spawn_state_snapshot
+                    # freeze>0: freeze old params and rebuild optimizer with only the new expert params.
+                    # Save full state snapshot now so frozen params can be restored at unfreeze.
+                    _opt_state_snapshot = {
+                        id(p): copy.deepcopy(optimizer.state.get(p, {}))
+                        for pg in optimizer.param_groups for p in pg['params']
+                    }
                     _unfreeze_at_epoch = epoch + freeze_epochs_after_spawn
                     print(f"  [Freeze] Freezing old experts/base for {freeze_epochs_after_spawn} epochs "
                           f"(unfreeze at epoch {_unfreeze_at_epoch})")
-
-                # Freeze base + old experts so only the newest expert trains during warmup.
-                # Always use explicit mode='previous' regardless of config freeze_mode.
-                if freeze_epochs_after_spawn > 0:
                     metrics['freeze_events'].append({
                         'epoch': epoch,
                         'action': 'freeze',
@@ -1879,32 +1907,43 @@ def train(
                         'unfreeze_at': epoch + freeze_epochs_after_spawn,
                         'experts_spawned': experts_spawned_this_step,
                     })
+                    metrics['optimizer_snapshots'].append({
+                        'epoch': epoch,
+                        'event': 'freeze',
+                        'experts_spawned': experts_spawned_this_step,
+                        **_get_optimizer_snapshot(optimizer, lr_scheduler, step_count),
+                    })
                     model.freeze_models(mode='previous')
+                    optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
+                    if current_phase == 3:
+                        lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_p3)
+                    else:
+                        lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
+                    # Do NOT reset step_count — LR scheduler continues from current position.
+                    # New expert params have no prior state → fresh optimizer state automatically.
+                    # Frozen old params restored at unfreeze via _opt_state_snapshot.
                 else:
-                    model.freeze_models()  # applies configured freeze_mode (likely 'none' or 'previous')
+                    # freeze==0: keep existing optimizer intact so old params preserve their
+                    # current state and LR without any restart. Add new expert params as a
+                    # separate fresh param group at the initial LR (AB-PINNs pattern: new
+                    # subdomains declared under their own optimizer entry with independent LRs).
+                    model.freeze_models()  # applies configured freeze_mode (typically 'none')
+                    if _new_expert_params:
+                        optimizer.add_param_group({
+                            'params': _new_expert_params,
+                            'lr': active_cfg['lr'],
+                        })
+                        print(f"  [SpawnGroup] New expert params added as fresh param group "
+                              f"{len(optimizer.param_groups) - 1} "
+                              f"at lr={active_cfg['lr']:.2e}; old params unchanged")
 
-                optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
-                if current_phase == 3:
-                    lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_p3)
-                else:
-                    lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
-                # Do NOT reset step_count — LR scheduler continues from current position so warmup
-                # is not restarted for already-trained params after each spawn.
-
-                # Immediately restore state for pre-existing params now in the new optimizer.
-                # freeze==0: all params here → full restore now (no deferred step).
-                # freeze>0: only new expert params here → snapshot lookup misses (they're new) → noop,
-                #           frozen params restored later at unfreeze via _opt_state_snapshot.
-                _restored_now = 0
-                for _pg in optimizer.param_groups:
-                    for _p in _pg['params']:
-                        _saved = _spawn_state_snapshot.get(id(_p))
-                        if _saved:
-                            optimizer.state[_p] = _saved
-                            _restored_now += 1
-                if _restored_now:
-                    print(f"  [Spawn] Optimizer state restored immediately for {_restored_now} "
-                          f"pre-existing param tensors")
+                metrics['optimizer_snapshots'].append({
+                    'epoch': epoch,
+                    'event': 'spawn',
+                    'experts_spawned': experts_spawned_this_step,
+                    'freeze_epochs_after_spawn': freeze_epochs_after_spawn,
+                    **_get_optimizer_snapshot(optimizer, lr_scheduler, step_count),
+                })
 
                 problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
                 num_experts_str = f" ({model.num_experts} experts)" if hasattr(model, 'num_experts') else ""
