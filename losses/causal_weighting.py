@@ -40,7 +40,7 @@ def create_causal_state(
         'tol_schedule', [0.01, 0.1, 1.0, 10.0, 100.0])
     return {
         'enabled': True,
-        'num_chunks': causal_cfg.get('num_chunks', 100),
+        'num_chunks': causal_cfg.get('num_chunks', 16),
         'schedule': list(schedule),
         'schedule_idx': 0,
         'tol': float(schedule[0]),
@@ -115,7 +115,7 @@ def _apply_causal_weights(
     t_flat = t_residual.view(-1)
     N = t_flat.shape[0]
 
-    if N == 0 or num_chunks <= 1:
+    if N == 0 or num_chunks <= 1 or N < num_chunks:
         return torch.mean(residual_squared)
 
     sort_idx = torch.argsort(t_flat)

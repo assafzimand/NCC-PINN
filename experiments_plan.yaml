@@ -50,8 +50,9 @@ base_config:
   adam_eps: 1.0e-8                   # Adam epsilon for numerical stability.
 
   # ── Gradient clipping (applied before every optimizer.step) ──
-  # Always on — prevents post-spawn NaN divergence when multiple experts are added.
-  grad_clip_norm: 1.0
+  grad_clip_norm: 1.0               # Clip for base model params (and all params when no experts exist)
+  expert_grad_clip_norm: 0.001      # Tighter clip applied to ALL expert params whenever experts exist;
+                                    # base still uses grad_clip_norm; set null to disable expert-specific clip
 
   # ── RWF (Random Weight Factorization) ──
   rwf: true                          # Apply W_eff = diag(exp(s)) @ W to all hidden layers
@@ -64,13 +65,17 @@ base_config:
     periodic: false
 
   # ── Smart Initialization ──
-  # hidden: glorot → Glorot uniform + zero bias on all hidden layers;
-  #                   also zero-inits ResNet fc2 blocks for identity-like start.
+  # hidden: glorot        → Glorot uniform + zero bias on all hidden layers;
+  #                          also zero-inits ResNet fc2 blocks for identity-like start.
+  # hidden: parent_weights → New experts copy hidden-layer weights from their closest ancestor
+  #                          (parent expert, or base model if no expert parent). Output layer
+  #                          is always zeroed regardless. Base model ALWAYS uses glorot.
+  #                          Prevents 4th-order derivative overflow from random Glorot init.
   # output: ls     → Least-squares fit of output layer to IC data (base model only).
   #                   Raises error if IC points < hidden_dim+1.
   # output: zero   → Zero-initialize output layer (useful standalone when output: ls is off).
   init:
-    hidden: glorot                  # 'default' (kaiming) | 'glorot'
+    hidden: parent_weights          # 'default' (kaiming) | 'glorot' | 'parent_weights'
     output: ls                      # 'default' | 'zero' | 'ls'
     ls_use_bias: true                # Include bias column in LS system
 
@@ -259,6 +264,7 @@ base_config:
     eval_train_ratio: 0.25           # eval = 25% of train (all types)
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
     resample_every_epochs: 100       # Regenerate training data every N epochs. Papers use 500.
+    min_points_per_leaf: 50          # Minimum adaptive points per leaf (per_leaf_sampling only); 0 = disabled
     adaptive_sampling:
       enabled: false              # Mix uniform + residual-adaptive points (vRBA/RAR-D)
       adaptive_ratio: 0.1            # Fraction of residual_train points that are adaptive

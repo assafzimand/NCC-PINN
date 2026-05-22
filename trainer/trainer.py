@@ -676,7 +676,10 @@ def train(
 
     resample_every = cfg.get('sampling', {}).get('resample_every_epochs', 0)
     base_seed = cfg.get('seed', 42)
-    grad_clip_norm = cfg.get('grad_clip_norm', None)  # None = disabled
+    grad_clip_norm = cfg.get('grad_clip_norm', None)          # None = disabled
+    # Tighter clip for all expert params (separate from base); only active when experts exist.
+    # When no experts exist (base-only phase), grad_clip_norm applies to all params as usual.
+    expert_grad_clip_norm = cfg.get('expert_grad_clip_norm', None)
 
     # Freeze-after-spawn state (Fix 2)
     # freeze_mode: none takes priority — if explicitly set to none, disable post-spawn freeze entirely.
@@ -768,7 +771,7 @@ def train(
     print("=" * 60 + "\n")
 
     # Smart initialization (Glorot hidden + zero/LS output) — base model only
-    from trainer.init import apply_hidden_init, apply_output_init, apply_expert_init
+    from trainer.init import apply_hidden_init, apply_output_init, apply_expert_init, apply_parent_copy_init
     _init_target = model.base_model if is_adaptive else model
     _init_cfg = cfg.get('init', {})
     if _init_cfg.get('hidden', 'default') != 'default' or _init_cfg.get('output', 'default') != 'default':
@@ -959,7 +962,18 @@ def train(
                             print(f"  Expert {i}: first_layer.grad={'None' if first_grad is None else f'norm={first_grad.norm().item():.6f}'}, "
                                   f"final_layer.grad={'None' if final_grad is None else f'norm={final_grad.norm().item():.6f}'}")
 
-                if grad_clip_norm is not None:
+                # Split clip: experts at expert_grad_clip_norm (tighter), base at grad_clip_norm.
+                # When no experts exist (base-only phase), falls back to grad_clip_norm for all.
+                _exp_clip_ps = ([p for exp in model.experts for p in exp.parameters()
+                                  if p.requires_grad]
+                                 if hasattr(model, 'experts') and model.experts else [])
+                _base_clip_ps = ([p for p in model.base_model.parameters() if p.requires_grad]
+                                  if hasattr(model, 'base_model') else [])
+                if _exp_clip_ps and expert_grad_clip_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(_exp_clip_ps, expert_grad_clip_norm)
+                    if _base_clip_ps and grad_clip_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(_base_clip_ps, grad_clip_norm)
+                elif grad_clip_norm is not None:
                     torch.nn.utils.clip_grad_norm_(
                         [p for p in model.parameters() if p.requires_grad], grad_clip_norm)
                 timer.start('train.optim_step')
@@ -1013,7 +1027,18 @@ def train(
                 # Single forward pass with ALL training data at once
                 loss = loss_fn(model, train_data)
                 loss.backward()
-                if grad_clip_norm is not None:
+                # Split clip: experts at expert_grad_clip_norm (tighter), base at grad_clip_norm.
+                # When no experts exist (base-only phase), falls back to grad_clip_norm for all.
+                _exp_clip_ps = ([p for exp in model.experts for p in exp.parameters()
+                                  if p.requires_grad]
+                                 if hasattr(model, 'experts') and model.experts else [])
+                _base_clip_ps = ([p for p in model.base_model.parameters() if p.requires_grad]
+                                  if hasattr(model, 'base_model') else [])
+                if _exp_clip_ps and expert_grad_clip_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(_exp_clip_ps, expert_grad_clip_norm)
+                    if _base_clip_ps and grad_clip_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(_base_clip_ps, grad_clip_norm)
+                elif grad_clip_norm is not None:
                     torch.nn.utils.clip_grad_norm_(
                         [p for p in model.parameters() if p.requires_grad], grad_clip_norm)
                 return loss
@@ -1894,9 +1919,25 @@ def train(
                 _plateau_check_active = False
                 _last_spawn_epoch = epoch
 
-                # Apply smart init to newly spawned experts (Glorot hidden + zero output)
-                for _new_exp in model.experts[-experts_spawned_this_step:]:
-                    apply_expert_init(_new_exp, cfg)
+                # Apply smart init to newly spawned experts (Glorot hidden + zero output,
+                # or parent_weights: copy hidden layers from parent expert for stability).
+                _init_mode = cfg.get('init', {}).get('hidden', 'default')
+                _new_exp_start_idx = len(model.experts) - experts_spawned_this_step
+                for _ei, _new_exp in enumerate(model.experts[-experts_spawned_this_step:]):
+                    _new_exp_idx = _new_exp_start_idx + _ei
+                    if _init_mode == 'parent_weights':
+                        # Resolve parent model: AToE uses model.regions, ANT uses model.parent_indices
+                        if hasattr(model, 'regions') and _new_exp_idx < len(model.regions):
+                            _par_idx = model.regions[_new_exp_idx].parent_idx
+                        elif hasattr(model, 'parent_indices') and _new_exp_idx < len(model.parent_indices):
+                            _par_idx = model.parent_indices[_new_exp_idx]
+                        else:
+                            _par_idx = -1
+                        _parent_model = (model.base_model if _par_idx == -1
+                                         else model.experts[_par_idx])
+                        apply_parent_copy_init(_new_exp, _parent_model)
+                    else:
+                        apply_expert_init(_new_exp, cfg)
 
                 # ── 3-phase: reinitialize base + transition to Phase 3 ──
                 if use_three_phase and spawning_complete and current_phase == 1:
@@ -2115,6 +2156,26 @@ def train(
                     loss_fn._leaf_state['leaf_info'] = _new_leaf_info
                     print(f"  [PerLeafCausal] Updated leaf states: "
                           f"{list(_new_states.keys())} ({len(_new_states)} leaves)")
+
+            # Post-spawn resample: immediately rebuild dataset with new leaf structure so new leaves
+            # get their fair share of adaptive points instead of waiting for the next scheduled resample.
+            # Without this, newly spawned experts in tiny regions are starved of training points
+            # for up to resample_every_epochs batches, causing empty causal chunks and NaN.
+            if experts_spawned_this_step > 0 and _per_leaf_sampling and hasattr(model, 'get_leaf_info'):
+                _spawn_raw_leaf_info = model.get_leaf_info()
+                _spawn_leaf_info = [(r, idx) for r, idx in _spawn_raw_leaf_info if r is not None] or None
+                _spawn_cached = getattr(model, '_residual_cache', [])
+                _spawn_train_data = regenerate_training_data(
+                    cfg, device, resample_seed=epoch,
+                    cached_residuals=_spawn_cached,
+                    run_dir=run_dir,
+                    epoch=epoch,
+                    causal_state=causal_state,
+                    leaf_info=_spawn_leaf_info,
+                )
+                train_loader = _create_dataloader(_spawn_train_data, cfg['batch_size'], shuffle=True)
+                n_new_leaves = len(_spawn_leaf_info) if _spawn_leaf_info else 0
+                print(f"  [PostSpawnResample] Rebuilt dataset for {n_new_leaves} leaves")
 
             model.train()
 
