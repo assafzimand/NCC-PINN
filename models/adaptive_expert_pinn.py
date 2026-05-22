@@ -447,6 +447,38 @@ class AdaptiveExpertPINN(nn.Module):
 
         return expert_idx
     
+    def get_ancestor_indices(self, new_expert_indices: List[int]) -> Set[int]:
+        """Return indices of all ancestors of the given new experts (including -1 for base).
+
+        Walks parent_idx chains upward through self.regions. Used by the trainer to
+        determine which experts to freeze after a spawn — only ancestors have overlapping
+        regions with the new experts, not sibling leaves on other branches.
+        """
+        ancestors: Set[int] = set()
+        for idx in new_expert_indices:
+            parent = self.regions[idx].parent_idx
+            while True:
+                ancestors.add(parent)
+                if parent == -1:
+                    break
+                parent = self.regions[parent].parent_idx
+        return ancestors
+
+    def freeze_ancestors(self, ancestor_indices: Set[int]) -> None:
+        """Freeze only the specified ancestors; leave all other models trainable.
+
+        Args:
+            ancestor_indices: Set of expert indices to freeze (-1 = base model).
+                              All experts NOT in this set remain requires_grad=True.
+        """
+        freeze_base = -1 in ancestor_indices
+        for param in self.base_model.parameters():
+            param.requires_grad = not freeze_base
+        for i, expert in enumerate(self.experts):
+            is_ancestor = i in ancestor_indices
+            for param in expert.parameters():
+                param.requires_grad = not is_ancestor
+
     def freeze_models(self, mode: Optional[str] = None):
         """
         Apply freezing strategy to models.

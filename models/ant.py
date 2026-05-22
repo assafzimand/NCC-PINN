@@ -515,6 +515,36 @@ class ANT(nn.Module):
         result['weights_normalized'] = weights_normalized
         return result
 
+    def get_ancestor_indices(self, new_expert_indices: List[int]) -> set:
+        """Return indices of all ancestors of the given new experts (including -1 for base).
+
+        Uses self.parent_indices to walk upward. Only ancestors have overlapping regions
+        with the new experts; sibling leaves on other branches are untouched.
+        """
+        ancestors: set = set()
+        for idx in new_expert_indices:
+            parent = self.parent_indices[idx]
+            while True:
+                ancestors.add(parent)
+                if parent == -1:
+                    break
+                parent = self.parent_indices[parent]
+        return ancestors
+
+    def freeze_ancestors(self, ancestor_indices: set) -> None:
+        """Freeze only the specified ancestors; leave all other models trainable.
+
+        Args:
+            ancestor_indices: Set of expert indices to freeze (-1 = base model).
+        """
+        freeze_base = -1 in ancestor_indices
+        for p in self.base_model.parameters():
+            p.requires_grad = not freeze_base
+        for i, expert in enumerate(self.experts):
+            is_ancestor = i in ancestor_indices
+            for p in expert.parameters():
+                p.requires_grad = not is_ancestor
+
     def freeze_models(self, mode: Optional[str] = None):
         mode = mode or self.freeze_mode
 

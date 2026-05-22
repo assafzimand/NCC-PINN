@@ -15,7 +15,7 @@ base_config:
 
   # ── Primary optimizer ──
   # ── Optimizer configuration ──
-  optimizer_1: adam                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
+  optimizer_1: soap                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
   optimizer_2: null                  # No second optimizer — let SOAP run full duration
   optimizer_switch_epoch: 5000       # Unused (no switch)
   lr: 0.001                          # Base (peak) learning rate
@@ -25,6 +25,8 @@ base_config:
   lr_warmup_steps: 1000               # ~200 epochs at 5 steps/epoch (20k points / batch 4096)
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps
   lr_decay_steps: 8000               # Slow decay over 5000 epochs
+  new_expert_lr_decay: 0.1           # LR scale for newly spawned expert param group: lr_new = current_lr × this
+                                     # 1.0 = no decay (current behavior); 0.1 = gentle entry (plan Tier 2)
 
   # ── SOAP-specific (only used when optimizer_1 or _2 is 'soap') ──
   soap_betas: [0.95, 0.95]          # KS-tuned: symmetric betas work better for chaotic dynamics
@@ -366,31 +368,31 @@ experiments:
         per_leaf_sampling: true   
 
 
-  - name: ks_plateau_no_freeze
-    problem: ks
-    base_architecture: [2, 128, 128, 128, 1]
-    adaptive_pinn:
-      freeze_mode: none
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 300
-      spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
+  # - name: ks_plateau_no_freeze
+  #   problem: ks
+  #   base_architecture: [2, 128, 128, 128, 1]
+  #   adaptive_pinn:
+  #     freeze_mode: none
+  #     spawn_require_plateau: true
+  #     spawn_plateau_epochs: 300
+  #     spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
 
-  - name: ks_with_plateau_perm_freeze
-    problem: ks
-    base_architecture: [2, 128, 128, 128, 1]
-    adaptive_pinn:
-      freeze_mode: previous
-      freeze_epochs_after_spawn: 9999
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 300
-      spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
+  # - name: ks_with_plateau_perm_freeze
+  #   problem: ks
+  #   base_architecture: [2, 128, 128, 128, 1]
+  #   adaptive_pinn:
+  #     freeze_mode: previous
+  #     freeze_epochs_after_spawn: 9999
+  #     spawn_require_plateau: true
+  #     spawn_plateau_epochs: 300
+  #     spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
 
-  - name: ks_plateau_semi_freeze
-    problem: ks
-    base_architecture: [2, 128, 128, 128, 1]
-    adaptive_pinn:
-      freeze_mode: previous
-      freeze_epochs_after_spawn: 400
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 300
-      spawn_plateau_delta: 0.05  
+  # - name: ks_plateau_semi_freeze
+  #   problem: ks
+  #   base_architecture: [2, 128, 128, 128, 1]
+  #   adaptive_pinn:
+  #     freeze_mode: previous
+  #     freeze_epochs_after_spawn: 400
+  #     spawn_require_plateau: true
+  #     spawn_plateau_epochs: 300
+  #     spawn_plateau_delta: 0.05  
