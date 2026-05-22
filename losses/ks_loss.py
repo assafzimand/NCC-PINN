@@ -28,6 +28,34 @@ from typing import Dict, Callable, Tuple
 from losses.causal_weighting import (create_causal_state, compute_causal_residual,
                                       compute_per_leaf_causal_residual)
 
+# Mutable context set by trainer (e.g. f"epoch {epoch} batch {b}") so prints are traceable.
+_nan_ctx: list = ['']
+
+
+def _chk(tensor: torch.Tensor, name: str) -> bool:
+    """Check tensor for NaN/Inf every call; print detailed stats on first bad occurrence.
+
+    Cost in the clean case: one GPU reduction (.any()) — negligible.
+    """
+    with torch.no_grad():
+        t = tensor.detach().float().reshape(-1)
+        bad = ~torch.isfinite(t)
+        if not bad.any().item():
+            return False
+        n_bad = bad.sum().item()
+        frac = n_bad / max(t.numel(), 1)
+        max_abs = t.abs().max().item()
+        finite = t[~bad]
+        fin_mean = finite.mean().item() if finite.numel() > 0 else float('nan')
+        fin_std = finite.std().item() if finite.numel() > 1 else 0.0
+        has_nan = torch.isnan(t[bad]).any().item()
+        label = 'NaN' if has_nan else 'Inf'
+    ctx = _nan_ctx[0]
+    print(f"  [NaN-Debug{' ' + ctx if ctx else ''}] {label} in '{name}': "
+          f"n_bad={int(n_bad)}/{t.numel()} ({frac:.0%}), "
+          f"max_abs={max_abs:.3e}, finite_mean={fin_mean:.3e}, finite_std={fin_std:.3e}")
+    return True
+
 
 def compute_derivatives(
     h: torch.Tensor,
@@ -50,21 +78,26 @@ def compute_derivatives(
     )
     h_x = h_grads[0]
     h_t = h_grads[1]
+    _chk(h_x, 'h_x')
+    _chk(h_t, 'h_t')
 
     h_xx = torch.autograd.grad(
         outputs=h_x, inputs=x, grad_outputs=torch.ones_like(h_x),
         create_graph=True, retain_graph=True,
     )[0]
+    _chk(h_xx, 'h_xx')
 
     h_xxx = torch.autograd.grad(
         outputs=h_xx, inputs=x, grad_outputs=torch.ones_like(h_xx),
         create_graph=True, retain_graph=True,
     )[0]
+    _chk(h_xxx, 'h_xxx')
 
     h_xxxx = torch.autograd.grad(
         outputs=h_xxx, inputs=x, grad_outputs=torch.ones_like(h_xxx),
         create_graph=True, retain_graph=True,
     )[0]
+    _chk(h_xxxx, 'h_xxxx')
 
     h_t = h_t.squeeze(-1)
     h_x = h_x.squeeze(-1)
@@ -537,16 +570,25 @@ def build_loss(**cfg) -> Callable:
                 if _t: _t.stop('loss.residual.forward')
 
                 h_f = h_pred[:, 0]
+                _chk(h_f, 'h_f (model output)')
 
                 if _t: _t.start('loss.residual.derivatives')
                 h_t_val, h_x_val, h_xx_val, h_xxxx_val = compute_derivatives(h_f, x_f, t_f)
                 if _t: _t.stop('loss.residual.derivatives')
 
+            # Check individual PDE terms before combining
+            _chk(h_t_val,                       'term: h_t')
+            _chk(alpha * h_f * h_x_val,         'term: alpha*h*h_x')
+            _chk(beta  * h_xx_val,              'term: beta*h_xx')
+            _chk(gamma_val * h_xxxx_val,        'term: gamma*h_xxxx')
+
             residual = pde_residual(
                 h_f, h_t_val, h_x_val, h_xx_val, h_xxxx_val,
                 alpha=alpha, beta=beta, gamma=gamma_val)
+            _chk(residual, 'residual')
 
             residual_squared = residual ** 2
+            _chk(residual_squared, 'residual_squared')
 
             if for_tree_spawning:
                 residual_per_sample[masks['residual']] = residual_squared
@@ -567,6 +609,7 @@ def build_loss(**cfg) -> Callable:
                 else:
                     mse_residual = compute_causal_residual(
                         residual_squared, t_f, causal_state, update_state=update_causal_state)
+                _chk(mse_residual, 'mse_residual (after causal weighting)')
         else:
             if not for_tree_spawning:
                 mse_residual = torch.tensor(0.0, device=device)
@@ -583,6 +626,7 @@ def build_loss(**cfg) -> Callable:
             if _t: _t.stop('loss.ic.forward')
 
             ic_squared = (h_pred_0 - h_gt_0) ** 2
+            _chk(ic_squared, 'ic_squared')
 
             if for_tree_spawning:
                 ic_per_sample[masks['IC']] = ic_squared.squeeze(-1)

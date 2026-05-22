@@ -20,6 +20,7 @@ from utils.dataset_gen import regenerate_training_data, _save_adaptive_sampling_
 from utils.dataset_plotting import save_spawn_prediction_plot
 from losses.causal_weighting import advance_causal_schedule, create_causal_state
 from losses.lra import LRAWeights
+import losses.ks_loss as _ks_loss_module
 
 
 class _NumpySafeEncoder(json.JSONEncoder):
@@ -133,6 +134,31 @@ def _create_primary_optimizer(model: nn.Module, cfg: Dict) -> Tuple[torch.optim.
     """
     opt_name = cfg.get('optimizer_1', cfg.get('optimizer', 'adam')).lower()
     return _create_optimizer_by_name(opt_name, model, cfg)
+
+
+def _create_grouped_optimizer(param_groups: list, cfg: Dict) -> torch.optim.Optimizer:
+    """Create an optimizer with explicit param groups, each with its own LR.
+
+    Used at spawn/unfreeze to give ancestors, untouched leaves, and new experts
+    separate LRs and fresh/preserved state independently.
+    Supports Adam and SOAP; raises ValueError for others.
+    """
+    opt_name = cfg.get('optimizer_1', cfg.get('optimizer', 'adam')).lower()
+    if opt_name == 'adam':
+        betas = tuple(cfg.get('adam_betas', [0.9, 0.999]))
+        eps = cfg.get('adam_eps', 1e-8)
+        return torch.optim.Adam(param_groups, betas=betas, eps=eps)
+    elif opt_name == 'soap':
+        from optimizers.soap import SOAP
+        return SOAP(
+            param_groups,
+            betas=tuple(cfg.get('soap_betas', [0.95, 0.95])),
+            eps=cfg.get('adam_eps', 1e-8),
+            precondition_frequency=cfg.get('soap_precondition_frequency', 10),
+            weight_decay=cfg.get('soap_weight_decay', 0.0),
+        )
+    else:
+        raise ValueError(f"_create_grouped_optimizer not supported for optimizer: {opt_name}")
 
 
 def _create_lr_scheduler(optimizer, cfg, total_steps):
@@ -657,8 +683,12 @@ def train(
     freeze_epochs_after_spawn = adaptive_cfg.get('freeze_epochs_after_spawn', 0) if is_adaptive else 0
     if adaptive_cfg.get('freeze_mode', 'none') == 'none':
         freeze_epochs_after_spawn = 0
-    _unfreeze_at_epoch = None       # set after each spawn
-    _opt_state_snapshot = None      # saved optimizer moments before freeze
+    _unfreeze_at_epoch = None           # set after each spawn
+    _pre_freeze_lr = None               # LR of all groups before freeze (restored to ancestors at unfreeze)
+    _ancestor_indices: set = set()      # expert indices frozen as ancestors (includes -1 for base)
+    _ancestor_params: list = []         # ancestor parameter tensors (saved at freeze, used at unfreeze)
+    _ancestor_state_snapshot: dict = {} # {id(p): state} for ancestor params
+    _untouched_leaf_params: list = []   # leaf params kept in the freeze-period optimizer
 
     # Plateau-gated spawning state (Fix 3)
     # spawn_every acts as minimum interval; once elapsed, plateau is checked every epoch until met.
@@ -780,26 +810,33 @@ def train(
         epoch += 1
         timer.start_epoch(epoch, num_experts=model.num_experts if (is_adaptive and hasattr(model, 'num_experts')) else 0)
 
-        # Unfreeze old experts after freeze_epochs_after_spawn has elapsed (Fix 2)
+        # Unfreeze ancestors after freeze_epochs_after_spawn has elapsed
         if _unfreeze_at_epoch is not None and epoch == _unfreeze_at_epoch:
-            print(f"\n  [Freeze] Unfreezing all models at epoch {epoch} — restoring full training")
+            print(f"\n  [Freeze] Unfreezing ancestors at epoch {epoch} — restoring full training")
             metrics['freeze_events'].append({'epoch': epoch, 'action': 'unfreeze', 'reason': 'freeze_epochs_elapsed'})
             _unfreeze_at_epoch = None
-            model.freeze_models(mode='none')  # explicitly unfreeze all params
-            # Rebuild optimizer to include all now-trainable params
-            optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
-            lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
-            # Do NOT reset step_count — LR scheduler continues from current position to avoid
-            # warmup restart disrupting already-trained params on unfreeze.
-            # Restore saved optimizer moments for params that existed before the freeze
-            if _opt_state_snapshot is not None:
-                for pg in optimizer.param_groups:
-                    for p in pg['params']:
-                        saved = _opt_state_snapshot.get(id(p))
+            model.freeze_models(mode='none')
+            # Add ancestor params back as a NEW param group at their pre-freeze LR.
+            # Existing groups (untouched leaves, new experts) keep their current LRs — no rebuild,
+            # no scheduler restart, no warmup re-applied to anything.
+            if _ancestor_params and _pre_freeze_lr is not None:
+                optimizer.add_param_group({
+                    'params': _ancestor_params,
+                    'lr': _pre_freeze_lr,
+                })
+                if _ancestor_state_snapshot:
+                    for p in _ancestor_params:
+                        saved = _ancestor_state_snapshot.get(id(p))
                         if saved:
-                            optimizer.state[p] = saved
-                _opt_state_snapshot = None
-                print(f"  [Freeze] Optimizer moments restored for previously frozen params")
+                            optimizer.state[p] = copy.deepcopy(saved)
+                n_anc = len([i for i in _ancestor_indices if i >= 0])
+                base_note = '+base' if -1 in _ancestor_indices else ''
+                print(f"  [Freeze] Ancestors ({n_anc} expert(s){base_note}) restored "
+                      f"at lr={_pre_freeze_lr:.2e} with preserved moments")
+            _ancestor_params = []
+            _ancestor_state_snapshot = {}
+            _ancestor_indices = set()
+            _pre_freeze_lr = None
             metrics['optimizer_snapshots'].append({
                 'epoch': epoch,
                 'event': 'unfreeze',
@@ -894,6 +931,8 @@ def train(
         model.train()
         train_loss = 0.0
         n_train_batches = 0
+
+        _ks_loss_module._nan_ctx[0] = f"epoch {epoch}"
 
         if current_optimizer_name in ('Adam', 'SOAP'):
             # Adam/SOAP: Mini-batch training (GPU parallelized)
@@ -1890,21 +1929,58 @@ def train(
                 ]
 
                 if freeze_epochs_after_spawn > 0:
-                    # freeze>0: freeze old params and rebuild optimizer with only the new expert params.
-                    # Save full state snapshot now so frozen params can be restored at unfreeze.
-                    _opt_state_snapshot = {
+                    # freeze>0: freeze only the ANCESTORS of newly spawned experts.
+                    # Ancestors are the only experts with overlapping regions.
+                    # Sibling leaves on other branches keep training uninterrupted.
+
+                    _new_expert_indices = list(range(
+                        len(model.experts) - experts_spawned_this_step,
+                        len(model.experts)
+                    ))
+                    if hasattr(model, 'get_ancestor_indices'):
+                        _ancestor_indices = model.get_ancestor_indices(_new_expert_indices)
+                    else:
+                        # Fallback for model types without ancestor tracking
+                        _ancestor_indices = set(range(len(model.experts) - experts_spawned_this_step)) | {-1}
+
+                    # Collect ancestor params (all currently trainable, before any freezing)
+                    _ancestor_params = []
+                    if -1 in _ancestor_indices:
+                        _ancestor_params.extend(model.base_model.parameters())
+                    for _ai in sorted(i for i in _ancestor_indices if i >= 0):
+                        _ancestor_params.extend(model.experts[_ai].parameters())
+                    _ancestor_param_ids = {id(p) for p in _ancestor_params}
+                    _new_expert_param_ids = {id(p) for p in _new_expert_params}
+
+                    # Untouched leaf params: in current optimizer but not ancestor or new expert
+                    _untouched_leaf_params = [
+                        p for pg in optimizer.param_groups for p in pg['params']
+                        if id(p) not in _ancestor_param_ids and id(p) not in _new_expert_param_ids
+                    ]
+                    _untouched_state = {
                         id(p): copy.deepcopy(optimizer.state.get(p, {}))
-                        for pg in optimizer.param_groups for p in pg['params']
+                        for p in _untouched_leaf_params
                     }
+
+                    _pre_freeze_lr = optimizer.param_groups[0]['lr']
+                    _ancestor_state_snapshot = {
+                        id(p): copy.deepcopy(optimizer.state.get(p, {}))
+                        for p in _ancestor_params
+                    }
+
                     _unfreeze_at_epoch = epoch + freeze_epochs_after_spawn
-                    print(f"  [Freeze] Freezing old experts/base for {freeze_epochs_after_spawn} epochs "
-                          f"(unfreeze at epoch {_unfreeze_at_epoch})")
+                    n_anc = len([i for i in _ancestor_indices if i >= 0])
+                    base_note = '+base' if -1 in _ancestor_indices else ''
+                    print(f"  [Freeze] Freezing {n_anc} ancestor(s){base_note} for "
+                          f"{freeze_epochs_after_spawn} epochs (unfreeze at epoch {_unfreeze_at_epoch})")
+                    print(f"  [Freeze] {len(_untouched_leaf_params)} untouched leaf params continue training")
                     metrics['freeze_events'].append({
                         'epoch': epoch,
                         'action': 'freeze',
                         'reason': 'post_spawn',
-                        'freeze_mode_applied': 'previous',
-                        'unfreeze_at': epoch + freeze_epochs_after_spawn,
+                        'freeze_mode_applied': 'ancestors',
+                        'ancestor_indices': sorted(_ancestor_indices),
+                        'unfreeze_at': _unfreeze_at_epoch,
                         'experts_spawned': experts_spawned_this_step,
                     })
                     metrics['optimizer_snapshots'].append({
@@ -1913,15 +1989,37 @@ def train(
                         'experts_spawned': experts_spawned_this_step,
                         **_get_optimizer_snapshot(optimizer, lr_scheduler, step_count),
                     })
-                    model.freeze_models(mode='previous')
-                    optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
-                    if current_phase == 3:
-                        lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_p3)
+
+                    if hasattr(model, 'freeze_ancestors'):
+                        model.freeze_ancestors(_ancestor_indices)
                     else:
-                        lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
-                    # Do NOT reset step_count — LR scheduler continues from current position.
-                    # New expert params have no prior state → fresh optimizer state automatically.
-                    # Frozen old params restored at unfreeze via _opt_state_snapshot.
+                        model.freeze_models(mode='previous')
+
+                    # Build freeze-period optimizer with two groups:
+                    # Group 0: untouched leaves (restored state, same LR — keep training)
+                    # Group 1: new expert params (fresh state, initial LR)
+                    # No scheduler: LRs stay fixed during freeze period (no warmup restart).
+                    _freeze_groups = []
+                    if _untouched_leaf_params:
+                        _freeze_groups.append({'params': _untouched_leaf_params, 'lr': _pre_freeze_lr})
+                    if _new_expert_params:
+                        _new_expert_lr = _pre_freeze_lr * active_cfg.get('new_expert_lr_decay', 1.0)
+                        _freeze_groups.append({'params': _new_expert_params, 'lr': _new_expert_lr})
+                        if _new_expert_lr != _pre_freeze_lr:
+                            print(f"  [SpawnGroup] New expert LR: {_new_expert_lr:.2e} "
+                                  f"({active_cfg.get('new_expert_lr_decay', 1.0):.2f}× current {_pre_freeze_lr:.2e})")
+                    if _freeze_groups:
+                        try:
+                            optimizer = _create_grouped_optimizer(_freeze_groups, active_cfg)
+                            for p in _untouched_leaf_params:
+                                saved = _untouched_state.get(id(p))
+                                if saved:
+                                    optimizer.state[p] = saved
+                        except ValueError:
+                            optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
+                    else:
+                        optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
+                    lr_scheduler = None  # no scheduler during freeze; LRs are fixed per group
                 else:
                     # freeze==0: keep existing optimizer intact so old params preserve their
                     # current state and LR without any restart. Add new expert params as a
@@ -1929,13 +2027,17 @@ def train(
                     # subdomains declared under their own optimizer entry with independent LRs).
                     model.freeze_models()  # applies configured freeze_mode (typically 'none')
                     if _new_expert_params:
+                        _current_lr = optimizer.param_groups[0]['lr']
+                        _new_expert_lr = _current_lr * active_cfg.get('new_expert_lr_decay', 1.0)
                         optimizer.add_param_group({
                             'params': _new_expert_params,
-                            'lr': active_cfg['lr'],
+                            'lr': _new_expert_lr,
                         })
                         print(f"  [SpawnGroup] New expert params added as fresh param group "
                               f"{len(optimizer.param_groups) - 1} "
-                              f"at lr={active_cfg['lr']:.2e}; old params unchanged")
+                              f"at lr={_new_expert_lr:.2e} "
+                              f"({active_cfg.get('new_expert_lr_decay', 1.0):.2f}× current {_current_lr:.2e}); "
+                              f"old params unchanged")
 
                 metrics['optimizer_snapshots'].append({
                     'epoch': epoch,
