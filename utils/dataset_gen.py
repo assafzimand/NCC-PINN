@@ -618,20 +618,23 @@ def regenerate_training_data(
         # Adaptive residual points — global or per-leaf
         if per_leaf_sampling and leaf_info is not None and len(leaf_info) > 0:
             n_leaves = len(leaf_info)
-            n_per_leaf = max(1, n_adaptive // n_leaves)
+            n_per_leaf_base = max(1, n_adaptive // n_leaves)
             x_parts, t_parts = [], []
-            for _region, _expert_idx in leaf_info:
+            for _leaf_i, (_region, _expert_idx) in enumerate(leaf_info):
+                # Last leaf absorbs the remainder so total == n_adaptive exactly.
+                n_this = (n_adaptive - n_per_leaf_base * (n_leaves - 1)
+                          if _leaf_i == n_leaves - 1 else n_per_leaf_base)
                 leaf_cached = _filter_cache_to_region(cached_residuals, _region)
                 if leaf_cached:
                     x_leaf, t_leaf = _sample_adaptive_residual_points(
-                        leaf_cached, config, device, n_per_leaf, phi_cfg)
+                        leaf_cached, config, device, n_this, phi_cfg)
                 else:
-                    x_leaf, t_leaf = _uniform_in_region(_region, n_per_leaf, spatial_dim, device)
+                    x_leaf, t_leaf = _uniform_in_region(_region, n_this, spatial_dim, device)
                 x_parts.append(x_leaf)
                 t_parts.append(t_leaf)
             x_adap = torch.cat(x_parts, dim=0)[:n_adaptive]
             t_adap = torch.cat(t_parts, dim=0)[:n_adaptive]
-            print(f"  [Resample] Per-leaf adaptive: {n_leaves} leaves × {n_per_leaf} pts = {len(x_adap)} adaptive")
+            print(f"  [Resample] Per-leaf adaptive: {n_leaves} leaves × ~{n_per_leaf_base} pts = {len(x_adap)} adaptive")
         else:
             x_adap, t_adap = _sample_adaptive_residual_points(
                 cached_residuals, config, device, n_adaptive, phi_cfg, run_dir, epoch,
