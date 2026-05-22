@@ -618,7 +618,8 @@ def regenerate_training_data(
         # Adaptive residual points — global or per-leaf
         if per_leaf_sampling and leaf_info is not None and len(leaf_info) > 0:
             n_leaves = len(leaf_info)
-            n_per_leaf_base = max(1, n_adaptive // n_leaves)
+            _min_per_leaf = config.get('sampling', {}).get('min_points_per_leaf', 0)
+            n_per_leaf_base = max(_min_per_leaf, max(1, n_adaptive // n_leaves))
             x_parts, t_parts = [], []
             for _leaf_i, (_region, _expert_idx) in enumerate(leaf_info):
                 # Last leaf absorbs the remainder so total == n_adaptive exactly.

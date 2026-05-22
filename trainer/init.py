@@ -166,3 +166,42 @@ def apply_expert_init(expert: nn.Module, cfg: dict) -> None:
         nn.init.zeros_(out_layer.weight)
         if out_layer.bias is not None:
             nn.init.zeros_(out_layer.bias)
+
+
+def apply_parent_copy_init(expert: nn.Module, parent_model: nn.Module) -> None:
+    """Copy hidden layer weights from parent_model into a newly spawned expert.
+
+    The parent's hidden layers are in a trained, stable regime — their tanh activations
+    are well-behaved and higher-order spatial derivatives are bounded. Copying them
+    prevents the 4th-order derivative overflow (NaN in h_xxxx) that occurs when
+    freshly Glorot-initialized random weights are differentiated 4 times via autograd.
+
+    Output layer is NOT copied — it must be zeroed after this call so the expert
+    contributes u_k=0 at spawn time (residual learning principle).
+
+    Only layers with matching weight shapes are copied; mismatched layers are skipped.
+    """
+    try:
+        from models.rwf_layer import RWFLinear
+        linear_types = (nn.Linear, RWFLinear)
+    except ImportError:
+        linear_types = (nn.Linear,)
+
+    out_layer_new = _get_output_layer(expert)
+    n_copied = 0
+    for mod_new, mod_par in zip(expert.modules(), parent_model.modules()):
+        if (isinstance(mod_new, linear_types)
+                and mod_new is not out_layer_new
+                and mod_new.weight.shape == mod_par.weight.shape):
+            mod_new.weight.data.copy_(mod_par.weight.data)
+            if mod_new.bias is not None and mod_par.bias is not None:
+                mod_new.bias.data.copy_(mod_par.bias.data)
+            n_copied += 1
+
+    out_layer_new = _get_output_layer(expert)
+    with torch.no_grad():
+        nn.init.zeros_(out_layer_new.weight)
+        if out_layer_new.bias is not None:
+            nn.init.zeros_(out_layer_new.bias)
+
+    print(f"  [Init] Copied {n_copied} hidden layers from parent; output zeroed")
