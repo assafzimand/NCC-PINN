@@ -467,7 +467,8 @@ def train(
     _stop_on_no_spawn = _retries_before_stop is not False  # False = feature disabled
     _no_spawn_retries_max = int(_retries_before_stop) if _stop_on_no_spawn else 0
     _no_spawn_retries_remaining = _no_spawn_retries_max
-    _spawn_failed_last = False  # after a failed spawn, also retry at resample epochs
+    _spawn_retry_after = adaptive_cfg.get('spawn_retry_after', None)
+    _spawn_last_fail_epoch = -1  # epoch of last failed spawn; -1 = no pending retry
     _per_leaf_causal = problem_cfg.get('causal_training', {}).get('per_leaf_causal', False)
     _per_leaf_sampling = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('per_leaf_sampling', False)
     
@@ -1429,9 +1430,8 @@ def train(
 
         # Adaptive PINN: Hierarchical expert spawning from leaf nodes
         # Normal trigger: epoch % spawn_every == 0.
-        # After a failed spawn (_spawn_failed_last=True): also trigger at resample epochs
-        # so plateau is checked against a pre-resample loss baseline (avoids false
-        # "still-improving" reads caused by new sample points lowering loss temporarily).
+        # After a failed spawn: also trigger spawn_retry_after epochs after the failure
+        # (tracked from _spawn_last_fail_epoch). Plateau gating still applies at retries.
         if spawning_method in ('full_tree_by_norm', 'use_perfect_trees'):
             _base_spawn_eligible = is_adaptive and not spawning_complete
         else:
@@ -1440,9 +1440,10 @@ def train(
                                     model.num_experts < max_experts)
 
         _at_spawn_interval = epoch % spawn_every == 0
-        _at_resample_interval = (_spawn_failed_last and resample_every > 0
-                                 and epoch % resample_every == 0)
-        _at_interval = _at_spawn_interval or _at_resample_interval
+        _at_retry = (_spawn_retry_after is not None
+                     and _spawn_last_fail_epoch >= 0
+                     and epoch == _spawn_last_fail_epoch + _spawn_retry_after)
+        _at_interval = _at_spawn_interval or _at_retry
 
         if _base_spawn_eligible and _spawn_require_plateau:
             if _at_interval:
@@ -1479,7 +1480,7 @@ def train(
             else:
                 spawn_check_triggered = False
         else:
-            # No plateau gating: fire at spawn_every, and at resample epochs after a failure
+            # No plateau gating: fire at spawn_every, and at retry interval after a failure
             spawn_check_triggered = _base_spawn_eligible and _at_interval
         
         if spawn_check_triggered:
@@ -1921,7 +1922,7 @@ def train(
             if experts_spawned_this_step > 0:
                 print(f"\n  [Spawning] Spawned {experts_spawned_this_step} experts in this step")
                 _last_spawn_epoch = epoch
-                _spawn_failed_last = False
+                _spawn_last_fail_epoch = -1
                 _no_spawn_retries_remaining = _no_spawn_retries_max  # reset on success
 
                 # Apply smart init to newly spawned experts (Glorot hidden + zero output,
@@ -2138,7 +2139,7 @@ def train(
                     )
             else:
                 print(f"\n  [Spawning] No experts spawned this step")
-                _spawn_failed_last = True
+                _spawn_last_fail_epoch = epoch
                 if _stop_on_no_spawn:
                     if _no_spawn_retries_remaining > 0:
                         _no_spawn_retries_remaining -= 1
