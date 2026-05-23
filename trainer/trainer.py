@@ -467,6 +467,7 @@ def train(
     _stop_on_no_spawn = _retries_before_stop is not False  # False = feature disabled
     _no_spawn_retries_max = int(_retries_before_stop) if _stop_on_no_spawn else 0
     _no_spawn_retries_remaining = _no_spawn_retries_max
+    _spawn_failed_last = False  # after a failed spawn, also retry at resample epochs
     _per_leaf_causal = problem_cfg.get('causal_training', {}).get('per_leaf_causal', False)
     _per_leaf_sampling = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('per_leaf_sampling', False)
     
@@ -1427,9 +1428,10 @@ def train(
                 metrics['freq_history'].append((epoch, freq_metrics))
 
         # Adaptive PINN: Hierarchical expert spawning from leaf nodes
-        # With spawn_require_plateau=True: spawn only fires at epoch % spawn_every == 0
-        # AND the plateau condition is met at that checkpoint. If plateau not met, waits
-        # until the next spawn_every interval.
+        # Normal trigger: epoch % spawn_every == 0.
+        # After a failed spawn (_spawn_failed_last=True): also trigger at resample epochs
+        # so plateau is checked against a pre-resample loss baseline (avoids false
+        # "still-improving" reads caused by new sample points lowering loss temporarily).
         if spawning_method in ('full_tree_by_norm', 'use_perfect_trees'):
             _base_spawn_eligible = is_adaptive and not spawning_complete
         else:
@@ -1437,8 +1439,13 @@ def train(
                                     hasattr(model, 'num_experts') and
                                     model.num_experts < max_experts)
 
+        _at_spawn_interval = epoch % spawn_every == 0
+        _at_resample_interval = (_spawn_failed_last and resample_every > 0
+                                 and epoch % resample_every == 0)
+        _at_interval = _at_spawn_interval or _at_resample_interval
+
         if _base_spawn_eligible and _spawn_require_plateau:
-            if epoch % spawn_every == 0:
+            if _at_interval:
                 # Check training-loss plateau over the look-back window
                 _lookback = max(1, _spawn_plateau_epochs)
                 _recent = metrics['train_loss'][-_lookback:]
@@ -1472,8 +1479,8 @@ def train(
             else:
                 spawn_check_triggered = False
         else:
-            # No plateau gating: fire at every spawn_every interval
-            spawn_check_triggered = _base_spawn_eligible and (epoch % spawn_every == 0)
+            # No plateau gating: fire at spawn_every, and at resample epochs after a failure
+            spawn_check_triggered = _base_spawn_eligible and _at_interval
         
         if spawn_check_triggered:
             print(f"\n{'='*60}")
@@ -1914,6 +1921,7 @@ def train(
             if experts_spawned_this_step > 0:
                 print(f"\n  [Spawning] Spawned {experts_spawned_this_step} experts in this step")
                 _last_spawn_epoch = epoch
+                _spawn_failed_last = False
                 _no_spawn_retries_remaining = _no_spawn_retries_max  # reset on success
 
                 # Apply smart init to newly spawned experts (Glorot hidden + zero output,
@@ -2130,6 +2138,7 @@ def train(
                     )
             else:
                 print(f"\n  [Spawning] No experts spawned this step")
+                _spawn_failed_last = True
                 if _stop_on_no_spawn:
                     if _no_spawn_retries_remaining > 0:
                         _no_spawn_retries_remaining -= 1

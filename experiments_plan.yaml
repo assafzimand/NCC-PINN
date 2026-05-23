@@ -318,7 +318,7 @@ base_config:
     # ends of the look-back window fall at the same phase in the resampling cycle (apples-to-apples).
     # 300 = 3 × 100 ✓. With spawn_every=500 this fits well within one spawn interval.
     spawn_require_plateau: false     # Disabled by default; plateau experiments enable this
-    spawn_plateau_epochs: 300        # look-back window (3× resample_every = fair loss comparison)
+    spawn_plateau_epochs: 100        # look-back window (3× resample_every = fair loss comparison)
     spawn_plateau_delta: 0.01        # spawn only if training loss improved <1% over the window
     spawn_retries_before_stop: 1  # false = never stop. 0 = stop on first failed spawn attempt.
                                       # N = allow N retries (each waits spawn_every epochs, plateau
@@ -342,7 +342,7 @@ experiments:
     # freeze: perm, blend: default, loose plateau, adaptive
     adaptive_pinn:
       spawn_require_plateau: true
-      spawn_plateau_epochs: 300
+      spawn_plateau_epochs: 100
       spawn_plateau_delta: 0.05
       freeze_mode: none
     sampling:
@@ -356,7 +356,7 @@ experiments:
     base_architecture: [2, 128, 128, 128, 1]
     adaptive_pinn:
       spawn_require_plateau: true
-      spawn_plateau_epochs: 300
+      spawn_plateau_epochs: 100
       spawn_plateau_delta: 0.05
       freeze_mode: previous
       freeze_epochs_after_spawn: 400
@@ -371,7 +371,7 @@ experiments:
     base_architecture: [2, 128, 128, 128, 1]
     adaptive_pinn:
       spawn_require_plateau: true
-      spawn_plateau_epochs: 300
+      spawn_plateau_epochs: 100
       spawn_plateau_delta: 0.05
       freeze_mode: previous
       freeze_epochs_after_spawn: 9999
@@ -388,7 +388,7 @@ experiments:
   #   adaptive_pinn:
   #     freeze_mode: none
   #     spawn_require_plateau: true
-  #     spawn_plateau_epochs: 300
+  #     spawn_plateau_epochs: 100
   #     spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
 
   # - name: ks_with_plateau_perm_freeze
@@ -398,7 +398,7 @@ experiments:
   #     freeze_mode: previous
   #     freeze_epochs_after_spawn: 9999
   #     spawn_require_plateau: true
-  #     spawn_plateau_epochs: 300
+  #     spawn_plateau_epochs: 100
   #     spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
 
   # - name: ks_plateau_semi_freeze
@@ -408,5 +408,5 @@ experiments:
   #     freeze_mode: previous
   #     freeze_epochs_after_spawn: 400
   #     spawn_require_plateau: true
-  #     spawn_plateau_epochs: 300
+  #     spawn_plateau_epochs: 100
   #     spawn_plateau_delta: 0.05  
