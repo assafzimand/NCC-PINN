@@ -1244,11 +1244,6 @@ def train(
         # This speeds up training significantly for physics-informed losses
         should_evaluate = (epoch % eval_every == 0 or epoch == 1 or epoch == total_epochs)
         
-        # Initialize metrics for this epoch (will be updated if we evaluate)
-        eval_loss = None
-        eval_rel_l2 = None
-        eval_inf_norm = None
-
         if should_evaluate:
             # Compute train rel-L2 and infinity norm errors
 
@@ -1958,7 +1953,10 @@ def train(
                             _par_idx = -1
                         _parent_model = (model.base_model if _par_idx == -1
                                          else model.experts[_par_idx])
-                        apply_parent_copy_init(_new_exp, _parent_model, cfg)
+                        apply_parent_copy_init(
+                            _new_exp, _parent_model, cfg,
+                            copy_output=isinstance(model, (AToELeaves, ANT)),
+                        )
                     else:
                         apply_expert_init(_new_exp, cfg)
                     apply_spectral_norm(_new_exp, cfg)
@@ -2471,9 +2469,9 @@ def train(
         f.write(f"Learning rate: {cfg['lr']}\n")
         f.write(f"Device: {device}\n\n")
         f.write(f"Final train loss: {train_loss:.6f}\n")
-        f.write(f"Final eval loss: {eval_loss:.6f}\n")
-        f.write(f"Final eval rel-L2: {eval_rel_l2:.6f}\n")
-        f.write(f"Final eval inf-norm: {eval_inf_norm:.6f}\n")
+        f.write(f"Final eval loss: {eval_loss:.6f}\n" if eval_loss is not None else "Final eval loss: N/A\n")
+        f.write(f"Final eval rel-L2: {eval_rel_l2:.6f}\n" if eval_rel_l2 is not None else "Final eval rel-L2: N/A\n")
+        f.write(f"Final eval inf-norm: {eval_inf_norm:.6f}\n" if eval_inf_norm is not None else "Final eval inf-norm: N/A\n")
         f.write(f"Best eval loss: {best_eval_loss:.6f}\n\n")
         f.write(f"Best checkpoint: {best_checkpoint_path}\n")
         f.write(f"Final checkpoint: {final_checkpoint_path}\n")

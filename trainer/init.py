@@ -34,7 +34,7 @@ def apply_hidden_init(model: nn.Module, cfg: dict) -> None:
       block starts as an identity map (x + F(x) ≈ x), matching PirateNet's alpha=0.
     """
     init_cfg = cfg.get('init', {})
-    if init_cfg.get('hidden', 'default') != 'glorot':
+    if init_cfg.get('hidden', 'default') not in ('glorot', 'parent_weights'):
         return
 
     try:
@@ -176,16 +176,18 @@ def apply_expert_init(expert: nn.Module, cfg: dict) -> None:
             nn.init.zeros_(out_layer.bias)
 
 
-def apply_parent_copy_init(expert: nn.Module, parent_model: nn.Module, cfg: dict = None) -> None:
-    """Copy hidden layer weights from parent_model into a newly spawned expert.
+def apply_parent_copy_init(
+    expert: nn.Module,
+    parent_model: nn.Module,
+    cfg: dict = None,
+    copy_output: bool = False,
+) -> None:
+    """Copy weights from parent_model into a newly spawned expert.
 
-    The parent's hidden layers are in a trained, stable regime — their tanh activations
-    are well-behaved and higher-order spatial derivatives are bounded. Copying them
-    prevents the 4th-order derivative overflow (NaN in h_xxxx) that occurs when
-    freshly Glorot-initialized random weights are differentiated 4 times via autograd.
-
-    Output layer is NOT copied — it must be zeroed after this call so the expert
-    contributes u_k=0 at spawn time (residual learning principle).
+    copy_output=False (AToE): output layer is zeroed after copy so the expert
+        contributes u_k=0 at spawn time (parent stays active; children add residuals).
+    copy_output=True (AToELeaves, ANT): output layer is also copied; parent is
+        retired on spawn so children must start from the parent's full solution.
 
     Only layers with matching weight shapes are copied; mismatched layers are skipped.
     """
@@ -200,18 +202,26 @@ def apply_parent_copy_init(expert: nn.Module, parent_model: nn.Module, cfg: dict
 
     # Filter to linear_types only before zipping — spectral norm adds _SpectralNorm
     # parametrization objects as submodules, which would misalign a raw zip of modules().
-    expert_hidden = [m for m in expert.modules()
-                     if isinstance(m, linear_types) and m is not out_layer_new]
-    parent_hidden = [m for m in parent_model.modules()
-                     if isinstance(m, linear_types) and m is not out_layer_par]
+    if copy_output:
+        expert_layers = [m for m in expert.modules() if isinstance(m, linear_types)]
+        parent_layers = [m for m in parent_model.modules() if isinstance(m, linear_types)]
+    else:
+        expert_layers = [m for m in expert.modules()
+                         if isinstance(m, linear_types) and m is not out_layer_new]
+        parent_layers = [m for m in parent_model.modules()
+                         if isinstance(m, linear_types) and m is not out_layer_par]
 
     n_copied = 0
-    for mod_new, mod_par in zip(expert_hidden, parent_hidden):
+    for mod_new, mod_par in zip(expert_layers, parent_layers):
         if mod_new.weight.shape == mod_par.weight.shape:
             mod_new.weight.data.copy_(mod_par.weight.data)
             if mod_new.bias is not None and mod_par.bias is not None:
                 mod_new.bias.data.copy_(mod_par.bias.data)
             n_copied += 1
+
+    if copy_output:
+        print(f"  [Init] Copied {n_copied} layers from parent (hidden + output)")
+        return
 
     out_layer_new = _get_output_layer(expert)
     use_spectral = (cfg or {}).get('init', {}).get('spectral_norm', False)

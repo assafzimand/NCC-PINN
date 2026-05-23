@@ -317,9 +317,9 @@ base_config:
     # spawn_plateau_epochs should be a multiple of resample_every_epochs (currently 100) so both
     # ends of the look-back window fall at the same phase in the resampling cycle (apples-to-apples).
     # 300 = 3 × 100 ✓. With spawn_every=500 this fits well within one spawn interval.
-    spawn_require_plateau: false     # Disabled by default; plateau experiments enable this
+    spawn_require_plateau: true     # Disabled by default; plateau experiments enable this
     spawn_plateau_epochs: 50        # look-back window (3× resample_every = fair loss comparison)
-    spawn_plateau_delta: 0.01        # spawn only if training loss improved <1% over the window
+    spawn_plateau_delta: 0.05        # spawn only if training loss improved <1% over the window
     spawn_retries_before_stop: 1  # false = never stop. 0 = stop on first failed spawn attempt.
                                       # N = allow N retries; counter resets to N after any success.
     spawn_retry_after: 10            # epochs to wait before retrying after a failed spawn attempt.
@@ -343,9 +343,6 @@ experiments:
     base_architecture: [2, 128, 128, 128, 1]
     # freeze: perm, blend: default, loose plateau, adaptive
     adaptive_pinn:
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 50
-      spawn_plateau_delta: 0.05
       freeze_mode: none
     sampling:
       adaptive_sampling:
@@ -353,62 +350,39 @@ experiments:
         adaptive_ratio: 0.4
         per_leaf_sampling: true
 
-  - name: ks_plateau_adaptive_freeze_semi
-    problem: ks
-    base_architecture: [2, 128, 128, 128, 1]
-    adaptive_pinn:
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 50
-      spawn_plateau_delta: 0.05
-      freeze_mode: previous
-      freeze_epochs_after_spawn: 400
-    sampling:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.4
-        per_leaf_sampling: true   
-
   - name: ks_plateau_adaptive_freeze_perm
     problem: ks
     base_architecture: [2, 128, 128, 128, 1]
     adaptive_pinn:
-      spawn_require_plateau: true
-      spawn_plateau_epochs: 50
-      spawn_plateau_delta: 0.05
       freeze_mode: previous
       freeze_epochs_after_spawn: 9999
     sampling:
       adaptive_sampling:
         enabled: true
         adaptive_ratio: 0.4
-        per_leaf_sampling: true   
+        per_leaf_sampling: true 
 
+  - name: ks_AToELeaves
+    problem: ks
+    model: AToELeaves
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
+    adaptive_pinn:
+      expert_type: piratenet
+      freeze_mode: none
+    sampling:
+      adaptive_sampling:
+        enabled: true
+        adaptive_ratio: 0.4
+        per_leaf_sampling: true
 
-  # - name: ks_plateau_no_freeze
-  #   problem: ks
-  #   base_architecture: [2, 128, 128, 128, 1]
-  #   adaptive_pinn:
-  #     freeze_mode: none
-  #     spawn_require_plateau: true
-  #     spawn_plateau_epochs: 50
-  #     spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
-
-  # - name: ks_with_plateau_perm_freeze
-  #   problem: ks
-  #   base_architecture: [2, 128, 128, 128, 1]
-  #   adaptive_pinn:
-  #     freeze_mode: previous
-  #     freeze_epochs_after_spawn: 9999
-  #     spawn_require_plateau: true
-  #     spawn_plateau_epochs: 50
-  #     spawn_plateau_delta: 0.05       # Spawn when <5% loss improvement — fires more frequently
-
-  # - name: ks_plateau_semi_freeze
+  # - name: ks_plateau_adaptive_freeze_semi
   #   problem: ks
   #   base_architecture: [2, 128, 128, 128, 1]
   #   adaptive_pinn:
   #     freeze_mode: previous
   #     freeze_epochs_after_spawn: 400
-  #     spawn_require_plateau: true
-  #     spawn_plateau_epochs: 50
-  #     spawn_plateau_delta: 0.05  
+  #   sampling:
+  #     adaptive_sampling:
+  #       enabled: true
+  #       adaptive_ratio: 0.4
+  #       per_leaf_sampling: true   
