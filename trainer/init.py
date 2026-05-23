@@ -34,7 +34,7 @@ def apply_hidden_init(model: nn.Module, cfg: dict) -> None:
       block starts as an identity map (x + F(x) ≈ x), matching PirateNet's alpha=0.
     """
     init_cfg = cfg.get('init', {})
-    if init_cfg.get('hidden', 'default') not in ('glorot', 'parent_weights'):
+    if init_cfg.get('hidden', 'default') != 'glorot':
         return
 
     try:
