@@ -1468,6 +1468,7 @@ def train(
                     })
                 else:
                     spawn_check_triggered = False
+                    _spawn_last_fail_epoch = epoch
                     print(f"  [Plateau] Spawn deferred — loss still dropping "
                           f"({_drop_str} over last {_spawn_plateau_epochs} epochs, "
                           f"threshold={_spawn_plateau_delta*100:.2f}%)")
