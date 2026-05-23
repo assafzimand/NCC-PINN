@@ -1505,6 +1505,22 @@ def train(
             X_eval = eval_inputs.cpu().numpy()
             y_eval = u_pred.cpu().numpy()
 
+            # Save prediction heatmap BEFORE spawning so it reflects the state that
+            # drove the spawn decision. Deleted below if spawn yields 0 experts.
+            _pending_spawn_plot = None
+            if _problem_spatial_dim == 1 and gt_grid is not None:
+                _pending_spawn_plot = adaptive_plots_dir / f"spawn_pred_epoch_{epoch}.png"
+                save_spawn_prediction_plot(
+                    model=model,
+                    domain_bounds=domain_bounds,
+                    gt_grid=gt_grid,
+                    grid_x=gt_x,
+                    grid_t=gt_t,
+                    output_path=_pending_spawn_plot,
+                    epoch=epoch,
+                    cfg=cfg,
+                )
+
             # Only compute per-sample losses for by_mean_residual (expensive)
             loss_components = None
             if spawning_method == 'by_mean_residual':
@@ -2115,17 +2131,7 @@ def train(
                     grid_t=gt_t
                 )
 
-                if _problem_spatial_dim == 1 and gt_grid is not None:
-                    save_spawn_prediction_plot(
-                        model=model,
-                        domain_bounds=domain_bounds,
-                        gt_grid=gt_grid,
-                        grid_x=gt_x,
-                        grid_t=gt_t,
-                        output_path=adaptive_plots_dir / f"spawn_pred_epoch_{epoch}.png",
-                        epoch=epoch,
-                        cfg=cfg,
-                    )
+                # spawn_pred plot was already saved before spawn (pre-spawn state)
 
                 if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
                     leaf_indices_set = (
@@ -2141,6 +2147,9 @@ def train(
             else:
                 print(f"\n  [Spawning] No experts spawned this step")
                 _spawn_last_fail_epoch = epoch
+                if _pending_spawn_plot is not None and _pending_spawn_plot.exists():
+                    _pending_spawn_plot.unlink()
+                    _pending_spawn_plot = None
                 if _stop_on_no_spawn:
                     if _no_spawn_retries_remaining > 0:
                         _no_spawn_retries_remaining -= 1
