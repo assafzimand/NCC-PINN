@@ -463,7 +463,10 @@ def train(
     wavelet_threshold = problem_cfg.get('wavelet_threshold', 0.0)
     adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
     spawning_complete = False
-    _stop_if_no_spawn = adaptive_cfg.get('stop_if_no_spawn', False)
+    _retries_before_stop = adaptive_cfg.get('spawn_retries_before_stop', False)
+    _stop_on_no_spawn = _retries_before_stop is not False  # False = feature disabled
+    _no_spawn_retries_max = int(_retries_before_stop) if _stop_on_no_spawn else 0
+    _no_spawn_retries_remaining = _no_spawn_retries_max
     _per_leaf_causal = problem_cfg.get('causal_training', {}).get('per_leaf_causal', False)
     _per_leaf_sampling = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('per_leaf_sampling', False)
     
@@ -698,7 +701,6 @@ def train(
     _spawn_require_plateau = adaptive_cfg.get('spawn_require_plateau', False) if is_adaptive else False
     _spawn_plateau_epochs = adaptive_cfg.get('spawn_plateau_epochs', 300)
     _spawn_plateau_delta = adaptive_cfg.get('spawn_plateau_delta', 0.005)
-    _plateau_check_active = False   # True once spawn_every interval has elapsed
     _last_spawn_epoch = 0           # epoch of last successful spawn
     
     # Consolidated feature summary
@@ -771,13 +773,14 @@ def train(
     print("=" * 60 + "\n")
 
     # Smart initialization (Glorot hidden + zero/LS output) — base model only
-    from trainer.init import apply_hidden_init, apply_output_init, apply_expert_init, apply_parent_copy_init
+    from trainer.init import apply_hidden_init, apply_output_init, apply_expert_init, apply_parent_copy_init, apply_spectral_norm
     _init_target = model.base_model if is_adaptive else model
     _init_cfg = cfg.get('init', {})
-    if _init_cfg.get('hidden', 'default') != 'default' or _init_cfg.get('output', 'default') != 'default':
+    if _init_cfg.get('hidden', 'default') != 'default' or _init_cfg.get('output', 'default') != 'default' or _init_cfg.get('spectral_norm', False):
         print("[Init] Applying smart initialization to base model...")
         apply_hidden_init(_init_target, cfg)
         apply_output_init(_init_target, train_data, cfg, device)
+        apply_spectral_norm(_init_target, cfg)
         print()
 
     epoch = 0
@@ -1424,8 +1427,9 @@ def train(
                 metrics['freq_history'].append((epoch, freq_metrics))
 
         # Adaptive PINN: Hierarchical expert spawning from leaf nodes
-        # With spawn_require_plateau=True: spawn_every is a minimum interval; once elapsed,
-        # the plateau is checked every epoch until met, then spawn fires immediately.
+        # With spawn_require_plateau=True: spawn only fires at epoch % spawn_every == 0
+        # AND the plateau condition is met at that checkpoint. If plateau not met, waits
+        # until the next spawn_every interval.
         if spawning_method in ('full_tree_by_norm', 'use_perfect_trees'):
             _base_spawn_eligible = is_adaptive and not spawning_complete
         else:
@@ -1434,36 +1438,19 @@ def train(
                                     model.num_experts < max_experts)
 
         if _base_spawn_eligible and _spawn_require_plateau:
-            # Activate plateau checking once the minimum interval since last spawn has passed
-            if not _plateau_check_active and (epoch - _last_spawn_epoch) >= spawn_every:
-                _plateau_check_active = True
-
-            if _plateau_check_active:
+            if epoch % spawn_every == 0:
                 # Check training-loss plateau over the look-back window
-                _lookback = max(1, _spawn_plateau_epochs)  # train_loss stored every epoch
+                _lookback = max(1, _spawn_plateau_epochs)
                 _recent = metrics['train_loss'][-_lookback:]
                 _recent_valid = [r for r in _recent if not math.isnan(r) and not math.isinf(r)]
                 if len(_recent_valid) >= 2:
                     _rel_drop = (_recent_valid[0] - _recent_valid[-1]) / (abs(_recent_valid[0]) + 1e-8)
                     _plateau_met = _rel_drop <= _spawn_plateau_delta
                 else:
-                    _plateau_met = False  # not enough valid history yet
+                    _plateau_met = False
 
-                if not _plateau_met:
-                    spawn_check_triggered = False
-                    _drop_str = f"{_rel_drop*100:.2f}%" if len(_recent_valid) >= 2 else "n/a"
-                    # Only print once per 100 epochs to avoid spam
-                    if epoch % 100 == 0:
-                        print(f"  [Plateau] Spawn deferred — loss still dropping "
-                              f"({_drop_str} over last {_spawn_plateau_epochs} epochs, "
-                              f"threshold={_spawn_plateau_delta*100:.2f}%)")
-                    metrics['plateau_events'].append({
-                        'epoch': epoch,
-                        'action': 'deferred',
-                        'rel_drop_pct': float(_rel_drop * 100) if len(_recent_valid) >= 2 else None,
-                        'threshold_pct': float(_spawn_plateau_delta * 100),
-                    })
-                else:
+                _drop_str = f"{_rel_drop*100:.2f}%" if len(_recent_valid) >= 2 else "n/a"
+                if _plateau_met:
                     spawn_check_triggered = True
                     metrics['plateau_events'].append({
                         'epoch': epoch,
@@ -1471,10 +1458,21 @@ def train(
                         'rel_drop_pct': float(_rel_drop * 100) if len(_recent_valid) >= 2 else None,
                         'threshold_pct': float(_spawn_plateau_delta * 100),
                     })
+                else:
+                    spawn_check_triggered = False
+                    print(f"  [Plateau] Spawn deferred — loss still dropping "
+                          f"({_drop_str} over last {_spawn_plateau_epochs} epochs, "
+                          f"threshold={_spawn_plateau_delta*100:.2f}%)")
+                    metrics['plateau_events'].append({
+                        'epoch': epoch,
+                        'action': 'deferred',
+                        'rel_drop_pct': float(_rel_drop * 100) if len(_recent_valid) >= 2 else None,
+                        'threshold_pct': float(_spawn_plateau_delta * 100),
+                    })
             else:
-                spawn_check_triggered = False  # minimum interval not yet elapsed
+                spawn_check_triggered = False
         else:
-            # Original epoch-based trigger (no plateau gating)
+            # No plateau gating: fire at every spawn_every interval
             spawn_check_triggered = _base_spawn_eligible and (epoch % spawn_every == 0)
         
         if spawn_check_triggered:
@@ -1915,9 +1913,8 @@ def train(
 
             if experts_spawned_this_step > 0:
                 print(f"\n  [Spawning] Spawned {experts_spawned_this_step} experts in this step")
-                # Reset plateau state so next spawn waits another spawn_every interval
-                _plateau_check_active = False
                 _last_spawn_epoch = epoch
+                _no_spawn_retries_remaining = _no_spawn_retries_max  # reset on success
 
                 # Apply smart init to newly spawned experts (Glorot hidden + zero output,
                 # or parent_weights: copy hidden layers from parent expert for stability).
@@ -1935,9 +1932,10 @@ def train(
                             _par_idx = -1
                         _parent_model = (model.base_model if _par_idx == -1
                                          else model.experts[_par_idx])
-                        apply_parent_copy_init(_new_exp, _parent_model)
+                        apply_parent_copy_init(_new_exp, _parent_model, cfg)
                     else:
                         apply_expert_init(_new_exp, cfg)
+                    apply_spectral_norm(_new_exp, cfg)
 
                 # ── 3-phase: reinitialize base + transition to Phase 3 ──
                 if use_three_phase and spawning_complete and current_phase == 1:
@@ -2132,14 +2130,20 @@ def train(
                     )
             else:
                 print(f"\n  [Spawning] No experts spawned this step")
-                if _stop_if_no_spawn:
-                    print(f"  [StopIfNoSpawn] Zero experts spawned — saving final checkpoint and stopping.")
-                    final_checkpoint_path = checkpoint_dir / "final_model.pt"
-                    _save_checkpoint(final_checkpoint_path, model, optimizer,
-                                     current_optimizer_name, epoch,
-                                     train_loss, eval_loss, cfg, metrics)
-                    model.train()
-                    break
+                if _stop_on_no_spawn:
+                    if _no_spawn_retries_remaining > 0:
+                        _no_spawn_retries_remaining -= 1
+                        print(f"  [SpawnRetry] Zero experts spawned — "
+                              f"{_no_spawn_retries_remaining} retries remaining before stop.")
+                    else:
+                        print(f"  [SpawnRetry] Zero experts spawned and no retries remaining — "
+                              f"saving final checkpoint and stopping.")
+                        final_checkpoint_path = checkpoint_dir / "final_model.pt"
+                        _save_checkpoint(final_checkpoint_path, model, optimizer,
+                                         current_optimizer_name, epoch,
+                                         train_loss, eval_loss, cfg, metrics)
+                        model.train()
+                        break
 
             # Per-leaf causal: update leaf causal states after successful spawn
             if experts_spawned_this_step > 0 and _per_leaf_causal and hasattr(loss_fn, '_leaf_state'):

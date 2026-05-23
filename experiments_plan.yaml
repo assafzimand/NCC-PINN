@@ -78,6 +78,12 @@ base_config:
     hidden: parent_weights          # 'default' (kaiming) | 'glorot' | 'parent_weights'
     output: ls                      # 'default' | 'zero' | 'ls'
     ls_use_bias: true                # Include bias column in LS system
+    spectral_norm: true              # Apply spectral normalization to ALL layers (hidden + output)
+                                     # of every network: base model at init, every new expert at
+                                     # spawn. Bounds Lipschitz constant to ≤1 per layer → bounds
+                                     # h_xxxx in KS 4th-order autograd chain. When enabled, output
+                                     # layer uses tiny random init (std=1e-6) instead of strict
+                                     # zero (zero-init causes sigma=0 → 0/0=NaN with spectral_norm).
 
   # ── LRA (Loss Rate Annealing) ──
   lra:
@@ -314,7 +320,9 @@ base_config:
     spawn_require_plateau: false     # Disabled by default; plateau experiments enable this
     spawn_plateau_epochs: 300        # look-back window (3× resample_every = fair loss comparison)
     spawn_plateau_delta: 0.01        # spawn only if training loss improved <1% over the window
-    stop_if_no_spawn: false           # Feature A: stop training when a spawn attempt yields 0 new experts
+    spawn_retries_before_stop: 1  # false = never stop. 0 = stop on first failed spawn attempt.
+                                      # N = allow N retries (each waits spawn_every epochs, plateau
+                                      # gating still applies); counter resets to N after any success.
 
     # ── 3-Phase training config ──
     # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
