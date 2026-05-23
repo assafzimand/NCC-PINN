@@ -780,7 +780,11 @@ def train(
     _init_cfg = cfg.get('init', {})
     if _init_cfg.get('hidden', 'default') != 'default' or _init_cfg.get('output', 'default') != 'default' or _init_cfg.get('spectral_norm', False):
         print("[Init] Applying smart initialization to base model...")
-        apply_hidden_init(_init_target, cfg)
+        # parent_weights is expert-only; base model always uses glorot
+        _base_init_cfg = cfg
+        if cfg.get('init', {}).get('hidden') == 'parent_weights':
+            _base_init_cfg = {**cfg, 'init': {**cfg.get('init', {}), 'hidden': 'glorot'}}
+        apply_hidden_init(_init_target, _base_init_cfg)
         apply_output_init(_init_target, train_data, cfg, device)
         apply_spectral_norm(_init_target, cfg)
         print()
