@@ -93,7 +93,10 @@ def apply_output_init(
 
     if output_mode == 'zero':
         with torch.no_grad():
-            nn.init.zeros_(out_layer.weight)
+            if init_cfg.get('spectral_norm', False):
+                nn.init.normal_(out_layer.weight, mean=0.0, std=1e-6)
+            else:
+                nn.init.zeros_(out_layer.weight)
             if out_layer.bias is not None:
                 nn.init.zeros_(out_layer.bias)
         print("  [Init] Output layer: zero-initialized")
@@ -156,6 +159,8 @@ def apply_expert_init(expert: nn.Module, cfg: dict) -> None:
     Always applies:
     - Glorot hidden init (if init.hidden == 'glorot')
     - Zero output layer (residual learning: expert starts at u=0 contribution)
+      When spectral_norm is enabled, uses tiny random (std=1e-6) instead of
+      strict zero to avoid sigma=0 → NaN in the spectral norm wrapper.
 
     LS-init is NEVER applied to experts (only the base model gets it).
     """
@@ -163,12 +168,15 @@ def apply_expert_init(expert: nn.Module, cfg: dict) -> None:
 
     out_layer = _get_output_layer(expert)
     with torch.no_grad():
-        nn.init.zeros_(out_layer.weight)
+        if cfg.get('init', {}).get('spectral_norm', False):
+            nn.init.normal_(out_layer.weight, mean=0.0, std=1e-6)
+        else:
+            nn.init.zeros_(out_layer.weight)
         if out_layer.bias is not None:
             nn.init.zeros_(out_layer.bias)
 
 
-def apply_parent_copy_init(expert: nn.Module, parent_model: nn.Module) -> None:
+def apply_parent_copy_init(expert: nn.Module, parent_model: nn.Module, cfg: dict = None) -> None:
     """Copy hidden layer weights from parent_model into a newly spawned expert.
 
     The parent's hidden layers are in a trained, stable regime — their tanh activations
@@ -199,9 +207,42 @@ def apply_parent_copy_init(expert: nn.Module, parent_model: nn.Module) -> None:
             n_copied += 1
 
     out_layer_new = _get_output_layer(expert)
+    use_spectral = (cfg or {}).get('init', {}).get('spectral_norm', False)
     with torch.no_grad():
-        nn.init.zeros_(out_layer_new.weight)
+        if use_spectral:
+            nn.init.normal_(out_layer_new.weight, mean=0.0, std=1e-6)
+        else:
+            nn.init.zeros_(out_layer_new.weight)
         if out_layer_new.bias is not None:
             nn.init.zeros_(out_layer_new.bias)
 
-    print(f"  [Init] Copied {n_copied} hidden layers from parent; output zeroed")
+    print(f"  [Init] Copied {n_copied} hidden layers from parent; output {'tiny-random' if use_spectral else 'zeroed'}")
+
+
+def apply_spectral_norm(model: nn.Module, cfg: dict) -> None:
+    """Apply spectral normalization to ALL linear layers (hidden + output).
+
+    Bounds each layer's Lipschitz constant via per-forward-call weight
+    normalization by the spectral radius (power iteration, 1 step per forward).
+    Prevents h_xxxx overflow in KS 4th-order autograd chain.
+
+    Called for base model at init AND for every new expert at spawn.
+    Must be called AFTER weight init so weight_orig receives the correct values.
+    Output layer must NOT be strict-zero before this call (use tiny random init).
+    """
+    if not cfg.get('init', {}).get('spectral_norm', False):
+        return
+
+    try:
+        from models.rwf_layer import RWFLinear
+        linear_types = (nn.Linear, RWFLinear)
+    except ImportError:
+        linear_types = (nn.Linear,)
+
+    n_wrapped = 0
+    for module in model.modules():
+        if isinstance(module, linear_types):
+            nn.utils.parametrizations.spectral_norm(module)
+            n_wrapped += 1
+
+    print(f"  [Init] Spectral norm applied to {n_wrapped} layers (hidden + output)")
