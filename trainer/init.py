@@ -196,11 +196,18 @@ def apply_parent_copy_init(expert: nn.Module, parent_model: nn.Module, cfg: dict
         linear_types = (nn.Linear,)
 
     out_layer_new = _get_output_layer(expert)
+    out_layer_par = _get_output_layer(parent_model)
+
+    # Filter to linear_types only before zipping — spectral norm adds _SpectralNorm
+    # parametrization objects as submodules, which would misalign a raw zip of modules().
+    expert_hidden = [m for m in expert.modules()
+                     if isinstance(m, linear_types) and m is not out_layer_new]
+    parent_hidden = [m for m in parent_model.modules()
+                     if isinstance(m, linear_types) and m is not out_layer_par]
+
     n_copied = 0
-    for mod_new, mod_par in zip(expert.modules(), parent_model.modules()):
-        if (isinstance(mod_new, linear_types)
-                and mod_new is not out_layer_new
-                and mod_new.weight.shape == mod_par.weight.shape):
+    for mod_new, mod_par in zip(expert_hidden, parent_hidden):
+        if mod_new.weight.shape == mod_par.weight.shape:
             mod_new.weight.data.copy_(mod_par.weight.data)
             if mod_new.bias is not None and mod_par.bias is not None:
                 mod_new.bias.data.copy_(mod_par.bias.data)
