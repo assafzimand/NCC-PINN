@@ -242,17 +242,12 @@ class AToELeaves(nn.Module):
         device = next(self.base_model.parameters()).device
 
         if copy_from_idx is not None and self.atoe_threshold_capacity is None:
-            if copy_from_idx == -1:
-                source = self.base_model
-            else:
-                source = self.experts[copy_from_idx]
             expert = create_network(
                 architecture, self.activation, self.config,
                 is_base=True, expert_type=self.expert_type
             )
-            expert.load_state_dict(source.state_dict())
             expert = expert.to(device)
-            print(f"    Expert copied from {'Base Model' if copy_from_idx == -1 else f'E{copy_from_idx + 1}'}")
+            # Weight copy handled by apply_parent_copy_init in trainer.py
         else:
             expert = create_network(
                 architecture, self.activation, self.config,
