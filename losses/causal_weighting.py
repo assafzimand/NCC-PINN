@@ -151,8 +151,8 @@ def compute_region_mask(x_f: torch.Tensor, t_f: torch.Tensor, region) -> torch.T
     mask = torch.ones(x_f.shape[0], dtype=torch.bool, device=x_f.device)
     spatial_dim = x_f.shape[1]
     for d in range(spatial_dim):
-        mask &= (x_f[:, d] >= region.bounds_lower[d]) & (x_f[:, d] < region.bounds_upper[d])
-    mask &= (t_f[:, 0] >= region.bounds_lower[spatial_dim]) & (t_f[:, 0] < region.bounds_upper[spatial_dim])
+        mask &= (x_f[:, d] >= region.bounds_lower[d]) & (x_f[:, d] <= region.bounds_upper[d])
+    mask &= (t_f[:, 0] >= region.bounds_lower[spatial_dim]) & (t_f[:, 0] <= region.bounds_upper[spatial_dim])
     return mask
 
 

@@ -18,7 +18,8 @@
       "Bash(python3 -c ' *)",
       "Bash(grep -o '[0-9]*$')",
       "WebFetch(domain:arxiv.abs)",
-      "Bash(python3 -c \"import torch; l = torch.nn.Linear\\(10, 20\\); print\\('Default init \\(Kaiming uniform\\)'\\)\")"
+      "Bash(python3 -c \"import torch; l = torch.nn.Linear\\(10, 20\\); print\\('Default init \\(Kaiming uniform\\)'\\)\")",
+      "Bash(findstr /n \"_save_adaptive_sampling_heatmap\" utils\\\\dataset_gen.py)"
     ]
   }
 }

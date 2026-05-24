@@ -243,7 +243,7 @@ base_config:
     alpha: 6.25                      # 100/16
     beta: 0.390625                   # 100/16^2
     gamma: 0.00152587890625          # 100/16^4
-    wavelet_threshold: 0.02          # 0.04 from perfect tree analysis, reduced to 0.02 to get more spawns when spawn_method is accept_split_by_norm
+    wavelet_threshold: 0.04          
     new_norm_threshold: 10.0
     tree_smoothness_threshold: 0.3
     loss_weights:
@@ -320,7 +320,7 @@ base_config:
     spawn_require_plateau: true     # Disabled by default; plateau experiments enable this
     spawn_plateau_epochs: 50        # look-back window (3× resample_every = fair loss comparison)
     spawn_plateau_delta: 0.05        # spawn only if training loss improved <1% over the window
-    spawn_retries_before_stop: 2  # false = never stop. 0 = stop on first failed spawn attempt.
+    spawn_retries_before_stop: 5  # false = never stop. 0 = stop on first failed spawn attempt.
                                       # N = allow N retries; counter resets to N after any success.
     spawn_retry_after: 10            # epochs to wait before retrying after a failed spawn attempt.
                                       # Counted from the failure epoch (not aligned to spawn_every).
@@ -338,36 +338,35 @@ base_config:
 
 experiments:
 
-  # - name: ks_plateau_adaptive_no_freeze
-  #   problem: ks
-  #   base_architecture: [2, 128, 128, 128, 1]
-  #   # freeze: perm, blend: default, loose plateau, adaptive
-  #   adaptive_pinn:
-  #     freeze_mode: none
-  #   sampling:
-  #     adaptive_sampling:
-  #       enabled: true
-  #       adaptive_ratio: 0.4
-  #       per_leaf_sampling: true
+  - name: ks_plateau_adaptive_no_freeze
+    problem: ks
+    base_architecture: [2, 128, 128, 128, 1]
+    adaptive_pinn:
+      freeze_mode: none
+    sampling:
+      adaptive_sampling:
+        enabled: true
+        adaptive_ratio: 0.4
+        per_leaf_sampling: true
 
-  # - name: ks_plateau_adaptive_freeze_perm
-  #   problem: ks
-  #   base_architecture: [2, 128, 128, 128, 1]
-  #   adaptive_pinn:
-  #     freeze_mode: previous
-  #     freeze_epochs_after_spawn: 9999
-  #   sampling:
-  #     adaptive_sampling:
-  #       enabled: true
-  #       adaptive_ratio: 0.4
-  #       per_leaf_sampling: true 
+  - name: ks_plateau_adaptive_freeze_perm
+    problem: ks
+    base_architecture: [2, 128, 128, 128, 1]
+    adaptive_pinn:
+      freeze_mode: previous
+      freeze_epochs_after_spawn: 9999
+    sampling:
+      adaptive_sampling:
+        enabled: true
+        adaptive_ratio: 0.4
+        per_leaf_sampling: true 
 
   - name: ks_AToELeaves
     problem: ks
     model: AToELeaves
     base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
     adaptive_pinn:
-      expert_type: piratenet
+      expert_type: resnet
       freeze_mode: none
     sampling:
       adaptive_sampling:
