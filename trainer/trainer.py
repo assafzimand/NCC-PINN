@@ -780,9 +780,11 @@ def train(
     _init_cfg = cfg.get('init', {})
     if _init_cfg.get('hidden', 'default') != 'default' or _init_cfg.get('output', 'default') != 'default' or _init_cfg.get('spectral_norm', False):
         print("[Init] Applying smart initialization to base model...")
-        # parent_weights is expert-only; for AToELeaves base model use glorot instead
+        # parent_weights is expert-only; use glorot for base model unless architecture is
+        # resnet (glorot zeros fc2 in ResBlocks → spectral_norm wraps it → sigma=0 → NaN)
         _base_init_cfg = cfg
-        if cfg.get('init', {}).get('hidden') == 'parent_weights' and isinstance(model, AToELeaves):
+        _expert_type = cfg.get('adaptive_pinn', {}).get('expert_type', 'mlp')
+        if cfg.get('init', {}).get('hidden') == 'parent_weights' and _expert_type != 'resnet':
             _base_init_cfg = {**cfg, 'init': {**cfg.get('init', {}), 'hidden': 'glorot'}}
         apply_hidden_init(_init_target, _base_init_cfg)
         apply_output_init(_init_target, train_data, cfg, device)

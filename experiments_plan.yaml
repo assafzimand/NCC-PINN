@@ -338,29 +338,29 @@ base_config:
 
 experiments:
 
-  - name: ks_plateau_adaptive_no_freeze
-    problem: ks
-    base_architecture: [2, 128, 128, 128, 1]
-    # freeze: perm, blend: default, loose plateau, adaptive
-    adaptive_pinn:
-      freeze_mode: none
-    sampling:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.4
-        per_leaf_sampling: true
+  # - name: ks_plateau_adaptive_no_freeze
+  #   problem: ks
+  #   base_architecture: [2, 128, 128, 128, 1]
+  #   # freeze: perm, blend: default, loose plateau, adaptive
+  #   adaptive_pinn:
+  #     freeze_mode: none
+  #   sampling:
+  #     adaptive_sampling:
+  #       enabled: true
+  #       adaptive_ratio: 0.4
+  #       per_leaf_sampling: true
 
-  - name: ks_plateau_adaptive_freeze_perm
-    problem: ks
-    base_architecture: [2, 128, 128, 128, 1]
-    adaptive_pinn:
-      freeze_mode: previous
-      freeze_epochs_after_spawn: 9999
-    sampling:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.4
-        per_leaf_sampling: true 
+  # - name: ks_plateau_adaptive_freeze_perm
+  #   problem: ks
+  #   base_architecture: [2, 128, 128, 128, 1]
+  #   adaptive_pinn:
+  #     freeze_mode: previous
+  #     freeze_epochs_after_spawn: 9999
+  #   sampling:
+  #     adaptive_sampling:
+  #       enabled: true
+  #       adaptive_ratio: 0.4
+  #       per_leaf_sampling: true 
 
   - name: ks_AToELeaves
     problem: ks
