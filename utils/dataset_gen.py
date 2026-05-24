@@ -443,6 +443,7 @@ def _save_adaptive_sampling_heatmap(
     x_sampled, t_sampled,
     run_dir, epoch, config,
     causal_state=None,
+    leaf_info=None,
 ):
     """Save diagnostic heatmap for residual distribution (and adaptive sampling if active).
 
@@ -531,12 +532,28 @@ def _save_adaptive_sampling_heatmap(
         problem = config['problem']
         pc = config[problem]
         spatial_domain = pc['spatial_domain']
+        spatial_dim = pc.get('spatial_dim', 1)
         t_min, t_max = pc['temporal_domain']
         x_lo, x_hi = spatial_domain[0]
         for ax in [a for a in [ax1, ax2, ax3] if a is not None]:
             ax.set_xlim(x_lo, x_hi)
             ax.set_ylim(t_min, t_max)
-        
+
+        if leaf_info:
+            import matplotlib.patches as mpatches
+            for ax in [a for a in [ax1, ax2, ax3] if a is not None]:
+                for _region, _expert_idx in leaf_info:
+                    rx_min = _region.bounds_lower[0]
+                    rt_min = _region.bounds_lower[spatial_dim]
+                    rx_max = _region.bounds_upper[0]
+                    rt_max = _region.bounds_upper[spatial_dim]
+                    ax.add_patch(mpatches.Rectangle(
+                        (rx_min, rt_min),
+                        rx_max - rx_min, rt_max - rt_min,
+                        linewidth=1.5, edgecolor='black',
+                        facecolor='none', zorder=10,
+                    ))
+
         plt.tight_layout()
         output_path = output_dir / f"resample_epoch_{epoch}.png"
         plt.savefig(output_path, dpi=100, bbox_inches='tight')
@@ -636,6 +653,17 @@ def regenerate_training_data(
             x_adap = torch.cat(x_parts, dim=0)[:n_adaptive]
             t_adap = torch.cat(t_parts, dim=0)[:n_adaptive]
             print(f"  [Resample] Per-leaf adaptive: {n_leaves} leaves × ~{n_per_leaf_base} pts = {len(x_adap)} adaptive")
+            if run_dir is not None and epoch is not None and spatial_dim == 1:
+                _all_x = torch.cat([r[0] for r in cached_residuals], dim=0)
+                _all_t = torch.cat([r[1] for r in cached_residuals], dim=0)
+                _all_r2 = torch.cat([r[2] for r in cached_residuals], dim=0)
+                _save_adaptive_sampling_heatmap(
+                    _all_x, _all_t, _all_r2,
+                    x_adap, t_adap,
+                    run_dir, epoch, config,
+                    causal_state=None,
+                    leaf_info=leaf_info,
+                )
         else:
             x_adap, t_adap = _sample_adaptive_residual_points(
                 cached_residuals, config, device, n_adaptive, phi_cfg, run_dir, epoch,
