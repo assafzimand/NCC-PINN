@@ -444,11 +444,13 @@ def _save_adaptive_sampling_heatmap(
     run_dir, epoch, config,
     causal_state=None,
     leaf_info=None,
+    leaf_causal_states=None,
 ):
     """Save diagnostic heatmap for residual distribution (and adaptive sampling if active).
 
     x_sampled / t_sampled may be None when adaptive sampling is disabled —
     in that case the sampled-points panel is omitted.
+    leaf_causal_states: dict {expert_idx: causal_state_dict} for per-leaf causal panel.
     """
     try:
         import matplotlib.pyplot as plt
@@ -465,7 +467,12 @@ def _save_adaptive_sampling_heatmap(
         log_r2 = np.log10(r2_cached_np + 1e-10)
 
         has_adaptive = x_sampled is not None and t_sampled is not None
-        has_causal = (causal_state is not None and causal_state.get('enabled', False))
+        has_global_causal = (causal_state is not None and causal_state.get('enabled', False))
+        has_per_leaf_causal = (
+            leaf_info is not None and leaf_causal_states is not None and len(leaf_info) > 0
+            and any(leaf_causal_states.get(idx) is not None for _, idx in leaf_info)
+        )
+        has_causal = has_global_causal or has_per_leaf_causal
         n_panels = 1 + int(has_adaptive) + int(has_causal)
         fig, axes = plt.subplots(1, n_panels, figsize=(7 * n_panels, 5))
         if n_panels == 1:
@@ -490,43 +497,97 @@ def _save_adaptive_sampling_heatmap(
             ax2.set_xlabel('x')
             ax2.set_ylabel('t')
             ax2.set_title(f'Adaptive Sampling by Pure Residual (epoch {epoch})')
-        
-        # Panel 3: causal-weighted residuals (what we actually train on)
+
+        # Panel 3: causal-weighted residuals — global or per-leaf
         if has_causal and ax3 is not None:
-            num_chunks = causal_state.get('num_chunks', 16)
-            causal_tol = causal_state.get('tol', 1.0)
-            
-            t_flat = t_cached[:, 0].cpu()
-            r2_flat = r2_cached.cpu()
-            N = len(t_flat)
-            sort_idx = torch.argsort(t_flat)
-            r2_sorted = r2_flat[sort_idx]
-            
-            chunk_size = max(1, N // num_chunks)
-            per_point_weights = torch.ones(N)
-            chunk_losses = []
-            for i in range(num_chunks):
-                start = i * chunk_size
-                end = start + chunk_size if i < num_chunks - 1 else N
-                chunk_losses.append(r2_sorted[start:end].mean().item())
-            
-            cumsum = np.cumsum(chunk_losses)
-            shifted = np.concatenate([[0.0], cumsum[:-1]])
-            chunk_weights = np.exp(-causal_tol * shifted)
-            
-            for i in range(num_chunks):
-                start = i * chunk_size
-                end = start + chunk_size if i < num_chunks - 1 else N
-                per_point_weights[sort_idx[start:end]] = chunk_weights[i]
-            
-            weighted_r2 = r2_flat.numpy() * per_point_weights.numpy()
-            log_weighted = np.log10(weighted_r2 + 1e-10)
-            
+            if has_global_causal:
+                num_chunks = causal_state.get('num_chunks', 16)
+                causal_tol = causal_state.get('tol', 1.0)
+
+                t_flat = t_cached[:, 0].cpu()
+                r2_flat = r2_cached.cpu()
+                N = len(t_flat)
+                sort_idx = torch.argsort(t_flat)
+                r2_sorted = r2_flat[sort_idx]
+
+                chunk_size = max(1, N // num_chunks)
+                per_point_weights = torch.ones(N)
+                chunk_losses = []
+                for i in range(num_chunks):
+                    start = i * chunk_size
+                    end = start + chunk_size if i < num_chunks - 1 else N
+                    chunk_losses.append(r2_sorted[start:end].mean().item())
+
+                cumsum = np.cumsum(chunk_losses)
+                shifted = np.concatenate([[0.0], cumsum[:-1]])
+                chunk_weights = np.exp(-causal_tol * shifted)
+
+                for i in range(num_chunks):
+                    start = i * chunk_size
+                    end = start + chunk_size if i < num_chunks - 1 else N
+                    per_point_weights[sort_idx[start:end]] = chunk_weights[i]
+
+                weighted_r2 = r2_flat.numpy() * per_point_weights.numpy()
+                log_weighted = np.log10(weighted_r2 + 1e-10)
+                tol_str = f'{causal_tol:.4g}'
+                panel_title = f'Causal-Weighted Residual (ε={tol_str}, epoch {epoch-1})'
+
+            else:
+                # Per-leaf causal: compute per-point weights from each leaf's own state.
+                # Points not belonging to any leaf keep weight=1 (no de-weighting).
+                r2_np = r2_cached_np
+                per_point_weights = np.ones(len(x_cached_np))
+                problem = config['problem']
+                _sdim = config[problem].get('spatial_dim', 1)
+
+                tol_vals = []
+                for _region, _expert_idx in leaf_info:
+                    state = leaf_causal_states.get(_expert_idx)
+                    if state is None:
+                        continue
+                    # Region mask (matching compute_region_mask convention)
+                    mask = (
+                        (x_cached_np >= _region.bounds_lower[0]) &
+                        (x_cached_np <= _region.bounds_upper[0]) &
+                        (t_cached_np >= _region.bounds_lower[_sdim]) &
+                        (t_cached_np <= _region.bounds_upper[_sdim])
+                    )
+                    n_leaf = mask.sum()
+                    num_chunks = state.get('num_chunks', 16)
+                    causal_tol = state.get('tol', 1.0)
+                    tol_vals.append(causal_tol)
+                    if n_leaf < num_chunks:
+                        continue
+                    t_leaf = t_cached_np[mask]
+                    r2_leaf = r2_np[mask]
+                    sort_idx = np.argsort(t_leaf)
+                    r2_sorted = r2_leaf[sort_idx]
+                    chunk_size = max(1, n_leaf // num_chunks)
+                    chunk_losses = []
+                    for i in range(num_chunks):
+                        start = i * chunk_size
+                        end = start + chunk_size if i < num_chunks - 1 else n_leaf
+                        chunk_losses.append(r2_sorted[start:end].mean())
+                    cumsum = np.cumsum(chunk_losses)
+                    shifted = np.concatenate([[0.0], cumsum[:-1]])
+                    cw = np.exp(-causal_tol * shifted)
+                    leaf_weights = np.ones(n_leaf)
+                    for i in range(num_chunks):
+                        start = i * chunk_size
+                        end = start + chunk_size if i < num_chunks - 1 else n_leaf
+                        leaf_weights[sort_idx[start:end]] = cw[i]
+                    per_point_weights[mask] = leaf_weights
+
+                weighted_r2 = r2_np * per_point_weights
+                log_weighted = np.log10(weighted_r2 + 1e-10)
+                unique_tols = sorted(set(tol_vals))
+                tol_str = '/'.join(f'{e:.4g}' for e in unique_tols)
+                panel_title = f'Per-Leaf Causal-Weighted Residual (ε={tol_str}, epoch {epoch-1})'
+
             sc3 = ax3.scatter(x_cached_np, t_cached_np, c=log_weighted, cmap='hot', s=1, alpha=0.6)
             ax3.set_xlabel('x')
             ax3.set_ylabel('t')
-            tol_str = f'{causal_tol:.4g}'
-            ax3.set_title(f'Causal-Weighted Residual (ε={tol_str}, epoch {epoch-1})')
+            ax3.set_title(panel_title)
             plt.colorbar(sc3, ax=ax3, label='log10(w·r²)')
         
         problem = config['problem']
@@ -572,6 +633,7 @@ def regenerate_training_data(
     epoch=None,
     causal_state: dict = None,
     leaf_info=None,
+    leaf_causal_states: dict = None,
 ) -> Dict[str, torch.Tensor]:
     """Lightweight resampling: fresh random coordinates + analytical IC/BC.
 
@@ -663,6 +725,7 @@ def regenerate_training_data(
                     run_dir, epoch, config,
                     causal_state=None,
                     leaf_info=leaf_info,
+                    leaf_causal_states=leaf_causal_states,
                 )
         else:
             x_adap, t_adap = _sample_adaptive_residual_points(

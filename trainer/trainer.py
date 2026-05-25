@@ -898,6 +898,10 @@ def train(
                 # regenerate_training_data would crash when accessing region.bounds_lower.
                 _raw_leaf_info = model.get_leaf_info()
                 _leaf_info_for_sampling = [(r, idx) for r, idx in _raw_leaf_info if r is not None] or None
+            _leaf_causal_states_for_plot = (
+                loss_fn._leaf_state.get('causal_states', {})
+                if _per_leaf_causal and hasattr(loss_fn, '_leaf_state') else None
+            )
             # Save residual heatmap when adaptive sampling is off (adaptive path saves it internally)
             if not adaptive_sampling_enabled and cached_residuals and _problem_spatial_dim == 1:
                 all_x = torch.cat([r[0] for r in cached_residuals], dim=0)
@@ -909,6 +913,7 @@ def train(
                     run_dir, epoch, cfg,
                     causal_state=causal_state,
                     leaf_info=_leaf_info_for_sampling,
+                    leaf_causal_states=_leaf_causal_states_for_plot,
                 )
             train_data = regenerate_training_data(
                 cfg, device, resample_seed=resample_seed,
@@ -917,6 +922,7 @@ def train(
                 epoch=epoch,
                 causal_state=causal_state,
                 leaf_info=_leaf_info_for_sampling,
+                leaf_causal_states=_leaf_causal_states_for_plot,
             )
             train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
             metrics['resample_events'].append({
@@ -2194,6 +2200,10 @@ def train(
                 _spawn_raw_leaf_info = model.get_leaf_info()
                 _spawn_leaf_info = [(r, idx) for r, idx in _spawn_raw_leaf_info if r is not None] or None
                 _spawn_cached = getattr(model, '_residual_cache', [])
+                _spawn_causal_states = (
+                    loss_fn._leaf_state.get('causal_states', {})
+                    if _per_leaf_causal and hasattr(loss_fn, '_leaf_state') else None
+                )
                 _spawn_train_data = regenerate_training_data(
                     cfg, device, resample_seed=epoch,
                     cached_residuals=_spawn_cached,
@@ -2201,6 +2211,7 @@ def train(
                     epoch=epoch,
                     causal_state=causal_state,
                     leaf_info=_spawn_leaf_info,
+                    leaf_causal_states=_spawn_causal_states,
                 )
                 train_loader = _create_dataloader(_spawn_train_data, cfg['batch_size'], shuffle=True)
                 n_new_leaves = len(_spawn_leaf_info) if _spawn_leaf_info else 0
