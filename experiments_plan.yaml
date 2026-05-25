@@ -51,7 +51,7 @@ base_config:
 
   # ── Gradient clipping (applied before every optimizer.step) ──
   grad_clip_norm: 1.0               # Clip for base model params (and all params when no experts exist)
-  expert_grad_clip_norm: 0.001      # Tighter clip applied to ALL expert params whenever experts exist;
+  expert_grad_clip_norm: 1.0      # Tighter clip applied to ALL expert params whenever experts exist;
                                     # base still uses grad_clip_norm; set null to disable expert-specific clip
 
   # ── RWF (Random Weight Factorization) ──
