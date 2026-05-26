@@ -8,7 +8,7 @@ base_config:
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 5000                          # Total training epochs (accept_split_by_norm ignores initial_train)
+  epochs: 10000                          # Total training epochs (accept_split_by_norm ignores initial_train)
   batch_size: 4096                    # Mini-batch size for Adam/SOAP training
   patience_epochs: 50000             # Effectively disabled
   min_epochs: 1                      # No early-stop floor
@@ -256,7 +256,7 @@ base_config:
     causal_training:
       enabled: true                  # Always on for KS — essential for learning chaotic dynamics
       num_chunks: 16                 # Fine-grained temporal bins — smoother causal progression
-      tol_schedule: [1.0]  # Annealing schedule (Wang et al. 2022): start soft, harden as network learns
+      tol_schedule: [0.01]  # Annealing schedule (Wang et al. 2022): start soft, harden as network learns
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
       per_leaf_causal: true          # Feature B: each leaf gets its own independent causal state
     fourier_features:
