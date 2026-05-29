@@ -322,7 +322,7 @@ base_config:
       enabled: true
       adaptive_ratio: 0.3
       per_leaf_sampling: false
-      phi: exponential
+      phi: quadratic
       phi_epsilon: 1.0
       phi_power: 2.0
     grad_clip_norm: 1.0
