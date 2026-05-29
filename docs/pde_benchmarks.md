@@ -37,10 +37,11 @@ $$h_t + h\, h_x - \frac{\nu}{\pi}\, h_{xx} = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Optimizer | Rel. L₂ | Model Capacity | Reference |
-|--------|------|-----------|---------|----------------|-----------|
-| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | **2.68 × 10⁻⁷** | **2,011 params** (from paper Table 2) | [Hag et al., 2025 (npj AI)](https://www.nature.com/articles/s44387-026-00084-4) |
-| Vanilla PINN | 2019 | L-BFGS | 6.7 × 10⁻⁴ | **3,021 params** — MLP `[2,20×8,1]` (from [code](https://github.com/maziarraissi/PINNs)) | [Raissi et al., J. Comput. Phys. 378](https://doi.org/10.1016/j.jcp.2018.10.045) |
+| Method | Year | Optimizer | Rel. L₂ | Architecture | Params | Time Windows | Reference |
+|--------|------|-----------|---------|--------------|--------|--------------|-----------|
+| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | **2.68 × 10⁻⁷** | MLP `[2,30×3,1]` + periodic enc | **2,011** | None | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| RAD | 2023 | Adam+L-BFGS | varies | MLP `[2,64×4,1]`, tanh | **12,737** | None | [Wu et al., 2023](https://jmlr.org/papers/v24/22-1258.html) |
+| Vanilla PINN | 2019 | L-BFGS | 6.7 × 10⁻⁴ | MLP `[2,20×8,1]`, tanh | **3,021** | None | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
 > **Comparability:** Results above are for the $\nu/\pi = 1/1000$ variant matching our config and are directly comparable. For the easier $\nu/\pi = 1/100$ variant, SOTA is vRBA: 8.25 × 10⁻⁹ and PirateNet (Adam): 8.20 × 10⁻⁵ (not directly comparable).
 
@@ -62,13 +63,11 @@ $$i\, h_t + \tfrac{1}{2}\, h_{xx} + |h|^2 h = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Rel. L₂ | Model Capacity | Reference |
-|--------|------|---------|----------------|-----------|
-| Vanilla PINN | 2019 | ~1.97 × 10⁻³ | **30,802 params** — MLP `[2,100×4,2]` (from [code](https://github.com/maziarraissi/PINNs)) | [Raissi et al., J. Comput. Phys. 378](https://doi.org/10.1016/j.jcp.2018.10.045) |
-| PirateNet + FF + WF + CS | 2024 | ~10⁻⁴ range | *~500K+ params (est.)* — ModifiedMlp with 256 neurons/layer + FF + adaptive residual connections. Exact param count not stated; jaxpi default is 4×256. | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
-| PINNacle benchmark (multi-method) | 2024 | varies | Varies by method; standardized per-problem configs | [Hao et al., NeurIPS 2024](https://arxiv.org/abs/2306.08827) |
+| Method | Year | Rel. L₂ | Architecture | Params | Time Windows | Reference |
+|--------|------|---------|--------------|--------|--------------|-----------|
+| Vanilla PINN | 2019 | ~1.97 × 10⁻³ | MLP `[2,100×4,2]`, tanh | **30,802** | None | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
-> **Comparability:** All results above use the canonical NLS benchmark configuration matching our setup and are directly comparable.
+> **Comparability:** Vanilla PINN uses the canonical NLS benchmark configuration matching our setup. **Note:** PirateNet paper does not include a Schrödinger/NLS benchmark — only Ginzburg-Landau (different PDE).
 
 ---
 
@@ -137,17 +136,15 @@ $$h_t - D\, h_{xx} - 5(h - h^3) = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Optimizer | Rel. L₂ | Model Capacity | Reference |
-|--------|------|-----------|---------|----------------|-----------|
-| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | **1.88 × 10⁻⁶** | **2,011 params** (from paper Table 2) | [Hag et al., 2025 (npj AI)](https://www.nature.com/articles/s44387-026-00084-4) |
-| RAD + FF | 2024 | SSBroyden | 2.20 × 10⁻⁶ | *~2K params (est.)* — vRBA Table 4 compares RAD under same SSBroyden setup, implying same network size | [Wu et al., JMLR 24, 2023](https://jmlr.org/papers/v24/22-1258.html) |
-| PirateNet + FF + WF + CS + LRA | 2025 | SOAP | 3.48 × 10⁻⁶ | *~500K+ params (est.)* — same PirateNet architecture (same research group) | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
-| PirateNet + FF + WF + CS + NTK | 2024 | Adam | 2.24 × 10⁻⁵ | *~500K+ params (est.)* — paper: "256 neurons in each hidden layer", ModifiedMlp + FF | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
-| BRDR + FF + mMLP | 2025 | Adam | 1.45 × 10⁻⁵ | *~20K–50K params (est.)* — uses mMLP (modified MLP) + FF; architecture details not explicitly reported | [Kim & Perdikaris, 2025](https://www.nature.com/articles/s44387-026-00084-4#ref-CR16) |
-| DASA-PINN + FF | 2023 | Adam | 8.57 × 10⁻⁵ | *~200K-270K params (est.)* — uses standard MLP + FF + attention weighting; code at [github](https://github.com/soanagno/rba-pinns), exact arch not reported in paper | [Anagnostopoulos et al., 2023](https://arxiv.org/abs/2307.00379) |
-| Vanilla PINN | 2017 | Adam | 4.98 × 10⁻¹ | *~3K params (est.)* — Raissi-style MLP | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
+| Method | Year | Optimizer | Rel. L₂ | Architecture | Params | Time Windows | Reference |
+|--------|------|-----------|---------|--------------|--------|--------------|-----------|
+| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | **1.88 × 10⁻⁶** | MLP `[2,30×3,1]` + periodic enc | **2,011** | None | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| vRBA ($\Phi = r^2$) + FF | 2025 | Adam | varies | MLP `[2,64×6,1]` + FF, tanh | **21,318** | None | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| RBA + mMLP + FF | 2023 | Adam | ~4.55 × 10⁻⁵ | MLP `[2,128×6,1]`, tanh, Xavier | **83,073** | None | [Anagnostopoulos et al., 2023](https://arxiv.org/abs/2307.00379) |
+| PirateNet + FF + WF + CS | 2024 | Adam | 2.24 × 10⁻⁵ | 9 layers × 256 ch, tanh, FF 2.0, RWF | *~500K+ (est.)* | Causal 32 chunks | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| Vanilla PINN | 2019 | Adam | ~4.98 × 10⁻¹ | MLP `[2,20×8,1]`, tanh | **3,021** | None | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
-> **Comparability:** All results above use the standard Allen-Cahn benchmark with $D = 0.0001$ matching our configuration and are directly comparable.
+> **Comparability:** All results above use the standard Allen-Cahn benchmark with $D = 0.0001$ matching our configuration and are directly comparable. Note: RAD (Wu et al. 2023) uses D=0.001, which is a different (easier) problem.
 
 ---
 
@@ -166,14 +163,12 @@ $$h_t + \eta\, h\, h_x + \mu^2\, h_{xxx} = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Optimizer | Rel. L₂ | Model Capacity | Reference |
-|--------|------|-----------|---------|----------------|-----------|
-| vRBA ($\Phi = e^r$) + FF | 2025 | SSBroyden | **2.17 × 10⁻⁶** | **2,011 params** (from paper Table 2) | [Hag et al., 2025 (npj AI)](https://www.nature.com/articles/s44387-026-00084-4) |
-| RAD + FF | 2024 | SSBroyden | 6.00 × 10⁻⁶ | *~2K params (est.)* — same SSBroyden setup as vRBA comparison | [Wu et al., JMLR 24, 2023](https://jmlr.org/papers/v24/22-1258.html) |
-| PirateNet + FF + WF + CS + LRA | 2025 | SOAP | 3.40 × 10⁻⁴ | *~500K+ params (est.)* — PirateNet ModifiedMlp + FF | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
-| PirateNet + FF + WF + CS + LRA | 2024 | Adam | 4.27 × 10⁻⁴ | *~500K+ params (est.)* — PirateNet ModifiedMlp + FF | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| Method | Year | Optimizer | Rel. L₂ | Architecture | Params | Time Windows | Reference |
+|--------|------|-----------|---------|--------------|--------|--------------|-----------|
+| vRBA ($\Phi = e^r$) + FF | 2025 | SSBroyden | **2.17 × 10⁻⁶** | MLP `[2,30×3,1]` + periodic enc | **2,011** | None | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| PirateNet + FF + WF + CS | 2024 | Adam | 4.27 × 10⁻⁴ | 9 layers × 256 ch, tanh, FF 1.0, RWF | *~500K+ (est.)* | Causal 16 chunks | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
 
-> **Comparability:** All results above use the classical KdV benchmark with $\mu^2 = 4.84 \times 10^{-4}$ and periodic BC matching our configuration and are directly comparable.
+> **Comparability:** vRBA uses a different KdV formulation (two-soliton, x∈[0,20], t∈[0,5]) than our config. PirateNet KdV benchmark matches our config ($\mu^2 = 4.84 \times 10^{-4}$, periodic BC). Note: RAD (Wu et al. 2023) KdV benchmark is an **inverse problem** (parameter discovery), not directly comparable to forward problem.
 
 ---
 
@@ -242,34 +237,33 @@ $$h_t + \alpha\, h\, h_x + \beta\, h_{xx} + \gamma\, h_{xxxx} = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Optimizer | Rel. L₂ | Model Capacity | Reference |
-|--------|------|-----------|---------|----------------|-----------|
-| PirateNet + FF + WF + CS + NTK | 2024 | Adam | **1.42 × 10⁻⁴** | *~500K+ params (est.)* — PirateNet ModifiedMlp + FF | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
-| PirateNet + FF + WF + CS + LRA | 2025 | SOAP | ~10⁻⁴ range | *~500K+ params (est.)* — same PirateNet architecture | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
-| BRDR + FF + mMLP | 2025 | Adam | tested | *~20K-50K params (est.)* — mMLP with FF, smaller than PirateNet; exact size not reported | [Kim & Perdikaris, 2025](https://www.nature.com/articles/s44387-026-00084-4#ref-CR16) |
+| Method | Year | Optimizer | Rel. L₂ | Architecture | Params | Time Windows | Reference |
+|--------|------|-----------|---------|--------------|--------|--------------|-----------|
+| PINNacle benchmark | 2024 | varies | varies | MLP 5 layers × 100 neurons | *~40K (est.)* | None | [Hao et al., 2024](https://arxiv.org/abs/2306.08827) |
 
-> **Comparability:** KS is one of the most challenging 1D PINN benchmarks due to its chaotic dynamics and 4th-order spatial derivative. **Verification status:** The specific PirateNet error values listed above could not be verified from accessible primary sources for this exact KS configuration. Only results explicitly matching our parameters ($\alpha = 100/16$, $\beta = 100/16^2$, $\gamma = 100/16^4$, $t \in [0,1]$) are directly comparable.
+> **Comparability:** KS is one of the most challenging 1D PINN benchmarks due to its chaotic dynamics and 4th-order spatial derivative. **Note:** PirateNet paper does NOT include a KS benchmark. Limited verified architecture data available for this PDE.
 
 ---
 
 ## Model Capacity Summary
 
-A cross-method summary of network sizes. **Bold** = exact numbers from paper/code. *Italic* = assessment/estimate.
+A cross-method summary of network sizes. **Bold** = exact numbers from paper/code (verified). *Italic* = estimate.
 
-| Method | Architecture | Params | Source |
-|--------|-------------|--------|--------|
-| **Raissi (Burgers 1D)** | MLP `[2, 20×8, 1]`, Tanh | **3,021** | Code: [github](https://github.com/maziarraissi/PINNs) |
-| **Raissi (Schrödinger)** | MLP `[2, 100×4, 2]`, Tanh | **30,802** | Code: [github](https://github.com/maziarraissi/PINNs) |
-| **vRBA (Adam)** | MLP + FF | **21,318** | Paper Table 2 |
-| **vRBA (SSBroyden)** | MLP + FF | **2,011** | Paper Table 2 |
-| *PirateNet* | ModifiedMlp × 256 + FF + adaptive residual connections | *~500K+* | Paper: "256 neurons in each hidden layer"; ModifiedMlp adds U/V encoding branches. Exact count not stated; jaxpi default is 4×256. |
-| *RAD (SSBroyden)* | MLP + FF (same setup as vRBA) | *~2K* | Compared in vRBA Table 4 under identical SSBroyden config |
-| *SOAP* | PirateNet (same group) | *~500K+* | Same architecture as PirateNet paper |
-| *BRDR (mMLP)* | Modified MLP + FF | *~20K–50K* | Uses mMLP variant; no explicit count in paper |
-| *DASA-PINN / RBA* | Standard MLP + FF + attention weights | *~200K–270K* | Estimated from standard 4–5 hidden layers × 256; code at [github](https://github.com/soanagno/rba-pinns) |
-| *PINNacle* | Varies per method/PDE | *Varies* | Benchmark tool; default baseline ~4 layers × 128–256 |
+| Method | Architecture | Params | Time Windows | Source |
+|--------|-------------|--------|--------------|--------|
+| **Raissi (Burgers 1D)** | MLP `[2,20×8,1]`, tanh | **3,021** | None | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) + [code](https://github.com/maziarraissi/PINNs) |
+| **Raissi (Schrödinger)** | MLP `[2,100×4,2]`, tanh | **30,802** | None | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) + [code](https://github.com/maziarraissi/PINNs) |
+| **Raissi (Discrete Burgers)** | MLP `[1,50×4,501]`, RK-500 | *~8,501* | 500 RK stages | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) |
+| **vRBA (Adam)** | MLP `[2,64×6,1]` + FF, tanh | **21,318** | None | [Paper Table 2](https://www.nature.com/articles/s44387-026-00084-4) |
+| **vRBA (SSBroyden)** | MLP `[2,30×3,1]` + periodic enc | **2,011** | None | [Paper Table 2](https://www.nature.com/articles/s44387-026-00084-4) |
+| **RAD (Wu et al.)** | MLP `[2,64×4,1]`, tanh | **12,737** | None | [Paper Table 1](https://jmlr.org/papers/v24/22-1258.html) |
+| **RAD (KdV inverse)** | MLP `[2,100×4,1]`, tanh | **30,701** | None | [Paper Table 1](https://jmlr.org/papers/v24/22-1258.html) |
+| **RBA (Anagnostopoulos)** | MLP `[2,128×6,1]`, tanh, Xavier | **83,073** | None | [Paper Appendix](https://arxiv.org/abs/2307.00379) |
+| **PirateNet (Allen-Cahn)** | 9 layers × 256 ch, tanh, FF 2.0, RWF | *~500K+ (est.)* | Causal 32 chunks | [Paper](https://jmlr.org/papers/v25/24-0313.html) |
+| **PirateNet (KdV)** | 9 layers × 256 ch, tanh, FF 1.0, RWF | *~500K+ (est.)* | Causal 16 chunks | [Paper](https://jmlr.org/papers/v25/24-0313.html) |
+| *PINNacle* | Varies per method/PDE | *Varies* | None | [Paper](https://arxiv.org/abs/2306.08827) |
 
-> **How to read**: "MLP + FF" = multi-layer perceptron with random Fourier feature embedding. PirateNet adds adaptive residual connections on top of the modified MLP (mMLP) architecture. SSBroyden is a quasi-Newton optimizer that converges with far fewer parameters than Adam.
+> **How to read**: "MLP `[in,H×L,out]`" = multi-layer perceptron with input dim, H neurons × L hidden layers, output dim. "FF" = Fourier feature embedding. "RWF" = random weight factorization. SSBroyden is a quasi-Newton optimizer that converges with far fewer parameters than Adam. "Causal chunks" are training/weighting chunks used in causal training, not separate time-window models.
 
 ---
 
@@ -287,4 +281,4 @@ A cross-method summary of network sizes. **Bold** = exact numbers from paper/cod
 
 ---
 
-*Last updated: 2026-05-29*
+*Last updated: 2026-05-29 (Architecture verification update)*

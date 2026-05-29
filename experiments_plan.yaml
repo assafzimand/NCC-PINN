@@ -91,8 +91,8 @@ base_config:
       periodic: false
     init:
       hidden: glorot
-      output: ls
-      ls_use_bias: true
+      output: default
+      ls_use_bias: false
       spectral_norm: false
       spectral_norm_init_std: 1.0e-6
     lra:
@@ -310,8 +310,8 @@ base_config:
       periodic: false
     init:
       hidden: glorot
-      output: ls
-      ls_use_bias: true
+      output: default
+      ls_use_bias: false
       spectral_norm: false
     lra:
       enabled: false
@@ -534,10 +534,6 @@ base_config:
 experiments:
   # ── 4 experiments to verify M_term_tree_by_norm with M=40 ──
   # Using old successful config settings where applicable
-  - name: allen_cahn
-    problem: allen_cahn
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
-  
   - name: kdv
     problem: kdv
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
@@ -545,6 +541,10 @@ experiments:
   - name: schrodinger
     problem: schrodinger
     base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  
+  - name: allen_cahn
+    problem: allen_cahn
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
   
   - name: burgers1d
     problem: burgers1d
