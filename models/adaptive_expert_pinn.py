@@ -92,7 +92,6 @@ class AdaptiveExpertPINN(nn.Module):
         
         # Extract adaptive parameters
         self.max_experts = adaptive_config['max_experts']
-        self.max_depth = adaptive_config['max_depth']
         self.blending_mode = adaptive_config['blending_mode']
         self.sigma_fraction = adaptive_config['sigma_fraction']
         self.base_weight = adaptive_config['base_weight']

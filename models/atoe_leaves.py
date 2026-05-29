@@ -41,7 +41,6 @@ class AToELeaves(nn.Module):
         self.adaptive_config = adaptive_config
 
         self.max_experts = adaptive_config['max_experts']
-        self.max_depth = adaptive_config['max_depth']
         self.sigma_fraction = adaptive_config['sigma_fraction']
         self.base_weight = adaptive_config['base_weight']
         self.base_everywhere = adaptive_config['base_everywhere']

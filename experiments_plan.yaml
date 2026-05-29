@@ -467,8 +467,8 @@ base_config:
       bc: 1.0                        # Periodic BC is soft — low weight, FF can help enforce periodicity
     causal_training:
       enabled: true                  # Always on for KS — essential for learning chaotic dynamics
-      num_chunks: 16                 # Fine-grained temporal bins — smoother causal progression
-      tol_schedule: [0.01]  # Annealing schedule (Wang et al. 2022): start soft, harden as network learns
+      num_chunks: 32                 # Fine-grained temporal bins — smoother causal progression
+      tol_schedule: [0.01, 0.1, 1]  # Annealing schedule (Wang et al. 2022): start soft, harden as network learns
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
       per_leaf_causal: false          # Feature B: each leaf gets its own independent causal state
     # ── Per-problem features (KS-tuned, latest config) ──
@@ -477,7 +477,7 @@ base_config:
       enabled: true
       dim: 128
       scale: 2.0                     # Conservative — KS has broadband content, not sharp interfaces
-      periodic: false
+      periodic: true
     init:
       hidden: parent_weights         # New experts copy hidden-layer weights from closest ancestor
       output: ls                     # Least-squares fit to IC data (base model only)
@@ -492,16 +492,16 @@ base_config:
       epsilon: 1.0e-5
     adaptive_sampling:
       enabled: false                 # Disabled for KS by default; experiments can enable
-      adaptive_ratio: 0.1
+      adaptive_ratio: 0.3
       per_leaf_sampling: false
       phi: quadratic
       phi_epsilon: 1.0
       phi_power: 2.0
-    grad_clip_norm: 1.0
-    expert_grad_clip_norm: 1.0
+    grad_clip_norm: null
+    expert_grad_clip_norm: null
     time_marching:
       enabled: true                       # Enabled for KS - essential for chaotic dynamics
-      num_windows: 5                      # Splits temporal domain into 5 sequential windows
+      num_windows: 10                      # Splits temporal domain into 5 sequential windows
       freeze_previous_windows: true       # Freeze models from earlier windows
       m_distribution: quadratic           # linear | quadratic | equal - later windows get more experts
 
@@ -523,14 +523,13 @@ base_config:
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
-    ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
+    ANT_threshold_architecture: null           # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
-    expert_type: resnet                # 'mlp' or 'resnet' or 'piratenet' -- architecture for base model and experts
-    max_depth: 5                       # Maximum tree depth for region splitting
-    freeze_mode: none                      # "none" | "previous" | "base_only" — Fix 2 uses this; 'previous' = freeze base+old experts post-spawn
+    expert_type: piratenet                     # 'mlp' or 'resnet' or 'piratenet' -- architecture for base model and experts
+    freeze_mode: none                          # "none" | "previous" | "base_only" — Fix 2 uses this; 'previous' = freeze base+old experts post-spawn
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
-    base_weight: 0.3                           # Uniform weight for base model (soft blending only)
+    base_weight: 1.0                           # Uniform weight for base model (soft blending only)
     base_everywhere: true                      # If false, u_0 has indicator = domain \ experts
     tree_max_depth: 15                         # Max depth of decision tree for region splitting
     tree_min_samples_leaf: 50                  # Min samples in tree leaf node
@@ -578,18 +577,6 @@ base_config:
 experiments:
   # ── 4 experiments to verify M_term_tree_by_norm with M=40 ──
   # Using old successful config settings where applicable
-  - name: kdv
-    problem: kdv
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
-  
-  - name: schrodinger
-    problem: schrodinger
-    base_architecture: [2, 30, 30, 30, 30, 30, 2]
-  
-  - name: allen_cahn
-    problem: allen_cahn
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
-  
-  - name: burgers1d
-    problem: burgers1d
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  - name: ks
+    problem: ks
+    base_architecture: [2, 128, 128, 128, 128, 128, 128, 1]
