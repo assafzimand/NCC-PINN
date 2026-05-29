@@ -400,7 +400,8 @@ When `time_marching.enabled = true`:
 3. **For each window**:
    - Narrow config: set `temporal_domain = [t_start, t_end]`, `M_experts_num = window.M`
    - Generate datasets for narrowed domain
-   - If not first window: override IC `h_gt` with previous model's prediction
+   - Filter both train and eval data to window temporal range (reuses full-domain dataset)
+   - If not first window: override IC `h_gt` with previous model's **base network** prediction
    - Call `train()` as black box (full 3-phase pipeline per window)
    - Optionally freeze model
 4. **Wrap** all window models in `TimeMarchingModel` for evaluation
@@ -408,11 +409,29 @@ When `time_marching.enabled = true`:
 ### IC Propagation
 
 For windows 2+, the analytical IC is unavailable. Instead:
-1. Query previous window's model at `t = window.t_start` for all IC points
+1. Query previous window's **base model** at `t = window.t_start` for all IC points
 2. Replace `h_gt` in the dataset for IC points
 3. The loss function uses the same `loss_weights.ic` — no special handling needed
 
 This works because loss functions already use `h_gt` from the batch for IC loss.
+
+**Note**: Currently using `prev_model.base_model` (not the full AToE forward) for IC prediction.
+This bypasses experts/POU to ensure clean IC propagation during testing.
+
+### Data Filtering
+
+Both training and evaluation data are filtered to the window's temporal range:
+
+1. **Dataset Loading**: Full-domain datasets loaded from disk (generated once at first window)
+2. **Temporal Filtering** (in `trainer.py`): Both train and eval data filtered to `t >= t_start` and `t < t_end`
+3. **Tree Fitting**: Decision tree fitted only on filtered training data → expert boundaries stay within window
+4. **Metrics**: Rel-L2, Inf-norm, loss computed on filtered eval data
+5. **Visualization**: `get_domain_bounds()` uses narrowed `temporal_domain` from config → correct axis limits
+
+This ensures:
+- Expert regions are bounded by the window's temporal domain
+- Metrics reflect only the current window's performance
+- Visualizations show the correct temporal range
 
 ### TimeMarchingModel
 
