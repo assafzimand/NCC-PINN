@@ -184,7 +184,8 @@ def _create_lr_scheduler(optimizer, cfg, total_steps):
     milestones = []
 
     if warmup_steps > 0:
-        schedulers.append(LinearLR(optimizer, start_factor=0.01, total_iters=warmup_steps))
+        start_factor = cfg['lr_warmup_start_factor']
+        schedulers.append(LinearLR(optimizer, start_factor=start_factor, total_iters=warmup_steps))
         milestones.append(warmup_steps)
 
     if schedule == 'exponential':
@@ -333,7 +334,7 @@ def train(
         phase1_cfg = dict(cfg)
         for k, v in initial_train_cfg.items():
             phase1_cfg[k] = v
-        phase1_epochs = initial_train_cfg.get('epochs', cfg['epochs'])
+        phase1_epochs = initial_train_cfg['epochs']
         phase3_epochs = cfg['epochs']
         active_cfg = phase1_cfg
         epochs = phase1_epochs
@@ -431,6 +432,7 @@ def train(
             update_every=lra_cfg['update_every'],
             initial_weights=initial_loss_weights,
             scheme=lra_cfg['scheme'],
+            scheme_cfg=lra_cfg,
         )
     else:
         lra_weights = None
@@ -476,8 +478,8 @@ def train(
     _no_spawn_retries_remaining = _no_spawn_retries_max
     _spawn_retry_after = adaptive_cfg.get('spawn_retry_after', None)
     _spawn_last_fail_epoch = -1  # epoch of last failed spawn; -1 = no pending retry
-    _per_leaf_causal = problem_cfg.get('causal_training', {}).get('per_leaf_causal', False)
-    _per_leaf_sampling = problem_cfg['adaptive_sampling'].get('per_leaf_sampling', False)
+    _per_leaf_causal = problem_cfg.get('causal_training', {}).get('per_leaf_causal', False)  # Optional feature
+    _per_leaf_sampling = problem_cfg['adaptive_sampling'].get('per_leaf_sampling', False)  # Optional feature
     
     # Read configurable norm variables
     variable_for_node_accept = adaptive_cfg['variable_for_node_accept']
@@ -666,8 +668,8 @@ def train(
         step_count = 0
         print(f"  [PerfectTree] Phase 3 optimizer: "
               f"{current_optimizer_name}, "
-              f"lr={active_cfg.get('lr')}, "
-              f"schedule={active_cfg.get('lr_schedule', 'exponential')}")
+              f"lr={active_cfg['lr']}, "
+              f"schedule={active_cfg['lr_schedule']}")
 
     # Training loop
     total_epochs = epochs  # may extend when transitioning to Phase 3
@@ -791,9 +793,9 @@ def train(
         # parent_weights is expert-only; use glorot for base model unless architecture is
         # resnet (glorot zeros fc2 in ResBlocks → spectral_norm wraps it → sigma=0 → NaN)
         _base_init_cfg = cfg
-        _expert_type = cfg.get('adaptive_pinn', {}).get('expert_type', 'mlp')
-        if cfg.get('init', {}).get('hidden') == 'parent_weights' and _expert_type != 'resnet':
-            _base_init_cfg = {**cfg, 'init': {**cfg.get('init', {}), 'hidden': 'glorot'}}
+        _expert_type = cfg['adaptive_pinn']['expert_type']
+        if cfg['init']['hidden'] == 'parent_weights' and _expert_type != 'resnet':
+            _base_init_cfg = {**cfg, 'init': {**cfg['init'], 'hidden': 'glorot'}}
         apply_hidden_init(_init_target, _base_init_cfg)
         apply_output_init(_init_target, train_data, cfg, device)
         apply_spectral_norm(_init_target, cfg)
@@ -1540,8 +1542,8 @@ def train(
             # Only compute per-sample losses for by_mean_residual (expensive)
             loss_components = None
             if spawning_method == 'by_mean_residual':
-                problem = cfg.get('problem', 'schrodinger')
-                loss_weights = cfg[problem].get('loss_weights', {})
+                problem = cfg['problem']
+                loss_weights = cfg[problem]['loss_weights']
                 loss_components = compute_loss_components(
                     model=model,
                     x=eval_data['x'],
@@ -1550,9 +1552,9 @@ def train(
                     masks=eval_data['mask'],
                     loss_fn=loss_fn,
                     weights={
-                        'residual': loss_weights.get('residual', 1.0),
-                        'ic': loss_weights.get('ic', 1.0),
-                        'bc': loss_weights.get('bc', 1.0),
+                        'residual': loss_weights['residual'],
+                        'ic': loss_weights['ic'],
+                        'bc': loss_weights['bc'],
                     }
                 )
 
@@ -1990,7 +1992,7 @@ def train(
                     active_cfg = cfg
                     total_epochs = epoch + phase3_epochs  # extend loop
                     # Recalculate optimizer strategy from top-level config
-                    _p3_opt1 = active_cfg.get('optimizer_1', active_cfg.get('optimizer', 'adam')).lower()
+                    _p3_opt1 = active_cfg['optimizer_1'].lower()
                     _p3_opt2_cfg = active_cfg.get('optimizer_2', None)
                     optimizer_2_name = _p3_opt2_cfg.lower() if _p3_opt2_cfg else None
                     total_steps_p3 = phase3_epochs * batches_per_epoch
@@ -2003,7 +2005,7 @@ def train(
                         patience_start_epoch = epoch + 1
                     print(f"\n  [3-Phase] Transitioning to Phase 3: {phase3_epochs} epochs of full model training")
                     print(f"  [3-Phase] Total epochs now: {total_epochs} (Phase 1: {epoch}, Phase 3: {phase3_epochs})")
-                    print(f"  [3-Phase] Optimizer: {_p3_opt1}, lr: {active_cfg.get('lr')}, schedule: {active_cfg.get('lr_schedule', 'exponential')}")
+                    print(f"  [3-Phase] Optimizer: {_p3_opt1}, lr: {active_cfg['lr']}, schedule: {active_cfg['lr_schedule']}")
 
                 # Collect new expert parameters before any freeze/optimizer logic.
                 import copy
@@ -2087,11 +2089,11 @@ def train(
                     if _untouched_leaf_params:
                         _freeze_groups.append({'params': _untouched_leaf_params, 'lr': _pre_freeze_lr})
                     if _new_expert_params:
-                        _new_expert_lr = _pre_freeze_lr * active_cfg.get('new_expert_lr_decay', 1.0)
+                        _new_expert_lr = _pre_freeze_lr * active_cfg['new_expert_lr_decay']
                         _freeze_groups.append({'params': _new_expert_params, 'lr': _new_expert_lr})
                         if _new_expert_lr != _pre_freeze_lr:
                             print(f"  [SpawnGroup] New expert LR: {_new_expert_lr:.2e} "
-                                  f"({active_cfg.get('new_expert_lr_decay', 1.0):.2f}× current {_pre_freeze_lr:.2e})")
+                                  f"({active_cfg['new_expert_lr_decay']:.2f}× current {_pre_freeze_lr:.2e})")
                     if _freeze_groups:
                         try:
                             optimizer = _create_grouped_optimizer(_freeze_groups, active_cfg)
@@ -2112,7 +2114,7 @@ def train(
                     model.freeze_models()  # applies configured freeze_mode (typically 'none')
                     if _new_expert_params:
                         _current_lr = optimizer.param_groups[0]['lr']
-                        _new_expert_lr = _current_lr * active_cfg.get('new_expert_lr_decay', 1.0)
+                        _new_expert_lr = _current_lr * active_cfg['new_expert_lr_decay']
                         optimizer.add_param_group({
                             'params': _new_expert_params,
                             'lr': _new_expert_lr,
@@ -2120,7 +2122,7 @@ def train(
                         print(f"  [SpawnGroup] New expert params added as fresh param group "
                               f"{len(optimizer.param_groups) - 1} "
                               f"at lr={_new_expert_lr:.2e} "
-                              f"({active_cfg.get('new_expert_lr_decay', 1.0):.2f}× current {_current_lr:.2e}); "
+                              f"({active_cfg['new_expert_lr_decay']:.2f}× current {_current_lr:.2e}); "
                               f"old params unchanged")
 
                 metrics['optimizer_snapshots'].append({
@@ -2152,7 +2154,7 @@ def train(
 
                 # spawn_pred plot was already saved before spawn (pre-spawn state)
 
-                if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
+                if adaptive_cfg['blending_mode'] == 'soft' and problem_type == '2d':
                     leaf_indices_set = (
                         set(leaf_expert_indices) if isinstance(model, (AToELeaves, ANT)) else None
                     )
@@ -2401,7 +2403,7 @@ def train(
             grid_t=gt_t
         )
 
-        if adaptive_cfg.get('blending_mode', 'hard') == 'soft' and problem_type == '2d':
+        if adaptive_cfg['blending_mode'] == 'soft' and problem_type == '2d':
             leaf_indices_set = set(leaf_expert_indices) if is_leaves_model else None
             plot_expert_soft_weights(
                 model=model,

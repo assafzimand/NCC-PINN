@@ -40,13 +40,13 @@ class AToELeaves(nn.Module):
         self.config = config
         self.adaptive_config = adaptive_config
 
-        self.max_experts = adaptive_config.get('max_experts', 5)
-        self.max_depth = adaptive_config.get('max_depth', 5)
-        self.sigma_fraction = adaptive_config.get('sigma_fraction', 0.2)
-        self.base_weight = adaptive_config.get('base_weight', 1.0)
-        self.base_everywhere = adaptive_config.get('base_everywhere', True)
-        self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
-        self.expert_type = adaptive_config.get('expert_type', 'mlp')
+        self.max_experts = adaptive_config['max_experts']
+        self.max_depth = adaptive_config['max_depth']
+        self.sigma_fraction = adaptive_config['sigma_fraction']
+        self.base_weight = adaptive_config['base_weight']
+        self.base_everywhere = adaptive_config['base_everywhere']
+        self.freeze_mode = adaptive_config['freeze_mode']
+        self.expert_type = adaptive_config['expert_type']
         self.blending_mode = 'soft'
 
         self.atoe_threshold_capacity = adaptive_config.get(
@@ -55,16 +55,16 @@ class AToELeaves(nn.Module):
         problem = config['problem']
         problem_config = config[problem]
         self.input_dim = base_architecture[0]
-        self.output_dim = problem_config.get('output_dim', 2)
+        self.output_dim = problem_config['output_dim']
         if self.atoe_threshold_capacity is not None:
             # Read variable_for_expert_size and corresponding threshold
-            self.variable_for_expert_size = adaptive_config.get('variable_for_expert_size', 'norm')
+            self.variable_for_expert_size = adaptive_config['variable_for_expert_size']
             if self.variable_for_expert_size == 'norm':
-                self.expert_size_threshold = problem_config.get('wavelet_threshold', 1.0)
+                self.expert_size_threshold = problem_config['wavelet_threshold']
             elif self.variable_for_expert_size == 'new_norm':
-                self.expert_size_threshold = problem_config.get('new_norm_threshold', 1.0)
+                self.expert_size_threshold = problem_config['new_norm_threshold']
             elif self.variable_for_expert_size == 'smoothness':
-                self.expert_size_threshold = problem_config.get('tree_smoothness_threshold', 0.7)
+                self.expert_size_threshold = problem_config['tree_smoothness_threshold']
             else:
                 self.expert_size_threshold = 1.0
 
@@ -338,7 +338,7 @@ class AToELeaves(nn.Module):
         leaf_list = sorted(self.leaf_indices)
         _, psi_experts = self.batched_indicators(inputs)  # (N, K)
         psi_leaves = psi_experts[:, leaf_list]  # (N, L)
-        psi_norm = psi_leaves / psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        psi_norm = psi_leaves / psi_leaves.sum(dim=1, keepdim=True)
         u_leaves = torch.stack([self.experts[i](inputs) for i in leaf_list], dim=1)
         return (psi_norm.unsqueeze(-1) * u_leaves).sum(dim=1)
 
@@ -362,7 +362,7 @@ class AToELeaves(nn.Module):
         active_any = active_mask.sum(dim=0) > _ms  # (L,)
         active_local_indices = torch.nonzero(active_any, as_tuple=True)[0]
 
-        psi_sum = psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        psi_sum = psi_leaves.sum(dim=1, keepdim=True)
         psi_norm = psi_leaves / psi_sum
 
         if len(active_local_indices) == 0:
@@ -421,7 +421,7 @@ class AToELeaves(nn.Module):
 
         psi_leaves = psi_experts[:, leaf_list]  # (N, L)
 
-        Z = psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)  # (N, 1)
+        Z = psi_leaves.sum(dim=1, keepdim=True)  # (N, 1)
         psi_norm_leaves = psi_leaves / Z  # (N, L)
 
         if _t: _t.start('fwd.sparse_eval')
@@ -486,7 +486,7 @@ class AToELeaves(nn.Module):
         leaf_list = sorted(self.leaf_indices)
         _, psi_experts = self.batched_indicators(inputs)  # (N, K)
         psi_leaves = psi_experts[:, leaf_list]  # (N, L)
-        psi_sum = psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        psi_sum = psi_leaves.sum(dim=1, keepdim=True)
         psi_norm = psi_leaves / psi_sum
 
         result['masks'] = {}

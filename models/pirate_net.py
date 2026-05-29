@@ -108,7 +108,7 @@ class PirateNet(nn.Module):
         problem = config['problem']
         problem_config = config[problem]
         spatial_dim = problem_config['spatial_dim']
-        output_dim = problem_config.get('output_dim', 1)
+        output_dim = problem_config['output_dim']
 
         if is_base:
             expected_input_dim = spatial_dim + 1
@@ -161,7 +161,7 @@ class PirateNet(nn.Module):
             ff_out = input_dim
 
         # RWF
-        use_rwf = config.get('rwf', False)
+        use_rwf = config['rwf']
         LinearCls = RWFLinear if use_rwf else nn.Linear
 
         self.activation = _get_activation(activation)

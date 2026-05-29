@@ -578,7 +578,6 @@ class AToE(nn.Module):
 
         if _t: _t.start('fwd.blend')
         psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-        psi_sum = psi_sum.clamp(min=1e-8)
         psi_base_norm = psi_base / psi_sum  # (N, 1)
         psi_experts_norm = psi_experts / psi_sum  # (N, K)
 
@@ -683,7 +682,6 @@ class AToE(nn.Module):
 
         if _t: _t.start('fwd.blend')
         psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-        psi_sum = psi_sum.clamp(min=1e-8)
         psi_base_norm = psi_base / psi_sum  # (N, 1)
         psi_experts_norm = psi_experts / psi_sum  # (N, K)
 
@@ -751,7 +749,6 @@ class AToE(nn.Module):
         if _t: _t.stop('fwd.sparse_selection')
 
         Z = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-        Z = Z.clamp(min=1e-8)
         psi_norm_base = psi_base / Z  # (N, 1)
         psi_norm_experts = psi_experts / Z  # (N, K)
 
@@ -860,7 +857,6 @@ class AToE(nn.Module):
             result['masks'][f'expert_{i}'] = psi_experts[:, i:i+1]  # (N, 1)
 
         psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-        psi_sum = psi_sum.clamp(min=1e-8)
         psi_base_norm = psi_base / psi_sum  # (N, 1)
         psi_experts_norm = psi_experts / psi_sum  # (N, K)
 

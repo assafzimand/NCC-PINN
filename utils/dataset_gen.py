@@ -264,7 +264,7 @@ def _analytic_ic(problem: str, x: torch.Tensor, pc: Dict) -> torch.Tensor:
     if problem == 'wave1d':
         return torch.sin(x[:, 0:1])
     if problem == 'fisher_kpp':
-        kappa = pc.get('kappa', 25.0)
+        kappa = pc['kappa']
         width = math.sqrt(kappa / 6.0)
         return 1.0 / (1.0 + torch.exp(width * (x[:, 0:1] - 0.25)))
     if problem == 'conv_diff':
@@ -501,8 +501,8 @@ def _save_adaptive_sampling_heatmap(
         # Panel 3: causal-weighted residuals — global or per-leaf
         if has_causal and ax3 is not None:
             if has_global_causal:
-                num_chunks = causal_state.get('num_chunks', 16)
-                causal_tol = causal_state.get('tol', 1.0)
+                num_chunks = causal_state['num_chunks']
+                causal_tol = causal_state['tol']
 
                 t_flat = t_cached[:, 0].cpu()
                 r2_flat = r2_cached.cpu()
@@ -538,7 +538,7 @@ def _save_adaptive_sampling_heatmap(
                 r2_np = r2_cached_np
                 per_point_weights = np.ones(len(x_cached_np))
                 problem = config['problem']
-                _sdim = config[problem].get('spatial_dim', 1)
+                _sdim = config[problem]['spatial_dim']
 
                 tol_vals = []
                 for _region, _expert_idx in leaf_info:
@@ -553,8 +553,8 @@ def _save_adaptive_sampling_heatmap(
                         (t_cached_np <= _region.bounds_upper[_sdim])
                     )
                     n_leaf = mask.sum()
-                    num_chunks = state.get('num_chunks', 16)
-                    causal_tol = state.get('tol', 1.0)
+                    num_chunks = state['num_chunks']
+                    causal_tol = state['tol']
                     tol_vals.append(causal_tol)
                     if n_leaf < num_chunks:
                         continue
@@ -593,7 +593,7 @@ def _save_adaptive_sampling_heatmap(
         problem = config['problem']
         pc = config[problem]
         spatial_domain = pc['spatial_domain']
-        spatial_dim = pc.get('spatial_dim', 1)
+        spatial_dim = pc['spatial_dim']
         t_min, t_max = pc['temporal_domain']
         x_lo, x_hi = spatial_domain[0]
         for ax in [a for a in [ax1, ax2, ax3] if a is not None]:
@@ -656,7 +656,7 @@ def regenerate_training_data(
     spatial_dim = pc['spatial_dim']
     spatial_domain = pc['spatial_domain']
     t_min, t_max = pc['temporal_domain']
-    output_dim = pc.get('output_dim', 1)
+    output_dim = pc['output_dim']
 
     sizes = calculate_dataset_sizes(config)
     n_res = sizes['n_residual_train']
@@ -673,7 +673,7 @@ def regenerate_training_data(
     has_cache = cached_residuals is not None and len(cached_residuals) > 0
     as_enabled = as_cfg['enabled'] and has_cache
     as_ratio = as_cfg['adaptive_ratio']
-    per_leaf_sampling = as_cfg.get('per_leaf_sampling', False)
+    per_leaf_sampling = as_cfg['per_leaf_sampling']
     # phi config comes from the same per-problem adaptive_sampling section
     phi_cfg = {
         'phi': as_cfg['phi'],

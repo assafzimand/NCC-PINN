@@ -187,13 +187,13 @@ def compute_derivatives_decomposed(
 
 
 def build_loss(**cfg):
-    problem = cfg.get('problem', 'allen_cahn')
-    problem_config = cfg.get(problem, {})
-    loss_weights = problem_config.get('loss_weights', {})
-    weight_residual = loss_weights.get('residual', 1.0)
-    weight_ic = loss_weights.get('ic', 1.0)
-    weight_bc = loss_weights.get('bc', 1.0)
-    D = problem_config.get('D', 0.0001)
+    problem = cfg['problem']
+    problem_config = cfg[problem]
+    loss_weights = problem_config['loss_weights']
+    weight_residual = loss_weights['residual']
+    weight_ic = loss_weights['ic']
+    weight_bc = loss_weights['bc']
+    D = problem_config['D']
 
     causal_state = create_causal_state(problem_config)
 
@@ -203,7 +203,7 @@ def build_loss(**cfg):
         masks = batch['mask']
         N = x.shape[0]; device = x.device
         _t = getattr(model, '_timer', None)
-        use_decomposed = (cfg.get('use_decomposed_derivatives', False)
+        use_decomposed = (cfg['use_decomposed_derivatives']
                           and getattr(model, 'supports_decomposed', False)
                           and len(getattr(model, 'experts', [])) > 0)
         if for_tree_spawning:

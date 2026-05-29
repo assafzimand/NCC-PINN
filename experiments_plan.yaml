@@ -23,6 +23,7 @@ base_config:
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
   lr_schedule: exponential                # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
   lr_warmup_steps: 1000               # ~200 epochs at 5 steps/epoch (20k points / batch 4096)
+  lr_warmup_start_factor: 0.01        # Warmup starts at this fraction of base lr (0.01 = 1% of lr)
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps
   lr_decay_steps: 8000               # Slow decay over 5000 epochs
   new_expert_lr_decay: 0.1           # LR scale for newly spawned expert param group: lr_new = current_lr × this
@@ -62,6 +63,7 @@ base_config:
   save_every: 1000                   # Save checkpoint every N epochs
   inner_metrics_eval_every: 1000     # Run NCC/probes/derivatives analysis every N epochs
   seed: 42
+  use_decomposed_derivatives: false  # Use decomposed derivative computation for experts
 
   # ══════════════════════════════════════════════════════════════════════════════
   # PER-PROBLEM CONFIGURATION
@@ -94,11 +96,13 @@ base_config:
       output: ls
       ls_use_bias: true
       spectral_norm: false
+      spectral_norm_init_std: 1.0e-6
     lra:
       enabled: false
       update_every: 100
       alpha: 0.1
       scheme: grad_norm
+      epsilon: 1.0e-5
     adaptive_sampling:
       enabled: true
       adaptive_ratio: 0.3
@@ -133,11 +137,13 @@ base_config:
       output: ls
       ls_use_bias: true
       spectral_norm: false
+      spectral_norm_init_std: 1.0e-6
     lra:
       enabled: false
       update_every: 100
       alpha: 0.1
       scheme: grad_norm
+      epsilon: 1.0e-5
     adaptive_sampling:
       enabled: true
       adaptive_ratio: 0.3
@@ -173,11 +179,13 @@ base_config:
       output: ls
       ls_use_bias: true
       spectral_norm: false
+      spectral_norm_init_std: 1.0e-6
     lra:
       enabled: false
       update_every: 100
       alpha: 0.1
       scheme: grad_norm
+      epsilon: 1.0e-5
     adaptive_sampling:
       enabled: true
       adaptive_ratio: 0.3
@@ -213,11 +221,13 @@ base_config:
       output: ls
       ls_use_bias: true
       spectral_norm: false
+      spectral_norm_init_std: 1.0e-6
     lra:
       enabled: false
       update_every: 100
       alpha: 0.1
       scheme: grad_norm
+      epsilon: 1.0e-5
     adaptive_sampling:
       enabled: true
       adaptive_ratio: 0.3
@@ -258,11 +268,13 @@ base_config:
       output: ls
       ls_use_bias: true
       spectral_norm: false
+      spectral_norm_init_std: 1.0e-6
     lra:
       enabled: true
       update_every: 100
       alpha: 0.1
       scheme: grad_norm
+      epsilon: 1.0e-5
     adaptive_sampling:
       enabled: true
       adaptive_ratio: 0.3
@@ -344,11 +356,13 @@ base_config:
       output: ls
       ls_use_bias: true
       spectral_norm: false
+      spectral_norm_init_std: 1.0e-6
     lra:
       enabled: false
       update_every: 100
       alpha: 0.1
       scheme: grad_norm
+      epsilon: 1.0e-5
     adaptive_sampling:
       enabled: true
       adaptive_ratio: 0.3
@@ -432,11 +446,13 @@ base_config:
       output: ls                     # Least-squares fit to IC data (base model only)
       ls_use_bias: true
       spectral_norm: true            # Bounds Lipschitz constant — prevents h_xxxx overflow in KS
+      spectral_norm_init_std: 1.0e-6
     lra:
       enabled: false
       update_every: 100
       alpha: 0.1
       scheme: grad_norm
+      epsilon: 1.0e-5
     adaptive_sampling:
       enabled: false                 # Disabled for KS by default; experiments can enable
       adaptive_ratio: 0.1
@@ -519,51 +535,3 @@ base_config:
 
 
 experiments:
-
-  - name: ks_plateau_adaptive_no_freeze
-    problem: ks
-    base_architecture: [2, 128, 128, 128, 1]
-    adaptive_pinn:
-      freeze_mode: none
-    ks:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.4
-        per_leaf_sampling: true
-
-  - name: ks_plateau_adaptive_freeze_perm
-    problem: ks
-    base_architecture: [2, 128, 128, 128, 1]
-    adaptive_pinn:
-      freeze_mode: previous
-      freeze_epochs_after_spawn: 9999
-    ks:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.4
-        per_leaf_sampling: true 
-
-  - name: ks_AToELeaves
-    problem: ks
-    model: AToELeaves
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 1]
-    adaptive_pinn:
-      expert_type: resnet
-      freeze_mode: none
-    ks:
-      adaptive_sampling:
-        enabled: true
-        adaptive_ratio: 0.4
-        per_leaf_sampling: true
-
-  # - name: ks_plateau_adaptive_freeze_semi
-  #   problem: ks
-  #   base_architecture: [2, 128, 128, 128, 1]
-  #   adaptive_pinn:
-  #     freeze_mode: previous
-  #     freeze_epochs_after_spawn: 400
-  #   ks:
-  #     adaptive_sampling:
-  #       enabled: true
-  #       adaptive_ratio: 0.4
-  #       per_leaf_sampling: true   

@@ -92,15 +92,15 @@ def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     config_tuple = (
         tuple(pc['spatial_domain'][0]),
         tuple(pc['temporal_domain']),
-        pc.get('D', 1.0),
-        pc.get('kappa', 25.0),
+        pc['D'],
+        pc['kappa'],
     )
     if _cached_solution is None or _cached_config_hash != config_tuple:
         print("  Generating Fisher-KPP solution (514x201 grid)...")
         x_min, x_max = pc['spatial_domain'][0]
         t_min, t_max = pc['temporal_domain']
-        D = pc.get('D', 1.0)
-        kappa = pc.get('kappa', 25.0)
+        D = pc['D']
+        kappa = pc['kappa']
 
         x_grid, t_grid, h_sol = solve_fisher_kpp(
             x_min=x_min, x_max=x_max, t_min=t_min, t_max=t_max,
@@ -138,7 +138,7 @@ def generate_dataset(
     spatial_dim = pc['spatial_dim']
     x_min, x_max = pc['spatial_domain'][0]
     t_min, t_max = pc['temporal_domain']
-    kappa = pc.get('kappa', 25.0)
+    kappa = pc['kappa']
 
     # Get solver grid
     x_grid, t_grid, h_solution = _get_solution_cached(config)

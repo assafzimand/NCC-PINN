@@ -123,17 +123,17 @@ def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     config_tuple = (
         tuple(pc['spatial_domain'][0]),
         tuple(pc['temporal_domain']),
-        pc.get('alpha', 100.0 / 16.0),
-        pc.get('beta', 100.0 / 16.0 ** 2),
-        pc.get('gamma', 100.0 / 16.0 ** 4),
+        pc['alpha'],
+        pc['beta'],
+        pc['gamma'],
     )
     if _cached_solution is None or _cached_config_hash != config_tuple:
         print("  Generating KS solution (512x500 grid, ETDRK4)...")
         x_min, x_max = pc['spatial_domain'][0]
         t_min, t_max = pc['temporal_domain']
-        alpha = pc.get('alpha', 100.0 / 16.0)
-        beta = pc.get('beta', 100.0 / 16.0 ** 2)
-        gamma_val = pc.get('gamma', 100.0 / 16.0 ** 4)
+        alpha = pc['alpha']
+        beta = pc['beta']
+        gamma_val = pc['gamma']
         
         x_grid, t_grid, h_sol = solve_ks(
             x_min=x_min, x_max=x_max, t_min=t_min, t_max=t_max,

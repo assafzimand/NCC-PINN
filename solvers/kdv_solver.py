@@ -115,13 +115,13 @@ def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     config_tuple = (
         tuple(pc['spatial_domain'][0]),
         tuple(pc['temporal_domain']),
-        pc.get('mu', 0.000484),
+        pc['mu'],
     )
     if _cached_solution is None or _cached_config_hash != config_tuple:
         print("  Generating KdV solution (512x500 grid, ETDRK4)...")
         x_min, x_max = pc['spatial_domain'][0]
         t_min, t_max = pc['temporal_domain']
-        mu = pc.get('mu', 0.000484)
+        mu = pc['mu']
         
         x_grid, t_grid, h_sol = solve_kdv(
             x_min=x_min, x_max=x_max, t_min=t_min, t_max=t_max,

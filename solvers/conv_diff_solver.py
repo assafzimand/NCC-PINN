@@ -99,15 +99,15 @@ def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     config_tuple = (
         tuple(pc['spatial_domain'][0]),
         tuple(pc['temporal_domain']),
-        pc.get('beta', 1.0),
-        pc.get('epsilon', 0.01),
+        pc['beta'],
+        pc['epsilon'],
     )
     if _cached_solution is None or _cached_config_hash != config_tuple:
         print("  Generating Convection-Diffusion solution (514x201 grid)...")
         x_min, x_max = pc['spatial_domain'][0]
         t_min, t_max = pc['temporal_domain']
-        beta = pc.get('beta', 1.0)
-        epsilon = pc.get('epsilon', 0.01)
+        beta = pc['beta']
+        epsilon = pc['epsilon']
 
         x_grid, t_grid, h_sol = solve_conv_diff(
             x_min=x_min, x_max=x_max, t_min=t_min, t_max=t_max,

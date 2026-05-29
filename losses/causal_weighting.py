@@ -40,7 +40,7 @@ def create_causal_state(
         'tol_schedule', [0.01, 0.1, 1.0, 10.0, 100.0])
     return {
         'enabled': True,
-        'num_chunks': causal_cfg.get('num_chunks', 16),
+        'num_chunks': causal_cfg['num_chunks'],
         'schedule': list(schedule),
         'schedule_idx': 0,
         'tol': float(schedule[0]),
@@ -140,7 +140,7 @@ def _apply_causal_weights(
     if causal_state is not None:
         batch_min = weights.min().item()
         causal_state['min_weight'] = min(
-            causal_state.get('min_weight', 1.0), batch_min)
+            causal_state['min_weight'], batch_min)
 
     weighted = torch.sum(weights * chunk_losses_t) / num_chunks
     return weighted
