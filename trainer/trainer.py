@@ -11,7 +11,7 @@ import time
 import numpy as np
 
 from trainer.plotting import plot_training_curves, plot_final_comparison
-from trainer.utils import compute_relative_l2_error, compute_infinity_norm_error
+from trainer.utils import compute_infinity_norm_error
 from trainer.timing import EpochTimer
 from models.atoe import AToE
 from models.atoe_leaves import AToELeaves
@@ -1275,8 +1275,11 @@ def train(
             # Eval phase
             model.eval()
             eval_loss = 0.0
-            eval_rel_l2 = 0.0
-            eval_inf_norm = 0.0
+            # Accumulate squared sums for correct global rel-L2 computation
+            # (averaging per-batch rel-L2 is mathematically incorrect)
+            total_diff_sq = 0.0
+            total_gt_sq = 0.0
+            eval_inf_norm = 0.0  # Track max across all batches
             n_eval_batches = 0
 
             for batch in eval_loader:
@@ -1292,17 +1295,20 @@ def train(
                     timer.start('eval.h_pred')
                     h_pred = model(inputs)
                     timer.stop('eval.h_pred')
-                    rel_l2 = compute_relative_l2_error(h_pred, batch['h_gt'])
+                    # Accumulate squared differences and GT norms for global rel-L2
+                    diff = h_pred - batch['h_gt']
+                    total_diff_sq += (diff ** 2).sum().item()
+                    total_gt_sq += (batch['h_gt'] ** 2).sum().item()
+                    # Track max inf_norm across all batches
                     inf_norm = compute_infinity_norm_error(h_pred, batch['h_gt'])
+                    eval_inf_norm = max(eval_inf_norm, inf_norm.item())
 
                 eval_loss += loss.item()
-                eval_rel_l2 += rel_l2.item()
-                eval_inf_norm += inf_norm.item()
                 n_eval_batches += 1
 
             eval_loss /= n_eval_batches
-            eval_rel_l2 /= n_eval_batches
-            eval_inf_norm /= n_eval_batches
+            # Compute global rel-L2: ||pred - gt||_2 / ||gt||_2
+            eval_rel_l2 = math.sqrt(total_diff_sq) / (math.sqrt(total_gt_sq) + 1e-10)
 
             # Store evaluation metrics (train_loss already stored above for all epochs)
             metrics['epochs'].append(epoch)
