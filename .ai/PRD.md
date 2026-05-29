@@ -160,20 +160,21 @@ For **AToELeaves/ANT**: `copy_output=True` — parent is retired, children must 
 |-----------------|--------|-------------|
 | `'accept_split_by_norm'` | Single-phase | Spawn every N epochs, incremental |
 | `'by_mean_residual'` | Single-phase | Spawn one leaf with highest mean residual |
-| `'full_tree_by_norm'` | 3-phase | Phase 1 → Phase 2 → Phase 3 |
+| `'M_term_tree_by_norm'` | 3-phase | Phase 1 → Phase 2 (select top M) → Phase 3 |
 | `'use_perfect_trees'` | 2-phase (skip Phase 1) | Load pre-computed tree → Phase 3 |
 
-### 3-Phase Training (full_tree_by_norm)
+### 3-Phase Training (M_term_tree_by_norm)
 
 **Phase 1**: Train base model alone
 - Duration: `adaptive_pinn.initial_train.epochs`
 - Uses Phase 1 config overrides if specified
 
-**Phase 2**: Fit decision tree + spawn all experts
-- Calls `region_detector.fit_full_tree_and_prune()`
-- Bottom-up pruning based on `variable_for_node_accept` and thresholds
-- AToELeaves spawns only pruned-tree leaf nodes
-- AToE/ANT spawns all accepted nodes
+**Phase 2**: Fit decision tree + select top M experts
+- Calls `region_detector.fit_full_tree_and_prune(M=adaptive_pinn.M_experts_num)`
+- Selects top M nodes by `variable_for_node_accept` metric (norm/new_norm/smoothness)
+- Ensures valid binary tree structure (every node has 0 or 2 children)
+- AToELeaves spawns only leaf nodes from the final tree
+- AToE/ANT spawns all accepted nodes (top M + closure nodes)
 
 **Phase 3**: Train full model (base + all experts)
 - Duration: `epochs` from top-level config
@@ -272,11 +273,13 @@ else:
 
 Controlled by `variable_for_node_accept`:
 
-| Value | Acceptance Criterion | Threshold Key |
-|-------|---------------------|---------------|
-| `'norm'` | wavelet_norm_squared ≥ threshold | `wavelet_threshold` |
-| `'new_norm'` | new_wavelet_norm_squared ≥ threshold | `new_norm_threshold` |
-| `'smoothness'` | smoothness_alpha < threshold AND R² ≥ 0.5 | `tree_smoothness_threshold` |
+| Value | M_term_tree_by_norm (ranking) | Threshold-based methods | Threshold Key |
+|-------|------------------------------|------------------------|---------------|
+| `'norm'` | Select top M by wavelet_norm_squared (highest) | wavelet_norm_squared ≥ threshold | `wavelet_threshold` |
+| `'new_norm'` | Select top M by new_wavelet_norm_squared (highest) | new_wavelet_norm_squared ≥ threshold | `new_norm_threshold` |
+| `'smoothness'` | Select top M by smoothness_alpha (lowest/roughest, R²≥0.5) | smoothness_alpha < threshold AND R² ≥ 0.5 | `tree_smoothness_threshold` |
+
+**Note**: `M_term_tree_by_norm` uses `M_experts_num` for top-M selection, not thresholds. Thresholds are still used by `accept_split_by_norm` method.
 
 ---
 
@@ -468,9 +471,14 @@ Each problem section (`schrodinger`, `burgers1d`, etc.) contains:
 - Problem-specific: `nu` (Burgers), `D` (Allen-Cahn), `mu` (KdV), `alpha/beta/gamma` (KS), etc.
 
 ### Tree Thresholds
-- `wavelet_threshold`: For norm-based acceptance
-- `new_norm_threshold`: For new_norm-based acceptance
-- `tree_smoothness_threshold`: For smoothness-based acceptance
+- `wavelet_threshold`: For norm-based acceptance (used by `accept_split_by_norm`)
+- `new_norm_threshold`: For new_norm-based acceptance (used by `accept_split_by_norm`)
+- `tree_smoothness_threshold`: For smoothness-based acceptance (used by `accept_split_by_norm`)
+
+### M-term Tree Selection
+- `M_experts_num`: Number of top-ranked nodes to select (used by `M_term_tree_by_norm`)
+  - After selection, closure is built to ensure valid binary tree structure
+  - Final expert count = M + closure nodes (siblings + ancestors)
 
 ### Loss Weights
 ```yaml
