@@ -139,6 +139,14 @@ def narrow_config_for_window(cfg: Dict, window: TimeWindow) -> Dict:
     # Set window-specific M
     window_cfg['adaptive_pinn']['M_experts_num'] = window.M
     
+    # Add flag to indicate time marching is active (for eval filtering)
+    window_cfg['_time_marching_window'] = {
+        'enabled': True,
+        't_start': window.t_start,
+        't_end': window.t_end,
+        'idx': window.idx
+    }
+    
     return window_cfg
 
 
@@ -182,7 +190,15 @@ def override_ic_with_model(
     prev_model.eval()
     with torch.no_grad():
         inputs = torch.cat([x_ic, t_ic], dim=1).to(device)
-        h_pred = prev_model(inputs)  # (n_ic, output_dim)
+        
+        # DEBUG: Use base model only for clean IC propagation
+        # This bypasses experts/POU so IC is purely from the base network.
+        # Once time marching is verified working, this can be reverted to:
+        #   h_pred = prev_model(inputs)
+        if hasattr(prev_model, 'base_model'):
+            h_pred = prev_model.base_model(inputs)  # (n_ic, output_dim)
+        else:
+            h_pred = prev_model(inputs)  # Fallback for non-AToE models
     
     # Override h_gt for IC points
     dataset['h_gt'][ic_mask] = h_pred.to(dataset['h_gt'].device)

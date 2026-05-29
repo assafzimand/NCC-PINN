@@ -479,9 +479,9 @@ base_config:
       scale: 2.0                     # Conservative — KS has broadband content, not sharp interfaces
       periodic: true
     init:
-      hidden: parent_weights         # New experts copy hidden-layer weights from closest ancestor
-      output: ls                     # Least-squares fit to IC data (base model only)
-      ls_use_bias: true
+      hidden: glorot         # New experts copy hidden-layer weights from closest ancestor
+      output: zero                     # Least-squares fit to IC data (base model only)
+      ls_use_bias: false
       spectral_norm: false            # Bounds Lipschitz constant — prevents h_xxxx overflow in KS
       spectral_norm_init_std: 1.0e-6
     lra:

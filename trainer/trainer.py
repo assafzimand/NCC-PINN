@@ -303,6 +303,69 @@ def train(
     train_data = _move_batch_to_device(train_data, device)
     eval_data = _move_batch_to_device(eval_data, device)
 
+    # Filter train and eval data by window temporal bounds if time marching is enabled
+    time_marching_window = cfg.get('_time_marching_window', {})
+    if time_marching_window.get('enabled', False):
+        t_start = time_marching_window['t_start']
+        t_end = time_marching_window['t_end']
+        window_idx = time_marching_window['idx']
+        
+        # --- Filter TRAINING data ---
+        t_train = train_data['t'].squeeze()
+        train_mask = (t_train >= t_start) & (t_train < t_end)
+        # Handle edge case: last window should include t_end
+        if t_train.max() <= t_end:
+            train_mask = train_mask | (t_train == t_end)
+        
+        n_train_original = train_data['x'].shape[0]
+        n_train_filtered = train_mask.sum().item()
+        
+        print(f"  [Time Marching] Filtering train data for window {window_idx}: "
+              f"t in [{t_start:.4f}, {t_end:.4f}]")
+        print(f"  [Time Marching] Train data: {n_train_original} → {n_train_filtered} points")
+        
+        # Apply mask to train_data
+        filtered_train_data = {}
+        for key, value in train_data.items():
+            if torch.is_tensor(value):
+                filtered_train_data[key] = value[train_mask]
+            elif key == 'mask':
+                filtered_train_data[key] = {
+                    k: v[train_mask] if torch.is_tensor(v) else v
+                    for k, v in value.items()
+                }
+            else:
+                filtered_train_data[key] = value
+        train_data = filtered_train_data
+        
+        # --- Filter EVAL data ---
+        t_eval = eval_data['t'].squeeze()
+        eval_mask = (t_eval >= t_start) & (t_eval < t_end)
+        # Handle edge case: last window should include t_end
+        if t_eval.max() <= t_end:
+            eval_mask = eval_mask | (t_eval == t_end)
+        
+        n_eval_original = eval_data['x'].shape[0]
+        n_eval_filtered = eval_mask.sum().item()
+        
+        print(f"  [Time Marching] Filtering eval data for window {window_idx}: "
+              f"t in [{t_start:.4f}, {t_end:.4f}]")
+        print(f"  [Time Marching] Eval data: {n_eval_original} → {n_eval_filtered} points")
+        
+        # Apply mask to eval_data
+        filtered_eval_data = {}
+        for key, value in eval_data.items():
+            if torch.is_tensor(value):
+                filtered_eval_data[key] = value[eval_mask]
+            elif key == 'mask':
+                filtered_eval_data[key] = {
+                    k: v[eval_mask] if torch.is_tensor(v) else v
+                    for k, v in value.items()
+                }
+            else:
+                filtered_eval_data[key] = value
+        eval_data = filtered_eval_data
+
     print(f"  Train size: {train_data['x'].shape[0]}")
     print(f"  Eval size: {eval_data['x'].shape[0]}")
     print(f"  Train data device: {train_data['x'].device}")
