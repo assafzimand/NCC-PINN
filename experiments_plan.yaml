@@ -1,33 +1,32 @@
 # Experiment plan configuration
-experiment_name: "ks_day_ablation"
+experiment_name: "M_term_tree_verification"
 
 # Base configuration (will be used for all experiments)
 base_config:
-  problem: ks
+  problem: schrodinger
   model: AToE                        # 'AToE' | 'AToELeaves' | 'ANT'
   activation: tanh                   # Activation function for all networks
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 10000                          # Total training epochs (accept_split_by_norm ignores initial_train)
+  epochs: 1                          # Phase 3: just 1 epoch to verify tree creation
   batch_size: 4096                    # Mini-batch size for Adam/SOAP training
-  patience_epochs: 50000             # Effectively disabled
-  min_epochs: 1                      # No early-stop floor
+  patience_epochs: 3000              # Match old config
+  min_epochs: 2000                   # Match old config
 
   # ── Primary optimizer ──
   # ── Optimizer configuration ──
   optimizer_1: soap                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
   optimizer_2: null                  # No second optimizer — let SOAP run full duration
-  optimizer_switch_epoch: 5000       # Unused (no switch)
+  optimizer_switch_epoch: 1500       # Match old config
   lr: 0.001                          # Base (peak) learning rate
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
   lr_schedule: exponential                # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
-  lr_warmup_steps: 1000               # ~200 epochs at 5 steps/epoch (20k points / batch 4096)
+  lr_warmup_steps: 500                # Match old config
   lr_warmup_start_factor: 0.01        # Warmup starts at this fraction of base lr (0.01 = 1% of lr)
   lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps
-  lr_decay_steps: 8000               # Slow decay over 5000 epochs
-  new_expert_lr_decay: 0.1           # LR scale for newly spawned expert param group: lr_new = current_lr × this
-                                     # 1.0 = no decay (current behavior); 0.1 = gentle entry (plan Tier 2)
+  lr_decay_steps: 10000              # Match old config
+  new_expert_lr_decay: 1.0           # DISABLED: 1.0 = no decay (match old behavior)
 
   # ── SOAP-specific (only used when optimizer_1 or _2 is 'soap') ──
   soap_betas: [0.95, 0.95]          # KS-tuned: symmetric betas work better for chaotic dynamics
@@ -63,7 +62,6 @@ base_config:
   save_every: 1000                   # Save checkpoint every N epochs
   inner_metrics_eval_every: 1000     # Run NCC/probes/derivatives analysis every N epochs
   seed: 42
-  use_decomposed_derivatives: false  # Use decomposed derivative computation for experts
 
   # ══════════════════════════════════════════════════════════════════════════════
   # PER-PROBLEM CONFIGURATION
@@ -445,7 +443,7 @@ base_config:
       hidden: parent_weights         # New experts copy hidden-layer weights from closest ancestor
       output: ls                     # Least-squares fit to IC data (base model only)
       ls_use_bias: true
-      spectral_norm: true            # Bounds Lipschitz constant — prevents h_xxxx overflow in KS
+      spectral_norm: false            # Bounds Lipschitz constant — prevents h_xxxx overflow in KS
       spectral_norm_init_std: 1.0e-6
     lra:
       enabled: false
@@ -477,7 +475,7 @@ base_config:
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 500                   # Check for spawning every N epochs (matches initial_train.epochs)
+    spawn_every_epochs: 2000                   # Match old config (2000 = initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
@@ -502,37 +500,52 @@ base_config:
     M_experts_num: 40                              # Number of top-norm nodes to select (only for M_term_tree_by_norm)
     perfect_trees_path: perfect_tree_examples/classic_norm/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
-    # ── Post-spawn freeze (Fix 2) ──
+    # ── Post-spawn freeze (Fix 2) ── DISABLED for tree verification
     # After spawning, freeze base+old experts for N epochs so only the newest expert trains.
-    # Calibration: warmup_epochs = lr_warmup_steps / (n_residual/batch_size) = 1000/5 = 200ep.
-    # freeze_400 = 2× warmup. With spawn_every=500 this gives ~400ep solo + ~100ep joint before next check.
     # 0 = disabled (all models train together immediately after spawn).
-    freeze_epochs_after_spawn: 400
+    freeze_epochs_after_spawn: 0               # DISABLED: match old config (not present = 0)
 
-    # ── Plateau-gated spawning (Fix 3) ──
+    # ── Plateau-gated spawning (Fix 3) ── DISABLED for tree verification
     # spawn_every_epochs = minimum interval between spawns.
     # Once that interval elapses, plateau is checked every epoch until met, then spawn fires.
     # Plateau measured on training loss to avoid using ground truth (pure PINN spirit).
     # spawn_plateau_epochs should be a multiple of resample_every_epochs (currently 100) so both
     # ends of the look-back window fall at the same phase in the resampling cycle (apples-to-apples).
     # 300 = 3 × 100 ✓. With spawn_every=500 this fits well within one spawn interval.
-    spawn_require_plateau: true     # Disabled by default; plateau experiments enable this
+    spawn_require_plateau: false     # Disabled by default; plateau experiments enable this
     spawn_plateau_epochs: 50        # look-back window (3× resample_every = fair loss comparison)
     spawn_plateau_delta: 0.05        # spawn only if training loss improved <1% over the window
-    spawn_retries_before_stop: 5  # false = never stop. 0 = stop on first failed spawn attempt.
+    spawn_retries_before_stop: false  # false = never stop. 0 = stop on first failed spawn attempt.
                                       # N = allow N retries; counter resets to N after any success.
     spawn_retry_after: 10            # epochs to wait before retrying after a failed spawn attempt.
                                       # Counted from the failure epoch (not aligned to spawn_every).
                                       # Plateau gating still applies at the retry check.
 
     # ── 3-Phase training config ──
-    # full_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns, Phase 3 trains full model.
+    # M_term_tree_by_norm: Phase 1 trains base, Phase 2 fits tree + spawns top M, Phase 3 trains full model.
     # use_perfect_trees: SKIPS Phase 1, loads pre-computed tree from perfect_trees_path, spawns experts, then Phase 3.
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
     initial_train:
-      epochs: 4000                               # Phase 1: train base model before tree fitting
+      epochs: 2000                               # Phase 1: train base model before tree fitting (match old config)
 
 
 experiments:
+  # ── 4 experiments to verify M_term_tree_by_norm with M=40 ──
+  # Using old successful config settings where applicable
+  - name: allen_cahn
+    problem: allen_cahn
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  
+  - name: kdv
+    problem: kdv
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  
+  - name: schrodinger
+    problem: schrodinger
+    base_architecture: [2, 30, 30, 30, 30, 30, 2]
+  
+  - name: burgers1d
+    problem: burgers1d
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
