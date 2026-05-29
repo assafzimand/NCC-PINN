@@ -108,8 +108,8 @@ base_config:
       phi: quadratic
       phi_epsilon: 1.0
       phi_power: 2.0
-    grad_clip_norm: 1.0
-    expert_grad_clip_norm: 1.0
+    grad_clip_norm: null
+    expert_grad_clip_norm: null
 
   wave1d:
     spatial_dim: 1
@@ -191,8 +191,8 @@ base_config:
       phi: quadratic
       phi_epsilon: 1.0
       phi_power: 2.0
-    grad_clip_norm: 1.0
-    expert_grad_clip_norm: 1.0
+    grad_clip_norm: null
+    expert_grad_clip_norm: null
 
   burgers2d:
     spatial_dim: 2
@@ -280,8 +280,8 @@ base_config:
       phi: exponential               # quadratic | exponential | power
       phi_epsilon: 1.0               # scale ε for exponential phi
       phi_power: 2.0
-    grad_clip_norm: 1.0
-    expert_grad_clip_norm: 1.0
+    grad_clip_norm: null
+    expert_grad_clip_norm: null
 
   kdv:
     spatial_dim: 1
@@ -325,8 +325,8 @@ base_config:
       phi: quadratic
       phi_epsilon: 1.0
       phi_power: 2.0
-    grad_clip_norm: 1.0
-    expert_grad_clip_norm: 1.0
+    grad_clip_norm: null
+    expert_grad_clip_norm: null
 
   fisher_kpp:
     spatial_dim: 1
