@@ -511,13 +511,13 @@ def build_loss(**cfg) -> Callable:
         scalar CUDA tensor
     """
     # Extract loss weights
-    problem = cfg.get('problem', 'problem1')
+    problem = cfg['problem']
     problem_config = cfg.get(problem, {})
-    loss_weights = problem_config.get('loss_weights', {})
+    loss_weights = problem_config['loss_weights']
     
-    weight_residual = loss_weights.get('residual', 1.0)
-    weight_ic = loss_weights.get('ic', 1.0)
-    weight_bc = loss_weights.get('bc', 1.0)
+    weight_residual = loss_weights['residual']
+    weight_ic = loss_weights['ic']
+    weight_bc = loss_weights['bc']
 
     causal_state = create_causal_state(problem_config)
     
@@ -553,7 +553,7 @@ def build_loss(**cfg) -> Callable:
         # Timer (attached to model by trainer)
         _t = getattr(model, '_timer', None)
         
-        use_decomposed = (cfg.get('use_decomposed_derivatives', False)
+        use_decomposed = (cfg['use_decomposed_derivatives']
                           and getattr(model, 'supports_decomposed', False)
                           and len(getattr(model, 'experts', [])) > 0)
         

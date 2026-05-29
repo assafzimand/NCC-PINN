@@ -384,16 +384,16 @@ def build_loss(**cfg) -> Callable:
         Callable loss function that takes (model, batch) and returns
         scalar tensor
     """
-    problem = cfg.get('problem', 'conv_diff')
-    problem_config = cfg.get(problem, {})
-    loss_weights = problem_config.get('loss_weights', {})
+    problem = cfg['problem']
+    problem_config = cfg[problem]
+    loss_weights = problem_config['loss_weights']
     
-    weight_residual = loss_weights.get('residual', 1.0)
-    weight_ic = loss_weights.get('ic', 1.0)
-    weight_bc = loss_weights.get('bc', 1.0)
+    weight_residual = loss_weights['residual']
+    weight_ic = loss_weights['ic']
+    weight_bc = loss_weights['bc']
     
-    beta = problem_config.get('beta', 1.0)
-    epsilon = problem_config.get('epsilon', 0.01)
+    beta = problem_config['beta']
+    epsilon = problem_config['epsilon']
 
     causal_state = create_causal_state(problem_config)
     
@@ -428,7 +428,7 @@ def build_loss(**cfg) -> Callable:
         
         _t = getattr(model, '_timer', None)
         
-        use_decomposed = (cfg.get('use_decomposed_derivatives', False)
+        use_decomposed = (cfg['use_decomposed_derivatives']
                           and getattr(model, 'supports_decomposed', False)
                           and len(getattr(model, 'experts', [])) > 0)
         

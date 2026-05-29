@@ -37,17 +37,19 @@ class LRAWeights:
         update_every: int = 100,
         initial_weights: Dict[str, float] = None,
         scheme: str = 'grad_norm',
+        scheme_cfg: Dict[str, float] = None,
     ):
         self.alpha = alpha
         self.update_every = update_every
         self.scheme = scheme
+        self.scheme_cfg = scheme_cfg if scheme_cfg is not None else {}
 
         if initial_weights is not None:
             self.weights: Dict[str, float] = dict(initial_weights)
         else:
             self.weights: Dict[str, float] = {'residual': 1.0, 'ic': 1.0}
 
-        self.fixed_residual_weight = self.weights.get('residual', 1.0)
+        self.fixed_residual_weight = self.weights['residual']
         self.last_grad_norms: Dict[str, float] = {k: 0.0 for k in self.weights}
 
     def update(
@@ -97,8 +99,9 @@ class LRAWeights:
             for key in grad_norms:
                 # epsilon prevents division-by-zero when a loss term is already
                 # well-satisfied (e.g. IC after LS-init). Matches jaxpi formula:
-                # w = mean_norm / (norm + 1e-5 * mean_norm), max weight ~ 1e5.
-                target = mean_norm / (grad_norms[key] + 1e-5 * mean_norm)
+                # w = mean_norm / (norm + epsilon * mean_norm)
+                epsilon = self.scheme_cfg['epsilon']
+                target = mean_norm / (grad_norms[key] + epsilon * mean_norm)
                 self.weights[key] = (
                     (1.0 - self.alpha) * self.weights.get(key, 1.0)
                     + self.alpha * target
@@ -109,7 +112,8 @@ class LRAWeights:
             for key in grad_norms:
                 if key == 'residual':
                     continue
-                target = max_grad_res / (grad_norms[key] + 1e-5 * max_grad_res)
+                epsilon = self.scheme_cfg['epsilon']
+                target = max_grad_res / (grad_norms[key] + epsilon * max_grad_res)
                 self.weights[key] = (
                     (1.0 - self.alpha) * self.weights.get(key, 1.0)
                     + self.alpha * target

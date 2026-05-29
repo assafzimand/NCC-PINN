@@ -43,7 +43,7 @@ class FCNet(nn.Module):
         problem = config['problem']
         problem_config = config[problem]
         spatial_dim = problem_config['spatial_dim']
-        output_dim = problem_config.get('output_dim', 2)  # Default to 2 for legacy
+        output_dim = problem_config['output_dim']
 
         if is_base:
             expected_input_dim = spatial_dim + 1  # x + t

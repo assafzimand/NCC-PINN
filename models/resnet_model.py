@@ -87,7 +87,7 @@ class ResNetModel(nn.Module):
 
         self.activation = self._get_activation(activation)
 
-        use_rwf = config.get('rwf', False)
+        use_rwf = config['rwf']
 
         # Fourier Features: embed input before input_proj
         ff_cfg = config['fourier_features']

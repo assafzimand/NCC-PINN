@@ -91,15 +91,15 @@ class AdaptiveExpertPINN(nn.Module):
         self.adaptive_config = adaptive_config
         
         # Extract adaptive parameters
-        self.max_experts = adaptive_config.get('max_experts', 5)
-        self.max_depth = adaptive_config.get('max_depth', 5)  # Maximum depth in expert tree
-        self.blending_mode = adaptive_config.get('blending_mode', 'soft')
-        self.sigma_fraction = adaptive_config.get('sigma_fraction', 0.2)  # For soft: sigma = fraction * region_size
-        self.base_weight = adaptive_config.get('base_weight', 1.0)  # Uniform weight for base model
-        self.base_everywhere = adaptive_config.get('base_everywhere', True)
-        self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
-        self.expert_architectures = adaptive_config.get('expert_architectures', None)
-        self.only_leaves = adaptive_config.get('only_leaves', False)
+        self.max_experts = adaptive_config['max_experts']
+        self.max_depth = adaptive_config['max_depth']
+        self.blending_mode = adaptive_config['blending_mode']
+        self.sigma_fraction = adaptive_config['sigma_fraction']
+        self.base_weight = adaptive_config['base_weight']
+        self.base_everywhere = adaptive_config['base_everywhere']
+        self.freeze_mode = adaptive_config['freeze_mode']
+        self.expert_architectures = adaptive_config.get('expert_architectures', None)  # Truly optional
+        self.only_leaves = adaptive_config.get('only_leaves', False)  # Legacy feature flag
 
         # Leaf tracking for only_leaves mode (-1 = base model is a leaf)
         self.leaf_indices: Set[int] = {-1} if self.only_leaves else set()
@@ -664,7 +664,6 @@ class AdaptiveExpertPINN(nn.Module):
         # ψ̃_k = ψ_k / Σ_j ψ_j for j=0..K
         if _t: _t.start('fwd.blend')
         psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-        psi_sum = psi_sum.clamp(min=1e-8)
         psi_base_norm = psi_base / psi_sum  # (N, 1)
         psi_experts_norm = psi_experts / psi_sum  # (N, K)
         
@@ -799,7 +798,6 @@ class AdaptiveExpertPINN(nn.Module):
         # Step 5: Normalize weights and blend (partition of unity)
         if _t: _t.start('fwd.blend')
         psi_sum = psi_base + psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
-        psi_sum = psi_sum.clamp(min=1e-8)
         psi_base_norm = psi_base / psi_sum  # (N, 1)
         psi_experts_norm = psi_experts_filtered / psi_sum  # (N, K)
         
@@ -823,7 +821,7 @@ class AdaptiveExpertPINN(nn.Module):
         leaf_list = sorted(self.leaf_indices)
         _, psi_experts = self.batched_indicators(inputs)  # (N, K)
         psi_leaves = psi_experts[:, leaf_list]  # (N, L)
-        psi_norm = psi_leaves / psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        psi_norm = psi_leaves / psi_leaves.sum(dim=1, keepdim=True)
         u_leaves = torch.stack([self.experts[i](inputs) for i in leaf_list], dim=1)
         return (psi_norm.unsqueeze(-1) * u_leaves).sum(dim=1)
 
@@ -849,13 +847,13 @@ class AdaptiveExpertPINN(nn.Module):
 
         if len(active_local_indices) == 0:
             # Fallback: no leaf above threshold, use all leaves
-            psi_norm = psi_leaves / psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
+            psi_norm = psi_leaves / psi_leaves.sum(dim=1, keepdim=True)
             u_leaves = torch.stack([self.experts[i](inputs) for i in leaf_list], dim=1)
             return (psi_norm.unsqueeze(-1) * u_leaves).sum(dim=1)
 
         # Zero out sub-threshold psi
         psi_filtered = psi_leaves * active_mask.float()
-        psi_norm = psi_filtered / psi_filtered.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        psi_norm = psi_filtered / psi_filtered.sum(dim=1, keepdim=True)
 
         # Only evaluate active leaf experts
         N = inputs.shape[0]
@@ -935,7 +933,6 @@ class AdaptiveExpertPINN(nn.Module):
 
         # Step 3: Normalize weights (partition of unity)
         Z = psi_base + psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
-        Z = Z.clamp(min=1e-8)
         psi_norm_base = psi_base / Z  # (N, 1)
         psi_norm_experts = psi_experts_filtered / Z  # (N, K)
 
@@ -1043,7 +1040,7 @@ class AdaptiveExpertPINN(nn.Module):
             active_mask = psi_leaves > threshold  # (N, L)
             psi_leaves = psi_leaves * active_mask.float()
 
-        Z = psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)  # (N, 1)
+        Z = psi_leaves.sum(dim=1, keepdim=True)  # (N, 1)
         psi_norm_leaves = psi_leaves / Z  # (N, L)
 
         # Build components — each leaf gets own input copy
@@ -1158,7 +1155,6 @@ class AdaptiveExpertPINN(nn.Module):
         
         # Compute normalized weights (partition of unity)
         psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-        psi_sum = psi_sum.clamp(min=1e-8)
         psi_base_norm = psi_base / psi_sum  # (N, 1)
         psi_experts_norm = psi_experts / psi_sum  # (N, K)
         
@@ -1209,7 +1205,7 @@ class AdaptiveExpertPINN(nn.Module):
         leaf_list = sorted(self.leaf_indices)
         _, psi_experts = self.batched_indicators(inputs)  # (N, K)
         psi_leaves = psi_experts[:, leaf_list]  # (N, L)
-        psi_sum = psi_leaves.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        psi_sum = psi_leaves.sum(dim=1, keepdim=True)
         psi_norm = psi_leaves / psi_sum
 
         result['masks'] = {}

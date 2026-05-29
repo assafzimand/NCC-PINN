@@ -125,13 +125,13 @@ def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     config_tuple = (
         tuple(pc['spatial_domain'][0]),
         tuple(pc['temporal_domain']),
-        pc.get('D', 0.0001),
+        pc['D'],
     )
     if _cached_solution is None or _cached_config_hash != config_tuple:
         print("  Generating Allen-Cahn solution (512x500 grid, ETDRK4)...")
         x_min, x_max = pc['spatial_domain'][0]
         t_min, t_max = pc['temporal_domain']
-        D = pc.get('D', 0.0001)
+        D = pc['D']
         
         x_grid, t_grid, h_sol = solve_allen_cahn(
             x_min=x_min, x_max=x_max, t_min=t_min, t_max=t_max,

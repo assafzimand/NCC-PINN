@@ -467,15 +467,15 @@ def build_loss(**cfg) -> Callable:
     Returns:
         Callable loss function that takes (model, batch) and returns scalar tensor
     """
-    problem = cfg.get('problem', 'kdv')
-    problem_config = cfg.get(problem, {})
-    loss_weights = problem_config.get('loss_weights', {})
+    problem = cfg['problem']
+    problem_config = cfg[problem]
+    loss_weights = problem_config['loss_weights']
 
-    weight_residual = loss_weights.get('residual', 1.0)
-    weight_ic = loss_weights.get('ic', 1.0)
-    weight_bc = loss_weights.get('bc', 1.0)
+    weight_residual = loss_weights['residual']
+    weight_ic = loss_weights['ic']
+    weight_bc = loss_weights['bc']
 
-    mu = problem_config.get('mu', 0.000484)
+    mu = problem_config['mu']
 
     causal_state = create_causal_state(problem_config)
 

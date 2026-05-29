@@ -273,7 +273,7 @@ def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     problem_config = config['burgers1d']
     x_min, x_max = problem_config['spatial_domain'][0]
     t_min, t_max = problem_config['temporal_domain']
-    nu = problem_config.get('nu', 0.01)
+    nu = problem_config['nu']
     
     config_tuple = (x_min, x_max, t_min, t_max, nu)
     

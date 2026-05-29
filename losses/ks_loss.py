@@ -487,21 +487,21 @@ def build_loss(**cfg) -> Callable:
             - problem: problem name (e.g., 'ks')
             - ks: dict with 'loss_weights', 'alpha', 'beta', 'gamma'
     """
-    problem = cfg.get('problem', 'ks')
+    problem = cfg['problem']
     problem_config = cfg.get(problem, {})
-    loss_weights = problem_config.get('loss_weights', {})
+    loss_weights = problem_config['loss_weights']
 
-    weight_residual = loss_weights.get('residual', 1.0)
-    weight_ic = loss_weights.get('ic', 1.0)
-    weight_bc = loss_weights.get('bc', 1.0)
+    weight_residual = loss_weights['residual']
+    weight_ic = loss_weights['ic']
+    weight_bc = loss_weights['bc']
 
-    alpha = problem_config.get('alpha', 100.0 / 16.0)
-    beta = problem_config.get('beta', 100.0 / 16.0 ** 2)
-    gamma_val = problem_config.get('gamma', 100.0 / 16.0 ** 4)
+    alpha = problem_config['alpha']
+    beta = problem_config['beta']
+    gamma_val = problem_config['gamma']
 
     # Disable soft BC penalty when periodic Fourier embedding is used — BC is
     # enforced exactly by the embedding so the MSE term is redundant noise.
-    use_bc = not cfg.get('fourier_features', {}).get('periodic', False)
+    use_bc = not cfg['fourier_features']['periodic']
 
     causal_state = create_causal_state(problem_config)
     _leaf_state = {}  # mutable container; trainer populates when per_leaf_causal=True

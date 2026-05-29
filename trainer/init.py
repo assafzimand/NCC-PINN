@@ -43,7 +43,7 @@ def apply_hidden_init(model: nn.Module, cfg: dict) -> None:
     except ImportError:
         linear_types = (nn.Linear,)
 
-    activation = cfg.get('activation', 'tanh')
+    activation = cfg['activation']
     gain = nn.init.calculate_gain(activation)
     out_layer = _get_output_layer(model)
 
@@ -94,7 +94,8 @@ def apply_output_init(
     if output_mode == 'zero':
         with torch.no_grad():
             if init_cfg.get('spectral_norm', False):
-                nn.init.normal_(out_layer.weight, mean=0.0, std=1e-6)
+                std = init_cfg['spectral_norm_init_std']
+                nn.init.normal_(out_layer.weight, mean=0.0, std=std)
             else:
                 nn.init.zeros_(out_layer.weight)
             if out_layer.bias is not None:
@@ -102,7 +103,7 @@ def apply_output_init(
         print("  [Init] Output layer: zero-initialized")
 
     elif output_mode == 'ls':
-        use_bias = init_cfg.get('ls_use_bias', True)
+        use_bias = init_cfg['ls_use_bias']
 
         mask_ic = train_data['mask']['IC']
         n_ic = int(mask_ic.sum().item())
@@ -168,8 +169,10 @@ def apply_expert_init(expert: nn.Module, cfg: dict) -> None:
 
     out_layer = _get_output_layer(expert)
     with torch.no_grad():
-        if cfg.get('init', {}).get('spectral_norm', False):
-            nn.init.normal_(out_layer.weight, mean=0.0, std=1e-6)
+        init_cfg = cfg.get('init', {})
+        if init_cfg.get('spectral_norm', False):
+            std = init_cfg['spectral_norm_init_std']
+            nn.init.normal_(out_layer.weight, mean=0.0, std=std)
         else:
             nn.init.zeros_(out_layer.weight)
         if out_layer.bias is not None:
@@ -227,7 +230,8 @@ def apply_parent_copy_init(
     use_spectral = (cfg or {}).get('init', {}).get('spectral_norm', False)
     with torch.no_grad():
         if use_spectral:
-            nn.init.normal_(out_layer_new.weight, mean=0.0, std=1e-6)
+            std = cfg.get('init', {})['spectral_norm_init_std']
+            nn.init.normal_(out_layer_new.weight, mean=0.0, std=std)
         else:
             nn.init.zeros_(out_layer_new.weight)
         if out_layer_new.bias is not None:

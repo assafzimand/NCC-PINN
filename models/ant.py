@@ -38,27 +38,13 @@ class ANT(nn.Module):
         self.config = config
         self.adaptive_config = adaptive_config
 
-        self.max_experts = adaptive_config.get(
-            'max_experts', 5
-        )
-        self.max_depth = adaptive_config.get(
-            'max_depth', 5
-        )
-        self.blending_mode = adaptive_config.get(
-            'blending_mode', 'soft'
-        )
-        self.sigma_fraction = adaptive_config.get(
-            'sigma_fraction', 0.2
-        )
-        self.base_weight = adaptive_config.get(
-            'base_weight', 1.0
-        )
-        self.freeze_mode = adaptive_config.get(
-            'freeze_mode', 'none'
-        )
-        self.expert_type = adaptive_config.get(
-            'expert_type', 'mlp'
-        )
+        self.max_experts = adaptive_config['max_experts']
+        self.max_depth = adaptive_config['max_depth']
+        self.blending_mode = adaptive_config['blending_mode']
+        self.sigma_fraction = adaptive_config['sigma_fraction']
+        self.base_weight = adaptive_config['base_weight']
+        self.freeze_mode = adaptive_config['freeze_mode']
+        self.expert_type = adaptive_config['expert_type']
         if self.expert_type == 'piratenet':
             raise ValueError(
                 "PirateNet is incompatible with ANT: ANT requires "
@@ -67,9 +53,7 @@ class ANT(nn.Module):
                 "Use AToE or AToELeaves with expert_type='piratenet'."
             )
 
-        raw_hidden = adaptive_config.get(
-            'ANT_default_hidden_layers', 70
-        )
+        raw_hidden = adaptive_config['ANT_default_hidden_layers']
         if isinstance(raw_hidden, list):
             if len(set(raw_hidden)) != 1:
                 raise ValueError(
@@ -79,9 +63,7 @@ class ANT(nn.Module):
             raw_hidden = raw_hidden[0]
         self.default_hidden_width = int(raw_hidden)
 
-        raw_thresh = adaptive_config.get(
-            'ANT_threshold_architecture', None
-        )
+        raw_thresh = adaptive_config.get('ANT_threshold_architecture', None)  # Can be None
         if raw_thresh is not None:
             if isinstance(raw_thresh, list):
                 if len(set(raw_thresh)) != 1:
@@ -96,18 +78,16 @@ class ANT(nn.Module):
 
         problem = config['problem']
         problem_config = config[problem]
-        self.output_dim = problem_config.get(
-            'output_dim', 2
-        )
+        self.output_dim = problem_config['output_dim']
         
         # Read variable_for_expert_size and corresponding threshold
-        self.variable_for_expert_size = adaptive_config.get('variable_for_expert_size', 'norm')
+        self.variable_for_expert_size = adaptive_config['variable_for_expert_size']
         if self.variable_for_expert_size == 'norm':
-            self.expert_size_threshold = problem_config.get('wavelet_threshold', 1.0)
+            self.expert_size_threshold = problem_config['wavelet_threshold']
         elif self.variable_for_expert_size == 'new_norm':
-            self.expert_size_threshold = problem_config.get('new_norm_threshold', 1.0)
+            self.expert_size_threshold = problem_config['new_norm_threshold']
         elif self.variable_for_expert_size == 'smoothness':
-            self.expert_size_threshold = problem_config.get('tree_smoothness_threshold', 0.7)
+            self.expert_size_threshold = problem_config['tree_smoothness_threshold']
         else:
             self.expert_size_threshold = 1.0
 
@@ -359,7 +339,7 @@ class ANT(nn.Module):
 
         psi_sum = psi_raw.sum(
             dim=1, keepdim=True
-        ).clamp(min=1e-8)
+        )
         psi_normalized = psi_raw / psi_sum
 
         return psi_normalized, active_leaf_local
