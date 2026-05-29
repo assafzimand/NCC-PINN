@@ -268,6 +268,7 @@ else:
 | `spawn_plateau_delta` | Max relative improvement to trigger spawn (e.g., 0.05 = 5%) |
 | `spawn_retries_before_stop` | Max retries after failed spawn; `false` = never stop |
 | `spawn_retry_after` | Epochs to wait before retry after failed spawn |
+| `M_experts_num` | Number of top-ranked nodes to select (used by `M_term_tree_by_norm` only). After selection, closure is built to ensure valid binary tree structure. Final expert count = M + closure nodes (siblings + ancestors) |
 
 ### Node Acceptance Metrics
 
@@ -475,10 +476,7 @@ Each problem section (`schrodinger`, `burgers1d`, etc.) contains:
 - `new_norm_threshold`: For new_norm-based acceptance (used by `accept_split_by_norm`)
 - `tree_smoothness_threshold`: For smoothness-based acceptance (used by `accept_split_by_norm`)
 
-### M-term Tree Selection
-- `M_experts_num`: Number of top-ranked nodes to select (used by `M_term_tree_by_norm`)
-  - After selection, closure is built to ensure valid binary tree structure
-  - Final expert count = M + closure nodes (siblings + ancestors)
+**Note**: `M_term_tree_by_norm` does not use these thresholds. It uses `M_experts_num` from the `adaptive_pinn` section to select the top M nodes by the configured metric.
 
 ### Loss Weights
 ```yaml
