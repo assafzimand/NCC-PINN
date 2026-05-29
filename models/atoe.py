@@ -392,7 +392,7 @@ class AToE(nn.Module):
                        initially contributes nothing (smooth integration during
                        on-the-fly spawning). If False, keep PyTorch default
                        random init (used when all experts are created at once
-                       before training, e.g. full_tree_by_norm / use_perfect_trees).
+                       before training, e.g. M_term_tree_by_norm / use_perfect_trees).
 
         Returns:
             Index of the new expert

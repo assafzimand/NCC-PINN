@@ -12,7 +12,7 @@ All PDEs implemented in this project with their mathematical formulation, domain
 | 2 | Schrödinger (NLS) | $i h_t + \tfrac{1}{2} h_{xx} + \|h\|^2 h = 0$ | $x \in [-5,5],\; t \in [0,\pi/2]$ | — | 2 |
 | 3 | Wave 1D | $h_{tt} - h_{xx} = 0$ | $x \in [-5,5],\; t \in [0,2\pi]$ | — | 1 |
 | 4 | Burgers 2D | $h_t + h(h_{x_0} + h_{x_1}) - \nu(h_{x_0 x_0} + h_{x_1 x_1}) = 0$ | $(x_0,x_1) \in [0,1]^2,\; t \in [0,2]$ | $\nu = 0.1$ | 1 |
-| 5 | Allen-Cahn | $h_t - D h_{xx} - 5(h - h^3) = 0$ | $x \in [-1,1],\; t \in [0,1]$ | $D = 0.001$ | 1 |
+| 5 | Allen-Cahn | $h_t - D h_{xx} - 5(h - h^3) = 0$ | $x \in [-1,1],\; t \in [0,1]$ | $D = 0.0001$ | 1 |
 | 6 | KdV | $h_t + h h_x + \mu^2 h_{xxx} = 0$ | $x \in [-1,1],\; t \in [0,1]$ | $\mu = 0.022$ ($\mu^2 = 4.84 \times 10^{-4}$) | 1 |
 | 7 | Fisher-KPP | $h_t - D h_{xx} - \kappa h(1-h) = 0$ | $x \in [0,1],\; t \in [0,1]$ | $D=1,\; \kappa=25$ | 1 |
 | 8 | Convection-Diffusion | $h_t + \beta h_x - \varepsilon h_{xx} = 0$ | $x \in [-1,1],\; t \in [0,1]$ | $\beta=1,\; \varepsilon=0.01$ | 1 |
@@ -42,7 +42,7 @@ $$h_t + h\, h_x - \frac{\nu}{\pi}\, h_{xx} = 0$$
 | vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | **2.68 × 10⁻⁷** | **2,011 params** (from paper Table 2) | [Hag et al., 2025 (npj AI)](https://www.nature.com/articles/s44387-026-00084-4) |
 | Vanilla PINN | 2019 | L-BFGS | 6.7 × 10⁻⁴ | **3,021 params** — MLP `[2,20×8,1]` (from [code](https://github.com/maziarraissi/PINNs)) | [Raissi et al., J. Comput. Phys. 378](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
-> Note: results above are for the $\nu/\pi = 1/1000$ variant matching our config. For the easier $\nu/\pi = 1/100$ variant, SOTA is vRBA: 8.25 × 10⁻⁹ and PirateNet (Adam): 8.20 × 10⁻⁵.
+> **Comparability:** Results above are for the $\nu/\pi = 1/1000$ variant matching our config and are directly comparable. For the easier $\nu/\pi = 1/100$ variant, SOTA is vRBA: 8.25 × 10⁻⁹ and PirateNet (Adam): 8.20 × 10⁻⁵ (not directly comparable).
 
 ---
 
@@ -64,9 +64,11 @@ $$i\, h_t + \tfrac{1}{2}\, h_{xx} + |h|^2 h = 0$$
 
 | Method | Year | Rel. L₂ | Model Capacity | Reference |
 |--------|------|---------|----------------|-----------|
-| Vanilla PINN | 2019 | ~1.97 × 10⁻² | **30,802 params** — MLP `[2,100×4,2]` (from [code](https://github.com/maziarraissi/PINNs)) | [Raissi et al., J. Comput. Phys. 378](https://doi.org/10.1016/j.jcp.2018.10.045) |
+| Vanilla PINN | 2019 | ~1.97 × 10⁻³ | **30,802 params** — MLP `[2,100×4,2]` (from [code](https://github.com/maziarraissi/PINNs)) | [Raissi et al., J. Comput. Phys. 378](https://doi.org/10.1016/j.jcp.2018.10.045) |
 | PirateNet + FF + WF + CS | 2024 | ~10⁻⁴ range | *~500K+ params (est.)* — ModifiedMlp with 256 neurons/layer + FF + adaptive residual connections. Exact param count not stated; jaxpi default is 4×256. | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
 | PINNacle benchmark (multi-method) | 2024 | varies | Varies by method; standardized per-problem configs | [Hao et al., NeurIPS 2024](https://arxiv.org/abs/2306.08827) |
+
+> **Comparability:** All results above use the canonical NLS benchmark configuration matching our setup and are directly comparable.
 
 ---
 
@@ -145,6 +147,8 @@ $$h_t - D\, h_{xx} - 5(h - h^3) = 0$$
 | DASA-PINN + FF | 2023 | Adam | 8.57 × 10⁻⁵ | *~200K-270K params (est.)* — uses standard MLP + FF + attention weighting; code at [github](https://github.com/soanagno/rba-pinns), exact arch not reported in paper | [Anagnostopoulos et al., 2023](https://arxiv.org/abs/2307.00379) |
 | Vanilla PINN | 2017 | Adam | 4.98 × 10⁻¹ | *~3K params (est.)* — Raissi-style MLP | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
+> **Comparability:** All results above use the standard Allen-Cahn benchmark with $D = 0.0001$ matching our configuration and are directly comparable.
+
 ---
 
 ### 6. Korteweg-de Vries (KdV)
@@ -155,7 +159,7 @@ $$h_t + \eta\, h\, h_x + \mu^2\, h_{xxx} = 0$$
 |----------|-------|
 | **Spatial domain** | $x \in [-1, 1]$ |
 | **Temporal domain** | $t \in [0, 1]$ |
-| **Parameters** | $\eta = 1$, $\mu = 0.022$ (so $\mu^2 = 4.84 \times 10^{-4}$); classical Zabusky & Kruskal (1965) values |
+| **Parameters** | $\eta = 1$, $\mu = 0.022$ (so $\mu^2 = 4.84 \times 10^{-4}$); classical Zabusky & Kruskal (1965) values. **Note:** Our code uses `mu` directly as the coefficient (i.e., code's `mu` = literature's $\mu^2$) |
 | **Initial condition** | $h(x, 0) = \cos(\pi x)$ |
 | **Boundary conditions** | Periodic: $h(-1,t) = h(1,t)$ |
 | **Character** | Nonlinear dispersive; initial cosine breaks into multi-soliton train with sharp localized peaks on flat background |
@@ -168,6 +172,8 @@ $$h_t + \eta\, h\, h_x + \mu^2\, h_{xxx} = 0$$
 | RAD + FF | 2024 | SSBroyden | 6.00 × 10⁻⁶ | *~2K params (est.)* — same SSBroyden setup as vRBA comparison | [Wu et al., JMLR 24, 2023](https://jmlr.org/papers/v24/22-1258.html) |
 | PirateNet + FF + WF + CS + LRA | 2025 | SOAP | 3.40 × 10⁻⁴ | *~500K+ params (est.)* — PirateNet ModifiedMlp + FF | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
 | PirateNet + FF + WF + CS + LRA | 2024 | Adam | 4.27 × 10⁻⁴ | *~500K+ params (est.)* — PirateNet ModifiedMlp + FF | [Wang et al., JMLR 25, 2024](https://jmlr.org/papers/v25/24-0313.html) |
+
+> **Comparability:** All results above use the classical KdV benchmark with $\mu^2 = 4.84 \times 10^{-4}$ and periodic BC matching our configuration and are directly comparable.
 
 ---
 
@@ -228,7 +234,7 @@ $$h_t + \alpha\, h\, h_x + \beta\, h_{xx} + \gamma\, h_{xxxx} = 0$$
 | Property | Value |
 |----------|-------|
 | **Spatial domain** | $x \in [0, 2\pi]$ |
-| **Temporal domain** | $t \in [0, 0.8]$ |
+| **Temporal domain** | $t \in [0, 1]$ |
 | **Parameters** | $\alpha = 100/16 = 6.25$, $\beta = 100/16^2 = 0.390625$, $\gamma = 100/16^4 \approx 1.526 \times 10^{-3}$ |
 | **Initial condition** | $h(x, 0) = \cos(x)(1 + \sin(x))$ |
 | **Boundary conditions** | Periodic: $h(0,t) = h(2\pi,t)$, $h_x(0,t) = h_x(2\pi,t)$ |
@@ -242,7 +248,7 @@ $$h_t + \alpha\, h\, h_x + \beta\, h_{xx} + \gamma\, h_{xxxx} = 0$$
 | PirateNet + FF + WF + CS + LRA | 2025 | SOAP | ~10⁻⁴ range | *~500K+ params (est.)* — same PirateNet architecture | [Huang et al., 2025](https://arxiv.org/abs/2412.09009) |
 | BRDR + FF + mMLP | 2025 | Adam | tested | *~20K-50K params (est.)* — mMLP with FF, smaller than PirateNet; exact size not reported | [Kim & Perdikaris, 2025](https://www.nature.com/articles/s44387-026-00084-4#ref-CR16) |
 
-> Note: KS is one of the most challenging 1D PINN benchmarks due to its chaotic dynamics and 4th-order spatial derivative. The PirateNet benchmark above uses the same domain and parameter configuration as our implementation.
+> **Comparability:** KS is one of the most challenging 1D PINN benchmarks due to its chaotic dynamics and 4th-order spatial derivative. **Verification status:** The specific PirateNet error values listed above could not be verified from accessible primary sources for this exact KS configuration. Only results explicitly matching our parameters ($\alpha = 100/16$, $\beta = 100/16^2$, $\gamma = 100/16^4$, $t \in [0,1]$) are directly comparable.
 
 ---
 
@@ -281,4 +287,4 @@ A cross-method summary of network sizes. **Bold** = exact numbers from paper/cod
 
 ---
 
-*Last updated: 2026-02-19*
+*Last updated: 2026-05-29*

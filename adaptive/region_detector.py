@@ -539,27 +539,30 @@ class RegionDetector:
         self,
         X: np.ndarray,
         y: np.ndarray,
+        M: int,
         variable_for_node_accept: str = 'norm',
-        thresholds: Optional[Dict[str, float]] = None,
         verbose: bool = True,
         **kwargs,
     ) -> Tuple[List[Tuple[TreeNodeInfo, int]], Dict]:
         """
-        Fit a full decision tree on the entire domain and prune via
-        bottom-up sibling-pair thresholding.
+        Fit a full decision tree on the entire domain and select top M nodes
+        by the configured metric, ensuring valid binary tree structure.
 
-        Pruning criterion:
-            A sibling pair is ACCEPTED based on the configured metric:
-            - 'norm': wavelet_norm_squared >= threshold
-            - 'new_norm': new_wavelet_norm_squared >= threshold
-            - 'smoothness': smoothness_alpha < threshold (rough regions)
+        Selection criterion:
+            Select top M nodes based on the configured metric:
+            - 'norm': highest wavelet_norm_squared
+            - 'new_norm': highest new_wavelet_norm_squared
+            - 'smoothness': lowest smoothness_alpha (roughest regions)
+            
+        Then ensure valid binary tree structure by adding:
+            - All ancestors of selected nodes (paths to root)
+            - Siblings of any node in closure (so no node has exactly 1 child)
 
         Args:
             X: (N, n_dims) coordinates
             y: (N,) or (N, output_dim) predictions
+            M: Number of top nodes to select
             variable_for_node_accept: 'norm' | 'new_norm' | 'smoothness'
-            thresholds: Dict mapping variable names to threshold values
-                {'norm': float, 'new_norm': float, 'smoothness': float}
             verbose: print diagnostics
             **kwargs: ignored (backward compat)
 
@@ -568,12 +571,9 @@ class RegionDetector:
             - List of (TreeNodeInfo, parent_tree_node_id) in BFS order.
               parent_tree_node_id is the tree node id of the nearest
               accepted ancestor, or -1 for children of root.
-            - Dict of per-depth pruning statistics.
+            - Dict of per-depth selection statistics.
         """
         from collections import deque
-
-        if thresholds is None:
-            thresholds = {'norm': 0.0, 'new_norm': 0.0, 'smoothness': 0.7}
 
         old_n_estimators = self.n_estimators
         self.n_estimators = 1
@@ -587,7 +587,7 @@ class RegionDetector:
 
         if not all_nodes:
             if verbose:
-                print("  [FullTree] No nodes in tree")
+                print("  [M-term Tree] No nodes in tree")
             return [], {}
 
         node_lookup = {node.node_id: node for node in all_nodes}
@@ -597,6 +597,7 @@ class RegionDetector:
         children_right = tree.children_right
         node_depth = {}
         parent_map = {}
+        sibling_map = {}  # node_id -> sibling_id
         queue = deque([(0, 0)])
         max_depth_seen = 0
         while queue:
@@ -610,19 +611,10 @@ class RegionDetector:
             if r != -1:
                 parent_map[r] = nid
                 queue.append((r, depth + 1))
-
-        # Group sibling pairs by depth
-        depth_to_sibling_pairs = {}
-        for nid in range(tree.node_count):
-            l, r = children_left[nid], children_right[nid]
+            # Map siblings to each other
             if l != -1 and r != -1:
-                child_depth = node_depth.get(l, 0)
-                if child_depth not in depth_to_sibling_pairs:
-                    depth_to_sibling_pairs[child_depth] = []
-                depth_to_sibling_pairs[child_depth].append((l, r))
-
-        # Get threshold for configured variable
-        threshold = thresholds.get(variable_for_node_accept, 0.0)
+                sibling_map[l] = r
+                sibling_map[r] = l
 
         # Helper: extract the configured metric value from a node
         def _get_metric_value(nid: int) -> Optional[float]:
@@ -634,107 +626,102 @@ class RegionDetector:
             elif variable_for_node_accept == 'new_norm':
                 return node.new_wavelet_norm_squared
             elif variable_for_node_accept == 'smoothness':
+                # For smoothness, check reliability
+                if node.smoothness_r2 is None or node.smoothness_r2 < 0.5:
+                    return None  # unreliable smoothness estimate
                 return node.smoothness_alpha
             return None
 
-        # Helper: is a node above threshold?
-        def _passes_threshold(nid: int) -> bool:
-            value = _get_metric_value(nid)
-            if value is None:
-                return False  # unknown/unreliable → prune
-            
-            if variable_for_node_accept == 'smoothness':
-                # For smoothness: lower alpha = rougher = keep (alpha < threshold)
-                # Also check r2 for reliability
-                if nid in node_lookup:
-                    r2 = node_lookup[nid].smoothness_r2
-                    if r2 is None or r2 < 0.5:
-                        return False  # unreliable smoothness estimate
-                return value < threshold
+        # Get all nodes (excluding root) with valid metric values
+        nodes_with_metrics = []
+        for nid in range(1, tree.node_count):  # Skip root (0)
+            metric_val = _get_metric_value(nid)
+            if metric_val is not None and nid in node_lookup:
+                nodes_with_metrics.append((nid, metric_val))
+
+        # Sort nodes by metric (descending for norm/new_norm, ascending for smoothness)
+        reverse_sort = (variable_for_node_accept != 'smoothness')
+        nodes_with_metrics.sort(key=lambda x: x[1], reverse=reverse_sort)
+
+        # Select top M nodes
+        M_actual = min(M, len(nodes_with_metrics))
+        top_M_nodes = {nid for nid, _ in nodes_with_metrics[:M_actual]}
+
+        if verbose:
+            if M_actual < M:
+                print(f"  [M-term Tree] Requested M={M}, but only {M_actual} nodes with valid metrics")
             else:
-                # For norm/new_norm: higher = more variation = keep (value >= threshold)
-                return value >= threshold
+                print(f"  [M-term Tree] Selected top M={M_actual} nodes by {variable_for_node_accept}")
 
-        accepted = set()
-        depth_stats = {}
+        # Build closure: add ancestors and siblings for valid binary tree structure
+        accepted = set(top_M_nodes)
+        
+        # Add all ancestors of selected nodes
+        for nid in list(top_M_nodes):
+            cur = nid
+            while cur in parent_map:
+                cur = parent_map[cur]
+                if cur == 0:  # Don't add root
+                    break
+                accepted.add(cur)
 
-        # Bottom-up: deepest first
-        for depth in range(max_depth_seen, 0, -1):
-            pairs = depth_to_sibling_pairs.get(depth, [])
-            n_by_threshold = 0
-            n_by_child = 0
-            n_rejected = 0
-            metric_values_at_depth = []
-
-            for left_id, right_id in pairs:
-                left_accepted = left_id in accepted
-                right_accepted = right_id in accepted
-
-                # Collect metric values for stats
-                left_val = _get_metric_value(left_id)
-                right_val = _get_metric_value(right_id)
-                for v in (left_val, right_val):
-                    if v is not None:
-                        metric_values_at_depth.append(v)
-
-                # Decision logic
-                if left_accepted or right_accepted:
-                    accept_pair = True
-                    n_by_child += 1
-                elif _passes_threshold(left_id) or _passes_threshold(right_id):
-                    accept_pair = True
-                    n_by_threshold += 1
-                else:
-                    accept_pair = False
-                    n_rejected += 1
-
-                if accept_pair:
-                    for nid in (left_id, right_id):
-                        accepted.add(nid)
-                        cur = nid
+        # Ensure binary tree structure: iteratively add siblings
+        changed = True
+        iterations = 0
+        max_iterations = tree.node_count  # Safety limit
+        while changed and iterations < max_iterations:
+            changed = False
+            iterations += 1
+            for nid in list(accepted):
+                if nid in sibling_map:
+                    sibling = sibling_map[nid]
+                    if sibling not in accepted:
+                        accepted.add(sibling)
+                        changed = True
+                        # Also add ancestors of newly added sibling
+                        cur = sibling
                         while cur in parent_map:
                             cur = parent_map[cur]
-                            if cur in accepted:
+                            if cur == 0 or cur in accepted:
                                 break
                             accepted.add(cur)
+                            changed = True
 
-            if pairs and metric_values_at_depth:
-                depth_stats[depth] = {
-                    'n_pairs': len(pairs),
-                    'accepted_by_threshold': n_by_threshold,
-                    'accepted_by_child': n_by_child,
-                    'rejected': n_rejected,
-                    'metric_min': float(min(metric_values_at_depth)),
-                    'metric_max': float(max(metric_values_at_depth)),
-                    'metric_median': float(np.median(metric_values_at_depth)),
-                }
-
-        # Root itself is not an expert (it is the base model)
-        accepted.discard(0)
-
-        # Format threshold label for logging
-        if variable_for_node_accept == 'smoothness':
-            thr_label = f"{variable_for_node_accept}<{threshold}"
-        else:
-            thr_label = f"{variable_for_node_accept}>={threshold}"
+        # Compute statistics by depth
+        depth_stats = {}
+        for depth in range(1, max_depth_seen + 1):
+            nodes_at_depth = [nid for nid in accepted if node_depth.get(nid) == depth]
+            if nodes_at_depth:
+                metrics_at_depth = [_get_metric_value(nid) for nid in nodes_at_depth]
+                metrics_at_depth = [m for m in metrics_at_depth if m is not None]
+                top_m_at_depth = sum(1 for nid in nodes_at_depth if nid in top_M_nodes)
+                if metrics_at_depth:
+                    depth_stats[depth] = {
+                        'n_nodes': len(nodes_at_depth),
+                        'n_from_top_M': top_m_at_depth,
+                        'n_added_for_closure': len(nodes_at_depth) - top_m_at_depth,
+                        'metric_min': float(min(metrics_at_depth)),
+                        'metric_max': float(max(metrics_at_depth)),
+                        'metric_median': float(np.median(metrics_at_depth)),
+                    }
         
         if verbose:
-            print(f"\n  [FullTree] Tree has {tree.node_count} nodes, "
+            print(f"\n  [M-term Tree] Tree has {tree.node_count} nodes, "
                   f"max depth {max_depth_seen}")
-            print(f"  [FullTree] Accepted {len(accepted)} nodes "
-                  f"({thr_label})")
-            print(f"  [FullTree] Per-depth pruning stats:")
+            print(f"  [M-term Tree] Top M={M_actual} selected, "
+                  f"final accepted (with closure): {len(accepted)} nodes")
+            print(f"  [M-term Tree] Added {len(accepted) - M_actual} nodes for valid binary tree structure")
+            print(f"  [M-term Tree] Per-depth selection stats:")
             for d in sorted(depth_stats.keys()):
                 s = depth_stats[d]
                 print(
                     f"    Depth {d:2d}: "
-                    f"{s['n_pairs']:3d} pairs | "
-                    f"{s['accepted_by_threshold']:2d} by threshold | "
-                    f"{s['accepted_by_child']:2d} by child | "
-                    f"{s['rejected']:3d} rejected | "
-                    f"metric [{s['metric_min']:.3f}, "
-                    f"{s['metric_median']:.3f}, "
-                    f"{s['metric_max']:.3f}]"
+                    f"{s['n_nodes']:3d} nodes | "
+                    f"{s['n_from_top_M']:2d} from top-M | "
+                    f"{s['n_added_for_closure']:2d} added for closure | "
+                    f"{variable_for_node_accept} [{s['metric_min']:.4f}, "
+                    f"{s['metric_median']:.4f}, "
+                    f"{s['metric_max']:.4f}]"
                 )
 
         # Build result in BFS order with parent relationships
@@ -751,10 +738,11 @@ class RegionDetector:
                     metric_val = _get_metric_value(nid)
                     metric_str = (f"{metric_val:.4f}"
                                  if metric_val is not None else "None")
-                    print(f"    [FullTree] Node {nid} ({is_leaf_str}): "
+                    from_top_m = " [TOP-M]" if nid in top_M_nodes else ""
+                    print(f"    [M-term Tree] Node {nid} ({is_leaf_str}): "
                           f"ACCEPT (parent={anc_str}, "
                           f"{variable_for_node_accept}={metric_str}, "
-                          f"samples={node.n_samples})")
+                          f"samples={node.n_samples}){from_top_m}")
                 next_ancestor = nid
             else:
                 next_ancestor = nearest_ancestor
@@ -766,7 +754,7 @@ class RegionDetector:
                 bfs.append((r, next_ancestor))
 
         if verbose:
-            print(f"  [FullTree] Result: {len(result)} accepted nodes")
+            print(f"  [M-term Tree] Result: {len(result)} accepted nodes")
 
         return result, depth_stats
 

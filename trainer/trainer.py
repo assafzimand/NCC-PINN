@@ -314,11 +314,11 @@ def train(
     eval_loader = _create_dataloader(eval_data, cfg['batch_size'],
                                      shuffle=False)
 
-    # ── 3-phase logic for full_tree_by_norm / use_perfect_trees ──
+    # ── 3-phase logic for M_term_tree_by_norm / use_perfect_trees ──
     adaptive_cfg_init = cfg['adaptive_pinn']
     spawning_method_init = adaptive_cfg_init['spawning_method']
     initial_train_cfg = adaptive_cfg_init.get('initial_train', None)
-    use_three_phase = (spawning_method_init == 'full_tree_by_norm' and initial_train_cfg is not None)
+    use_three_phase = (spawning_method_init == 'M_term_tree_by_norm' and initial_train_cfg is not None)
     use_perfect_trees = (spawning_method_init == 'use_perfect_trees')
     reinit_base_after_spawn = adaptive_cfg_init['reinitialize_base_after_spawn']
 
@@ -501,7 +501,9 @@ def train(
         print(f"  Spawn every: {spawn_every} epochs")
         print(f"  Tree max depth: {tree_max_depth}")
         print(f"  Tree min samples leaf: {tree_min_samples_leaf}")
-        if spawning_method in ('accept_split_by_norm', 'full_tree_by_norm', 'use_perfect_trees'):
+        if spawning_method in ('accept_split_by_norm', 'M_term_tree_by_norm', 'use_perfect_trees'):
+            if spawning_method == 'M_term_tree_by_norm':
+                print(f"  M experts num: {adaptive_cfg['M_experts_num']}")
             print(f"  Wavelet threshold: {wavelet_threshold}")
         print(f"  Blending mode: {adaptive_cfg['blending_mode']}")
         print(f"  Freeze mode: {adaptive_cfg['freeze_mode']}")
@@ -522,7 +524,7 @@ def train(
 
         region_detector = RegionDetector(
             n_estimators=1,
-            max_depth=tree_max_depth if spawning_method in ('full_tree_by_norm', 'use_perfect_trees') else 1,
+            max_depth=tree_max_depth if spawning_method in ('M_term_tree_by_norm', 'use_perfect_trees') else 1,
             min_samples_leaf=tree_min_samples_leaf,
             domain_bounds=domain_bounds
         )
@@ -1450,7 +1452,7 @@ def train(
         # Normal trigger: epoch % spawn_every == 0.
         # After a failed spawn: also trigger spawn_retry_after epochs after the failure
         # (tracked from _spawn_last_fail_epoch). Plateau gating still applies at retries.
-        if spawning_method in ('full_tree_by_norm', 'use_perfect_trees'):
+        if spawning_method in ('M_term_tree_by_norm', 'use_perfect_trees'):
             _base_spawn_eligible = is_adaptive and not spawning_complete
         else:
             _base_spawn_eligible = (is_adaptive and
@@ -1829,16 +1831,17 @@ def train(
                     'evaluated_leaves': norm_diag_leaves,
                 })
 
-            elif spawning_method == 'full_tree_by_norm':
-                # One-shot: fit full tree, prune bottom-up, spawn all accepted
-                print(f"  [FullTree] Fitting full tree (max_depth={region_detector.max_depth}, "
-                      f"min_samples_leaf={region_detector.min_samples_leaf})...")
+            elif spawning_method == 'M_term_tree_by_norm':
+                # One-shot: fit full tree, select top M by norm, spawn all accepted
+                M = adaptive_cfg['M_experts_num']
+                print(f"  [M-term Tree] Fitting full tree (max_depth={region_detector.max_depth}, "
+                      f"min_samples_leaf={region_detector.min_samples_leaf}), selecting top M={M}...")
                 accepted_nodes, prune_depth_stats = \
                     region_detector.fit_full_tree_and_prune(
                         X=X_eval,
                         y=y_eval,
+                        M=M,
                         variable_for_node_accept=variable_for_node_accept,
-                        thresholds=thresholds,
                         verbose=True,
                     )
 
@@ -1942,8 +1945,9 @@ def train(
                 }
                 metrics['spawning_diagnostics'].append({
                     'epoch': epoch,
-                    'method': 'full_tree_by_norm',
-                    'wavelet_threshold': wavelet_threshold,
+                    'method': 'M_term_tree_by_norm',
+                    'M_experts_num': M,
+                    'variable_for_node_accept': variable_for_node_accept,
                     'total_tree_nodes': int(tree.node_count),
                     'accepted_count': len(accepted_ids_diag),
                     'spawned_count': len(spawned_ids_diag),

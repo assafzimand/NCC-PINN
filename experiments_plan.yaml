@@ -498,7 +498,8 @@ base_config:
     use_decomposed_derivatives: false
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
-    spawning_method: accept_split_by_norm         # "by_mean_residual" | "accept_split_by_norm" | "full_tree_by_norm" | "use_perfect_trees"
+    spawning_method: M_term_tree_by_norm          # "by_mean_residual" | "accept_split_by_norm" | "M_term_tree_by_norm" | "use_perfect_trees"
+    M_experts_num: 40                              # Number of top-norm nodes to select (only for M_term_tree_by_norm)
     perfect_trees_path: perfect_tree_examples/classic_norm/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
     # ── Post-spawn freeze (Fix 2) ──
