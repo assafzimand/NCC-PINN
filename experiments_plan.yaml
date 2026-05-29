@@ -31,6 +31,7 @@ base_config:
   # ── SOAP-specific (only used when optimizer_1 or _2 is 'soap') ──
   soap_betas: [0.95, 0.95]          # KS-tuned: symmetric betas work better for chaotic dynamics
   soap_precondition_frequency: 10    # How often SOAP updates its Shampoo-style preconditioner.
+  soap_weight_decay: 0.0             # Weight decay for SOAP
 
   # ── L-BFGS specific (only used when optimizer_1 or _2 is 'lbfgs') ──
   lbfgs_lr: 1.0                     # L-BFGS learning rate (line search makes this effectively a max step size).
@@ -49,48 +50,6 @@ base_config:
   adam_betas: [0.9, 0.999]           # Adam momentum parameters (beta1, beta2). Standard default.
   adam_eps: 1.0e-8                   # Adam epsilon for numerical stability.
 
-  # ── Gradient clipping (applied before every optimizer.step) ──
-  grad_clip_norm: 1.0               # Clip for base model params (and all params when no experts exist)
-  expert_grad_clip_norm: 1.0      # Tighter clip applied to ALL expert params whenever experts exist;
-                                    # base still uses grad_clip_norm; set null to disable expert-specific clip
-
-  # ── RWF (Random Weight Factorization) ──
-  rwf: true                          # Apply W_eff = diag(exp(s)) @ W to all hidden layers
-
-  # ── Fourier Features ──
-  fourier_features:
-    enabled: true                    # Map input → [cos(Bz), sin(Bz)] before network
-    dim: 128                         # Number of Fourier features (output = 2*dim = 256)
-    scale: 2.0                       # Std of random projection matrix B (per-problem override)
-    periodic: false
-
-  # ── Smart Initialization ──
-  # hidden: glorot        → Glorot uniform + zero bias on all hidden layers;
-  #                          also zero-inits ResNet fc2 blocks for identity-like start.
-  # hidden: parent_weights → New experts copy hidden-layer weights from their closest ancestor
-  #                          (parent expert, or base model if no expert parent). Output layer
-  #                          is always zeroed regardless. Base model ALWAYS uses glorot.
-  #                          Prevents 4th-order derivative overflow from random Glorot init.
-  # output: ls     → Least-squares fit of output layer to IC data (base model only).
-  #                   Raises error if IC points < hidden_dim+1.
-  # output: zero   → Zero-initialize output layer (useful standalone when output: ls is off).
-  init:
-    hidden: parent_weights          # 'default' (kaiming) | 'glorot' | 'parent_weights'
-    output: ls                      # 'default' | 'zero' | 'ls'
-    ls_use_bias: true                # Include bias column in LS system
-    spectral_norm: true              # Apply spectral normalization to ALL layers (hidden + output)
-                                     # of every network: base model at init, every new expert at
-                                     # spawn. Bounds Lipschitz constant to ≤1 per layer → bounds
-                                     # h_xxxx in KS 4th-order autograd chain. When enabled, output
-                                     # layer uses tiny random init (std=1e-6) instead of strict
-                                     # zero (zero-init causes sigma=0 → 0/0=NaN with spectral_norm).
-
-  # ── LRA (Loss Rate Annealing) ──
-  lra:
-    enabled: false                    # Adaptively weight residual/IC/BC losses
-    update_every: 100                # Epochs between weight updates (3 extra backward passes each)
-    alpha: 0.1                       # EMA smoothing factor for weight updates
-
   # ── General training settings ──
   cuda: true
   eval_only: false
@@ -104,7 +63,13 @@ base_config:
   inner_metrics_eval_every: 1000     # Run NCC/probes/derivatives analysis every N epochs
   seed: 42
 
-  # ── Problem-specific domains, parameters, and loss weights ──
+  # ══════════════════════════════════════════════════════════════════════════════
+  # PER-PROBLEM CONFIGURATION
+  # Each problem section MUST include all required fields. No global defaults.
+  # Required per-problem fields: rwf, fourier_features, init, lra, adaptive_sampling,
+  #                              grad_clip_norm, expert_grad_clip_norm
+  # ══════════════════════════════════════════════════════════════════════════════
+
   schrodinger:
     spatial_dim: 1
     output_dim: 2                    # Complex-valued: h = [u, v]
@@ -117,6 +82,32 @@ base_config:
       residual: 1.0
       ic: 1.0
       bc: 1.0
+    # ── Per-problem features (no global defaults) ──
+    rwf: false
+    fourier_features:
+      enabled: false
+      dim: 128
+      scale: 1.0
+      periodic: false
+    init:
+      hidden: glorot
+      output: ls
+      ls_use_bias: true
+      spectral_norm: false
+    lra:
+      enabled: false
+      update_every: 100
+      alpha: 0.1
+      scheme: grad_norm
+    adaptive_sampling:
+      enabled: true
+      adaptive_ratio: 0.3
+      per_leaf_sampling: false
+      phi: quadratic
+      phi_epsilon: 1.0
+      phi_power: 2.0
+    grad_clip_norm: 1.0
+    expert_grad_clip_norm: 1.0
 
   wave1d:
     spatial_dim: 1
@@ -130,6 +121,32 @@ base_config:
       residual: 1.0
       ic: 1.0
       bc: 1.0
+    # ── Per-problem features (no global defaults) ──
+    rwf: false
+    fourier_features:
+      enabled: false
+      dim: 128
+      scale: 1.0
+      periodic: false
+    init:
+      hidden: glorot
+      output: ls
+      ls_use_bias: true
+      spectral_norm: false
+    lra:
+      enabled: false
+      update_every: 100
+      alpha: 0.1
+      scheme: grad_norm
+    adaptive_sampling:
+      enabled: true
+      adaptive_ratio: 0.3
+      per_leaf_sampling: false
+      phi: quadratic
+      phi_epsilon: 1.0
+      phi_power: 2.0
+    grad_clip_norm: 1.0
+    expert_grad_clip_norm: 1.0
 
   burgers1d:
     spatial_dim: 1
@@ -144,6 +161,32 @@ base_config:
       residual: 1.0
       ic: 1.0
       bc: 1.0
+    # ── Per-problem features (no global defaults) ──
+    rwf: false
+    fourier_features:
+      enabled: false
+      dim: 128
+      scale: 1.0
+      periodic: false
+    init:
+      hidden: glorot
+      output: ls
+      ls_use_bias: true
+      spectral_norm: false
+    lra:
+      enabled: false
+      update_every: 100
+      alpha: 0.1
+      scheme: grad_norm
+    adaptive_sampling:
+      enabled: true
+      adaptive_ratio: 0.3
+      per_leaf_sampling: false
+      phi: quadratic
+      phi_epsilon: 1.0
+      phi_power: 2.0
+    grad_clip_norm: 1.0
+    expert_grad_clip_norm: 1.0
 
   burgers2d:
     spatial_dim: 2
@@ -158,6 +201,32 @@ base_config:
       residual: 1.0
       ic: 1.0
       bc: 1.0
+    # ── Per-problem features (no global defaults) ──
+    rwf: false
+    fourier_features:
+      enabled: false
+      dim: 128
+      scale: 1.0
+      periodic: false
+    init:
+      hidden: glorot
+      output: ls
+      ls_use_bias: true
+      spectral_norm: false
+    lra:
+      enabled: false
+      update_every: 100
+      alpha: 0.1
+      scheme: grad_norm
+    adaptive_sampling:
+      enabled: true
+      adaptive_ratio: 0.3
+      per_leaf_sampling: false
+      phi: quadratic
+      phi_epsilon: 1.0
+      phi_power: 2.0
+    grad_clip_norm: 1.0
+    expert_grad_clip_norm: 1.0
 
   allen_cahn:
     spatial_dim: 1
@@ -172,16 +241,37 @@ base_config:
       residual: 1.0
       ic: 100.0                      # Strong IC enforcement — stiff problem needs to lock in IC early
       bc: 1.0
-    adaptive_sampling:               # phi config for vRBA (only used when sampling.adaptive_sampling.enabled=true)
-      phi: exponential               # quadratic | exponential | power
-      phi_epsilon: 1.0               # scale ε for exponential phi
     causal_training:                 # Paper-recommended params (Wang et al. 2022)
       enabled: true                  # Causal weighting on residual loss
       num_chunks: 32                 # Temporal bins (keep 32, enough for 20k points)
       tol_schedule: [0.01, 0.1, 1.0, 10.0]  # Extended from [0.01, 0.1, 1.0] for 4000 epochs
       min_weight_threshold: 0.99
+    # ── Per-problem features (no global defaults) ──
+    rwf: true
     fourier_features:
+      enabled: true
+      dim: 128
       scale: 3.0                     # Higher scale for very sharp interfaces (D=0.0001)
+      periodic: false
+    init:
+      hidden: glorot
+      output: ls
+      ls_use_bias: true
+      spectral_norm: false
+    lra:
+      enabled: true
+      update_every: 100
+      alpha: 0.1
+      scheme: grad_norm
+    adaptive_sampling:
+      enabled: true
+      adaptive_ratio: 0.3
+      per_leaf_sampling: false
+      phi: exponential               # quadratic | exponential | power
+      phi_epsilon: 1.0               # scale ε for exponential phi
+      phi_power: 2.0
+    grad_clip_norm: 1.0
+    expert_grad_clip_norm: 1.0
 
   kdv:
     spatial_dim: 1
@@ -196,14 +286,37 @@ base_config:
       residual: 1.0
       ic: 1.0
       bc: 1.0
-    adaptive_sampling:
-      phi: exponential
-      phi_epsilon: 1.0
     causal_training:                 # Paper-recommended params (Wang et al. 2022)
       enabled: false
       num_chunks: 50
       tol_schedule: [0.1, 1.0, 10.0]
       min_weight_threshold: 0.99
+    # ── Per-problem features (no global defaults) ──
+    rwf: false
+    fourier_features:
+      enabled: false
+      dim: 128
+      scale: 1.0
+      periodic: false
+    init:
+      hidden: glorot
+      output: ls
+      ls_use_bias: true
+      spectral_norm: false
+    lra:
+      enabled: false
+      update_every: 100
+      alpha: 0.1
+      scheme: grad_norm
+    adaptive_sampling:
+      enabled: true
+      adaptive_ratio: 0.3
+      per_leaf_sampling: false
+      phi: exponential
+      phi_epsilon: 1.0
+      phi_power: 2.0
+    grad_clip_norm: 1.0
+    expert_grad_clip_norm: 1.0
 
   fisher_kpp:
     spatial_dim: 1
@@ -219,6 +332,32 @@ base_config:
       residual: 1.0
       ic: 1.0
       bc: 1.0
+    # ── Per-problem features (no global defaults) ──
+    rwf: false
+    fourier_features:
+      enabled: false
+      dim: 128
+      scale: 1.0
+      periodic: false
+    init:
+      hidden: glorot
+      output: ls
+      ls_use_bias: true
+      spectral_norm: false
+    lra:
+      enabled: false
+      update_every: 100
+      alpha: 0.1
+      scheme: grad_norm
+    adaptive_sampling:
+      enabled: true
+      adaptive_ratio: 0.3
+      per_leaf_sampling: false
+      phi: quadratic
+      phi_epsilon: 1.0
+      phi_power: 2.0
+    grad_clip_norm: 1.0
+    expert_grad_clip_norm: 1.0
 
   conv_diff:
     spatial_dim: 1
@@ -234,6 +373,28 @@ base_config:
       residual: 1.0
       ic: 1.0
       bc: 1.0
+    # ── Per-problem features (no global defaults) ──
+    rwf: false
+    fourier_features:
+      enabled: false
+      dim: 128
+      scale: 1.0
+      periodic: false
+    init:
+      hidden: glorot
+      output: ls
+      ls_use_bias: true
+      spectral_norm: false
+    lra:
+      enabled: false
+      update_every: 100
+      alpha: 0.1
+    adaptive_sampling:
+      enabled: true
+      adaptive_ratio: 0.3
+      per_leaf_sampling: false
+    grad_clip_norm: 1.0
+    expert_grad_clip_norm: 1.0
 
   ks:
     spatial_dim: 1
@@ -259,10 +420,34 @@ base_config:
       tol_schedule: [0.01]  # Annealing schedule (Wang et al. 2022): start soft, harden as network learns
       min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
       per_leaf_causal: true          # Feature B: each leaf gets its own independent causal state
+    # ── Per-problem features (KS-tuned, latest config) ──
+    rwf: true
     fourier_features:
+      enabled: true
+      dim: 128
       scale: 2.0                     # Conservative — KS has broadband content, not sharp interfaces
+      periodic: false
+    init:
+      hidden: parent_weights         # New experts copy hidden-layer weights from closest ancestor
+      output: ls                     # Least-squares fit to IC data (base model only)
+      ls_use_bias: true
+      spectral_norm: true            # Bounds Lipschitz constant — prevents h_xxxx overflow in KS
+    lra:
+      enabled: false
+      update_every: 100
+      alpha: 0.1
+      scheme: grad_norm
+    adaptive_sampling:
+      enabled: false                 # Disabled for KS by default; experiments can enable
+      adaptive_ratio: 0.1
+      per_leaf_sampling: false
+      phi: quadratic
+      phi_epsilon: 1.0
+      phi_power: 2.0
+    grad_clip_norm: 1.0
+    expert_grad_clip_norm: 1.0
 
-  # ── Dataset sampling ratios ──
+  # ── Dataset sampling ratios (global) ──
   sampling:
     sample_volume_ratio: 35          # Target: S^(1/d) / V^(1/d) = 35
     initial_train_ratio: 0.026       # ~260 IC points (with n_residual=20000). Papers use 256-512.
@@ -271,10 +456,6 @@ base_config:
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
     resample_every_epochs: 100       # Regenerate training data every N epochs. Papers use 500.
     min_points_per_leaf: 50          # Minimum adaptive points per leaf (per_leaf_sampling only); 0 = disabled
-    adaptive_sampling:
-      enabled: false              # Mix uniform + residual-adaptive points (vRBA/RAR-D)
-      adaptive_ratio: 0.1            # Fraction of residual_train points that are adaptive
-      candidate_multiplier: 10       # No longer used (was for candidate pool approach)
 
   # ── Adaptive Expert PINN configuration (Tree-Based Spawning) ──
   adaptive_pinn:
@@ -287,6 +468,7 @@ base_config:
     ANT_threshold_architecture: null             # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
     expert_type: resnet                # 'mlp' or 'resnet' or 'piratenet' -- architecture for base model and experts
+    max_depth: 5                       # Maximum tree depth for region splitting
     freeze_mode: none                      # "none" | "previous" | "base_only" — Fix 2 uses this; 'previous' = freeze base+old experts post-spawn
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
@@ -331,9 +513,9 @@ base_config:
     # use_perfect_trees: SKIPS Phase 1, loads pre-computed tree from perfect_trees_path, spawns experts, then Phase 3.
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
+    reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
     initial_train:
       epochs: 4000                               # Phase 1: train base model before tree fitting
-    reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
 
 
 experiments:
@@ -343,7 +525,7 @@ experiments:
     base_architecture: [2, 128, 128, 128, 1]
     adaptive_pinn:
       freeze_mode: none
-    sampling:
+    ks:
       adaptive_sampling:
         enabled: true
         adaptive_ratio: 0.4
@@ -355,7 +537,7 @@ experiments:
     adaptive_pinn:
       freeze_mode: previous
       freeze_epochs_after_spawn: 9999
-    sampling:
+    ks:
       adaptive_sampling:
         enabled: true
         adaptive_ratio: 0.4
@@ -368,7 +550,7 @@ experiments:
     adaptive_pinn:
       expert_type: resnet
       freeze_mode: none
-    sampling:
+    ks:
       adaptive_sampling:
         enabled: true
         adaptive_ratio: 0.4
@@ -380,7 +562,7 @@ experiments:
   #   adaptive_pinn:
   #     freeze_mode: previous
   #     freeze_epochs_after_spawn: 400
-  #   sampling:
+  #   ks:
   #     adaptive_sampling:
   #       enabled: true
   #       adaptive_ratio: 0.4

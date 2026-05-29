@@ -7,6 +7,10 @@ import importlib
 from pathlib import Path
 
 from utils.io import load_config, make_run_dir
+from utils.config_validation import (
+    validate_problem_config,
+    merge_problem_features_to_toplevel,
+)
 from models.fc_model import FCNet
 from models.network_factory import create_network
 from ncc.ncc_runner import run_ncc
@@ -186,6 +190,14 @@ def main():
     # Load configuration
     print("\n1. Loading configuration...")
     config = load_config()
+    
+    # Validate per-problem config (all features must be explicitly specified)
+    validate_problem_config(config)
+    
+    # Copy per-problem features to top-level for backward compatibility with
+    # model creation code that reads config['fourier_features'], config['rwf'], etc.
+    merge_problem_features_to_toplevel(config)
+    
     problem = config['problem']
     architecture = config['base_architecture']
     activation = config['activation']

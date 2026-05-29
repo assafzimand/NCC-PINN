@@ -18,6 +18,7 @@ from models.atoe_leaves import AToELeaves
 from models.ant import ANT
 from utils.dataset_gen import regenerate_training_data, _save_adaptive_sampling_heatmap
 from utils.dataset_plotting import save_spawn_prediction_plot
+from utils.config_validation import validate_problem_config
 from losses.causal_weighting import advance_causal_schedule, create_causal_state
 from losses.lra import LRAWeights
 import losses.ks_loss as _ks_loss_module
@@ -43,8 +44,8 @@ def _create_adam_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer
     Only includes trainable parameters (requires_grad=True) to avoid
     wasting memory/compute on frozen parameters (e.g., pretrained base model).
     """
-    betas = tuple(cfg.get('adam_betas', [0.9, 0.999]))
-    eps = cfg.get('adam_eps', 1e-8)
+    betas = tuple(cfg['adam_betas'])
+    eps = cfg['adam_eps']
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     return torch.optim.Adam(
         trainable_params,
@@ -63,13 +64,13 @@ def _create_lbfgs_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimize
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     return torch.optim.LBFGS(
         trainable_params,
-        lr=cfg.get('lbfgs_lr', 1.0),
-        max_iter=cfg.get('lbfgs_max_iter', 20),
+        lr=cfg['lbfgs_lr'],
+        max_iter=cfg['lbfgs_max_iter'],
         max_eval=None,  # Default: max_iter * 1.25
-        history_size=cfg.get('lbfgs_history_size', 20),
-        line_search_fn=cfg.get('lbfgs_line_search', 'strong_wolfe'),
-        tolerance_grad=cfg.get('lbfgs_tolerance_grad', 0.0),
-        tolerance_change=cfg.get('lbfgs_tolerance_change', 0.0)
+        history_size=cfg['lbfgs_history_size'],
+        line_search_fn=cfg['lbfgs_line_search'],
+        tolerance_grad=cfg['lbfgs_tolerance_grad'],
+        tolerance_change=cfg['lbfgs_tolerance_change']
     )
 
 
@@ -83,10 +84,10 @@ def _create_soap_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer
     return SOAP(
         trainable_params,
         lr=cfg['lr'],
-        betas=tuple(cfg.get('soap_betas', [0.95, 0.95])),
-        eps=cfg.get('adam_eps', 1e-8),
-        precondition_frequency=cfg.get('soap_precondition_frequency', 10),
-        weight_decay=cfg.get('soap_weight_decay', 0.0),
+        betas=tuple(cfg['soap_betas']),
+        eps=cfg['adam_eps'],
+        precondition_frequency=cfg['soap_precondition_frequency'],
+        weight_decay=cfg['soap_weight_decay'],
     )
 
 
@@ -101,10 +102,10 @@ def _create_ssbroyden_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Opti
         from torchmin import Broyden
         return Broyden(
             trainable_params,
-            lr=cfg.get('lr', 1e-3),
-            history_size=cfg.get('ssbroyden_history_size', 10),
-            max_iter=cfg.get('ssbroyden_max_iter', 20),
-            line_search=cfg.get('ssbroyden_line_search', 'strong-wolfe'),
+            lr=cfg['lr'],
+            history_size=cfg['ssbroyden_history_size'],
+            max_iter=cfg['ssbroyden_max_iter'],
+            line_search=cfg['ssbroyden_line_search'],
         )
     except ImportError:
         print("  [Warning] torchmin not installed — SSBroyden unavailable, falling back to LBFGS.")
@@ -132,7 +133,7 @@ def _create_primary_optimizer(model: nn.Module, cfg: Dict) -> Tuple[torch.optim.
     Supports new optimizer_1 key and legacy optimizer key.
     Returns (optimizer, name_string).
     """
-    opt_name = cfg.get('optimizer_1', cfg.get('optimizer', 'adam')).lower()
+    opt_name = cfg['optimizer_1'].lower()
     return _create_optimizer_by_name(opt_name, model, cfg)
 
 
@@ -143,19 +144,19 @@ def _create_grouped_optimizer(param_groups: list, cfg: Dict) -> torch.optim.Opti
     separate LRs and fresh/preserved state independently.
     Supports Adam and SOAP; raises ValueError for others.
     """
-    opt_name = cfg.get('optimizer_1', cfg.get('optimizer', 'adam')).lower()
+    opt_name = cfg['optimizer_1'].lower()
     if opt_name == 'adam':
-        betas = tuple(cfg.get('adam_betas', [0.9, 0.999]))
-        eps = cfg.get('adam_eps', 1e-8)
+        betas = tuple(cfg['adam_betas'])
+        eps = cfg['adam_eps']
         return torch.optim.Adam(param_groups, betas=betas, eps=eps)
     elif opt_name == 'soap':
         from optimizers.soap import SOAP
         return SOAP(
             param_groups,
-            betas=tuple(cfg.get('soap_betas', [0.95, 0.95])),
-            eps=cfg.get('adam_eps', 1e-8),
-            precondition_frequency=cfg.get('soap_precondition_frequency', 10),
-            weight_decay=cfg.get('soap_weight_decay', 0.0),
+            betas=tuple(cfg['soap_betas']),
+            eps=cfg['adam_eps'],
+            precondition_frequency=cfg['soap_precondition_frequency'],
+            weight_decay=cfg['soap_weight_decay'],
         )
     else:
         raise ValueError(f"_create_grouped_optimizer not supported for optimizer: {opt_name}")
@@ -173,8 +174,8 @@ def _create_lr_scheduler(optimizer, cfg, total_steps):
     """
     from torch.optim.lr_scheduler import LinearLR, StepLR, CosineAnnealingLR, SequentialLR
 
-    schedule = cfg.get('lr_schedule', 'exponential')
-    warmup_steps = cfg.get('lr_warmup_steps', 0)
+    schedule = cfg['lr_schedule']
+    warmup_steps = cfg['lr_warmup_steps']
 
     if schedule == 'none' and warmup_steps <= 0:
         return None
@@ -187,8 +188,8 @@ def _create_lr_scheduler(optimizer, cfg, total_steps):
         milestones.append(warmup_steps)
 
     if schedule == 'exponential':
-        decay_rate = cfg.get('lr_decay_rate', 0.9)
-        decay_steps = cfg.get('lr_decay_steps', 2000)
+        decay_rate = cfg['lr_decay_rate']
+        decay_steps = cfg['lr_decay_steps']
         schedulers.append(StepLR(optimizer, step_size=decay_steps, gamma=decay_rate))
     elif schedule == 'cosine':
         remaining = max(total_steps - warmup_steps, 1)
@@ -249,6 +250,18 @@ def train(
     print("Starting Training")
     print("=" * 60)
 
+    # Validate per-problem config (all features must be explicitly specified)
+    validate_problem_config(cfg)
+    problem = cfg['problem']
+    problem_cfg = cfg[problem]
+    
+    # Copy per-problem features to top-level for backward compatibility with
+    # functions that read cfg['init'], cfg['fourier_features'], etc.
+    for key in ['rwf', 'fourier_features', 'init', 'lra', 'adaptive_sampling',
+                'grad_clip_norm', 'expert_grad_clip_norm']:
+        if key in problem_cfg:
+            cfg[key] = problem_cfg[key]
+
     # Setup device
     device = torch.device('cuda' if cfg['cuda'] and
                           torch.cuda.is_available() else 'cpu')
@@ -271,7 +284,7 @@ def train(
     model = model.to(device)
 
     # DIAGNOSTIC: Verify model is on correct device (configurable)
-    if cfg.get('adaptive_pinn', {}).get('enable_gradient_diagnostics', False):
+    if cfg['adaptive_pinn']['enable_gradient_diagnostics']:
         print(f"\n{'='*40} GPU DIAGNOSTIC {'='*40}")
         print(f"Target device: {device}")
         if hasattr(model, 'base_model'):
@@ -301,12 +314,12 @@ def train(
                                      shuffle=False)
 
     # ── 3-phase logic for full_tree_by_norm / use_perfect_trees ──
-    adaptive_cfg_init = cfg.get('adaptive_pinn', {})
-    spawning_method_init = adaptive_cfg_init.get('spawning_method', 'by_mean_residual')
+    adaptive_cfg_init = cfg['adaptive_pinn']
+    spawning_method_init = adaptive_cfg_init['spawning_method']
     initial_train_cfg = adaptive_cfg_init.get('initial_train', None)
     use_three_phase = (spawning_method_init == 'full_tree_by_norm' and initial_train_cfg is not None)
     use_perfect_trees = (spawning_method_init == 'use_perfect_trees')
-    reinit_base_after_spawn = adaptive_cfg_init.get('reinitialize_base_after_spawn', False)
+    reinit_base_after_spawn = adaptive_cfg_init['reinitialize_base_after_spawn']
 
     if use_perfect_trees:
         # Skip Phase 1: spawn from pre-computed tree, then Phase 3
@@ -335,15 +348,13 @@ def train(
         current_phase = 0  # single-phase (legacy)
 
     # Determine optimizer strategy (new config: optimizer_1/optimizer_2/optimizer_switch_epoch)
-    optimizer_1_name = active_cfg.get('optimizer_1', active_cfg.get('optimizer', 'adam')).lower()
+    optimizer_1_name = active_cfg['optimizer_1'].lower()
     optimizer_2_name_cfg = active_cfg.get('optimizer_2', None)
     optimizer_2_name = optimizer_2_name_cfg.lower() if optimizer_2_name_cfg else None
 
     # optimizer_switch_epoch: when to switch. None / ignored when optimizer_2 is null.
     if optimizer_2_name is not None:
-        switch_epoch = active_cfg.get('optimizer_switch_epoch', None)
-        if switch_epoch is None:
-            switch_epoch = epochs + 1  # no switch if not specified
+        switch_epoch = active_cfg['optimizer_switch_epoch']
     else:
         switch_epoch = epochs + 1  # never switch
 
@@ -371,16 +382,16 @@ def train(
         else:
             print(f"Using {current_optimizer_name} optimizer (mini-batch) for all epochs")
         if lr_scheduler is not None:
-            sched_name = active_cfg.get('lr_schedule', 'exponential')
-            warmup = active_cfg.get('lr_warmup_steps', 0)
+            sched_name = active_cfg['lr_schedule']
+            warmup = active_cfg['lr_warmup_steps']
             print(f"  LR schedule: {sched_name} (warmup={warmup} steps, ~{total_steps_estimate} total steps)")
 
     step_count = 0  # global optimizer step counter for LR scheduler
 
     # Training setup
     print_every = cfg['print_every']
-    eval_every = cfg.get('eval_every', print_every)
-    inner_metrics_every = cfg.get('inner_metrics_eval_every', 0)
+    eval_every = cfg['eval_every']
+    inner_metrics_every = cfg['inner_metrics_eval_every']
     save_every = cfg['save_every']
 
     # Metrics storage
@@ -406,23 +417,20 @@ def train(
     best_eval_loss = float('inf')
     best_train_loss = float('inf')
     best_checkpoint_path = None
-    patience_epochs = cfg.get('patience_epochs', 0)
-    min_epochs = cfg.get('min_epochs', 0)
+    patience_epochs = cfg['patience_epochs']
+    min_epochs = cfg['min_epochs']
     epochs_without_improvement = 0
 
-    # LRA: adaptive loss component weighting
-    lra_cfg = cfg.get('lra', {})
-    lra_enabled = lra_cfg.get('enabled', False)
+    # LRA: adaptive loss component weighting (read from per-problem config)
+    lra_cfg = problem_cfg['lra']
+    lra_enabled = lra_cfg['enabled']
     if lra_enabled:
-        # Initialize LRA weights from problem's loss_weights
-        problem = cfg.get('problem', '')
-        problem_cfg = cfg.get(problem, {})
-        initial_loss_weights = problem_cfg.get('loss_weights', {})
+        initial_loss_weights = problem_cfg['loss_weights']
         lra_weights = LRAWeights(
-            alpha=lra_cfg.get('alpha', 0.1),
-            update_every=lra_cfg.get('update_every', 100),
+            alpha=lra_cfg['alpha'],
+            update_every=lra_cfg['update_every'],
             initial_weights=initial_loss_weights,
-            scheme=lra_cfg.get('scheme', 'grad_norm'),
+            scheme=lra_cfg['scheme'],
         )
     else:
         lra_weights = None
@@ -453,39 +461,38 @@ def train(
     ncc_plots_parent.mkdir(exist_ok=True)
 
     # Adaptive PINN setup
-    adaptive_cfg = cfg.get('adaptive_pinn', {})
-    is_adaptive = adaptive_cfg.get('enabled', False)
+    adaptive_cfg = cfg['adaptive_pinn']
+    is_adaptive = adaptive_cfg['enabled']
     region_detector = None
-    spawn_every = adaptive_cfg.get('spawn_every_epochs', 2000)
-    max_experts = adaptive_cfg.get('max_experts', 5)
-    spawning_method = adaptive_cfg.get('spawning_method', 'by_mean_residual')
-    problem_cfg = cfg.get(cfg['problem'], {})
-    wavelet_threshold = problem_cfg.get('wavelet_threshold', 0.0)
-    adaptive_inner_metrics = adaptive_cfg.get('inner_metrics_calculation', False)
+    spawn_every = adaptive_cfg['spawn_every_epochs']
+    max_experts = adaptive_cfg['max_experts']
+    spawning_method = adaptive_cfg['spawning_method']
+    wavelet_threshold = problem_cfg['wavelet_threshold']
+    adaptive_inner_metrics = adaptive_cfg['inner_metrics_calculation']
     spawning_complete = False
-    _retries_before_stop = adaptive_cfg.get('spawn_retries_before_stop', False)
+    _retries_before_stop = adaptive_cfg['spawn_retries_before_stop']
     _stop_on_no_spawn = _retries_before_stop is not False  # False = feature disabled
     _no_spawn_retries_max = int(_retries_before_stop) if _stop_on_no_spawn else 0
     _no_spawn_retries_remaining = _no_spawn_retries_max
     _spawn_retry_after = adaptive_cfg.get('spawn_retry_after', None)
     _spawn_last_fail_epoch = -1  # epoch of last failed spawn; -1 = no pending retry
     _per_leaf_causal = problem_cfg.get('causal_training', {}).get('per_leaf_causal', False)
-    _per_leaf_sampling = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('per_leaf_sampling', False)
+    _per_leaf_sampling = problem_cfg['adaptive_sampling'].get('per_leaf_sampling', False)
     
     # Read configurable norm variables
-    variable_for_node_accept = adaptive_cfg.get('variable_for_node_accept', 'norm')
-    variable_for_expert_size = adaptive_cfg.get('variable_for_expert_size', 'norm')
+    variable_for_node_accept = adaptive_cfg['variable_for_node_accept']
+    variable_for_expert_size = adaptive_cfg['variable_for_expert_size']
     
     # Build thresholds dict
     thresholds = {
-        'norm': problem_cfg.get('wavelet_threshold', 0.0),
-        'new_norm': problem_cfg.get('new_norm_threshold', 0.0),
-        'smoothness': problem_cfg.get('tree_smoothness_threshold', 0.7),
+        'norm': problem_cfg['wavelet_threshold'],
+        'new_norm': problem_cfg['new_norm_threshold'],
+        'smoothness': problem_cfg['tree_smoothness_threshold'],
     }
 
     if is_adaptive:
-        tree_max_depth = adaptive_cfg.get('tree_max_depth', 15)
-        tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
+        tree_max_depth = adaptive_cfg['tree_max_depth']
+        tree_min_samples_leaf = adaptive_cfg['tree_min_samples_leaf']
 
         print(f"\nAdaptive PINN enabled (spawning_method={spawning_method}):")
         print(f"  Max experts: {max_experts}")
@@ -494,10 +501,10 @@ def train(
         print(f"  Tree min samples leaf: {tree_min_samples_leaf}")
         if spawning_method in ('accept_split_by_norm', 'full_tree_by_norm', 'use_perfect_trees'):
             print(f"  Wavelet threshold: {wavelet_threshold}")
-        print(f"  Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
-        print(f"  Freeze mode: {adaptive_cfg.get('freeze_mode', 'none')}")
+        print(f"  Blending mode: {adaptive_cfg['blending_mode']}")
+        print(f"  Freeze mode: {adaptive_cfg['freeze_mode']}")
         print(f"  Model type: {type(model).__name__}")
-        enable_timing_cfg = adaptive_cfg.get('enable_timing', False)
+        enable_timing_cfg = adaptive_cfg['enable_timing']
         print(f"  Timing profiling: {'enabled' if enable_timing_cfg else 'disabled'}")
 
         from adaptive.region_detector import RegionDetector
@@ -511,7 +518,6 @@ def train(
         domain_bounds = model.get_domain_bounds()
         gt_grid, gt_x, gt_t = prepare_ground_truth_grid(eval_data, domain_bounds)
 
-        tree_min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
         region_detector = RegionDetector(
             n_estimators=1,
             max_depth=tree_max_depth if spawning_method in ('full_tree_by_norm', 'use_perfect_trees') else 1,
@@ -669,7 +675,7 @@ def train(
     start_time = time.time()
     
     # Epoch timer for fine-grained performance profiling
-    enable_timing = adaptive_cfg.get('enable_timing', False) if is_adaptive else False
+    enable_timing = adaptive_cfg['enable_timing'] if is_adaptive else False
     timer = EpochTimer(enabled=enable_timing, print_every=eval_every)
     if enable_timing:
         model._timer = timer
@@ -679,17 +685,18 @@ def train(
     eval_rel_l2 = 0.0
     eval_inf_norm = 0.0
 
-    resample_every = cfg.get('sampling', {}).get('resample_every_epochs', 0)
-    base_seed = cfg.get('seed', 42)
-    grad_clip_norm = cfg.get('grad_clip_norm', None)          # None = disabled
+    resample_every = cfg['sampling']['resample_every_epochs']
+    base_seed = cfg['seed']
+    # Gradient clipping (read from per-problem config)
+    grad_clip_norm = problem_cfg['grad_clip_norm']
     # Tighter clip for all expert params (separate from base); only active when experts exist.
     # When no experts exist (base-only phase), grad_clip_norm applies to all params as usual.
-    expert_grad_clip_norm = cfg.get('expert_grad_clip_norm', None)
+    expert_grad_clip_norm = problem_cfg['expert_grad_clip_norm']
 
     # Freeze-after-spawn state (Fix 2)
     # freeze_mode: none takes priority — if explicitly set to none, disable post-spawn freeze entirely.
-    freeze_epochs_after_spawn = adaptive_cfg.get('freeze_epochs_after_spawn', 0) if is_adaptive else 0
-    if adaptive_cfg.get('freeze_mode', 'none') == 'none':
+    freeze_epochs_after_spawn = adaptive_cfg['freeze_epochs_after_spawn'] if is_adaptive else 0
+    if adaptive_cfg['freeze_mode'] == 'none':
         freeze_epochs_after_spawn = 0
     _unfreeze_at_epoch = None           # set after each spawn
     _pre_freeze_lr = None               # LR of all groups before freeze (restored to ancestors at unfreeze)
@@ -700,9 +707,9 @@ def train(
 
     # Plateau-gated spawning state (Fix 3)
     # spawn_every acts as minimum interval; once elapsed, plateau is checked every epoch until met.
-    _spawn_require_plateau = adaptive_cfg.get('spawn_require_plateau', False) if is_adaptive else False
-    _spawn_plateau_epochs = adaptive_cfg.get('spawn_plateau_epochs', 300)
-    _spawn_plateau_delta = adaptive_cfg.get('spawn_plateau_delta', 0.005)
+    _spawn_require_plateau = adaptive_cfg['spawn_require_plateau'] if is_adaptive else False
+    _spawn_plateau_epochs = adaptive_cfg['spawn_plateau_epochs']
+    _spawn_plateau_delta = adaptive_cfg['spawn_plateau_delta']
     _last_spawn_epoch = 0           # epoch of last successful spawn
     
     # Consolidated feature summary
@@ -710,21 +717,21 @@ def train(
     print("FEATURE SUMMARY")
     print("=" * 60)
     
-    # Fourier Features
-    ff_cfg = cfg.get('fourier_features', {})
-    ff_enabled = ff_cfg.get('enabled', False)
+    # Fourier Features (read from per-problem config)
+    ff_cfg = problem_cfg['fourier_features']
+    ff_enabled = ff_cfg['enabled']
     if ff_enabled:
-        ff_dim = ff_cfg.get('dim', 64)
-        ff_scale = ff_cfg.get('scale', 1.0)
+        ff_dim = ff_cfg['dim']
+        ff_scale = ff_cfg['scale']
         _base_for_ff = model.base_model if hasattr(model, 'base_model') else model
         _ff_out = _base_for_ff.ff_emb.output_dim if (hasattr(_base_for_ff, 'ff_emb') and _base_for_ff.ff_emb is not None) else 2 * ff_dim
-        _periodic = ff_cfg.get('periodic', False)
+        _periodic = ff_cfg['periodic']
         print(f"  Fourier Features: enabled (dim={ff_dim}, scale={ff_scale}, output_dim={_ff_out}, periodic={_periodic})")
     else:
         print(f"  Fourier Features: disabled")
     
-    # RWF
-    rwf_enabled = cfg.get('rwf', False)
+    # RWF (read from per-problem config)
+    rwf_enabled = problem_cfg['rwf']
     if rwf_enabled:
         print(f"  RWF: enabled")
     else:
@@ -746,11 +753,12 @@ def train(
     else:
         print(f"  LRA: disabled")
     
-    # Resampling & Adaptive Sampling
-    adaptive_sampling_enabled = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('enabled', False)
+    # Resampling & Adaptive Sampling (read from per-problem config)
+    adaptive_sampling_cfg = problem_cfg['adaptive_sampling']
+    adaptive_sampling_enabled = adaptive_sampling_cfg['enabled']
     if resample_every > 0:
         if adaptive_sampling_enabled:
-            as_ratio = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('adaptive_ratio', 0.5)
+            as_ratio = adaptive_sampling_cfg['adaptive_ratio']
             print(f"  Resampling: every {resample_every} epochs (adaptive: enabled, ratio={as_ratio})")
         else:
             print(f"  Resampling: every {resample_every} epochs (adaptive: disabled)")
@@ -758,10 +766,10 @@ def train(
         print(f"  Resampling: disabled")
     
     # Optimizer schedule
-    opt1_name = cfg.get('optimizer_1', cfg.get('optimizer', 'adam'))
+    opt1_name = cfg['optimizer_1']
     opt2_name = cfg.get('optimizer_2', 'null')
     if opt2_name and opt2_name != 'null':
-        switch_epoch = cfg.get('optimizer_switch_epoch', total_epochs + 1)
+        switch_epoch = cfg['optimizer_switch_epoch']
         print(f"  Optimizer: {opt1_name} → {opt2_name} at epoch {switch_epoch}")
     else:
         print(f"  Optimizer: {opt1_name}")
@@ -859,7 +867,7 @@ def train(
 
         # Enable residual caching for adaptive sampling if needed
         # Cache THIS epoch's residuals for NEXT epoch's resampling
-        adaptive_sampling_enabled = cfg.get('sampling', {}).get('adaptive_sampling', {}).get('enabled', False)
+        # (adaptive_sampling_enabled already set from problem_cfg above)
         causal_state = getattr(loss_fn, 'causal_state', None)
         
         will_cache_for_resample = (
@@ -868,7 +876,7 @@ def train(
             and epoch > 0 and epoch % resample_every == 0
         )
         # Cache residuals for the diagnostic heatmap even when adaptive sampling is off
-        _problem_spatial_dim = cfg.get(cfg.get('problem', ''), {}).get('spatial_dim', 0)
+        _problem_spatial_dim = problem_cfg['spatial_dim']
         will_cache_for_plot = (
             not adaptive_sampling_enabled
             and resample_every > 0
@@ -1952,7 +1960,7 @@ def train(
 
                 # Apply smart init to newly spawned experts (Glorot hidden + zero output,
                 # or parent_weights: copy hidden layers from parent expert for stability).
-                _init_mode = cfg.get('init', {}).get('hidden', 'default')
+                _init_mode = problem_cfg['init']['hidden']
                 _new_exp_start_idx = len(model.experts) - experts_spawned_this_step
                 for _ei, _new_exp in enumerate(model.experts[-experts_spawned_this_step:]):
                     _new_exp_idx = _new_exp_start_idx + _ei

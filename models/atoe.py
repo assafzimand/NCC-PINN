@@ -93,14 +93,14 @@ class AToE(nn.Module):
         self.config = config
         self.adaptive_config = adaptive_config
 
-        self.max_experts = adaptive_config.get('max_experts', 5)
-        self.max_depth = adaptive_config.get('max_depth', 5)
-        self.blending_mode = adaptive_config.get('blending_mode', 'soft')
-        self.sigma_fraction = adaptive_config.get('sigma_fraction', 0.2)
-        self.base_weight = adaptive_config.get('base_weight', 1.0)
-        self.base_everywhere = adaptive_config.get('base_everywhere', True)
-        self.freeze_mode = adaptive_config.get('freeze_mode', 'none')
-        self.expert_type = adaptive_config.get('expert_type', 'mlp')
+        self.max_experts = adaptive_config['max_experts']
+        self.max_depth = adaptive_config['max_depth']
+        self.blending_mode = adaptive_config['blending_mode']
+        self.sigma_fraction = adaptive_config['sigma_fraction']
+        self.base_weight = adaptive_config['base_weight']
+        self.base_everywhere = adaptive_config['base_everywhere']
+        self.freeze_mode = adaptive_config['freeze_mode']
+        self.expert_type = adaptive_config['expert_type']
 
         self.atoe_threshold_capacity = adaptive_config.get(
             'AToE_threshold_capacity', None
@@ -108,16 +108,16 @@ class AToE(nn.Module):
         problem = config['problem']
         problem_config = config[problem]
         self.input_dim = base_architecture[0]
-        self.output_dim = problem_config.get('output_dim', 2)
+        self.output_dim = problem_config['output_dim']
         if self.atoe_threshold_capacity is not None:
             # Read variable_for_expert_size and corresponding threshold
-            self.variable_for_expert_size = adaptive_config.get('variable_for_expert_size', 'norm')
+            self.variable_for_expert_size = adaptive_config['variable_for_expert_size']
             if self.variable_for_expert_size == 'norm':
-                self.expert_size_threshold = problem_config.get('wavelet_threshold', 1.0)
+                self.expert_size_threshold = problem_config['wavelet_threshold']
             elif self.variable_for_expert_size == 'new_norm':
-                self.expert_size_threshold = problem_config.get('new_norm_threshold', 1.0)
+                self.expert_size_threshold = problem_config['new_norm_threshold']
             elif self.variable_for_expert_size == 'smoothness':
-                self.expert_size_threshold = problem_config.get('tree_smoothness_threshold', 0.7)
+                self.expert_size_threshold = problem_config['tree_smoothness_threshold']
             else:
                 self.expert_size_threshold = 1.0
 

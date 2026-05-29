@@ -52,7 +52,7 @@ class ResNetModel(nn.Module):
         problem = config['problem']
         problem_config = config[problem]
         spatial_dim = problem_config['spatial_dim']
-        output_dim = problem_config.get('output_dim', 2)
+        output_dim = problem_config['output_dim']
 
         if is_base:
             expected_input_dim = spatial_dim + 1
@@ -90,14 +90,14 @@ class ResNetModel(nn.Module):
         use_rwf = config.get('rwf', False)
 
         # Fourier Features: embed input before input_proj
-        ff_cfg = config.get('fourier_features', {})
-        use_ff = ff_cfg.get('enabled', False)
-        use_periodic = ff_cfg.get('periodic', False)
+        ff_cfg = config['fourier_features']
+        use_ff = ff_cfg['enabled']
+        use_periodic = ff_cfg['periodic']
         self.ff_emb: Optional[FourierFeatureEmbedding] = None
         effective_input_dim = layers[0]
         if use_ff:
-            ff_dim = ff_cfg.get('dim', 64)
-            ff_scale = ff_cfg.get('scale', 1.0)
+            ff_dim = ff_cfg['dim']
+            ff_scale = ff_cfg['scale']
             if use_periodic:
                 L = problem_config['spatial_domain'][0][1]
                 self.ff_emb = PeriodicSpatialFourierEmbedding(spatial_dim, ff_dim, ff_scale, L)

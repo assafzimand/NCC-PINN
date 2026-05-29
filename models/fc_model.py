@@ -66,14 +66,14 @@ class FCNet(nn.Module):
         self.activation = self._get_activation(activation)
 
         # Fourier Features: embed input before first linear layer
-        ff_cfg = config.get('fourier_features', {})
-        use_ff = ff_cfg.get('enabled', False)
-        use_periodic = ff_cfg.get('periodic', False)
+        ff_cfg = config['fourier_features']
+        use_ff = ff_cfg['enabled']
+        use_periodic = ff_cfg['periodic']
         self.ff_emb: Optional[FourierFeatureEmbedding] = None
         effective_input_dim = layers[0]
         if use_ff:
-            ff_dim = ff_cfg.get('dim', 64)
-            ff_scale = ff_cfg.get('scale', 1.0)
+            ff_dim = ff_cfg['dim']
+            ff_scale = ff_cfg['scale']
             if use_periodic:
                 L = problem_config['spatial_domain'][0][1]
                 self.ff_emb = PeriodicSpatialFourierEmbedding(spatial_dim, ff_dim, ff_scale, L)
@@ -82,7 +82,7 @@ class FCNet(nn.Module):
             effective_input_dim = self.ff_emb.output_dim  # 2*ff_dim or 4*ff_dim
 
         # RWF: use RWFLinear for hidden layers when enabled
-        use_rwf = config.get('rwf', False)
+        use_rwf = config['rwf']
         n_layers = len(layers) - 1  # total linear layers
         LinearCls_hidden = RWFLinear if use_rwf else nn.Linear
 
