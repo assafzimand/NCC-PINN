@@ -305,12 +305,12 @@ def _compute_phi_pdf(residuals: torch.Tensor, phi_cfg: Dict) -> torch.Tensor:
     Returns:
         Normalized probability tensor of shape (M,).
     """
-    phi = phi_cfg.get('phi', 'quadratic')
+    phi = phi_cfg['phi']
     if phi == 'exponential':
-        eps = phi_cfg.get('phi_epsilon', 1.0)
+        eps = phi_cfg['phi_epsilon']
         w = torch.exp(residuals / eps)
     elif phi == 'power':
-        p = phi_cfg.get('phi_power', 2.0)
+        p = phi_cfg['phi_power']
         w = residuals ** p
     else:  # default: quadratic
         w = residuals ** 2
@@ -666,17 +666,19 @@ def regenerate_training_data(
 
     torch.manual_seed(resample_seed)
 
-    # Adaptive sampling config (global sampling section)
-    as_global = config.get('sampling', {}).get('adaptive_sampling', {})
-    as_problem = config.get(problem, {}).get('adaptive_sampling', {})
-    as_enabled = as_global.get('enabled', False) and cached_residuals is not None and len(cached_residuals) > 0
-    as_ratio = as_global.get('adaptive_ratio', 0.5)
-    per_leaf_sampling = as_global.get('per_leaf_sampling', False)
-    # phi config comes from per-problem section
+    # Adaptive sampling config (read from per-problem config section)
+    # merge_problem_features_to_toplevel() copies to top-level for compatibility
+    problem_as = config.get(problem, {}).get('adaptive_sampling', {})
+    as_cfg = problem_as if problem_as else config['adaptive_sampling']
+    has_cache = cached_residuals is not None and len(cached_residuals) > 0
+    as_enabled = as_cfg['enabled'] and has_cache
+    as_ratio = as_cfg['adaptive_ratio']
+    per_leaf_sampling = as_cfg.get('per_leaf_sampling', False)
+    # phi config comes from the same per-problem adaptive_sampling section
     phi_cfg = {
-        'phi': as_problem.get('phi', 'quadratic'),
-        'phi_epsilon': as_problem.get('phi_epsilon', 1.0),
-        'phi_power': as_problem.get('phi_power', 2.0),
+        'phi': as_cfg['phi'],
+        'phi_epsilon': as_cfg['phi_epsilon'],
+        'phi_power': as_cfg['phi_power'],
     }
 
     x = torch.zeros(N, spatial_dim, device=device)
@@ -697,7 +699,7 @@ def regenerate_training_data(
         # Adaptive residual points — global or per-leaf
         if per_leaf_sampling and leaf_info is not None and len(leaf_info) > 0:
             n_leaves = len(leaf_info)
-            _min_per_leaf = config.get('sampling', {}).get('min_points_per_leaf', 0)
+            _min_per_leaf = config['sampling']['min_points_per_leaf']
             n_per_leaf_base = max(_min_per_leaf, max(1, n_adaptive // n_leaves))
             x_parts, t_parts = [], []
             for _leaf_i, (_region, _expert_idx) in enumerate(leaf_info):
