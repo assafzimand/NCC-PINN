@@ -110,6 +110,11 @@ base_config:
       phi_power: 2.0
     grad_clip_norm: null
     expert_grad_clip_norm: null
+    time_marching:
+      enabled: false
+      num_windows: 5
+      freeze_previous_windows: true
+      m_distribution: quadratic
 
   wave1d:
     spatial_dim: 1
@@ -151,6 +156,11 @@ base_config:
       phi_power: 2.0
     grad_clip_norm: 1.0
     expert_grad_clip_norm: 1.0
+    time_marching:
+      enabled: false
+      num_windows: 5
+      freeze_previous_windows: true
+      m_distribution: quadratic
 
   burgers1d:
     spatial_dim: 1
@@ -192,6 +202,11 @@ base_config:
       phi_power: 2.0
     grad_clip_norm: null
     expert_grad_clip_norm: null
+    time_marching:
+      enabled: false
+      num_windows: 5
+      freeze_previous_windows: true
+      m_distribution: quadratic
 
   burgers2d:
     spatial_dim: 2
@@ -234,6 +249,11 @@ base_config:
       phi_power: 2.0
     grad_clip_norm: 1.0
     expert_grad_clip_norm: 1.0
+    time_marching:
+      enabled: false
+      num_windows: 5
+      freeze_previous_windows: true
+      m_distribution: quadratic
 
   allen_cahn:
     spatial_dim: 1
@@ -281,6 +301,11 @@ base_config:
       phi_power: 2.0
     grad_clip_norm: null
     expert_grad_clip_norm: null
+    time_marching:
+      enabled: false
+      num_windows: 5
+      freeze_previous_windows: true
+      m_distribution: quadratic
 
   kdv:
     spatial_dim: 1
@@ -326,6 +351,11 @@ base_config:
       phi_power: 2.0
     grad_clip_norm: null
     expert_grad_clip_norm: null
+    time_marching:
+      enabled: false
+      num_windows: 5
+      freeze_previous_windows: true
+      m_distribution: quadratic
 
   fisher_kpp:
     spatial_dim: 1
@@ -369,6 +399,11 @@ base_config:
       phi_power: 2.0
     grad_clip_norm: 1.0
     expert_grad_clip_norm: 1.0
+    time_marching:
+      enabled: false
+      num_windows: 5
+      freeze_previous_windows: true
+      m_distribution: quadratic
 
   conv_diff:
     spatial_dim: 1
@@ -406,6 +441,11 @@ base_config:
       per_leaf_sampling: false
     grad_clip_norm: 1.0
     expert_grad_clip_norm: 1.0
+    time_marching:
+      enabled: false
+      num_windows: 5
+      freeze_previous_windows: true
+      m_distribution: quadratic
 
   ks:
     spatial_dim: 1
@@ -459,6 +499,11 @@ base_config:
       phi_power: 2.0
     grad_clip_norm: 1.0
     expert_grad_clip_norm: 1.0
+    time_marching:
+      enabled: true                       # Enabled for KS - essential for chaotic dynamics
+      num_windows: 5                      # Splits temporal domain into 5 sequential windows
+      freeze_previous_windows: true       # Freeze models from earlier windows
+      m_distribution: quadratic           # linear | quadratic | equal - later windows get more experts
 
   # ── Dataset sampling ratios (global) ──
   sampling:

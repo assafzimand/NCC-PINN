@@ -296,106 +296,157 @@ def main():
             print(f"    Eval: {eval_data_path}")
             print(f"    NCC: {ncc_data_path}")
 
-        # Build model
-        print("\n5. Building model...")
-        
         # Check if adaptive PINN is enabled
         adaptive_cfg = config.get('adaptive_pinn', {})
         is_adaptive = adaptive_cfg.get('enabled', False)
         
-        if is_adaptive:
+        # Check if time marching is enabled for this problem
+        tm_cfg = config.get(problem, {}).get('time_marching', {})
+        use_time_marching = tm_cfg.get('enabled', False)
+        
+        if use_time_marching:
+            # Time marching mode - train separate models for each window
+            print("\n5. Time marching mode enabled")
+            print(f"  Windows: {tm_cfg.get('num_windows', 5)}")
+            print(f"  M distribution: {tm_cfg.get('m_distribution', 'quadratic')}")
+            print(f"  Freeze previous: {tm_cfg.get('freeze_previous_windows', True)}")
+            
+            if not is_adaptive:
+                raise ValueError(
+                    "Time marching requires adaptive PINN (adaptive_pinn.enabled=true). "
+                    "Time marching trains AToE/ANT models for each window."
+                )
+            
+            # Determine model class
             model_type = config.get('model', 'AToE')
             if model_type == 'ANT':
                 from models.ant import ANT
-                model = ANT(architecture, activation, config, adaptive_cfg)
+                model_class = ANT
             elif model_type == 'AToELeaves':
                 from models.atoe_leaves import AToELeaves
-                model = AToELeaves(architecture, activation, config, adaptive_cfg)
+                model_class = AToELeaves
             else:
                 from models.atoe import AToE
-                model = AToE(architecture, activation, config, adaptive_cfg)
-            print(f"  {type(model).__name__} created: {len(model.get_layer_names())} base layers")
+                model_class = AToE
+            
+            # Get device
+            cuda_available = config.get('cuda', True) and torch.cuda.is_available()
+            device = torch.device('cuda' if cuda_available else 'cpu')
+            
+            # Train with time marching
+            from trainer.time_marching import train_with_time_marching
+            model, checkpoint_path = train_with_time_marching(
+                model_class=model_class,
+                architecture=architecture,
+                activation=activation,
+                config=config,
+                adaptive_cfg=adaptive_cfg,
+                run_dir=run_dir,
+                device=device,
+            )
+            
+            print(f"\n  Time marching training complete")
+            print(f"  Combined model: {model.num_windows} windows, {model.total_experts} total experts")
+            print(f"  Last checkpoint: {checkpoint_path}")
+        
         else:
-            expert_type = adaptive_cfg.get('expert_type', 'mlp')
-            model = create_network(architecture, activation, config,
-                                   is_base=True, expert_type=expert_type)
-            print(f"  Model created: {len(model.get_layer_names())} layers")
-
-        # Load checkpoint if resume_from is specified
-        if resume_from is not None:
-            print(f"\n  Loading checkpoint from: {resume_from}")
-            resume_checkpoint_path = fix_long_path(Path(resume_from))
-
-            if not resume_checkpoint_path.exists():
-                raise FileNotFoundError(f"Checkpoint not found: {resume_from}")
-
-            # Load checkpoint (with legacy support)
-            try:
-                checkpoint = torch.load(resume_checkpoint_path,
-                                        map_location='cpu')
-            except Exception:
-                print("  Warning: Standard load failed, trying legacy mode...")
-                checkpoint = torch.load(resume_checkpoint_path,
-                                        map_location='cpu',
-                                        weights_only=False)
-                print("  Legacy checkpoint loaded")
-
-            # Extract state dict
-            if 'model_state_dict' in checkpoint:
-                state_dict = checkpoint['model_state_dict']
-            elif 'model' in checkpoint:
-                state_dict = checkpoint['model']
+            # Standard training mode (no time marching)
+            # Build model
+            print("\n5. Building model...")
+            
+            if is_adaptive:
+                model_type = config.get('model', 'AToE')
+                if model_type == 'ANT':
+                    from models.ant import ANT
+                    model = ANT(architecture, activation, config, adaptive_cfg)
+                elif model_type == 'AToELeaves':
+                    from models.atoe_leaves import AToELeaves
+                    model = AToELeaves(architecture, activation, config, adaptive_cfg)
+                else:
+                    from models.atoe import AToE
+                    model = AToE(architecture, activation, config, adaptive_cfg)
+                print(f"  {type(model).__name__} created: {len(model.get_layer_names())} base layers")
             else:
-                state_dict = checkpoint
+                expert_type = adaptive_cfg.get('expert_type', 'mlp')
+                model = create_network(architecture, activation, config,
+                                       is_base=True, expert_type=expert_type)
+                print(f"  Model created: {len(model.get_layer_names())} layers")
 
-            # Check if this is an adaptive checkpoint
-            if is_adaptive and checkpoint.get('is_adaptive', False):
-                # Load adaptive state including experts and regions
-                model.load_state_dict_extended(checkpoint['adaptive_state'])
-                print(f"  Adaptive model weights loaded ({model.num_experts} experts)")
-            else:
-                # Remap keys for legacy checkpoints
-                remapped_state_dict = {}
-                for key, value in state_dict.items():
-                    if key.startswith('layer_') or key.startswith('output.'):
-                        if key.startswith('output.'):
-                            layer_num = len(architecture) - 1
-                            new_key = key.replace('output.',
-                                                  f'network.layer_{layer_num}.')
-                        else:
-                            new_key = f'network.{key}'
-                        remapped_state_dict[new_key] = value
-                    else:
-                        remapped_state_dict[key] = value
+            # Load checkpoint if resume_from is specified
+            if resume_from is not None:
+                print(f"\n  Loading checkpoint from: {resume_from}")
+                resume_checkpoint_path = fix_long_path(Path(resume_from))
 
-                # Load weights
+                if not resume_checkpoint_path.exists():
+                    raise FileNotFoundError(f"Checkpoint not found: {resume_from}")
+
+                # Load checkpoint (with legacy support)
                 try:
-                    model.load_state_dict(remapped_state_dict)
+                    checkpoint = torch.load(resume_checkpoint_path,
+                                            map_location='cpu')
+                except Exception:
+                    print("  Warning: Standard load failed, trying legacy mode...")
+                    checkpoint = torch.load(resume_checkpoint_path,
+                                            map_location='cpu',
+                                            weights_only=False)
+                    print("  Legacy checkpoint loaded")
+
+                # Extract state dict
+                if 'model_state_dict' in checkpoint:
+                    state_dict = checkpoint['model_state_dict']
+                elif 'model' in checkpoint:
+                    state_dict = checkpoint['model']
+                else:
+                    state_dict = checkpoint
+
+                # Check if this is an adaptive checkpoint
+                if is_adaptive and checkpoint.get('is_adaptive', False):
+                    # Load adaptive state including experts and regions
+                    model.load_state_dict_extended(checkpoint['adaptive_state'])
+                    print(f"  Adaptive model weights loaded ({model.num_experts} experts)")
+                else:
+                    # Remap keys for legacy checkpoints
+                    remapped_state_dict = {}
+                    for key, value in state_dict.items():
+                        if key.startswith('layer_') or key.startswith('output.'):
+                            if key.startswith('output.'):
+                                layer_num = len(architecture) - 1
+                                new_key = key.replace('output.',
+                                                      f'network.layer_{layer_num}.')
+                            else:
+                                new_key = f'network.{key}'
+                            remapped_state_dict[new_key] = value
+                        else:
+                            remapped_state_dict[key] = value
+
+                    # Load weights
+                    try:
+                        model.load_state_dict(remapped_state_dict)
+                        print("  Model weights loaded - continuing from checkpoint")
+                    except RuntimeError:
+                        print("  Warning: Remapped keys didn't match, trying original...")
+                        model.load_state_dict(state_dict)
                     print("  Model weights loaded - continuing from checkpoint")
-                except RuntimeError:
-                    print("  Warning: Remapped keys didn't match, trying original...")
-                    model.load_state_dict(state_dict)
-                print("  Model weights loaded - continuing from checkpoint")
 
-        # Build loss
-        print("\n6. Building loss function...")
-        loss_module = importlib.import_module(f"losses.{problem}_loss")
-        loss_fn = loss_module.build_loss(**config)
-        print(f"  Loss function built for {problem}")
+            # Build loss
+            print("\n6. Building loss function...")
+            loss_module = importlib.import_module(f"losses.{problem}_loss")
+            loss_fn = loss_module.build_loss(**config)
+            print(f"  Loss function built for {problem}")
 
-        # Train
-        print("\n7. Training...")
-        checkpoint_path = train(
-            model=model,
-            loss_fn=loss_fn,
-            train_data_path=str(train_data_path),
-            eval_data_path=str(eval_data_path),
-            cfg=config,
-            run_dir=run_dir
-        )
+            # Train
+            print("\n7. Training...")
+            checkpoint_path = train(
+                model=model,
+                loss_fn=loss_fn,
+                train_data_path=str(train_data_path),
+                eval_data_path=str(eval_data_path),
+                cfg=config,
+                run_dir=run_dir
+            )
 
-        print(f"\n  Training complete")
-        print(f"  Best checkpoint: {checkpoint_path}")
+            print(f"\n  Training complete")
+            print(f"  Best checkpoint: {checkpoint_path}")
 
     else:
         # Eval-only mode - require resume_from

@@ -46,9 +46,12 @@ trainer/trainer.py  →  Core training loop
    - Writes merged config to `config/config.yaml`
    - Spawns `run_ncc.py` as subprocess
 3. `run_ncc.py` calls `load_config()` from `utils/io.py`
-4. Creates model via `create_network()` from `models/network_factory.py`
-5. Builds loss via dynamic import: `losses.{problem}_loss.build_loss()`
-6. Calls `trainer.train()` with model, loss_fn, data paths, config, run_dir
+4. Checks `time_marching.enabled`:
+   - If true: calls `train_with_time_marching()` from `trainer/time_marching.py`
+   - If false: standard single-model training flow
+5. Creates model via `create_network()` from `models/network_factory.py` (standard flow)
+6. Builds loss via dynamic import: `losses.{problem}_loss.build_loss()`
+7. Calls `trainer.train()` with model, loss_fn, data paths, config, run_dir
 
 ### Config Resolution
 
@@ -357,6 +360,85 @@ causal_state['min_weight'] = 1.0  # reset for next epoch
 
 ---
 
+## Time Marching
+
+### Overview
+
+Time marching decomposes the temporal domain [0, T] into sequential windows and trains a separate AToE/ANT model for each. Essential for chaotic PDEs like Kuramoto-Sivashinsky where standard PINNs fail due to error accumulation over long time horizons.
+
+Key idea: Train PINN on [0, t₁], use its terminal prediction as IC for [t₁, t₂], and so on. The final solution is piecewise: for a query (x, t), use the model corresponding to the window containing t.
+
+### Config Keys
+
+Under `problem.time_marching`:
+
+| Key | Description |
+|-----|-------------|
+| `enabled` | Enable time marching mode (default: false, true for KS) |
+| `num_windows` | Number of temporal windows (default: 5) |
+| `freeze_previous_windows` | Freeze models from earlier windows after training (default: true) |
+| `m_distribution` | How to distribute M experts across windows: `'equal'` \| `'linear'` \| `'quadratic'` |
+
+### M Distribution Strategies
+
+Given global_M (from `adaptive_pinn.M_experts_num`) and num_windows, distribute experts:
+
+| Strategy | Formula | Example (M=40, n=5) | Rationale |
+|----------|---------|---------------------|-----------|
+| `'equal'` | M/n per window | [8, 8, 8, 8, 8] | Uniform allocation |
+| `'linear'` | Mᵢ ∝ (i+1) | [3, 5, 8, 11, 13] | Linear growth |
+| `'quadratic'` | Mᵢ ∝ (i+1)² | [1, 4, 7, 13, 15] | Later windows get more experts |
+
+**Default**: `'quadratic'` — Later time windows in chaotic systems have more complex dynamics.
+
+### Training Flow
+
+When `time_marching.enabled = true`:
+
+1. **Compute windows**: Split temporal_domain into num_windows equal intervals
+2. **Distribute M**: Allocate experts per window based on m_distribution
+3. **For each window**:
+   - Narrow config: set `temporal_domain = [t_start, t_end]`, `M_experts_num = window.M`
+   - Generate datasets for narrowed domain
+   - If not first window: override IC `h_gt` with previous model's prediction
+   - Call `train()` as black box (full 3-phase pipeline per window)
+   - Optionally freeze model
+4. **Wrap** all window models in `TimeMarchingModel` for evaluation
+
+### IC Propagation
+
+For windows 2+, the analytical IC is unavailable. Instead:
+1. Query previous window's model at `t = window.t_start` for all IC points
+2. Replace `h_gt` in the dataset for IC points
+3. The loss function uses the same `loss_weights.ic` — no special handling needed
+
+This works because loss functions already use `h_gt` from the batch for IC loss.
+
+### TimeMarchingModel
+
+A wrapper that routes queries to the correct window model:
+
+```python
+def forward(self, inputs):
+    t = inputs[:, -1]  # Extract temporal coordinate
+    # Route each point to its window's model
+    for i, model in enumerate(self.models):
+        mask = (t >= t_starts[i]) & (t < t_ends[i])
+        output[mask] = model(inputs[mask])
+    return output
+```
+
+Full-domain evaluation works transparently — the piecewise nature is hidden.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `trainer/time_marching.py` | TimeWindow, compute_time_windows, orchestrator |
+| `models/time_marching_model.py` | TimeMarchingModel wrapper |
+
+---
+
 ## Adaptive Sampling
 
 ### Overview
@@ -511,3 +593,5 @@ loss_weights:
 | `utils/dataset_gen.py` | Dataset generation + adaptive sampling |
 | `adaptive/region_detector.py` | Tree fitting and pruning |
 | `adaptive/indicators.py` | Soft indicator functions |
+| `trainer/time_marching.py` | Time marching orchestrator |
+| `models/time_marching_model.py` | Piecewise model wrapper for time marching |
