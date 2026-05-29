@@ -203,7 +203,7 @@ def build_loss(**cfg):
         masks = batch['mask']
         N = x.shape[0]; device = x.device
         _t = getattr(model, '_timer', None)
-        use_decomposed = (cfg['use_decomposed_derivatives']
+        use_decomposed = (cfg['adaptive_pinn']['use_decomposed_derivatives']
                           and getattr(model, 'supports_decomposed', False)
                           and len(getattr(model, 'experts', [])) > 0)
         if for_tree_spawning:
