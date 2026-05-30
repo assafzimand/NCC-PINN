@@ -15,9 +15,9 @@ base_config:
 
   # ── Primary optimizer ──
   # ── Optimizer configuration ──
-  optimizer_1: soap                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
-  optimizer_2: null                  # No second optimizer — let SOAP run full duration
-  optimizer_switch_epoch: 1500       # Match old config
+  optimizer_1: adam                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
+  optimizer_2: ssbroyden                  # No second optimizer — let SOAP run full duration
+  optimizer_switch_epoch: 1000       # Match old config
   lr: 0.001                          # Base (peak) learning rate
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
@@ -463,7 +463,7 @@ base_config:
       # PirateNets paper (Wang et al. JMLR 2024) uses ic=1 on KS with LS-init.
       # We use 10 as a conservative choice: LS-init satisfies IC at epoch 0,
       # so extreme ic weighting (100) is no longer needed.
-      ic: 10.0
+      ic: 100.0
       bc: 1.0                        # Periodic BC is soft — low weight, FF can help enforce periodicity
     causal_training:
       enabled: true                  # Always on for KS — essential for learning chaotic dynamics
@@ -540,7 +540,7 @@ base_config:
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
     spawning_method: M_term_tree_by_norm          # "by_mean_residual" | "accept_split_by_norm" | "M_term_tree_by_norm" | "use_perfect_trees"
-    M_experts_num: 40                              # Number of top-norm nodes to select (only for M_term_tree_by_norm)
+    M_experts_num: 0                              # Number of top-norm nodes to select (only for M_term_tree_by_norm)
     perfect_trees_path: perfect_tree_examples/classic_norm/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
     # ── Post-spawn freeze (Fix 2) ── DISABLED for tree verification
@@ -579,4 +579,4 @@ experiments:
   # Using old successful config settings where applicable
   - name: ks
     problem: ks
-    base_architecture: [2, 128, 128, 128, 1]
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]
