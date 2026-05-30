@@ -18,7 +18,7 @@ base_config:
   optimizer_1: soap                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
   optimizer_2: null                  # No second optimizer — let SOAP run full duration
   optimizer_switch_epoch: 1500       # Match old config
-  lr: 0.0000000000001                          # Base (peak) learning rate
+  lr: 0.001                          # Base (peak) learning rate
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
   lr_schedule: exponential                # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
@@ -572,7 +572,7 @@ base_config:
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
     initial_train:
       epochs: 2000                               # Phase 1: train base model before tree fitting (match old config)
-      lr: 0.001
+
 
 experiments:
   # ── 4 experiments to verify M_term_tree_by_norm with M=40 ──

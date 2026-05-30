@@ -260,24 +260,29 @@ $$h_t + \alpha\, h\, h_x + \beta\, h_{xx} + \gamma\, h_{xxxx} = 0$$
 
 A cross-method summary of network sizes. **Bold** = exact numbers from paper/code (verified). *Italic* = estimate.
 
-| Method | Architecture | Params/NN | Time Windows | Total Params | Source |
-|--------|-------------|-----------|--------------|--------------|--------|
-| **Raissi (Burgers 1D)** | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | **3,021** | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) + [code](https://github.com/maziarraissi/PINNs) |
-| **Raissi (Schrödinger)** | MLP `[2,100×4,2]`, tanh | **30,802** | 1 | **30,802** | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) + [code](https://github.com/maziarraissi/PINNs) |
-| **SSBroyden (Burgers)** | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | **3,021** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
-| **SSBroyden (Allen-Cahn)** | MLP `[2,30×3,1]`, tanh | **2,019** | 1 | **2,019** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
-| **SSBroyden (KS 5-win)** | MLP `[2,30×5,1]`, tanh | **4,411** | 5 | **22,055** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
-| **SSBroyden (KS 20-win)** | MLP `[2,30×5,1]`, tanh | **4,411** | 20 | **88,220** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
-| **Causal PINN (Allen-Cahn)** | Modified MLP `[2,128×6,1]`, tanh | **~84K** | 1 | **~84K** | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
-| **Causal PINN (KS regular)** | Modified MLP `[2,256×5,1]`, tanh | **~267K** | 10 | **~2.67M** | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
-| **Causal PINN (KS chaotic)** | Modified MLP `[2,128×10,1]`, tanh | **~150K** | 5 | **~750K** | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
-| **SOAP + PirateNet** | PirateNet 3×256, RWF | *~500K* | 1–10 (varies) | *~500K–5M* | [Wang et al., 2025](https://arxiv.org/abs/2502.00604) |
-| **vRBA (Adam)** | MLP `[2,64×6,1]` + FF, tanh | **21,318** | 1 | **21,318** | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
-| **vRBA (SSBroyden)** | MLP `[2,30×3,1]` + periodic enc | **2,011** | 1 | **2,011** | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
-| **RAD (Wu et al.)** | MLP `[2,64×4,1]`, tanh | **12,737** | 1 | **12,737** | [Wu et al., 2023](https://jmlr.org/papers/v24/22-1258.html) |
-| **RBA (Anagnostopoulos)** | MLP `[2,128×6,1]`, tanh, Xavier | **83,073** | 1 | **83,073** | [Anagnostopoulos et al., 2023](https://arxiv.org/abs/2307.00379) |
-| **PirateNet (Allen-Cahn)** | 9×256 ch, tanh, FF 2.0, RWF | *~500K+* | 1 (32 causal chunks) | *~500K+* | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
-| **PirateNet (KdV)** | 9×256 ch, tanh, FF 1.0, RWF | *~500K+* | 1 (16 causal chunks) | *~500K+* | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| Method | PDE | Rel-L2 Reported | Architecture | Params/NN | Time Windows | Total Params | Source |
+|--------|-----|-----------------|-------------|-----------|--------------|--------------|--------|
+| **Raissi (Burgers 1D)** | Burgers 1D | 6.7 × 10⁻⁴ | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | **3,021** | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) + [code](https://github.com/maziarraissi/PINNs) |
+| **Raissi (Schrödinger)** | Schrödinger | ~1.97 × 10⁻³ | MLP `[2,100×4,2]`, tanh | **30,802** | 1 | **30,802** | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) + [code](https://github.com/maziarraissi/PINNs) |
+| **SSBroyden (Burgers)** | Burgers 1D | **1.62 × 10⁻⁸** | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | **3,021** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| **SSBroyden (Allen-Cahn)** | Allen-Cahn | **9.43 × 10⁻⁷** | MLP `[2,30×3,1]`, tanh | **2,019** | 1 | **2,019** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| **SSBroyden (KS 5-win)** | KS | **2.65 × 10⁻⁵** | MLP `[2,30×5,1]`, tanh | **4,411** | 5 | **22,055** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| **SSBroyden (KS 20-win)** | KS | 6.51 × 10⁻⁴ | MLP `[2,30×5,1]`, tanh | **4,411** | 20 | **88,220** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| **Causal PINN (Allen-Cahn)** | Allen-Cahn | 2.46 × 10⁻⁴ | Modified MLP `[2,128×6,1]`, tanh | **~84K** | 1 | **~84K** | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
+| **Causal PINN (KS regular)** | KS | 3.49 × 10⁻⁴ | Modified MLP `[2,256×5,1]`, tanh | **~267K** | 10 | **~2.67M** | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
+| **Causal PINN (KS chaotic)** | KS | 2.46 × 10⁻² | Modified MLP `[2,128×10,1]`, tanh | **~150K** | 5 | **~750K** | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
+| **SOAP + PirateNet (Burgers)** | Burgers 1D | 4.03 × 10⁻⁵ | PirateNet 3×256, RWF | *~500K* | 1 | *~500K* | [Wang et al., 2025](https://arxiv.org/abs/2502.00604) |
+| **SOAP + PirateNet (Allen-Cahn)** | Allen-Cahn | 3.48 × 10⁻⁶ | PirateNet 3×256, RWF | *~500K* | 1 | *~500K* | [Wang et al., 2025](https://arxiv.org/abs/2502.00604) |
+| **SOAP + PirateNet (KdV)** | KdV | 3.40 × 10⁻⁴ | PirateNet 3×256, RWF | *~500K* | 1 | *~500K* | [Wang et al., 2025](https://arxiv.org/abs/2502.00604) |
+| **SOAP + PirateNet (KS)** | KS | 3.86 × 10⁻² | PirateNet 3×256, RWF | *~500K* | 10 | *~5M* | [Wang et al., 2025](https://arxiv.org/abs/2502.00604) |
+| **vRBA (Adam, Allen-Cahn)** | Allen-Cahn | varies | MLP `[2,64×6,1]` + FF, tanh | **21,318** | 1 | **21,318** | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| **vRBA (SSBroyden, Burgers)** | Burgers 1D | 2.68 × 10⁻⁷ | MLP `[2,30×3,1]` + periodic enc | **2,011** | 1 | **2,011** | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| **vRBA (SSBroyden, Allen-Cahn)** | Allen-Cahn | 1.88 × 10⁻⁶ | MLP `[2,30×3,1]` + periodic enc | **2,011** | 1 | **2,011** | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| **vRBA (SSBroyden, KdV)** | KdV | **2.17 × 10⁻⁶** | MLP `[2,30×3,1]` + periodic enc | **2,011** | 1 | **2,011** | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| **RAD (Wu et al.)** | Burgers 1D | varies | MLP `[2,64×4,1]`, tanh | **12,737** | 1 | **12,737** | [Wu et al., 2023](https://jmlr.org/papers/v24/22-1258.html) |
+| **RBA (Anagnostopoulos)** | Allen-Cahn | ~4.55 × 10⁻⁵ | MLP `[2,128×6,1]`, tanh, Xavier | **83,073** | 1 | **83,073** | [Anagnostopoulos et al., 2023](https://arxiv.org/abs/2307.00379) |
+| **PirateNet (Allen-Cahn)** | Allen-Cahn | 2.24 × 10⁻⁵ | 9×256 ch, tanh, FF 2.0, RWF | *~500K+* | 1 (32 causal chunks) | *~500K+* | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| **PirateNet (KdV)** | KdV | 4.27 × 10⁻⁴ | 9×256 ch, tanh, FF 1.0, RWF | *~500K+* | 1 (16 causal chunks) | *~500K+* | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
 
 > **How to read**: "MLP `[in,H×L,out]`" = multi-layer perceptron with input dim, H neurons × L hidden layers, output dim. "FF" = Fourier feature embedding. "RWF" = random weight factorization. SSBroyden is a quasi-Newton optimizer that converges with far fewer parameters than Adam. **"Causal chunks"** = training/weighting divisions within a single NN (not separate models). **"Time Windows"** = separate NNs trained sequentially; total params = params/NN × windows.
 
