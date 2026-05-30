@@ -39,9 +39,11 @@ $$h_t + h\, h_x - \frac{\nu}{\pi}\, h_{xx} = 0$$
 
 | Method | Year | Optimizer | Rel. L₂ | Architecture | Params | Time Windows | Reference |
 |--------|------|-----------|---------|--------------|--------|--------------|-----------|
-| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | **2.68 × 10⁻⁷** | MLP `[2,30×3,1]` + periodic enc | **2,011** | None | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
-| RAD | 2023 | Adam+L-BFGS | varies | MLP `[2,64×4,1]`, tanh | **12,737** | None | [Wu et al., 2023](https://jmlr.org/papers/v24/22-1258.html) |
-| Vanilla PINN | 2019 | L-BFGS | 6.7 × 10⁻⁴ | MLP `[2,20×8,1]`, tanh | **3,021** | None | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
+| SSBroyden PINN | 2025 | SSBroyden | **1.62 × 10⁻⁸** | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | 2.68 × 10⁻⁷ | MLP `[2,30×3,1]` + periodic enc | **2,011** | 1 | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| SOAP + PirateNet | 2025 | SOAP | 4.03 × 10⁻⁵ | PirateNet 3×256, RWF | *~500K* | 1 | [Wang et al., 2025](https://arxiv.org/abs/2502.00604) |
+| RAD | 2023 | Adam+L-BFGS | varies | MLP `[2,64×4,1]`, tanh | **12,737** | 1 | [Wu et al., 2023](https://jmlr.org/papers/v24/22-1258.html) |
+| Vanilla PINN | 2019 | L-BFGS | 6.7 × 10⁻⁴ | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
 > **Comparability:** Results above are for the $\nu/\pi = 1/1000$ variant matching our config and are directly comparable. For the easier $\nu/\pi = 1/100$ variant, SOTA is vRBA: 8.25 × 10⁻⁹ and PirateNet (Adam): 8.20 × 10⁻⁵ (not directly comparable).
 
@@ -138,13 +140,16 @@ $$h_t - D\, h_{xx} - 5(h - h^3) = 0$$
 
 | Method | Year | Optimizer | Rel. L₂ | Architecture | Params | Time Windows | Reference |
 |--------|------|-----------|---------|--------------|--------|--------------|-----------|
-| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | **1.88 × 10⁻⁶** | MLP `[2,30×3,1]` + periodic enc | **2,011** | None | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
-| vRBA ($\Phi = r^2$) + FF | 2025 | Adam | varies | MLP `[2,64×6,1]` + FF, tanh | **21,318** | None | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
-| RBA + mMLP + FF | 2023 | Adam | ~4.55 × 10⁻⁵ | MLP `[2,128×6,1]`, tanh, Xavier | **83,073** | None | [Anagnostopoulos et al., 2023](https://arxiv.org/abs/2307.00379) |
-| PirateNet + FF + WF + CS | 2024 | Adam | 2.24 × 10⁻⁵ | 9 layers × 256 ch, tanh, FF 2.0, RWF | *~500K+ (est.)* | Causal 32 chunks | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
-| Vanilla PINN | 2019 | Adam | ~4.98 × 10⁻¹ | MLP `[2,20×8,1]`, tanh | **3,021** | None | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
+| SSBroyden PINN | 2025 | SSBroyden | **9.43 × 10⁻⁷** | MLP `[2,30×3,1]`, tanh | **2,019** | 1 | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| vRBA ($\Phi = r^2$) + FF | 2025 | SSBroyden | 1.88 × 10⁻⁶ | MLP `[2,30×3,1]` + periodic enc | **2,011** | 1 | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| SOAP + PirateNet | 2025 | SOAP | 3.48 × 10⁻⁶ | PirateNet 3×256, RWF | *~500K* | 1 | [Wang et al., 2025](https://arxiv.org/abs/2502.00604) |
+| Causal PINN | 2022 | Adam | 2.46 × 10⁻⁴ | Modified MLP `[2,128×6,1]`, tanh | **~84K** | 1 (causal weighting) | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
+| vRBA ($\Phi = r^2$) + FF | 2025 | Adam | varies | MLP `[2,64×6,1]` + FF, tanh | **21,318** | 1 | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| RBA + mMLP + FF | 2023 | Adam | ~4.55 × 10⁻⁵ | MLP `[2,128×6,1]`, tanh, Xavier | **83,073** | 1 | [Anagnostopoulos et al., 2023](https://arxiv.org/abs/2307.00379) |
+| PirateNet + FF + WF + CS | 2024 | Adam | 2.24 × 10⁻⁵ | 9 layers × 256 ch, tanh, FF 2.0, RWF | *~500K+* | 1 (causal 32 chunks) | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| Vanilla PINN | 2019 | Adam | ~4.98 × 10⁻¹ | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
-> **Comparability:** All results above use the standard Allen-Cahn benchmark with $D = 0.0001$ matching our configuration and are directly comparable. Note: RAD (Wu et al. 2023) uses D=0.001, which is a different (easier) problem.
+> **Comparability:** All results above use the standard Allen-Cahn benchmark with $D = 0.0001$ matching our configuration and are directly comparable. Note: RAD (Wu et al. 2023) uses D=0.001, which is a different (easier) problem. "Causal chunks" are training/weighting chunks (not separate NNs).
 
 ---
 
@@ -165,10 +170,11 @@ $$h_t + \eta\, h\, h_x + \mu^2\, h_{xxx} = 0$$
 
 | Method | Year | Optimizer | Rel. L₂ | Architecture | Params | Time Windows | Reference |
 |--------|------|-----------|---------|--------------|--------|--------------|-----------|
-| vRBA ($\Phi = e^r$) + FF | 2025 | SSBroyden | **2.17 × 10⁻⁶** | MLP `[2,30×3,1]` + periodic enc | **2,011** | None | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
-| PirateNet + FF + WF + CS | 2024 | Adam | 4.27 × 10⁻⁴ | 9 layers × 256 ch, tanh, FF 1.0, RWF | *~500K+ (est.)* | Causal 16 chunks | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| vRBA ($\Phi = e^r$) + FF | 2025 | SSBroyden | **2.17 × 10⁻⁶** | MLP `[2,30×3,1]` + periodic enc | **2,011** | 1 | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| SOAP + PirateNet | 2025 | SOAP | 3.40 × 10⁻⁴ | PirateNet 3×256, RWF | *~500K* | 1 | [Wang et al., 2025](https://arxiv.org/abs/2502.00604) |
+| PirateNet + FF + WF + CS | 2024 | Adam | 4.27 × 10⁻⁴ | 9 layers × 256 ch, tanh, FF 1.0, RWF | *~500K+* | 1 (causal 16 chunks) | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
 
-> **Comparability:** vRBA uses a different KdV formulation (two-soliton, x∈[0,20], t∈[0,5]) than our config. PirateNet KdV benchmark matches our config ($\mu^2 = 4.84 \times 10^{-4}$, periodic BC). Note: RAD (Wu et al. 2023) KdV benchmark is an **inverse problem** (parameter discovery), not directly comparable to forward problem.
+> **Comparability:** vRBA uses a different KdV formulation (two-soliton, x∈[0,20], t∈[0,5]) than our config. PirateNet/SOAP KdV benchmark matches our config ($\mu^2 = 4.84 \times 10^{-4}$, periodic BC). Note: RAD (Wu et al. 2023) KdV benchmark is an **inverse problem** (parameter discovery), not directly comparable to forward problem.
 
 ---
 
@@ -237,11 +243,16 @@ $$h_t + \alpha\, h\, h_x + \beta\, h_{xx} + \gamma\, h_{xxxx} = 0$$
 
 **PINN Benchmark Results (Rel. L₂ Error):**
 
-| Method | Year | Optimizer | Rel. L₂ | Architecture | Params | Time Windows | Reference |
-|--------|------|-----------|---------|--------------|--------|--------------|-----------|
-| PINNacle benchmark | 2024 | varies | varies | MLP 5 layers × 100 neurons | *~40K (est.)* | None | [Hao et al., 2024](https://arxiv.org/abs/2306.08827) |
+| Method | Year | Optimizer | Rel. L₂ | Architecture | Params/window | Total Params | Time Windows | Reference |
+|--------|------|-----------|---------|--------------|---------------|--------------|--------------|-----------|
+| SSBroyden PINN | 2025 | SSBroyden | **2.65 × 10⁻⁵** | MLP `[2,30×5,1]`, tanh | **4,411** | **22,055** | 5 (t∈[0,0.5]) | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| SSBroyden PINN | 2025 | SSBroyden | 6.51 × 10⁻⁴ | MLP `[2,30×5,1]`, tanh | **4,411** | **88,220** | 20 (t∈[0,1]) | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| Causal PINN (regular) | 2022 | Adam | 3.49 × 10⁻⁴ | Modified MLP `[2,256×5,1]`, tanh | **~267K** | **~2.67M** | 10 (t∈[0,1]) | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
+| Causal PINN (chaotic) | 2022 | Adam | 2.46 × 10⁻² | Modified MLP `[2,128×10,1]`, tanh | **~150K** | **~750K** | 5 (t∈[0,0.5]) | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
+| SOAP + PirateNet | 2025 | SOAP | 3.86 × 10⁻² | PirateNet 3×256, RWF | *~500K* | *~5M* | 10 | [Wang et al., 2025](https://arxiv.org/abs/2502.00604) |
+| PINNacle benchmark | 2024 | varies | varies | MLP 5 layers × 100 neurons | *~40K* | *~40K* | 1 | [Hao et al., 2024](https://arxiv.org/abs/2306.08827) |
 
-> **Comparability:** KS is one of the most challenging 1D PINN benchmarks due to its chaotic dynamics and 4th-order spatial derivative. **Note:** PirateNet paper does NOT include a KS benchmark. Limited verified architecture data available for this PDE.
+> **Comparability:** KS is one of the most challenging 1D PINN benchmarks due to its chaotic dynamics and 4th-order spatial derivative. **Critical note on time windows:** All high-accuracy KS results use time-marching (separate PINNs per window). Total params = params/window × num_windows. The "Causal" approaches of Wang et al. use time-marching with causal weighting within each window.
 
 ---
 
@@ -249,21 +260,26 @@ $$h_t + \alpha\, h\, h_x + \beta\, h_{xx} + \gamma\, h_{xxxx} = 0$$
 
 A cross-method summary of network sizes. **Bold** = exact numbers from paper/code (verified). *Italic* = estimate.
 
-| Method | Architecture | Params | Time Windows | Source |
-|--------|-------------|--------|--------------|--------|
-| **Raissi (Burgers 1D)** | MLP `[2,20×8,1]`, tanh | **3,021** | None | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) + [code](https://github.com/maziarraissi/PINNs) |
-| **Raissi (Schrödinger)** | MLP `[2,100×4,2]`, tanh | **30,802** | None | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) + [code](https://github.com/maziarraissi/PINNs) |
-| **Raissi (Discrete Burgers)** | MLP `[1,50×4,501]`, RK-500 | *~8,501* | 500 RK stages | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) |
-| **vRBA (Adam)** | MLP `[2,64×6,1]` + FF, tanh | **21,318** | None | [Paper Table 2](https://www.nature.com/articles/s44387-026-00084-4) |
-| **vRBA (SSBroyden)** | MLP `[2,30×3,1]` + periodic enc | **2,011** | None | [Paper Table 2](https://www.nature.com/articles/s44387-026-00084-4) |
-| **RAD (Wu et al.)** | MLP `[2,64×4,1]`, tanh | **12,737** | None | [Paper Table 1](https://jmlr.org/papers/v24/22-1258.html) |
-| **RAD (KdV inverse)** | MLP `[2,100×4,1]`, tanh | **30,701** | None | [Paper Table 1](https://jmlr.org/papers/v24/22-1258.html) |
-| **RBA (Anagnostopoulos)** | MLP `[2,128×6,1]`, tanh, Xavier | **83,073** | None | [Paper Appendix](https://arxiv.org/abs/2307.00379) |
-| **PirateNet (Allen-Cahn)** | 9 layers × 256 ch, tanh, FF 2.0, RWF | *~500K+ (est.)* | Causal 32 chunks | [Paper](https://jmlr.org/papers/v25/24-0313.html) |
-| **PirateNet (KdV)** | 9 layers × 256 ch, tanh, FF 1.0, RWF | *~500K+ (est.)* | Causal 16 chunks | [Paper](https://jmlr.org/papers/v25/24-0313.html) |
-| *PINNacle* | Varies per method/PDE | *Varies* | None | [Paper](https://arxiv.org/abs/2306.08827) |
+| Method | Architecture | Params/NN | Time Windows | Total Params | Source |
+|--------|-------------|-----------|--------------|--------------|--------|
+| **Raissi (Burgers 1D)** | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | **3,021** | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) + [code](https://github.com/maziarraissi/PINNs) |
+| **Raissi (Schrödinger)** | MLP `[2,100×4,2]`, tanh | **30,802** | 1 | **30,802** | [Paper](https://doi.org/10.1016/j.jcp.2018.10.045) + [code](https://github.com/maziarraissi/PINNs) |
+| **SSBroyden (Burgers)** | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | **3,021** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| **SSBroyden (Allen-Cahn)** | MLP `[2,30×3,1]`, tanh | **2,019** | 1 | **2,019** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| **SSBroyden (KS 5-win)** | MLP `[2,30×5,1]`, tanh | **4,411** | 5 | **22,055** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| **SSBroyden (KS 20-win)** | MLP `[2,30×5,1]`, tanh | **4,411** | 20 | **88,220** | [Kiyani et al., 2025](https://arxiv.org/abs/2501.16371) |
+| **Causal PINN (Allen-Cahn)** | Modified MLP `[2,128×6,1]`, tanh | **~84K** | 1 | **~84K** | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
+| **Causal PINN (KS regular)** | Modified MLP `[2,256×5,1]`, tanh | **~267K** | 10 | **~2.67M** | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
+| **Causal PINN (KS chaotic)** | Modified MLP `[2,128×10,1]`, tanh | **~150K** | 5 | **~750K** | [Wang et al., 2022](https://arxiv.org/abs/2203.07404) |
+| **SOAP + PirateNet** | PirateNet 3×256, RWF | *~500K* | 1–10 (varies) | *~500K–5M* | [Wang et al., 2025](https://arxiv.org/abs/2502.00604) |
+| **vRBA (Adam)** | MLP `[2,64×6,1]` + FF, tanh | **21,318** | 1 | **21,318** | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| **vRBA (SSBroyden)** | MLP `[2,30×3,1]` + periodic enc | **2,011** | 1 | **2,011** | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
+| **RAD (Wu et al.)** | MLP `[2,64×4,1]`, tanh | **12,737** | 1 | **12,737** | [Wu et al., 2023](https://jmlr.org/papers/v24/22-1258.html) |
+| **RBA (Anagnostopoulos)** | MLP `[2,128×6,1]`, tanh, Xavier | **83,073** | 1 | **83,073** | [Anagnostopoulos et al., 2023](https://arxiv.org/abs/2307.00379) |
+| **PirateNet (Allen-Cahn)** | 9×256 ch, tanh, FF 2.0, RWF | *~500K+* | 1 (32 causal chunks) | *~500K+* | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
+| **PirateNet (KdV)** | 9×256 ch, tanh, FF 1.0, RWF | *~500K+* | 1 (16 causal chunks) | *~500K+* | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
 
-> **How to read**: "MLP `[in,H×L,out]`" = multi-layer perceptron with input dim, H neurons × L hidden layers, output dim. "FF" = Fourier feature embedding. "RWF" = random weight factorization. SSBroyden is a quasi-Newton optimizer that converges with far fewer parameters than Adam. "Causal chunks" are training/weighting chunks used in causal training, not separate time-window models.
+> **How to read**: "MLP `[in,H×L,out]`" = multi-layer perceptron with input dim, H neurons × L hidden layers, output dim. "FF" = Fourier feature embedding. "RWF" = random weight factorization. SSBroyden is a quasi-Newton optimizer that converges with far fewer parameters than Adam. **"Causal chunks"** = training/weighting divisions within a single NN (not separate models). **"Time Windows"** = separate NNs trained sequentially; total params = params/NN × windows.
 
 ---
 
@@ -272,13 +288,15 @@ A cross-method summary of network sizes. **Bold** = exact numbers from paper/cod
 | Abbrev. | Full Reference |
 |---------|---------------|
 | **Raissi et al., 2019** | M. Raissi, P. Perdikaris, G.E. Karniadakis. "Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations." *J. Comput. Phys.* 378, 2019. |
+| **Causal PINNs (Wang et al., 2022)** | S. Wang, S. Sankaran, P. Perdikaris. "Respecting causality is all you need for training physics-informed neural networks." arXiv:2203.07404, 2022. |
+| **SSBroyden (Kiyani et al., 2025)** | E. Kiyani, K. Shukla, J.F. Urbán, J. Darbon, G.E. Karniadakis. "Optimizing the Optimizer for Physics-Informed Neural Networks and Kolmogorov-Arnold Networks." arXiv:2501.16371, 2025. |
+| **SOAP (Wang et al., 2025)** | S. Wang, A.K. Bhartari, B. Li, P. Perdikaris. "Gradient Alignment in Physics-informed Neural Networks: A Second-Order Optimization Perspective." arXiv:2502.00604, 2025. |
 | **PirateNet (Wang et al., 2024)** | S. Wang, B. Li, Y. Chen, P. Perdikaris. "PirateNets: Physics-informed Deep Learning with Residual Adaptive Networks." *JMLR* 25, 2024. |
 | **RAD (Wu et al., 2023)** | C. Wu, M. Zhu, Q. Tan, Y. Kartha, L. Lu. "A comprehensive study of non-adaptive and residual-based adaptive sampling for physics-informed neural networks." *CMAME* 403, 2023. |
 | **vRBA (Hag et al., 2025)** | J. Hag et al. "A variational framework for residual-based adaptivity in neural PDE solvers and operator learning." *npj Artificial Intelligence*, 2025. |
 | **PINNacle (Hao et al., 2024)** | Z. Hao et al. "PINNacle: A Comprehensive Benchmark of Physics-Informed Neural Networks for Solving PDEs." *NeurIPS Datasets & Benchmarks*, 2024. |
-| **SOAP (Huang et al., 2025)** | Z. Huang, T. Zhang. "SOAP optimizer for PINNs." arXiv:2412.09009, 2025. |
 | **DASA-PINN / RBA (Anagnostopoulos et al., 2024)** | S. Anagnostopoulos, J.D. Toscano, N. Stergiopulos, G.E. Karniadakis. "Residual-based attention in physics-informed neural networks." *CMAME* 421, 2024. |
 
 ---
 
-*Last updated: 2026-05-29 (Architecture verification update)*
+*Last updated: 2026-05-30 (Added SSBroyden, Causal PINN, and SOAP papers with verified param counts)*

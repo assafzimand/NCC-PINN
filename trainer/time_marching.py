@@ -113,7 +113,7 @@ def compute_time_windows(
     return windows
 
 
-def narrow_config_for_window(cfg: Dict, window: TimeWindow) -> Dict:
+def narrow_config_for_window(cfg: Dict, window: TimeWindow, prev_model: nn.Module = None) -> Dict:
     """
     Create a copy of cfg with temporal_domain and M narrowed for this window.
     
@@ -126,6 +126,7 @@ def narrow_config_for_window(cfg: Dict, window: TimeWindow) -> Dict:
     Args:
         cfg: Full configuration dictionary
         window: TimeWindow to narrow to
+        prev_model: Model from previous window (for IC override during resampling)
     
     Returns:
         Deep copy of cfg with temporal_domain and M_experts_num updated
@@ -139,12 +140,14 @@ def narrow_config_for_window(cfg: Dict, window: TimeWindow) -> Dict:
     # Set window-specific M
     window_cfg['adaptive_pinn']['M_experts_num'] = window.M
     
-    # Add flag to indicate time marching is active (for eval filtering)
+    # Add flag to indicate time marching is active (for eval filtering and IC override)
+    # prev_model is stored as reference for IC override after resampling
     window_cfg['_time_marching_window'] = {
         'enabled': True,
         't_start': window.t_start,
         't_end': window.t_end,
-        'idx': window.idx
+        'idx': window.idx,
+        'prev_model': prev_model  # None for window 0, model for windows 1+
     }
     
     return window_cfg
@@ -278,8 +281,8 @@ def train_with_time_marching(
         print(f"  M_experts_num = {window.M}")
         print(f"{'='*60}")
         
-        # 1. Narrow config for this window
-        window_cfg = narrow_config_for_window(config, window)
+        # 1. Narrow config for this window (pass prev_model for IC override during resampling)
+        window_cfg = narrow_config_for_window(config, window, prev_model=prev_model)
         window_run_dir = run_dir / f"window_{window.idx}"
         window_run_dir.mkdir(parents=True, exist_ok=True)
         
