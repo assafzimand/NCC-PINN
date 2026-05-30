@@ -7,4 +7,4 @@ scipy
 pyyaml
 seaborn
 finufft
-git+https://github.com/rfeinman/pytorch-minimize.git
+pytorch-minimize
