@@ -203,20 +203,12 @@ def override_ic_with_model(
     prev_model.eval()
     with torch.no_grad():
         inputs = torch.cat([x_ic, t_ic], dim=1).to(device)
-        
-        # Use base model only for clean IC propagation
-        # This bypasses experts/POU so IC is purely from the base network.
-        if hasattr(prev_model, 'base_model'):
-            h_pred = prev_model.base_model(inputs)  # (n_ic, output_dim)
-            model_type = "base_model"
-        else:
-            h_pred = prev_model(inputs)  # Fallback for non-AToE models
-            model_type = "full_model"
+        h_pred = prev_model(inputs)
     
     # Diagnostic: print prediction stats
     has_nan = torch.isnan(h_pred).any().item()
     has_inf = torch.isinf(h_pred).any().item()
-    print(f"      h_pred ({model_type}): min={h_pred.min().item():.4f}, max={h_pred.max().item():.4f}, mean={h_pred.mean().item():.4f}")
+    print(f"      h_pred: min={h_pred.min().item():.4f}, max={h_pred.max().item():.4f}, mean={h_pred.mean().item():.4f}")
     print(f"      h_pred contains NaN: {has_nan}, Inf: {has_inf}")
     
     if has_nan or has_inf:
@@ -462,6 +454,12 @@ def train_with_time_marching(
         print(f"\n  Creating model for window {window.idx}...")
         window_model = model_class(architecture, activation, window_cfg, window_cfg['adaptive_pinn'])
         window_model = window_model.to(device)
+        
+        # Convert to double precision if configured
+        precision = window_cfg.get('precision', 'float32')
+        if precision == 'float64':
+            window_model = window_model.double()
+        
         print(f"  {type(window_model).__name__} created")
         
         # 4. Build loss function for this window

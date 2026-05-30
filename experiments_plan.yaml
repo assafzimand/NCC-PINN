@@ -1,31 +1,33 @@
 # Experiment plan configuration
-experiment_name: "M_term_tree_verification"
+# Kiyani et al. Reproduction (arXiv:2501.16371)
+experiment_name: "kiyani_reproduction"
 
 # Base configuration (will be used for all experiments)
 base_config:
-  problem: schrodinger
+  problem: burgers1d
   model: AToE                        # 'AToE' | 'AToELeaves' | 'ANT'
   activation: tanh                   # Activation function for all networks
+  precision: float64                 # 'float32' or 'float64' (Kiyani: double precision)
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
-  epochs: 1                          # Phase 3: just 1 epoch to verify tree creation
-  batch_size: 4096                    # Mini-batch size for Adam/SOAP training
-  patience_epochs: 3000              # Match old config
-  min_epochs: 2000                   # Match old config
+  epochs: 1                          # Phase 3: unused when M=0 (all training in initial_train)
+  batch_size: 99999                  # Full-batch for Adam too (>= dataset size)
+  patience_epochs: 50000             # No early stopping
+  min_epochs: 1                      # No minimum
 
   # ── Primary optimizer ──
   # ── Optimizer configuration ──
-  optimizer_1: soap                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
-  optimizer_2: null                  # No second optimizer — let SOAP run full duration
-  optimizer_switch_epoch: 1000       # Match old config
+  optimizer_1: adam                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
+  optimizer_2: ssbroyden             # Second optimizer (Kiyani: Adam warmup then SSBroyden)
+  optimizer_switch_epoch: 1000       # Switch to SSBroyden after 1000 Adam epochs
   lr: 0.001                          # Base (peak) learning rate
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
-  lr_schedule: exponential                # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
-  lr_warmup_steps: 500                # Match old config
-  lr_warmup_start_factor: 0.01        # Warmup starts at this fraction of base lr (0.01 = 1% of lr)
-  lr_decay_rate: 0.9                 # For exponential: multiply lr by this factor every lr_decay_steps
-  lr_decay_steps: 10000              # Match old config
+  lr_schedule: none                  # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
+  lr_warmup_steps: 0                 # No warmup (Kiyani: none mentioned)
+  lr_warmup_start_factor: 0.01       # Warmup starts at this fraction of base lr (0.01 = 1% of lr)
+  lr_decay_rate: 0.98                # For exponential: multiply lr by this factor every lr_decay_steps
+  lr_decay_steps: 1000               # Kiyani: decay every 1000 iterations for KS/Allen-Cahn
   new_expert_lr_decay: 1.0           # DISABLED: 1.0 = no decay (match old behavior)
 
   # ── SOAP-specific (only used when optimizer_1 or _2 is 'soap') ──
@@ -35,16 +37,15 @@ base_config:
 
   # ── L-BFGS specific (only used when optimizer_1 or _2 is 'lbfgs') ──
   lbfgs_lr: 1.0                     # L-BFGS learning rate (line search makes this effectively a max step size).
-  lbfgs_max_iter: 20                 # Max L-BFGS iterations per step.
-  lbfgs_history_size: 20             # L-BFGS history size (number of past updates stored).
+  lbfgs_max_iter: 1                  # Kiyani: 1 quasi-Newton step per epoch (matches paper's "iteration" count)
+  lbfgs_history_size: 100            # L-BFGS history size (number of past updates stored).
   lbfgs_line_search: 'strong_wolfe'  # L-BFGS line search algorithm.
   lbfgs_tolerance_grad: 0.0          # Gradient tolerance for L-BFGS convergence. 0 = disabled.
   lbfgs_tolerance_change: 0.0        # Loss change tolerance for L-BFGS convergence. 0 = disabled.
 
   # ── SSBroyden-specific (only used when optimizer_1 or _2 is 'ssbroyden') ──
-  ssbroyden_history_size: 10         # Number of correction pairs stored. Paper uses default (~10).
-  ssbroyden_max_iter: 20             # Inner iterations per closure call. Paper: 20k-30k total iters full-batch.
-  ssbroyden_line_search: strong-wolfe  # Line search. Paper (vRBA 2025): Strong Wolfe.
+  ssbroyden_lr: 1.0                  # SSBroyden learning rate (scimba default)
+  ssbroyden_tolerance_grad: 1.0e-10  # Gradient tolerance (scimba default)
 
   # ── Adam hyperparameters (only used when optimizer_1 or _2 is 'adam') ──
   adam_betas: [0.9, 0.999]           # Adam momentum parameters (beta1, beta2). Standard default.
@@ -195,7 +196,7 @@ base_config:
       epsilon: 1.0e-5
     adaptive_sampling:
       enabled: true
-      adaptive_ratio: 0.3
+      adaptive_ratio: 0.5
       per_leaf_sampling: false
       phi: quadratic
       phi_epsilon: 1.0
@@ -266,38 +267,38 @@ base_config:
     tree_smoothness_threshold: 0.5
     loss_weights:
       residual: 1.0
-      ic: 100.0                      # Strong IC enforcement — stiff problem needs to lock in IC early
+      ic: 1.0                        # Kiyani: equal weights
       bc: 1.0
-    causal_training:                 # Paper-recommended params (Wang et al. 2022)
-      enabled: true                  # Causal weighting on residual loss
-      num_chunks: 32                 # Temporal bins (keep 32, enough for 20k points)
-      tol_schedule: [0.01, 0.1, 1.0, 10.0]  # Extended from [0.01, 0.1, 1.0] for 4000 epochs
+    causal_training:                 # Kiyani: disabled
+      enabled: false
+      num_chunks: 32
+      tol_schedule: [0.01, 0.1, 1.0]
       min_weight_threshold: 0.99
-    # ── Per-problem features (no global defaults) ──
-    rwf: true
+    # ── Per-problem features (Kiyani: all disabled for vanilla PINN) ──
+    rwf: false
     fourier_features:
-      enabled: true
+      enabled: false
       dim: 128
       scale: 3.0                     # Higher scale for very sharp interfaces (D=0.0001)
       periodic: false
     init:
       hidden: glorot
-      output: ls
-      ls_use_bias: true
+      output: default                # Kiyani: no LS init
+      ls_use_bias: false
       spectral_norm: false
       spectral_norm_init_std: 1.0e-6
     lra:
-      enabled: true
+      enabled: false                 # Kiyani: disabled
       update_every: 100
       alpha: 0.1
       scheme: grad_norm
       epsilon: 1.0e-5
     adaptive_sampling:
-      enabled: true
+      enabled: false                 # Kiyani: no RAD for Allen-Cahn
       adaptive_ratio: 0.3
       per_leaf_sampling: false
-      phi: exponential               # quadratic | exponential | power
-      phi_epsilon: 1.0               # scale ε for exponential phi
+      phi: quadratic
+      phi_epsilon: 1.0
       phi_power: 2.0
     grad_clip_norm: null
     expert_grad_clip_norm: null
@@ -460,29 +461,26 @@ base_config:
     tree_smoothness_threshold: 0.3
     loss_weights:
       residual: 1.0
-      # PirateNets paper (Wang et al. JMLR 2024) uses ic=1 on KS with LS-init.
-      # We use 10 as a conservative choice: LS-init satisfies IC at epoch 0,
-      # so extreme ic weighting (100) is no longer needed.
-      ic: 100.0
-      bc: 1.0                        # Periodic BC is soft — low weight, FF can help enforce periodicity
+      ic: 1.0                        # Kiyani: equal weights
+      bc: 1.0
     causal_training:
-      enabled: true                  # Always on for KS — essential for learning chaotic dynamics
-      num_chunks: 32                 # Fine-grained temporal bins — smoother causal progression
-      tol_schedule: [0.01, 0.1, 1]  # Annealing schedule (Wang et al. 2022): start soft, harden as network learns
-      min_weight_threshold: 0.99     # Paper default — strict convergence before advancing
-      per_leaf_causal: false          # Feature B: each leaf gets its own independent causal state
-    # ── Per-problem features (KS-tuned, latest config) ──
-    rwf: true
+      enabled: false                 # Kiyani: disabled
+      num_chunks: 32
+      tol_schedule: [0.01, 0.1, 1]
+      min_weight_threshold: 0.99
+      per_leaf_causal: false
+    # ── Per-problem features (Kiyani: Fourier M=10, RAD enabled) ──
+    rwf: false
     fourier_features:
       enabled: true
-      dim: 128
-      scale: 2.0                     # Conservative — KS has broadband content, not sharp interfaces
+      dim: 10                        # Kiyani: M=10 Fourier modes (input dim = 1 + 2*10 = 21)
+      scale: 1.0
       periodic: true
     init:
-      hidden: glorot         # New experts copy hidden-layer weights from closest ancestor
-      output: zero                     # Least-squares fit to IC data (base model only)
+      hidden: glorot
+      output: default                # Kiyani: no LS init
       ls_use_bias: false
-      spectral_norm: false            # Bounds Lipschitz constant — prevents h_xxxx overflow in KS
+      spectral_norm: false
       spectral_norm_init_std: 1.0e-6
     lra:
       enabled: false
@@ -491,8 +489,8 @@ base_config:
       scheme: grad_norm
       epsilon: 1.0e-5
     adaptive_sampling:
-      enabled: false                 # Disabled for KS by default; experiments can enable
-      adaptive_ratio: 0.3
+      enabled: true                  # Kiyani: RAD enabled for KS
+      adaptive_ratio: 0.5
       per_leaf_sampling: false
       phi: quadratic
       phi_epsilon: 1.0
@@ -500,10 +498,10 @@ base_config:
     grad_clip_norm: null
     expert_grad_clip_norm: null
     time_marching:
-      enabled: true                       # Enabled for KS - essential for chaotic dynamics
-      num_windows: 3                      # Splits temporal domain into 5 sequential windows
-      freeze_previous_windows: true       # Freeze models from earlier windows
-      m_distribution: quadratic           # linear | quadratic | equal - later windows get more experts
+      enabled: true                       # Kiyani: 20 windows for t in [0, 1]
+      num_windows: 20
+      freeze_previous_windows: true
+      m_distribution: equal               # Kiyani: equal distribution
 
   # ── Dataset sampling ratios (global) ──
   sampling:
@@ -512,20 +510,21 @@ base_config:
     boundary_train_ratio: 0.026      # ~260 BC points (with n_residual=20000). Papers use 200+.
     eval_train_ratio: 0.25           # eval = 25% of train (all types)
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
-    resample_every_epochs: 100       # Regenerate training data every N epochs. Papers use 500.
+    resample_every_epochs: 500       # Kiyani: resample every 500 iterations (only during Adam phase)
     min_points_per_leaf: 50          # Minimum adaptive points per leaf (per_leaf_sampling only); 0 = disabled
 
   # ── Adaptive Expert PINN configuration (Tree-Based Spawning) ──
+  # Kiyani: M_experts_num=0 makes this a vanilla MLP (no spawning), all training in Phase 1
   adaptive_pinn:
     enabled: true                              # Toggle adaptive expert spawning on/off
     max_experts: 150                           # Maximum number of expert networks
-    spawn_every_epochs: 2000                   # Match old config (2000 = initial_train.epochs)
+    spawn_every_epochs: 99999                   # Match old config (2000 = initial_train.epochs)
     variable_for_node_accept: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for node acceptance/pruning
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null           # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
-    expert_type: piratenet                     # 'mlp' or 'resnet' or 'piratenet' -- architecture for base model and experts
+    expert_type: mlp                           # Kiyani: vanilla MLP
     freeze_mode: none                          # "none" | "previous" | "base_only" — Fix 2 uses this; 'previous' = freeze base+old experts post-spawn
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
@@ -571,12 +570,68 @@ base_config:
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
     initial_train:
-      epochs: 100                               # Phase 1: train base model before tree fitting (match old config)
+      epochs: 31000                            # Kiyani Burgers: 1000 Adam + 30000 SSBroyden
+      optimizer_1: adam
+      optimizer_2: ssbroyden
+      optimizer_switch_epoch: 1000
+      lr: 0.001
+      lr_schedule: none
+      lr_warmup_steps: 0
 
 
 experiments:
-  # ── 4 experiments to verify M_term_tree_by_norm with M=40 ──
-  # Using old successful config settings where applicable
-  - name: ks
+  # ══════════════════════════════════════════════════════════════════════════════
+  # Kiyani et al. Reproduction Experiments (arXiv:2501.16371)
+  # Vanilla PINNs with Adam + SSBroyden optimizer, float64 precision
+  # ══════════════════════════════════════════════════════════════════════════════
+
+  # BURGERS (Case 4 from paper - 8 hidden x 20, 3021 params)
+  # Paper result: ~1e-5 relative L2 error with SSBroyden
+  - name: burgers_kiyani
+    problem: burgers1d
+    base_architecture: [2, 20, 20, 20, 20, 20, 20, 20, 20, 1]
+    adaptive_pinn:
+      initial_train:
+        epochs: 31000
+        optimizer_1: adam
+        optimizer_2: ssbroyden
+        optimizer_switch_epoch: 1000
+        lr: 0.001
+        lr_schedule: none
+        lr_warmup_steps: 0
+
+  # ALLEN-CAHN (Case 3 from paper - 3 hidden x 30, 1981 params)
+  # Paper result: ~9.43e-7 with kappa continuation (we cannot reproduce kappa trick)
+  # Expected without kappa continuation: ~1e-4
+  - name: allen_cahn_kiyani
+    problem: allen_cahn
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      initial_train:
+        epochs: 35000
+        optimizer_1: adam
+        optimizer_2: ssbroyden
+        optimizer_switch_epoch: 5000
+        lr: 0.005
+        lr_schedule: exponential
+        lr_decay_rate: 0.98
+        lr_decay_steps: 1000
+        lr_warmup_steps: 0
+
+  # KS (Case 2 from paper - 5 hidden x 30, with Fourier features M=10)
+  # Paper: 20 windows, t in [0, 1], SSBroyden + RAD resampling
+  # Paper result: ~6.51e-4 relative L2 error
+  - name: ks_kiyani
     problem: ks
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    adaptive_pinn:
+      initial_train:
+        epochs: 31000
+        optimizer_1: adam
+        optimizer_2: ssbroyden
+        optimizer_switch_epoch: 1000
+        lr: 0.005
+        lr_schedule: exponential
+        lr_decay_rate: 0.98
+        lr_decay_steps: 1000
+        lr_warmup_steps: 0

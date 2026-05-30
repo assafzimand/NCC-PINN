@@ -300,6 +300,14 @@ def main():
         adaptive_cfg = config.get('adaptive_pinn', {})
         is_adaptive = adaptive_cfg.get('enabled', False)
         
+        # Handle precision configuration (float32 or float64)
+        precision = config.get('precision', 'float32')
+        if precision == 'float64':
+            torch.set_default_dtype(torch.float64)
+            print(f"\n  [Precision] Using float64 (double precision)")
+        else:
+            torch.set_default_dtype(torch.float32)
+        
         # Check if time marching is enabled for this problem
         tm_cfg = config.get(problem, {}).get('time_marching', {})
         use_time_marching = tm_cfg.get('enabled', False)
@@ -371,6 +379,10 @@ def main():
                 model = create_network(architecture, activation, config,
                                        is_base=True, expert_type=expert_type)
                 print(f"  Model created: {len(model.get_layer_names())} layers")
+
+            # Convert model to double precision if configured
+            if precision == 'float64':
+                model = model.double()
 
             # Load checkpoint if resume_from is specified
             if resume_from is not None:
