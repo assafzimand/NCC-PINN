@@ -290,31 +290,21 @@ def train_with_time_marching(
         print(f"\n  Generating datasets for window {window.idx}...")
         generate_and_save_datasets(window_cfg)
         
-        # 3. For windows 2+: override IC h_gt with prev_model predictions
-        if not window.is_first and prev_model is not None:
-            print(f"\n  Overriding IC with predictions from window {window.idx - 1}...")
-            
-            train_path = Path(f"datasets/{problem}/training_data.pt")
-            train_data = torch.load(train_path, weights_only=False)
-            train_data = override_ic_with_model(train_data, prev_model, window, device)
-            torch.save(train_data, train_path)
-            
-            eval_path = Path(f"datasets/{problem}/eval_data.pt")
-            eval_data = torch.load(eval_path, weights_only=False)
-            eval_data = override_ic_with_model(eval_data, prev_model, window, device)
-            torch.save(eval_data, eval_path)
+        # NOTE: IC override for windows 1+ is now handled in-memory by trainer.py
+        # (_override_ic_for_time_marching) which runs before filtering and after each resample.
+        # This avoids corrupting the disk dataset if a previous window diverged with NaN.
         
-        # 4. Create fresh model for this window
+        # 3. Create fresh model for this window
         print(f"\n  Creating model for window {window.idx}...")
         window_model = model_class(architecture, activation, window_cfg, window_cfg['adaptive_pinn'])
         window_model = window_model.to(device)
         print(f"  {type(window_model).__name__} created")
         
-        # 5. Build loss function for this window
+        # 4. Build loss function for this window
         loss_module = importlib.import_module(f"losses.{problem}_loss")
         loss_fn = loss_module.build_loss(**window_cfg)
         
-        # 6. Call existing train() as black box
+        # 5. Call existing train() as black box
         print(f"\n  Training window {window.idx}...")
         train_data_path = f"datasets/{problem}/training_data.pt"
         eval_data_path = f"datasets/{problem}/eval_data.pt"
@@ -328,7 +318,7 @@ def train_with_time_marching(
             run_dir=window_run_dir,
         )
         
-        # 7. Save window-specific checkpoint
+        # 6. Save window-specific checkpoint
         window_checkpoint = {
             'window_idx': window.idx,
             'window': {
@@ -344,7 +334,7 @@ def train_with_time_marching(
         torch.save(window_checkpoint, window_checkpoint_path)
         print(f"  Window checkpoint saved: {window_checkpoint_path}")
         
-        # 8. Optionally freeze for memory savings
+        # 7. Optionally freeze for memory savings
         if tm_cfg['freeze_previous_windows']:
             print(f"  Freezing window {window.idx} model parameters")
             for p in window_model.parameters():
