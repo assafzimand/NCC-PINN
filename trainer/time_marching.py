@@ -9,8 +9,11 @@ using the previous window's terminal prediction as the next window's initial con
 """
 
 import copy
+import json
 import torch
 import torch.nn as nn
+import numpy as np
+import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -178,37 +181,198 @@ def override_ic_with_model(
         Modified dataset with h_gt overridden for IC points
     """
     if window.is_first:
-        return dataset  # Window 1 uses analytical IC
+        return dataset  # Window 0 uses analytical IC
     
     # Get IC mask
     ic_mask = dataset['mask']['IC']
     if ic_mask.sum() == 0:
-        print(f"    Warning: No IC points found in dataset")
+        print(f"    [IC Override] Window {window.idx}: No IC points found in dataset, skipping")
         return dataset
     
     x_ic = dataset['x'][ic_mask]  # (n_ic, spatial_dim)
     t_ic = dataset['t'][ic_mask]  # (n_ic, 1) - all at window.t_start
+    h_gt_original = dataset['h_gt'][ic_mask].clone()
+    
+    # Diagnostic: print input stats
+    print(f"    [IC Override] Window {window.idx}: Overriding {ic_mask.sum().item()} IC points")
+    print(f"      x_ic: shape={x_ic.shape}, min={x_ic.min().item():.4f}, max={x_ic.max().item():.4f}, mean={x_ic.mean().item():.4f}")
+    print(f"      t_ic: min={t_ic.min().item():.4f}, max={t_ic.max().item():.4f}")
+    print(f"      h_gt (original): min={h_gt_original.min().item():.4f}, max={h_gt_original.max().item():.4f}, mean={h_gt_original.mean().item():.4f}")
     
     # Query previous model (no gradients)
     prev_model.eval()
     with torch.no_grad():
         inputs = torch.cat([x_ic, t_ic], dim=1).to(device)
         
-        # DEBUG: Use base model only for clean IC propagation
+        # Use base model only for clean IC propagation
         # This bypasses experts/POU so IC is purely from the base network.
-        # Once time marching is verified working, this can be reverted to:
-        #   h_pred = prev_model(inputs)
         if hasattr(prev_model, 'base_model'):
             h_pred = prev_model.base_model(inputs)  # (n_ic, output_dim)
+            model_type = "base_model"
         else:
             h_pred = prev_model(inputs)  # Fallback for non-AToE models
+            model_type = "full_model"
+    
+    # Diagnostic: print prediction stats
+    has_nan = torch.isnan(h_pred).any().item()
+    has_inf = torch.isinf(h_pred).any().item()
+    print(f"      h_pred ({model_type}): min={h_pred.min().item():.4f}, max={h_pred.max().item():.4f}, mean={h_pred.mean().item():.4f}")
+    print(f"      h_pred contains NaN: {has_nan}, Inf: {has_inf}")
+    
+    if has_nan or has_inf:
+        print(f"      [WARNING] Previous model produced invalid values! This will cause NaN divergence.")
+        num_nan = torch.isnan(h_pred).sum().item()
+        num_inf = torch.isinf(h_pred).sum().item()
+        print(f"      Number of NaN: {num_nan}, Number of Inf: {num_inf}")
     
     # Override h_gt for IC points
     dataset['h_gt'][ic_mask] = h_pred.to(dataset['h_gt'].device)
     
-    print(f"    Overrode {ic_mask.sum().item()} IC points with predictions from previous window")
+    print(f"    [IC Override] Completed: overrode {ic_mask.sum().item()} IC points")
     
     return dataset
+
+
+def _plot_combined_loss_curves(windows: List[TimeWindow], run_dir: Path) -> None:
+    """
+    Create a combined loss curve plot showing all windows concatenated.
+    
+    Reads metrics.json from each window and creates a single plot with:
+    - Train loss and eval loss curves concatenated across windows
+    - Vertical lines showing window boundaries
+    
+    Args:
+        windows: List of TimeWindow objects
+        run_dir: Root run directory containing window subdirectories
+    """
+    print(f"\n  Creating combined loss curve plot...")
+    
+    all_train_epochs = []
+    all_train_loss = []
+    all_eval_epochs = []
+    all_eval_loss = []
+    all_eval_rel_l2 = []
+    
+    epoch_offset = 0
+    window_boundaries = [0]  # Epoch boundaries between windows
+    
+    for window in windows:
+        window_metrics_path = run_dir / f"window_{window.idx}" / "metrics.json"
+        if not window_metrics_path.exists():
+            print(f"    Warning: metrics.json not found for window {window.idx}")
+            continue
+        
+        with open(window_metrics_path, 'r') as f:
+            metrics = json.load(f)
+        
+        # Offset epochs to create continuous timeline
+        train_epochs = np.array(metrics['train_loss_epochs']) + epoch_offset
+        eval_epochs = np.array(metrics['epochs']) + epoch_offset
+        
+        all_train_epochs.extend(train_epochs)
+        all_train_loss.extend(metrics['train_loss'])
+        all_eval_epochs.extend(eval_epochs)
+        all_eval_loss.extend(metrics['eval_loss'])
+        all_eval_rel_l2.extend(metrics['eval_rel_l2'])
+        
+        # Update offset for next window
+        if len(train_epochs) > 0:
+            epoch_offset = train_epochs[-1]
+            window_boundaries.append(epoch_offset)
+    
+    if len(all_train_epochs) == 0:
+        print(f"    Warning: No metrics found for any window")
+        return
+    
+    # Create figure with 2 subplots
+    fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+    
+    # Plot 1: Loss curves
+    ax = axes[0]
+    ax.plot(all_train_epochs, all_train_loss, 'b-', label='Train Loss',
+            linewidth=2, alpha=0.8)
+    ax.plot(all_eval_epochs, all_eval_loss, 'r-', label='Eval Loss',
+            linewidth=2, alpha=0.8)
+    
+    # Add window boundary markers
+    for i, boundary in enumerate(window_boundaries[1:-1], start=1):
+        ax.axvline(x=boundary, color='gray', linestyle='--', 
+                   linewidth=1.5, alpha=0.5)
+        ax.text(boundary, ax.get_ylim()[1]*0.95, f'W{i}', 
+                ha='center', va='top', fontsize=9, alpha=0.7)
+    
+    ax.set_xlabel('Epoch (Cumulative)', fontsize=12)
+    ax.set_ylabel('Loss', fontsize=12)
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    ax.set_yscale('log')
+    ax.set_title(f'Time Marching: Combined Loss Curves [{len(windows)} windows]', 
+                 fontsize=14, fontweight='bold')
+    
+    # Plot 2: Relative L2 error
+    ax = axes[1]
+    ax.plot(all_eval_epochs, all_eval_rel_l2, 'r-', label='Eval Rel. L2',
+            linewidth=2, alpha=0.8)
+    
+    # Add window boundary markers
+    for i, boundary in enumerate(window_boundaries[1:-1], start=1):
+        ax.axvline(x=boundary, color='gray', linestyle='--', 
+                   linewidth=1.5, alpha=0.5)
+        ax.text(boundary, ax.get_ylim()[1]*0.95, f'W{i}', 
+                ha='center', va='top', fontsize=9, alpha=0.7)
+    
+    ax.set_xlabel('Epoch (Cumulative)', fontsize=12)
+    ax.set_ylabel('Relative L2 Error', fontsize=12)
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    ax.set_yscale('log')
+    ax.set_title(f'Time Marching: Combined Relative L2 Error', 
+                 fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    
+    # Save figure
+    save_path = run_dir / 'time_marching_combined_loss_curves.png'
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"    Combined loss curves saved to {save_path}")
+
+
+def _plot_combined_heatmap(
+    combined_model: nn.Module,
+    config: Dict,
+    run_dir: Path,
+    device: torch.device
+) -> None:
+    """
+    Create a global heatmap showing prediction and error vs ground truth.
+    
+    Uses the combined TimeMarchingModel to generate predictions across the
+    entire temporal domain and compares with ground truth.
+    
+    Args:
+        combined_model: TimeMarchingModel wrapping all windows
+        config: Full configuration dictionary
+        run_dir: Directory to save the plot
+        device: Device for inference
+    """
+    from utils.problem_specific.generic_viz import plot_predictions_and_error_maps
+    
+    print(f"\n  Creating combined prediction heatmap...")
+    
+    try:
+        plot_predictions_and_error_maps(
+            model=combined_model,
+            save_dir=run_dir,
+            config=config,
+            filename="time_marching_combined_heatmap.png",
+            n_x=256,
+            n_t=200
+        )
+        print(f"    Combined heatmap saved")
+    except Exception as e:
+        print(f"    Warning: Could not create combined heatmap: {e}")
 
 
 def train_with_time_marching(
@@ -367,5 +531,20 @@ def train_with_time_marching(
     combined_checkpoint_path = run_dir / "time_marching_combined.pt"
     torch.save(combined_checkpoint, combined_checkpoint_path)
     print(f"  Combined checkpoint saved: {combined_checkpoint_path}")
+    
+    # 11. Create combined visualizations
+    print(f"\n{'='*60}")
+    print(f"  Generating time marching visualizations")
+    print(f"{'='*60}")
+    
+    # Plot combined loss curves from all windows
+    _plot_combined_loss_curves(windows, run_dir)
+    
+    # Plot combined prediction heatmap vs ground truth
+    _plot_combined_heatmap(combined_model, config, run_dir, device)
+    
+    print(f"\n{'='*60}")
+    print(f"  Time marching training complete!")
+    print(f"{'='*60}")
     
     return combined_model, last_checkpoint_path

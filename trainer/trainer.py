@@ -59,12 +59,19 @@ def _override_ic_for_time_marching(
     # Get IC mask and points
     ic_mask = train_data['mask']['IC']
     if ic_mask.sum() == 0:
+        print(f"  [IC Override] Window {window_idx}: No IC points found in dataset, skipping")
         return train_data
     
     x_ic = train_data['x'][ic_mask]
+    h_gt_original = train_data['h_gt'][ic_mask].clone()
     
     # Create t values at window.t_start for querying previous model
     t_query = torch.full_like(train_data['t'][ic_mask], t_start)
+    
+    # Diagnostic: print input stats
+    print(f"  [IC Override] Window {window_idx}: Overriding {ic_mask.sum().item()} IC points at t={t_start:.4f}")
+    print(f"    x_ic: shape={x_ic.shape}, min={x_ic.min().item():.4f}, max={x_ic.max().item():.4f}, mean={x_ic.mean().item():.4f}")
+    print(f"    h_gt (original): min={h_gt_original.min().item():.4f}, max={h_gt_original.max().item():.4f}, mean={h_gt_original.mean().item():.4f}")
     
     # Query previous model's base network for IC values
     prev_model.eval()
@@ -73,8 +80,22 @@ def _override_ic_for_time_marching(
         # Use base model only for clean IC propagation
         if hasattr(prev_model, 'base_model'):
             h_pred = prev_model.base_model(inputs)
+            model_type = "base_model"
         else:
             h_pred = prev_model(inputs)
+            model_type = "full_model"
+    
+    # Diagnostic: print prediction stats
+    has_nan = torch.isnan(h_pred).any().item()
+    has_inf = torch.isinf(h_pred).any().item()
+    print(f"    h_pred ({model_type}): min={h_pred.min().item():.4f}, max={h_pred.max().item():.4f}, mean={h_pred.mean().item():.4f}")
+    print(f"    h_pred contains NaN: {has_nan}, Inf: {has_inf}")
+    
+    if has_nan or has_inf:
+        print(f"    [WARNING] Previous model produced invalid values! This will cause NaN divergence.")
+        num_nan = torch.isnan(h_pred).sum().item()
+        num_inf = torch.isinf(h_pred).sum().item()
+        print(f"    Number of NaN: {num_nan}, Number of Inf: {num_inf}")
     
     # Override h_gt AND t for IC points
     train_data['h_gt'][ic_mask] = h_pred.to(train_data['h_gt'].device)
