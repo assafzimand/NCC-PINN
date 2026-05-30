@@ -15,8 +15,8 @@ base_config:
 
   # ── Primary optimizer ──
   # ── Optimizer configuration ──
-  optimizer_1: adam                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
-  optimizer_2: ssbroyden                  # No second optimizer — let SOAP run full duration
+  optimizer_1: soap                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
+  optimizer_2: null                  # No second optimizer — let SOAP run full duration
   optimizer_switch_epoch: 1000       # Match old config
   lr: 0.001                          # Base (peak) learning rate
 
@@ -501,7 +501,7 @@ base_config:
     expert_grad_clip_norm: null
     time_marching:
       enabled: true                       # Enabled for KS - essential for chaotic dynamics
-      num_windows: 10                      # Splits temporal domain into 5 sequential windows
+      num_windows: 3                      # Splits temporal domain into 5 sequential windows
       freeze_previous_windows: true       # Freeze models from earlier windows
       m_distribution: quadratic           # linear | quadratic | equal - later windows get more experts
 
@@ -571,7 +571,7 @@ base_config:
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
     initial_train:
-      epochs: 2000                               # Phase 1: train base model before tree fitting (match old config)
+      epochs: 100                               # Phase 1: train base model before tree fitting (match old config)
 
 
 experiments:
