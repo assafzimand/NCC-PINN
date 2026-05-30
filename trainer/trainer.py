@@ -73,22 +73,16 @@ def _override_ic_for_time_marching(
     print(f"    x_ic: shape={x_ic.shape}, min={x_ic.min().item():.4f}, max={x_ic.max().item():.4f}, mean={x_ic.mean().item():.4f}")
     print(f"    h_gt (original): min={h_gt_original.min().item():.4f}, max={h_gt_original.max().item():.4f}, mean={h_gt_original.mean().item():.4f}")
     
-    # Query previous model's base network for IC values
+    # Query previous model for IC values
     prev_model.eval()
     with torch.no_grad():
         inputs = torch.cat([x_ic, t_query], dim=1).to(device)
-        # Use base model only for clean IC propagation
-        if hasattr(prev_model, 'base_model'):
-            h_pred = prev_model.base_model(inputs)
-            model_type = "base_model"
-        else:
-            h_pred = prev_model(inputs)
-            model_type = "full_model"
+        h_pred = prev_model(inputs)
     
     # Diagnostic: print prediction stats
     has_nan = torch.isnan(h_pred).any().item()
     has_inf = torch.isinf(h_pred).any().item()
-    print(f"    h_pred ({model_type}): min={h_pred.min().item():.4f}, max={h_pred.max().item():.4f}, mean={h_pred.mean().item():.4f}")
+    print(f"    h_pred: min={h_pred.min().item():.4f}, max={h_pred.max().item():.4f}, mean={h_pred.mean().item():.4f}")
     print(f"    h_pred contains NaN: {has_nan}, Inf: {has_inf}")
     
     if has_nan or has_inf:
@@ -172,24 +166,23 @@ def _create_soap_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer
 
 
 def _create_ssbroyden_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Optimizer:
-    """Create SSBroyden (Self-Scaled Broyden) quasi-Newton optimizer via torchmin.
+    """Create SSBroyden (Self-Scaled Broyden) quasi-Newton optimizer via scimba.
 
-    Falls back to LBFGS with a warning if torchmin is not installed.
+    Falls back to LBFGS with a warning if scimba is not installed.
     Only includes trainable parameters.
     """
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     try:
-        from torchmin import Broyden
-        return Broyden(
+        from scimba.optimizers.ssbroyden import SSBroyden
+        return SSBroyden(
             trainable_params,
-            lr=cfg['lr'],
-            history_size=cfg['ssbroyden_history_size'],
-            max_iter=cfg['ssbroyden_max_iter'],
-            line_search=cfg['ssbroyden_line_search'],
+            lr=cfg.get('ssbroyden_lr', 1.0),
+            tolerance_grad=cfg.get('ssbroyden_tolerance_grad', 1e-10),
+            method='ssbroyden',
         )
     except ImportError:
-        print("  [Warning] torchmin not installed — SSBroyden unavailable, falling back to LBFGS.")
-        print("            Install with: pip install torchmin")
+        print("  [Warning] scimba not installed — SSBroyden unavailable, falling back to LBFGS.")
+        print("            Install with: pip install scimba")
         return _create_lbfgs_optimizer(model, cfg)
 
 
@@ -382,6 +375,12 @@ def train(
     # Move data to device
     train_data = _move_batch_to_device(train_data, device)
     eval_data = _move_batch_to_device(eval_data, device)
+
+    # Cast data to configured precision (float32 or float64)
+    precision = cfg.get('precision', 'float32')
+    target_dtype = torch.float64 if precision == 'float64' else torch.float32
+    train_data = _cast_data_to_dtype(train_data, target_dtype)
+    eval_data = _cast_data_to_dtype(eval_data, target_dtype)
 
     # Filter train and eval data by window temporal bounds if time marching is enabled
     time_marching_window = cfg.get('_time_marching_window', {})
@@ -2705,6 +2704,17 @@ def _move_batch_to_device(batch: Dict, device: torch.device) -> Dict:
             'IC': batch['mask']['IC'].to(device),
             'BC': batch['mask']['BC'].to(device)
         }
+    }
+    return result
+
+
+def _cast_data_to_dtype(batch: Dict, dtype: torch.dtype) -> Dict:
+    """Cast floating-point tensors in a batch dictionary to specified dtype."""
+    result = {
+        'x': batch['x'].to(dtype) if batch['x'].is_floating_point() else batch['x'],
+        't': batch['t'].to(dtype) if batch['t'].is_floating_point() else batch['t'],
+        'h_gt': batch['h_gt'].to(dtype) if batch['h_gt'].is_floating_point() else batch['h_gt'],
+        'mask': batch['mask']  # masks are boolean, don't cast
     }
     return result
 

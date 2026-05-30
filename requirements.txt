@@ -7,4 +7,4 @@ scipy
 pyyaml
 seaborn
 finufft
-pytorch-minimize
+scimba
