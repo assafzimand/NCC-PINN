@@ -24,6 +24,65 @@ from losses.lra import LRAWeights
 import losses.ks_loss as _ks_loss_module
 
 
+def _override_ic_for_time_marching(
+    train_data: Dict[str, torch.Tensor],
+    cfg: Dict,
+    device: torch.device
+) -> Dict[str, torch.Tensor]:
+    """
+    Override IC h_gt values with previous model predictions for time marching.
+    Also updates IC t values to window.t_start so they aren't filtered out.
+    
+    Called after each regenerate_training_data to ensure IC values come from
+    the previous window's model, not the analytical IC.
+    
+    Args:
+        train_data: Freshly resampled training data
+        cfg: Config with _time_marching_window info
+        device: Device for inference
+    
+    Returns:
+        train_data with IC h_gt overridden (if time marching window > 0)
+    """
+    tm_window = cfg.get('_time_marching_window', {})
+    if not tm_window.get('enabled', False):
+        return train_data
+    
+    window_idx = tm_window.get('idx', 0)
+    prev_model = tm_window.get('prev_model', None)
+    t_start = tm_window.get('t_start', 0)
+    
+    # Window 0 uses analytical IC, no override needed
+    if window_idx == 0 or prev_model is None:
+        return train_data
+    
+    # Get IC mask and points
+    ic_mask = train_data['mask']['IC']
+    if ic_mask.sum() == 0:
+        return train_data
+    
+    x_ic = train_data['x'][ic_mask]
+    
+    # Create t values at window.t_start for querying previous model
+    t_query = torch.full_like(train_data['t'][ic_mask], t_start)
+    
+    # Query previous model's base network for IC values
+    prev_model.eval()
+    with torch.no_grad():
+        inputs = torch.cat([x_ic, t_query], dim=1).to(device)
+        # Use base model only for clean IC propagation
+        if hasattr(prev_model, 'base_model'):
+            h_pred = prev_model.base_model(inputs)
+        else:
+            h_pred = prev_model(inputs)
+    
+    # Override h_gt AND t for IC points
+    train_data['h_gt'][ic_mask] = h_pred.to(train_data['h_gt'].device)
+    train_data['t'][ic_mask] = t_start  # Set IC t to window start
+    
+    return train_data
+
+
 class _NumpySafeEncoder(json.JSONEncoder):
     """Handles numpy scalars that stdlib json cannot serialize."""
     def default(self, obj):
@@ -309,6 +368,11 @@ def train(
         t_start = time_marching_window['t_start']
         t_end = time_marching_window['t_end']
         window_idx = time_marching_window['idx']
+        
+        # IMPORTANT: For windows 1+, override IC BEFORE filtering
+        # This updates IC t values from t=0 to t=window.t_start, so they survive filtering
+        train_data = _override_ic_for_time_marching(train_data, cfg, device)
+        eval_data = _override_ic_for_time_marching(eval_data, cfg, device)
         
         # --- Filter TRAINING data ---
         t_train = train_data['t'].squeeze()
@@ -999,6 +1063,8 @@ def train(
                 leaf_info=_leaf_info_for_sampling,
                 leaf_causal_states=_leaf_causal_states_for_plot,
             )
+            # Override IC h_gt for time marching (windows 1+)
+            train_data = _override_ic_for_time_marching(train_data, cfg, device)
             train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
             metrics['resample_events'].append({
                 'epoch': epoch,
@@ -2296,6 +2362,8 @@ def train(
                     leaf_info=_spawn_leaf_info,
                     leaf_causal_states=_spawn_causal_states,
                 )
+                # Override IC h_gt for time marching (windows 1+)
+                _spawn_train_data = _override_ic_for_time_marching(_spawn_train_data, cfg, device)
                 train_loader = _create_dataloader(_spawn_train_data, cfg['batch_size'], shuffle=True)
                 n_new_leaves = len(_spawn_leaf_info) if _spawn_leaf_info else 0
                 print(f"  [PostSpawnResample] Rebuilt dataset for {n_new_leaves} leaves")

@@ -415,8 +415,10 @@ For windows 2+, the analytical IC is unavailable. Instead:
 
 This works because loss functions already use `h_gt` from the batch for IC loss.
 
-**Note**: Currently using `prev_model.base_model` (not the full AToE forward) for IC prediction.
-This bypasses experts/POU to ensure clean IC propagation during testing.
+**Important Implementation Details**:
+- **Disk Data**: IC points in the original dataset are at `t=0`. For windows 1+, IC override is applied BEFORE temporal filtering: updates `t` to `window.t_start` and `h_gt` from previous model.
+- **Resampling**: During training, `regenerate_training_data` samples IC points at the correct `t` (from narrowed `temporal_domain`), but computes `h_gt` analytically. The IC override is re-applied after every resample to restore correct `h_gt` values.
+- **Base Model Only**: Using `prev_model.base_model` (not the full AToE forward) for IC prediction bypasses experts/POU to ensure clean IC propagation.
 
 ### Data Filtering
 
