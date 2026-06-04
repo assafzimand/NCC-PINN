@@ -26,7 +26,7 @@ def cole_hopf_exact(x, t, nu, n_terms=None):
     Domain: [-1, 1], IC: h(x,0) = -sin(pi*x), Dirichlet BCs: h(+-1,t) = 0
     
     Uses the Hopf formula (integral representation):
-      h(x,t) = -[integral (x-xi)/t * w(xi) dxi] / [integral w(xi) dxi]
+      h(x,t) = [integral (x-xi)/t * w(xi) dxi] / [integral w(xi) dxi]
     where w(xi) = exp(E(xi)) and
       E(xi) = -(x-xi)^2/(4*epsilon*t) + (1-cos(pi*xi))/(2*nu)
     
@@ -78,7 +78,7 @@ def cole_hopf_exact(x, t, nu, n_terms=None):
     numerator   = np.trapz(kernel * w, xi, axis=1)  # (nx,)
     denominator = np.trapz(w, xi, axis=1)            # (nx,)
     
-    h = -numerator / denominator
+    h = numerator / denominator
     
     return h
 
