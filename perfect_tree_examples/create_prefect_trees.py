@@ -4,14 +4,16 @@ JSON files for every PDE problem.
 For each problem, fits a full decision tree on ground-truth data
 (from eval_data.pt), prunes it, and produces:
 
-  1. A 3-panel PNG image:
+  For non-time-marching problems (3-panel PNG):
      - Original tree (before pruning)
      - After pruning (M regions)
      - Tree hierarchy diagram
 
-  2. A JSON file containing the full tree structure, accepted
-     nodes in BFS order with parent relationships, and all
-     metadata needed to reconstruct an adaptive model.
+  For time-marching problems (2-panel PNG):
+     - All original trees concatenated (before pruning, all windows)
+     - All accepted regions from all windows (after pruning)
+
+  Plus a JSON file containing the full tree structure for reconstruction.
 """
 
 import json
@@ -24,12 +26,14 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from pathlib import Path
 from collections import deque
+from typing import List, Dict, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from adaptive.region_detector import RegionDetector  # noqa: E402
 from adaptive.visualization import prepare_ground_truth_grid  # noqa: E402
 from utils.dataset_gen import calculate_dataset_sizes  # noqa: E402
+from trainer.time_marching import compute_m_per_window  # noqa: E402
 
 
 class _NumpySafeEncoder(json.JSONEncoder):
@@ -403,19 +407,212 @@ def build_problem_tree_data(
     }
 
 
+def process_problem_with_time_marching(
+    problem: str, base_cfg: dict, output_dir: Path
+):
+    """Generate perfect trees for time-marching scenario.
+    
+    Creates one tree per window with window-specific M values,
+    then combines all regions into a single 2-panel visualization.
+    
+    Returns the tree data dict for this problem, or None if skipped.
+    """
+    print(f"\n{'='*60}")
+    print(f"  Problem: {problem} (TIME MARCHING)")
+    print(f"{'='*60}")
+
+    problem_cfg = base_cfg[problem]
+    adaptive_cfg = base_cfg.get('adaptive_pinn', {})
+    tm_cfg = problem_cfg.get('time_marching', {})
+
+    max_depth = adaptive_cfg.get('tree_max_depth', 30)
+    min_samples_leaf = adaptive_cfg.get('tree_min_samples_leaf', 10)
+    global_M = adaptive_cfg.get('M_experts_num', 40)
+    output_dim = problem_cfg.get('output_dim', 1)
+    variable_for_node_accept = adaptive_cfg.get('variable_for_node_accept', 'norm')
+    
+    num_windows = tm_cfg.get('num_windows', 5)
+    m_distribution = tm_cfg.get('m_distribution', 'equal')
+    
+    # Compute M per window
+    m_per_window = compute_m_per_window(global_M, num_windows, m_distribution)
+    
+    print(f"  max_depth={max_depth}, min_samples_leaf={min_samples_leaf}")
+    print(f"  num_windows={num_windows}, m_distribution={m_distribution}")
+    print(f"  global_M={global_M}, M per window: {m_per_window}")
+
+    eval_data = ensure_eval_data(problem, base_cfg)
+    domain_bounds = build_domain_bounds(problem_cfg)
+
+    if len(domain_bounds['lower']) != 2:
+        print(f"  Skipping {problem}: only 2D (x,t) domains supported.")
+        return None
+
+    X_full, y_full = extract_xy(eval_data, output_dim)
+    print(f"  Full data: X={X_full.shape}, y={y_full.shape if hasattr(y_full, 'shape') else '?'}")
+
+    # Compute window boundaries
+    t_min, t_max = problem_cfg['temporal_domain']
+    dt = (t_max - t_min) / num_windows
+    
+    # Collect nodes from all windows
+    all_window_nodes = []  # All raw tree nodes from all windows
+    all_accepted_nodes = []  # All accepted nodes from all windows
+    all_bfs_accepted = []  # For JSON output
+    
+    for win_idx in range(num_windows):
+        win_t_start = t_min + win_idx * dt
+        win_t_end = t_min + (win_idx + 1) * dt
+        win_M = m_per_window[win_idx]
+        
+        print(f"\n  Window {win_idx}: t in [{win_t_start:.4f}, {win_t_end:.4f}], M={win_M}")
+        
+        # Filter data to this window's temporal range
+        t_col = X_full[:, -1]  # Last column is t
+        mask = (t_col >= win_t_start) & (t_col < win_t_end)
+        # Include endpoint for last window
+        if win_idx == num_windows - 1:
+            mask = (t_col >= win_t_start) & (t_col <= win_t_end)
+        
+        X_win = X_full[mask]
+        y_win = y_full[mask] if y_full.ndim == 1 else y_full[mask]
+        
+        if len(X_win) < min_samples_leaf * 2:
+            print(f"    Skipping window {win_idx}: too few samples ({len(X_win)})")
+            continue
+        
+        print(f"    Window data: {len(X_win)} samples")
+        
+        # Get actual data t-range (differs from window bounds due to discrete sampling)
+        data_t_min = X_win[:, -1].min()
+        data_t_max = X_win[:, -1].max()
+        
+        # Fit tree for this window
+        try:
+            (node_dicts, accepted_ids,
+             bfs_accepted, children_left) = fit_and_get_all_nodes(
+                X_win, y_win, max_depth, min_samples_leaf, win_M, variable_for_node_accept,
+            )
+            
+            # Extend node bounds to exact window boundaries (fixes visualization gaps)
+            # Tree derives bounds from data, but we want nodes to align with window edges
+            # Sklearn bounds are always at-or-within data range, so use <= / >= to catch edge nodes
+            for nd in node_dicts:
+                # If node's lower t-bound is at data minimum, extend to window start
+                if nd['bounds_lower'][-1] <= data_t_min:
+                    nd['bounds_lower'][-1] = win_t_start
+                # If node's upper t-bound is at data maximum, extend to window end
+                if nd['bounds_upper'][-1] >= data_t_max:
+                    nd['bounds_upper'][-1] = win_t_end
+            for nd in bfs_accepted:
+                if nd['bounds_lower'][-1] <= data_t_min:
+                    nd['bounds_lower'][-1] = win_t_start
+                if nd['bounds_upper'][-1] >= data_t_max:
+                    nd['bounds_upper'][-1] = win_t_end
+            
+            # Tag nodes with window index for later reference
+            for nd in node_dicts:
+                nd['window_idx'] = win_idx
+            for nd in bfs_accepted:
+                nd['window_idx'] = win_idx
+            
+            all_window_nodes.extend(node_dicts)
+            all_accepted_nodes.extend([n for n in node_dicts if n['accepted']])
+            all_bfs_accepted.extend(bfs_accepted)
+            
+            print(f"    Window {win_idx}: {len(node_dicts)} total nodes, "
+                  f"{len([n for n in node_dicts if n['accepted']])} accepted")
+                  
+        except Exception as e:
+            print(f"    Error in window {win_idx}: {e}")
+            continue
+    
+    if not all_accepted_nodes:
+        print(f"  No accepted nodes found across all windows!")
+        return None
+    
+    n_total = len(all_window_nodes)
+    n_accepted = len(all_accepted_nodes)
+    print(f"\n  Combined: {n_total} total nodes, {n_accepted} accepted across {num_windows} windows")
+    
+    # Count pruned tree leaves (nodes that are leaves in their window's pruned tree)
+    n_pruned_leaves = sum(
+        1 for n in all_bfs_accepted
+        if n.get('is_leaf_in_pruned_tree', False)
+    )
+    
+    # Build tree data for JSON
+    tree_data = {
+        'domain_bounds': domain_bounds,
+        'tree_params': {
+            'max_depth': max_depth,
+            'min_samples_leaf': min_samples_leaf,
+            'global_M': global_M,
+            'num_windows': num_windows,
+            'm_distribution': m_distribution,
+            'm_per_window': m_per_window,
+        },
+        'summary': {
+            'total_nodes': n_total,
+            'accepted_nodes': n_accepted,
+            'pruned_tree_leaves': n_pruned_leaves,
+        },
+        'accepted_nodes_bfs': all_bfs_accepted,
+        'all_nodes': all_window_nodes,
+    }
+    
+    # Generate 2-panel plot on FULL domain
+    gt_grid, grid_x, grid_t = prepare_ground_truth_grid(
+        eval_data, domain_bounds, resolution=150)
+    
+    fig, axes = plt.subplots(1, 2, figsize=(18, 7))
+    
+    _plot_regions_panel(
+        axes[0], all_window_nodes, domain_bounds,
+        gt_grid, grid_x, grid_t,
+        f'{problem}: Original Trees (all {num_windows} windows)')
+    _plot_regions_panel(
+        axes[1], all_accepted_nodes, domain_bounds,
+        gt_grid, grid_x, grid_t,
+        f'{problem}: After Pruning ({n_accepted} total experts)')
+    
+    fig.suptitle(
+        f'Perfect Tree \u2014 {problem}  '
+        f'({num_windows} windows, {m_distribution}, total_M={global_M})',
+        fontsize=14, fontweight='bold', y=1.01)
+    plt.tight_layout()
+    
+    out_path = output_dir / f'{problem}_perfect_tree.png'
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Saved plot: {out_path}")
+    
+    return tree_data
+
+
 def process_problem(
     problem: str, base_cfg: dict, output_dir: Path
 ):
-    """Generate the 3-panel image + return tree data dict.
+    """Generate the visualization + return tree data dict.
 
+    Dispatches to time-marching handler if enabled, otherwise
+    generates standard 3-panel image.
+    
     Returns the tree data dict for this problem, or None if
     the problem was skipped.
     """
+    problem_cfg = base_cfg[problem]
+    
+    # Check if time marching is enabled for this problem
+    tm_cfg = problem_cfg.get('time_marching', {})
+    if tm_cfg.get('enabled', False):
+        return process_problem_with_time_marching(problem, base_cfg, output_dir)
+    
+    # Standard (non-time-marching) processing
     print(f"\n{'='*60}")
     print(f"  Problem: {problem}")
     print(f"{'='*60}")
 
-    problem_cfg = base_cfg[problem]
     adaptive_cfg = base_cfg.get('adaptive_pinn', {})
 
     max_depth = adaptive_cfg.get('tree_max_depth', 30)

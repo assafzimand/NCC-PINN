@@ -262,13 +262,9 @@ def process_run(label: str, ts_dir: Path):
     if n_cols == 1:
         axes = [axes]
 
-    model_type_label = cfg.get('model', 'AToE')
     n_exp  = len(regions)
     n_leaf = len(leaf_indices)
-    title  = (
-        f"{label}  |  {model_type_label}  |  "
-        f"{n_exp} experts ({n_leaf} leaves)"
-    )
+    title  = f"{problem}  |  {n_exp} experts ({n_leaf} leaves)"
     fig.suptitle(title, fontsize=13, fontweight='bold')
 
     # Left panel: expert regions image (if present)
@@ -278,15 +274,19 @@ def process_run(label: str, ts_dir: Path):
         axes[0].set_axis_off()
         axes[0].set_title('Expert Regions (final)', fontsize=11)
 
-    # Right panel: capacity heatmap
+    # Right panel: capacity heatmap (continuous with interpolation)
     ax = axes[-1]
     vmin = capacity.min()
     vmax = capacity.max()
-    im = ax.pcolormesh(
-        x_grid, t_grid, cap_grid.T,
-        shading='auto', cmap='YlOrRd',
-        vmin=vmin, vmax=vmax)
-    plt.colorbar(im, ax=ax, label='Parameters in region')
+    im = ax.imshow(
+        cap_grid.T,
+        extent=[x_grid[0], x_grid[-1], t_grid[0], t_grid[-1]],
+        origin='lower',
+        aspect='auto',
+        cmap='YlOrRd',
+        vmin=vmin, vmax=vmax,
+        interpolation='bilinear')
+    plt.colorbar(im, ax=ax, label='Parameters')
 
     _draw_regions(ax, regions, leaf_indices, leaves_only_model)
 

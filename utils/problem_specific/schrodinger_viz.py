@@ -126,9 +126,10 @@ def visualize_evaluation(model, eval_data_path: str, save_dir: Path, config: Dic
     t_grid = np.linspace(t_min, t_max, n_t)
     X, T = np.meshgrid(x_grid, t_grid)
     
-    # Flatten for model input
-    x_flat = torch.tensor(X.flatten(), dtype=torch.float32, device=device).view(-1, 1)
-    t_flat = torch.tensor(T.flatten(), dtype=torch.float32, device=device).view(-1, 1)
+    # Flatten for model input (use model's dtype for precision compatibility)
+    dtype = next(model.parameters()).dtype
+    x_flat = torch.tensor(X.flatten(), dtype=dtype, device=device).view(-1, 1)
+    t_flat = torch.tensor(T.flatten(), dtype=dtype, device=device).view(-1, 1)
     
     # Model predictions
     with torch.no_grad():

@@ -283,11 +283,12 @@ def visualize_evaluation(model: torch.nn.Module, eval_data_path: str,
     # Create 3D meshgrid
     X0, X1, T = np.meshgrid(x0_grid, x1_grid, t_grid, indexing='ij')
     
-    # Flatten for model input
+    # Flatten for model input (use model's dtype for precision compatibility)
     device = next(model.parameters()).device
-    x0_flat = torch.tensor(X0.flatten(), dtype=torch.float32, device=device)
-    x1_flat = torch.tensor(X1.flatten(), dtype=torch.float32, device=device)
-    t_flat = torch.tensor(T.flatten(), dtype=torch.float32, device=device)
+    dtype = next(model.parameters()).dtype
+    x0_flat = torch.tensor(X0.flatten(), dtype=dtype, device=device)
+    x1_flat = torch.tensor(X1.flatten(), dtype=dtype, device=device)
+    t_flat = torch.tensor(T.flatten(), dtype=dtype, device=device)
     
     # Model predictions
     model.eval()
