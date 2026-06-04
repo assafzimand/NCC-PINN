@@ -99,11 +99,11 @@ class HardIndicator:
         self._upper: Optional[torch.Tensor] = None
         self._device: Optional[torch.device] = None
     
-    def _ensure_tensors(self, device: torch.device):
-        """Lazily create tensors on the correct device."""
-        if self._device != device:
-            self._lower = torch.tensor(self.region.bounds_lower, dtype=torch.float32, device=device)
-            self._upper = torch.tensor(self.region.bounds_upper, dtype=torch.float32, device=device)
+    def _ensure_tensors(self, device: torch.device, dtype: torch.dtype):
+        """Lazily create tensors on the correct device and dtype."""
+        if self._device != device or (self._lower is not None and self._lower.dtype != dtype):
+            self._lower = torch.tensor(self.region.bounds_lower, dtype=dtype, device=device)
+            self._upper = torch.tensor(self.region.bounds_upper, dtype=dtype, device=device)
             self._device = device
     
     def __call__(self, inputs: torch.Tensor) -> torch.Tensor:
@@ -116,7 +116,7 @@ class HardIndicator:
         Returns:
             mask: (N, 1) float tensor - 1.0 if inside region, 0.0 otherwise
         """
-        self._ensure_tensors(inputs.device)
+        self._ensure_tensors(inputs.device, inputs.dtype)
         
         # Vectorized comparison: all dimensions must be within bounds
         # inputs >= lower: (N, n_dims) bool tensor
@@ -126,7 +126,7 @@ class HardIndicator:
         # Point is inside if ALL dimensions are inside
         mask = inside.all(dim=1, keepdim=True)  # (N, 1)
         
-        return mask.float()
+        return mask.to(inputs.dtype)
     
     def get_bounds(self) -> tuple:
         """Return bounds as tuple of lists."""
@@ -158,11 +158,11 @@ class SoftIndicator:
         self._sigma: Optional[torch.Tensor] = None  # Per-dimension sigma
         self._device: Optional[torch.device] = None
     
-    def _ensure_tensors(self, device: torch.device):
-        """Lazily create tensors on the correct device."""
-        if self._device != device:
-            self._lower = torch.tensor(self.region.bounds_lower, dtype=torch.float32, device=device)
-            self._upper = torch.tensor(self.region.bounds_upper, dtype=torch.float32, device=device)
+    def _ensure_tensors(self, device: torch.device, dtype: torch.dtype):
+        """Lazily create tensors on the correct device and dtype."""
+        if self._device != device or (self._lower is not None and self._lower.dtype != dtype):
+            self._lower = torch.tensor(self.region.bounds_lower, dtype=dtype, device=device)
+            self._upper = torch.tensor(self.region.bounds_upper, dtype=dtype, device=device)
             # Compute sigma per dimension as fraction of region size
             region_sizes = self._upper - self._lower
             self._sigma = self.sigma_fraction * region_sizes  # (n_dims,)
@@ -181,7 +181,7 @@ class SoftIndicator:
             mask: (N, 1) float tensor - smooth value in [0, 1]
                   Highest at region center, smoothly decaying to boundaries.
         """
-        self._ensure_tensors(inputs.device)
+        self._ensure_tensors(inputs.device, inputs.dtype)
         
         # Distance from lower bound (positive = inside), scaled by per-dim sigma
         dist_lower = (inputs - self._lower) / self._sigma  # Broadcasting (N, n_dims)
@@ -353,10 +353,12 @@ class BatchedIndicators:
         if self.all_lower is None or self._num_experts == 0:
             return psi_base, torch.empty((N, 0), device=device, dtype=dtype)
         
-        # Ensure bounds are on correct device
-        if self.all_lower.device != device:
-            self.all_lower = self.all_lower.to(device)
-            self.all_upper = self.all_upper.to(device)
+        # Ensure bounds are on correct device and dtype
+        if self.all_lower.device != device or self.all_lower.dtype != dtype:
+            self.all_lower = self.all_lower.to(device=device, dtype=dtype)
+            self.all_upper = self.all_upper.to(device=device, dtype=dtype)
+            if self.all_sigma is not None:
+                self.all_sigma = self.all_sigma.to(device=device, dtype=dtype)
             if self.all_sigma is not None:
                 self.all_sigma = self.all_sigma.to(device)
         

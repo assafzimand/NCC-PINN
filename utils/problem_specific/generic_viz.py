@@ -89,9 +89,10 @@ def plot_predictions_and_error_maps(
 
     # Model predictions
     device = next(model.parameters()).device
+    dtype = next(model.parameters()).dtype  # Match model's precision (float32 or float64)
     model.eval()
-    x_tensor = torch.tensor(x_flat, dtype=torch.float32, device=device).view(-1, 1)
-    t_tensor = torch.tensor(t_flat, dtype=torch.float32, device=device).view(-1, 1)
+    x_tensor = torch.tensor(x_flat, dtype=dtype, device=device).view(-1, 1)
+    t_tensor = torch.tensor(t_flat, dtype=dtype, device=device).view(-1, 1)
     with torch.no_grad():
         pred = model(torch.cat([x_tensor, t_tensor], dim=1))   # (N, output_dim)
     pred_np = pred.cpu().numpy()                                # (N, output_dim)

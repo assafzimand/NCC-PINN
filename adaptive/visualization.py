@@ -700,11 +700,12 @@ def plot_expert_soft_weights(
     eval_grid_t = np.linspace(t_min, t_max, resolution)
     X, T = np.meshgrid(eval_grid_x, eval_grid_t, indexing='ij')
     
-    # Flatten for model input
+    # Flatten for model input (match model's precision)
     device = next(model.parameters()).device
+    dtype = next(model.parameters()).dtype
     inputs = torch.tensor(
         np.column_stack([X.ravel(), T.ravel()]),
-        dtype=torch.float32, 
+        dtype=dtype, 
         device=device
     )
     
