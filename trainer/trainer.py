@@ -173,7 +173,7 @@ def _create_ssbroyden_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Opti
     """
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     try:
-        from scimba.optimizers.ssbroyden import SSBroyden
+        from scimba_torch.optimizers.ssbroyden import SSBroyden
         return SSBroyden(
             trainable_params,
             lr=cfg.get('ssbroyden_lr', 1.0),

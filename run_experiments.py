@@ -14,7 +14,7 @@ import torch
 
 def load_experiment_plan(plan_path="experiments_plan.yaml"):
     """Load experiment plan from YAML file."""
-    with open(plan_path, 'r') as f:
+    with open(plan_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
 
 
