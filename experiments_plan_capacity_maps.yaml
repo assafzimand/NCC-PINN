@@ -1,13 +1,13 @@
 # Experiment plan configuration
 # Kiyani et al. Reproduction (arXiv:2501.16371)
-experiment_name: "kiyani_reproduction"
+experiment_name: "capcity_maps_creation"
 
 # Base configuration (will be used for all experiments)
 base_config:
   problem: burgers1d
   model: AToE                        # 'AToE' | 'AToELeaves' | 'ANT'
   activation: tanh                   # Activation function for all networks
-  precision: float64                 # 'float32' or 'float64' (Kiyani: double precision)
+  precision: float32                 # 'float32' or 'float64' (Kiyani: double precision)
 
   # ── Training duration (Phase 3 when using 3-phase, or total when single-phase) ──
   epochs: 1                          # Phase 3: unused when M=0 (all training in initial_train)
@@ -523,7 +523,7 @@ base_config:
     variable_for_expert_size: norm             # "norm" | "new_norm" | "smoothness" -- metric to use for expert architecture sizing
     AToE_threshold_capacity: null              # null = same as base, int = base capacity at threshold norm
     ANT_threshold_architecture: null           # null = uses ANT_default_hidden_layers, int = threshold width with scaling
-    ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
+    ANT_default_hidden_layers: 35              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
     expert_type: mlp                           # Kiyani: vanilla MLP
     freeze_mode: none                          # "none" | "previous" | "base_only" — Fix 2 uses this; 'previous' = freeze base+old experts post-spawn
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
@@ -538,7 +538,7 @@ base_config:
     use_decomposed_derivatives: false
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
-    spawning_method: M_term_tree_by_norm          # "by_mean_residual" | "accept_split_by_norm" | "M_term_tree_by_norm" | "use_perfect_trees"
+    spawning_method: use_perfect_trees          # "by_mean_residual" | "accept_split_by_norm" | "M_term_tree_by_norm" | "use_perfect_trees"
     M_experts_num: 40                              # Number of top-norm nodes to select (only for M_term_tree_by_norm)
     perfect_trees_path: perfect_tree_examples/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
@@ -580,58 +580,77 @@ base_config:
 
 
 experiments:
-  # ══════════════════════════════════════════════════════════════════════════════
-  # Kiyani et al. Reproduction Experiments (arXiv:2501.16371)
-  # Vanilla PINNs with Adam + SSBroyden optimizer, float64 precision
-  # ══════════════════════════════════════════════════════════════════════════════
-
-  # BURGERS (Case 4 from paper - 8 hidden x 20, 3021 params)
-  # Paper result: ~1e-5 relative L2 error with SSBroyden
-  - name: burgers_kiyani
+  - name: burgers_AToE_capacity_map
     problem: burgers1d
-    base_architecture: [2, 20, 20, 20, 20, 20, 20, 20, 20, 1]
-    adaptive_pinn:
-      initial_train:
-        epochs: 31000
-        optimizer_1: adam
-        optimizer_2: ssbroyden
-        optimizer_switch_epoch: 1000
-        lr: 0.001
-        lr_schedule: none
-        lr_warmup_steps: 0
+    model: AToE
+    base_architecture: [2, 30, 30, 1]
 
-  # ALLEN-CAHN (Case 3 from paper - 3 hidden x 30, 1981 params)
-  # Paper result: ~9.43e-7 with kappa continuation (we cannot reproduce kappa trick)
-  # Expected without kappa continuation: ~1e-4
-  - name: allen_cahn_kiyani
+  - name: burgers_ANT_capacity_map
+    problem: burgers1d
+    model: ANT
+    base_architecture: [2, 30, 30, 1]
+
+  - name: burgers_AToELeaves_capacity_map
+    problem: burgers1d
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 1]
+
+  - name: schrodinger_AToE_capacity_map
+    problem: schrodinger
+    model: AToE
+    base_architecture: [2, 30, 30, 2]
+
+  - name: schrodinger_ANT_capacity_map
+    problem: schrodinger
+    model: ANT
+    base_architecture: [2, 30, 30, 2]
+
+  - name: schrodinger_AToELeaves_capacity_map
+    problem: schrodinger
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 2]
+
+  - name: kdv_AToE_capacity_map
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 30, 30, 1]
+
+  - name: kdv_ANT_capacity_map
+    problem: kdv
+    model: ANT
+    base_architecture: [2, 30, 30, 1]
+
+  - name: kdv_AToELeaves_capacity_map
+    problem: kdv
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 1]
+
+  - name: allen_cahn_AToE_capacity_map
     problem: allen_cahn
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      initial_train:
-        epochs: 35000
-        optimizer_1: adam
-        optimizer_2: ssbroyden
-        optimizer_switch_epoch: 5000
-        lr: 0.005
-        lr_schedule: exponential
-        lr_decay_rate: 0.98
-        lr_decay_steps: 1000
-        lr_warmup_steps: 0
+    model: AToE
+    base_architecture: [2, 30, 30, 1]
 
-  # KS (Case 2 from paper - 5 hidden x 30, with Fourier features M=10)
-  # Paper: 20 windows, t in [0, 1], SSBroyden + RAD resampling
-  # Paper result: ~6.51e-4 relative L2 error
-  - name: ks_kiyani
+  - name: allen_cahn_ANT_capacity_map
+    problem: allen_cahn
+    model: ANT
+    base_architecture: [2, 30, 30, 1]
+
+  - name: allen_cahn_AToELeaves_capacity_map
+    problem: allen_cahn
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 1]
+
+  - name: ks_AToE_capacity_map
     problem: ks
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
-    adaptive_pinn:
-      initial_train:
-        epochs: 31000
-        optimizer_1: adam
-        optimizer_2: ssbroyden
-        optimizer_switch_epoch: 1000
-        lr: 0.005
-        lr_schedule: exponential
-        lr_decay_rate: 0.98
-        lr_decay_steps: 1000
-        lr_warmup_steps: 0
+    model: AToE
+    base_architecture: [2, 30, 30, 1]
+
+  - name: ks_ANT_capacity_map
+    problem: ks
+    model: ANT
+    base_architecture: [2, 30, 30, 1]
+
+  - name: ks_AToELeaves_capacity_map
+    problem: ks
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 1]

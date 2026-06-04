@@ -201,7 +201,7 @@ def compute_analytical_indicator_derivatives(
     # Z derivatives = sum of raw expert derivatives (psi_base is constant → 0)
     # But we must only sum FILTERED experts (threshold-zeroed ones contribute 0)
     # Use psi_experts_filtered > 0 as mask (same points that were active)
-    filt_mask = (psi_experts_filtered > 0).float()  # (N, K)
+    filt_mask = (psi_experts_filtered > 0).to(psi_experts_filtered.dtype)  # (N, K)
     
     Z_x = (dpsi_raw_dx * filt_mask).sum(dim=1, keepdim=True)  # (N, 1)
     if need_ht:
@@ -234,7 +234,7 @@ def compute_analytical_indicator_derivatives(
         eidx = expert_idx.item() if torch.is_tensor(expert_idx) else expert_idx
         
         # Per-point mask: zero derivatives where expert was filtered out (below threshold)
-        # This matches autograd behavior where psi_filtered = psi * mask.float()
+        # This matches autograd behavior where psi_filtered = psi * mask.to(dtype)
         pt_mask = filt_mask[:, eidx:eidx+1]  # (N, 1) — 1 where active, 0 where filtered
         
         # Raw derivatives for this expert (masked to match filtered behavior)

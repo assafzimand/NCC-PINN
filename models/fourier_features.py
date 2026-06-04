@@ -49,6 +49,7 @@ class FourierFeatureEmbedding(nn.Module):
         Returns:
             Fourier features of shape (N, 2 * fourier_dim).
         """
+        x = x.to(self.B.dtype)  # Cast to match B's precision
         proj = x @ self.B.T  # (N, fourier_dim)
         return torch.cat([torch.cos(proj), torch.sin(proj)], dim=-1)
 
@@ -114,6 +115,7 @@ class PeriodicSpatialFourierEmbedding(nn.Module):
 
         # Step 2: random Fourier features on [t, cos(x), sin(x)]
         z = torch.cat([t, cos_x, sin_x], dim=-1)   # (N, 1+2*spatial_dim)
+        z = z.to(self.B.dtype)                       # Cast to match B's precision
         proj = z @ self.B.T                          # (N, fourier_dim)
         return torch.cat([torch.cos(proj), torch.sin(proj)], dim=-1)
 

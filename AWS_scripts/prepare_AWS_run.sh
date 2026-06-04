@@ -92,7 +92,14 @@ echo
 echo "=== Installing Python dependencies ==="
 pip install --upgrade pip
 if [ -f "requirements.txt" ]; then
+  echo "  Installing from requirements.txt..."
   pip install -r requirements.txt
+  
+  echo
+  echo "=== Verifying critical dependencies ==="
+  python3 -c "import torch; print(f'  ✓ PyTorch {torch.__version__}')" || echo "  ✗ PyTorch not found!"
+  python3 -c "from scimba_torch.optimizers.ssbroyden import SSBroyden; print('  ✓ scimba SSBroyden available')" || echo "  ✗ scimba SSBroyden not found!"
+  python3 -c "import scipy; print('  ✓ scipy installed')" || echo "  ✗ scipy not found!"
 else
   echo "WARNING: requirements.txt not found in $REPO_DIR"
 fi

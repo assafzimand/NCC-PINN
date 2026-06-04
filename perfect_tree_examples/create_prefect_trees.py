@@ -2,18 +2,16 @@
 JSON files for every PDE problem.
 
 For each problem, fits a full decision tree on ground-truth data
-(from eval_data.pt), prunes it using wavelet norms with the
-configured threshold, and produces:
+(from eval_data.pt), prunes it, and produces:
 
   1. A 3-panel PNG image:
-     - Regions BEFORE pruning on GT background
-     - Regions AFTER pruning on GT background
-     - Tree hierarchy diagram (dendrogram)
+     - Original tree (before pruning)
+     - After pruning (M regions)
+     - Tree hierarchy diagram
 
   2. A JSON file containing the full tree structure, accepted
      nodes in BFS order with parent relationships, and all
-     metadata needed to reconstruct an AToE / AToELeaves / ANT
-     model from the tree.
+     metadata needed to reconstruct an adaptive model.
 """
 
 import json
@@ -50,7 +48,7 @@ class _NumpySafeEncoder(json.JSONEncoder):
 
 def load_config(plan_path: Path) -> dict:
     """Load experiments_plan.yaml and return the base_config."""
-    with open(plan_path, 'r') as f:
+    with open(plan_path, 'r', encoding='utf-8') as f:
         plan = yaml.safe_load(f)
     return plan.get('base_config', {})
 
@@ -122,7 +120,7 @@ def extract_xy(eval_data: dict, output_dim: int):
 
 
 def fit_and_get_all_nodes(
-    X, y, max_depth, min_samples_leaf, variable_for_node_accept, thresholds,
+    X, y, max_depth, min_samples_leaf, M, variable_for_node_accept,
 ):
     """Fit tree, prune, return visualization + reconstruction data.
 
@@ -144,8 +142,8 @@ def fit_and_get_all_nodes(
 
     accepted_nodes, depth_stats = detector.fit_full_tree_and_prune(
         X, y,
+        M=M,
         variable_for_node_accept=variable_for_node_accept,
-        thresholds=thresholds,
         verbose=True,
     )
     accepted_ids = {n.node_id for n, _ in accepted_nodes}
@@ -253,17 +251,10 @@ def _plot_regions_panel(ax, regions_dicts, domain_bounds, gt_grid, grid_x, grid_
     ax.set_aspect('auto')
 
 
-def _plot_hierarchy_panel(ax, all_nodes, variable_for_node_accept, threshold):
-    """Dendrogram-style tree hierarchy colored by the configured metric.
-
-    Nodes are colored based on variable_for_node_accept:
-    - 'smoothness': red (rough, low α) → green (smooth, high α) via RdYlGn
-    - 'norm' or 'new_norm': blue (low) → red (high) via coolwarm
-    
-    The threshold is marked on the colorbar.
-    """
+def _plot_hierarchy_panel(ax, all_nodes, variable_for_node_accept):
+    """Dendrogram-style tree hierarchy colored by the configured metric."""
     if not all_nodes:
-        ax.set_title('Tree Hierarchy (no nodes)')
+        ax.set_title('Tree Hierarchy')
         return
 
     children_map = {}
@@ -278,7 +269,7 @@ def _plot_hierarchy_panel(ax, all_nodes, variable_for_node_accept, threshold):
     if not root_children:
         root_children = [n for n in all_nodes if n.get('parent_node_id', -1) == -1]
     if not root_children:
-        ax.set_title('Tree Hierarchy (no root children)')
+        ax.set_title('Tree Hierarchy')
         return
 
     leaf_counter = [0]
@@ -333,12 +324,7 @@ def _plot_hierarchy_panel(ax, all_nodes, variable_for_node_accept, threshold):
             return 0.0
 
     # Build colormap normalization
-    if metric_values and threshold is not None:
-        from matplotlib.colors import TwoSlopeNorm
-        vmin = min(min(metric_values), threshold - abs(threshold) * 0.1)
-        vmax = max(max(metric_values), threshold + abs(threshold) * 0.1)
-        norm = TwoSlopeNorm(vmin=vmin, vcenter=threshold, vmax=vmax)
-    elif metric_values:
+    if metric_values:
         norm = plt.Normalize(vmin=min(metric_values), vmax=max(metric_values))
     else:
         norm = plt.Normalize(vmin=0.0, vmax=1.0)
@@ -379,49 +365,21 @@ def _plot_hierarchy_panel(ax, all_nodes, variable_for_node_accept, threshold):
 
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cb = plt.colorbar(sm, ax=ax, label=metric_label, shrink=0.7)
-
-    # Mark threshold on colorbar
-    if threshold is not None and metric_values:
-        cb.ax.axhline(y=threshold, color='black',
-                      linewidth=1.5, linestyle='--')
-        cb.ax.text(0.5, threshold,
-                   f' thr={threshold:.4g}',
-                   transform=cb.ax.get_yaxis_transform(),
-                   va='bottom', ha='left', fontsize=7, color='black')
+    plt.colorbar(sm, ax=ax, label=metric_label, shrink=0.7)
 
     ax.set_ylabel('Depth')
     ax.set_yticks([-d for d in range(max_depth + 1)])
     ax.set_yticklabels([str(d) for d in range(max_depth + 1)])
     ax.set_xticks([])
     
-    n_acc = sum(1 for n in all_nodes if n['accepted'])
-    n_none = sum(1 for n in all_nodes if get_metric(n) is None)
-    
-    # Build threshold label based on variable type
-    if variable_for_node_accept == 'smoothness':
-        thr_label = f'α < {threshold:.4g}' if threshold is not None else 'no threshold'
-    elif variable_for_node_accept == 'norm':
-        thr_label = f'norm ≥ {threshold:.4g}' if threshold is not None else 'no threshold'
-    elif variable_for_node_accept == 'new_norm':
-        thr_label = f'new_norm ≥ {threshold:.4g}' if threshold is not None else 'no threshold'
-    else:
-        thr_label = f'value ≥ {threshold:.4g}' if threshold is not None else 'no threshold'
-    
-    metric_short = {'smoothness': 'α', 'norm': 'norm', 'new_norm': 'new_norm'}.get(variable_for_node_accept, 'val')
-    ax.set_title(
-        f'Tree Hierarchy  (keep: {thr_label})\n'
-        f'{n_acc} accepted / {len(all_nodes) - n_acc} rejected'
-        f'  [{n_none} gray=no {metric_short}]',
-        fontsize=10)
+    ax.set_title('Tree Hierarchy', fontsize=11)
     ax.grid(True, alpha=0.15, axis='y')
 
 
 def build_problem_tree_data(
     problem, domain_bounds,
-    max_depth, min_samples_leaf, wavelet_threshold,
+    max_depth, min_samples_leaf, M,
     bfs_accepted, node_dicts,
-    tree_smoothness_threshold=None,
 ):
     """Build the dict for one problem's perfect tree."""
     n_leaves = sum(
@@ -433,8 +391,7 @@ def build_problem_tree_data(
         'tree_params': {
             'max_depth': max_depth,
             'min_samples_leaf': min_samples_leaf,
-            'wavelet_threshold': wavelet_threshold,
-            'tree_smoothness_threshold': tree_smoothness_threshold,
+            'M': M,
         },
         'summary': {
             'total_nodes': len(node_dicts),
@@ -464,27 +421,17 @@ def process_problem(
     max_depth = adaptive_cfg.get('tree_max_depth', 30)
     min_samples_leaf = adaptive_cfg.get(
         'tree_min_samples_leaf', 10)
-    wavelet_threshold = problem_cfg.get(
-        'wavelet_threshold',
-        adaptive_cfg.get('wavelet_threshold', 5.0))
-    tree_smoothness_threshold = problem_cfg.get(
-        'tree_smoothness_threshold',
-        adaptive_cfg.get('tree_smoothness_threshold', None))
+    M = adaptive_cfg.get('M_experts_num', 40)
     output_dim = problem_cfg.get('output_dim', 1)
     
-    # Read variable_for_node_accept and build thresholds dict
+    # Read variable_for_node_accept
     variable_for_node_accept = adaptive_cfg.get('variable_for_node_accept', 'norm')
-    thresholds = {
-        'norm': problem_cfg.get('wavelet_threshold', 0.0),
-        'new_norm': problem_cfg.get('new_norm_threshold', 0.0),
-        'smoothness': problem_cfg.get('tree_smoothness_threshold', 0.7),
-    }
 
     print(
         f"  max_depth={max_depth}, "
         f"min_samples_leaf={min_samples_leaf}, "
-        f"variable_for_node_accept={variable_for_node_accept}, "
-        f"thresholds={thresholds}")
+        f"M={M}, "
+        f"variable_for_node_accept={variable_for_node_accept}")
 
     eval_data = ensure_eval_data(problem, base_cfg)
     domain_bounds = build_domain_bounds(problem_cfg)
@@ -501,15 +448,14 @@ def process_problem(
 
     (node_dicts, accepted_ids,
      bfs_accepted, children_left) = fit_and_get_all_nodes(
-        X, y, max_depth, min_samples_leaf, variable_for_node_accept, thresholds,
+        X, y, max_depth, min_samples_leaf, M, variable_for_node_accept,
     )
 
     # -- Build tree data for unified JSON --
     tree_data = build_problem_tree_data(
         problem, domain_bounds,
-        max_depth, min_samples_leaf, wavelet_threshold,
+        max_depth, min_samples_leaf, M,
         bfs_accepted, node_dicts,
-        tree_smoothness_threshold=tree_smoothness_threshold,
     )
 
     # -- Generate 3-panel plot --
@@ -523,31 +469,23 @@ def process_problem(
     n_total = len(all_region_dicts)
     n_accepted = len(accepted_region_dicts)
     print(f"  Nodes: {n_total} total, "
-          f"{n_accepted} accepted")
-
-    # Build threshold label based on variable type
-    threshold = thresholds.get(variable_for_node_accept)
-    if variable_for_node_accept == 'smoothness':
-        thr_label = f'{variable_for_node_accept} < {threshold:.4g}' if threshold is not None else 'no threshold'
-    else:  # 'norm' or 'new_norm'
-        thr_label = f'{variable_for_node_accept} ≥ {threshold:.4g}' if threshold is not None else 'no threshold'
+          f"{n_accepted} accepted (target M={M})")
 
     fig, axes = plt.subplots(1, 3, figsize=(24, 7))
 
     _plot_regions_panel(
         axes[0], all_region_dicts, domain_bounds,
         gt_grid, grid_x, grid_t,
-        f'{problem}: Before Pruning ({n_total} nodes)')
+        f'{problem}: Original Tree')
     _plot_regions_panel(
         axes[1], accepted_region_dicts, domain_bounds,
         gt_grid, grid_x, grid_t,
-        f'{problem}: After Pruning ({n_accepted} nodes, {thr_label})')
+        f'{problem}: After Pruning ({n_accepted} nodes)')
     _plot_hierarchy_panel(
-        axes[2], node_dicts, variable_for_node_accept, threshold)
+        axes[2], node_dicts, variable_for_node_accept)
 
     fig.suptitle(
-        f'Perfect Tree \u2014 {problem}  '
-        f'(depth={max_depth}, min_leaf={min_samples_leaf}, {thr_label})',
+        f'Perfect Tree \u2014 {problem}  (depth={max_depth}, M={M})',
         fontsize=14, fontweight='bold', y=1.01)
     plt.tight_layout()
 

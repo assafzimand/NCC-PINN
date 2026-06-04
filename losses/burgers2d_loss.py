@@ -159,7 +159,7 @@ def compute_analytical_indicator_derivatives(
     Z = psi_base + psi_experts_filtered.sum(dim=1, keepdim=True)  # (N, 1)
     Z = Z.clamp(min=1e-8)
 
-    filt_mask = (psi_experts_filtered > 0).float()  # (N, K)
+    filt_mask = (psi_experts_filtered > 0).to(psi_experts_filtered.dtype)  # (N, K)
 
     Z_x0 = (dpsi_raw_dx0 * filt_mask).sum(dim=1, keepdim=True)
     Z_x1 = (dpsi_raw_dx1 * filt_mask).sum(dim=1, keepdim=True)
