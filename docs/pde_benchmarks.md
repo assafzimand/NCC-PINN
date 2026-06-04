@@ -132,7 +132,7 @@ $$h_t - D\, h_{xx} - 5(h - h^3) = 0$$
 | **Spatial domain** | $x \in [-1, 1]$ |
 | **Temporal domain** | $t \in [0, 1]$ |
 | **Parameters** | $D = 0.0001$ (standard SOTA benchmark) |
-| **Initial condition** | $h(x, 0) = x^2 \sin(2\pi x)$ |
+| **Initial condition** | $h(x, 0) = x^2 \cos(\pi x)$ |
 | **Boundary conditions** | Periodic: $h(-1, t) = h(1, t)$, $h_x(-1, t) = h_x(1, t)$ |
 | **Character** | Stiff nonlinear reaction-diffusion; sharp moving interface between $h \approx +1$ and $h \approx -1$ regions. One of the hardest standard PINN benchmarks |
 
@@ -147,9 +147,9 @@ $$h_t - D\, h_{xx} - 5(h - h^3) = 0$$
 | vRBA ($\Phi = r^2$) + FF | 2025 | Adam | varies | MLP `[2,64×6,1]` + FF, tanh | **21,318** | 1 | [Hag et al., 2025](https://www.nature.com/articles/s44387-026-00084-4) |
 | RBA + mMLP + FF | 2023 | Adam | ~4.55 × 10⁻⁵ | MLP `[2,128×6,1]`, tanh, Xavier | **83,073** | 1 | [Anagnostopoulos et al., 2023](https://arxiv.org/abs/2307.00379) |
 | PirateNet + FF + WF + CS | 2024 | Adam | 2.24 × 10⁻⁵ | 9 layers × 256 ch, tanh, FF 2.0, RWF | *~500K+* | 1 (causal 32 chunks) | [Wang et al., 2024](https://jmlr.org/papers/v25/24-0313.html) |
-| Vanilla PINN † | 2019 | Adam | ~4.98 × 10⁻¹ | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
+| Vanilla PINN | 2019 | Adam | ~4.98 × 10⁻¹ | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
-> **Comparability:** All results above use $D = 0.0001$ matching our configuration. **Important:** Our IC ($x^2 \sin(2\pi x)$) matches Kiyani et al. (2025). **†** Raissi et al. (2019) and some other papers use IC $= x^2 \cos(\pi x)$ (single oscillation vs. double), which is a slightly different benchmark instance. Note: RAD (Wu et al. 2023) uses D=0.001, which is a different (easier) problem. "Causal chunks" are training/weighting chunks (not separate NNs).
+> **Comparability:** All results above use the standard Allen-Cahn benchmark with $D = 0.0001$ matching our configuration and are directly comparable. Note: RAD (Wu et al. 2023) uses D=0.001, which is a different (easier) problem. "Causal chunks" are training/weighting chunks (not separate NNs).
 
 ---
 

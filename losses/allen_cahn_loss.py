@@ -6,7 +6,7 @@ Implements the three-component loss:
 
 where:
 - MSE_f: PDE residual loss (h_t - D*h_xx - 5*(h - h^3) = 0)
-- MSE_0: Initial condition loss (h(x,0) = x^2*sin(2*pi*x))
+- MSE_0: Initial condition loss (h(x,0) = x^2*cos(pi*x))
 - MSE_b: Periodic boundary condition loss (h(-1,t) = h(1,t) and h_x(-1,t) = h_x(1,t))
 """
 
