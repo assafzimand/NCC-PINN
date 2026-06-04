@@ -45,10 +45,20 @@ def _find_run_dirs(batch_path: Path):
         return []
 
     # Flat layout: batch_path contains timestamp dirs directly
-    flat_ts = [
-        d for d in child_dirs
-        if _TS_RE.match(d.name) and (d / 'metrics.json').exists()
-    ]
+    # Include both regular runs (have metrics.json) and time-marching runs (have window_0/)
+    def _is_valid_run(d):
+        if not _TS_RE.match(d.name):
+            return False
+        # Regular run
+        if (d / 'metrics.json').exists():
+            return True
+        # Time-marching run
+        window_0 = d / 'window_0'
+        if window_0.exists() and (window_0 / 'metrics.json').exists():
+            return True
+        return False
+    
+    flat_ts = [d for d in child_dirs if _is_valid_run(d)]
     if flat_ts:
         runs = []
         for ts_dir in flat_ts:
@@ -143,37 +153,28 @@ def _compute_capacity(points: np.ndarray, metrics: dict,
 
 def _make_grid(x: np.ndarray, t: np.ndarray,
                values: np.ndarray, n_x=300, n_t=300):
-    """Bin-average values onto a regular grid — no scipy required."""
+    """Interpolate values onto a regular grid for smooth continuous heatmap."""
+    from scipy.interpolate import griddata
+    
     x_min, x_max = x.min(), x.max()
     t_min, t_max = t.min(), t.max()
 
-    x_edges = np.linspace(x_min, x_max, n_x + 1)
-    t_edges = np.linspace(t_min, t_max, n_t + 1)
-
-    # 2D histogram of summed values and counts
-    sum_grid, _, _ = np.histogram2d(
-        x, t, bins=[x_edges, t_edges], weights=values)
-    cnt_grid, _, _ = np.histogram2d(
-        x, t, bins=[x_edges, t_edges])
-
-    with np.errstate(invalid='ignore'):
-        avg_grid = np.where(cnt_grid > 0, sum_grid / cnt_grid, np.nan)
-
-    # Fill empty cells with nearest neighbour (from populated neighbours)
-    from scipy.ndimage import generic_filter
-    def _fill(a):
-        # median of non-nan neighbours; returns nan if all neighbours are nan
-        v = a[~np.isnan(a)]
-        return np.median(v) if len(v) else np.nan
-    nan_mask = np.isnan(avg_grid)
+    # Create regular grid
+    x_grid = np.linspace(x_min, x_max, n_x)
+    t_grid = np.linspace(t_min, t_max, n_t)
+    X_grid, T_grid = np.meshgrid(x_grid, t_grid, indexing='ij')
+    
+    # Interpolate using linear method for smooth result
+    points = np.column_stack([x, t])
+    grid_values = griddata(points, values, (X_grid, T_grid), method='linear')
+    
+    # Fill any remaining NaN at edges with nearest neighbor
+    nan_mask = np.isnan(grid_values)
     if nan_mask.any():
-        filled = generic_filter(avg_grid, _fill, size=5,
-                                mode='nearest')
-        avg_grid[nan_mask] = filled[nan_mask]
+        grid_values_nn = griddata(points, values, (X_grid, T_grid), method='nearest')
+        grid_values[nan_mask] = grid_values_nn[nan_mask]
 
-    x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
-    t_centers = 0.5 * (t_edges[:-1] + t_edges[1:])
-    return x_centers, t_centers, avg_grid
+    return x_grid, t_grid, grid_values
 
 
 def _draw_regions(ax, regions, leaf_indices, leaves_only_model):
@@ -195,10 +196,88 @@ def _draw_regions(ax, regions, leaf_indices, leaves_only_model):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+#  Time-marching support
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _is_time_marching_run(ts_dir: Path) -> bool:
+    """Check if this is a time-marching run (has window_N subdirectories)."""
+    window_dirs = sorted(d for d in ts_dir.iterdir() 
+                        if d.is_dir() and d.name.startswith('window_'))
+    if not window_dirs:
+        return False
+    # Check at least window_0 has metrics
+    return (window_dirs[0] / 'metrics.json').exists()
+
+
+def _load_time_marching_metrics(ts_dir: Path):
+    """Load and stitch metrics from all windows in a time-marching run.
+    
+    Returns:
+        Combined metrics dict with stitched regions, expert_params, etc.
+    """
+    window_dirs = sorted(
+        d for d in ts_dir.iterdir() 
+        if d.is_dir() and d.name.startswith('window_')
+    )
+    
+    all_regions = []
+    all_expert_params = []
+    all_leaf_indices = []
+    base_params = None
+    
+    expert_offset = 0  # Track expert index offset for leaf_indices
+    
+    for window_dir in window_dirs:
+        metrics_path = window_dir / 'metrics.json'
+        if not metrics_path.exists():
+            continue
+            
+        with open(metrics_path) as f:
+            win_metrics = json.load(f)
+        
+        adaptive = win_metrics.get('adaptive_pinn')
+        if adaptive is None:
+            continue
+        
+        # Use base_params from first window (should be same across all)
+        if base_params is None:
+            base_params = adaptive.get('base_params', 0)
+        
+        # Stitch regions and expert_params
+        win_regions = adaptive.get('regions', [])
+        win_expert_params = adaptive.get('expert_params', [])
+        win_leaf_indices = adaptive.get('leaf_expert_indices', [])
+        
+        all_regions.extend(win_regions)
+        all_expert_params.extend(win_expert_params)
+        
+        # Offset leaf indices to account for experts from previous windows
+        all_leaf_indices.extend([idx + expert_offset for idx in win_leaf_indices])
+        
+        expert_offset += len(win_regions)
+    
+    # Build combined metrics structure
+    combined_metrics = {
+        'adaptive_pinn': {
+            'base_params': base_params or 0,
+            'expert_params': all_expert_params,
+            'regions': all_regions,
+            'leaf_expert_indices': all_leaf_indices,
+        }
+    }
+    
+    return combined_metrics, len(window_dirs)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 #  Per-run processing
 # ──────────────────────────────────────────────────────────────────────────────
 
 def process_run(label: str, ts_dir: Path):
+    # Check for time-marching run first
+    if _is_time_marching_run(ts_dir):
+        return process_time_marching_run(label, ts_dir)
+    
     metrics_path = ts_dir / 'metrics.json'
     if not metrics_path.exists():
         print(f"  [{label}] No metrics.json, skipping")
@@ -243,14 +322,18 @@ def process_run(label: str, ts_dir: Path):
 
     x_flat = x_np[:, 0]   # (N,)
     t_flat = t_np[:, 0]   # (N,)
-    points  = np.column_stack([x_flat, t_flat])   # (N, 2)
-
-    # ── Compute capacity per point ────────────────────────────────────────────
-    capacity = _compute_capacity(points, metrics, model_type)   # (N,)
-
-    # ── Build grid ────────────────────────────────────────────────────────────
-    x_grid, t_grid, cap_grid = _make_grid(x_flat, t_flat, capacity)
-    # cap_grid shape: (n_x, n_t)
+    
+    # ── Create dense grid for continuous heatmap ────────────────────────────────
+    # Compute capacity directly on grid (not interpolated from sparse eval data)
+    n_grid = 300  # Resolution for smooth heatmap
+    x_grid = np.linspace(x_flat.min(), x_flat.max(), n_grid)
+    t_grid = np.linspace(t_flat.min(), t_flat.max(), n_grid)
+    X_grid, T_grid = np.meshgrid(x_grid, t_grid, indexing='ij')
+    grid_points = np.column_stack([X_grid.ravel(), T_grid.ravel()])  # (n_grid^2, 2)
+    
+    # ── Compute capacity at each grid point ────────────────────────────────────
+    capacity_grid = _compute_capacity(grid_points, metrics, model_type)  # (n_grid^2,)
+    cap_grid = capacity_grid.reshape(n_grid, n_grid)  # (n_x, n_t)
 
     # ── Find expert_regions_final.png ────────────────────────────────────────
     regions_img_path = ts_dir / 'adaptive_plots' / 'expert_regions_final.png'
@@ -274,18 +357,17 @@ def process_run(label: str, ts_dir: Path):
         axes[0].set_axis_off()
         axes[0].set_title('Expert Regions (final)', fontsize=11)
 
-    # Right panel: capacity heatmap (continuous with interpolation)
+    # Right panel: capacity heatmap (computed on dense grid for continuous display)
     ax = axes[-1]
-    vmin = capacity.min()
-    vmax = capacity.max()
+    vmin = cap_grid.min()
+    vmax = cap_grid.max()
     im = ax.imshow(
         cap_grid.T,
         extent=[x_grid[0], x_grid[-1], t_grid[0], t_grid[-1]],
         origin='lower',
         aspect='auto',
         cmap='YlOrRd',
-        vmin=vmin, vmax=vmax,
-        interpolation='bilinear')
+        vmin=vmin, vmax=vmax)
     plt.colorbar(im, ax=ax, label='Parameters')
 
     _draw_regions(ax, regions, leaf_indices, leaves_only_model)
@@ -312,6 +394,97 @@ def process_run(label: str, ts_dir: Path):
     print(f"  [{label}] Saved {out_path}")
 
 
+def process_time_marching_run(label: str, ts_dir: Path):
+    """Process a time-marching run by stitching regions from all windows."""
+    print(f"  [{label}] Time-marching run detected")
+    
+    # Load config
+    cfg_path = ts_dir / 'config_used.yaml'
+    if not cfg_path.exists():
+        print(f"  [{label}] No config_used.yaml, skipping")
+        return
+    with open(cfg_path) as f:
+        cfg = yaml.safe_load(f)
+    
+    problem = cfg['problem']
+    model_type = cfg.get('model', 'AToE')
+    problem_cfg = cfg.get(problem, {})
+    
+    # Get full domain from config
+    spatial_domain = problem_cfg.get('spatial_domain', [[0, 1]])
+    temporal_domain = problem_cfg.get('temporal_domain', [0, 1])
+    x_min, x_max = spatial_domain[0]
+    t_min, t_max = temporal_domain
+    
+    # Load and stitch metrics from all windows
+    combined_metrics, num_windows = _load_time_marching_metrics(ts_dir)
+    
+    adaptive = combined_metrics.get('adaptive_pinn')
+    if adaptive is None or not adaptive.get('regions'):
+        print(f"  [{label}] No regions found in any window, skipping")
+        return
+    
+    regions = adaptive['regions']
+    leaf_indices = set(adaptive.get('leaf_expert_indices', []))
+    leaves_only_model = (model_type == 'AToELeaves')
+    
+    print(f"  [{label}] Stitched {len(regions)} regions from {num_windows} windows")
+    
+    # Create dense grid over FULL domain
+    n_grid = 300
+    x_grid = np.linspace(x_min, x_max, n_grid)
+    t_grid = np.linspace(t_min, t_max, n_grid)
+    X_grid, T_grid = np.meshgrid(x_grid, t_grid, indexing='ij')
+    grid_points = np.column_stack([X_grid.ravel(), T_grid.ravel()])
+    
+    # Compute capacity at each grid point
+    capacity_grid = _compute_capacity(grid_points, combined_metrics, model_type)
+    cap_grid = capacity_grid.reshape(n_grid, n_grid)
+    
+    # Build figure (single panel - no pre-existing regions image for combined)
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+    
+    n_exp = len(regions)
+    n_leaf = len(leaf_indices)
+    title = f"{problem}  |  {n_exp} experts ({n_leaf} leaves)  |  {num_windows} windows"
+    fig.suptitle(title, fontsize=13, fontweight='bold')
+    
+    # Capacity heatmap
+    vmin = cap_grid.min()
+    vmax = cap_grid.max()
+    im = ax.imshow(
+        cap_grid.T,
+        extent=[x_grid[0], x_grid[-1], t_grid[0], t_grid[-1]],
+        origin='lower',
+        aspect='auto',
+        cmap='YlOrRd',
+        vmin=vmin, vmax=vmax)
+    plt.colorbar(im, ax=ax, label='Parameters')
+    
+    _draw_regions(ax, regions, leaf_indices, leaves_only_model)
+    
+    ax.set_xlabel('x', fontsize=11)
+    ax.set_ylabel('t', fontsize=11)
+    ax.set_title('Capacity Heatmap (params per point)', fontsize=11)
+    
+    # Legend
+    solid = mpatches.Patch(edgecolor='red', facecolor='none',
+                           linestyle='-', label='Leaf expert region')
+    handles = [solid]
+    if leaves_only_model:
+        grey = mpatches.Patch(edgecolor='grey', facecolor='none',
+                              linestyle='--', label='Non-leaf (frozen)')
+        handles.append(grey)
+    ax.legend(handles=handles, fontsize=8, loc='upper right')
+    
+    plt.tight_layout()
+    
+    out_path = ts_dir / 'capacity_map.png'
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  [{label}] Saved {out_path}")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 #  Entry point
 # ──────────────────────────────────────────────────────────────────────────────
@@ -329,10 +502,13 @@ def main(batch_dir: str):
 
     runs = _find_run_dirs(batch_path)
     if not runs:
-        # Maybe the path IS a run dir (has metrics.json directly)
+        # Maybe the path IS a run dir (has metrics.json directly or is time-marching)
         if (batch_path / 'metrics.json').exists():
             label = batch_path.name
             process_run(label, batch_path)
+        elif (batch_path / 'window_0' / 'metrics.json').exists():
+            label = batch_path.name
+            process_run(label, batch_path)  # Will detect time-marching
         else:
             print("No runs found")
         return

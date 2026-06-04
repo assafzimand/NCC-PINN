@@ -499,7 +499,7 @@ base_config:
     expert_grad_clip_norm: null
     time_marching:
       enabled: true                       # Kiyani: 20 windows for t in [0, 1]
-      num_windows: 20
+      num_windows: 10
       freeze_previous_windows: true
       m_distribution: equal               # Kiyani: equal distribution
 
