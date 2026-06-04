@@ -3,9 +3,9 @@ Allen-Cahn Equation Solver using Fourier Pseudo-Spectral + ETDRK4.
 
 Solves: h_t = D * h_xx + 5*(h - h^3)
 Domain: x in [-1, 1], t in [0, 1]
-Initial Condition: h(x, 0) = x^2 * cos(pi * x)
+Initial Condition: h(x, 0) = x^2 * sin(2*pi*x)
 Boundary Conditions: Periodic: h(-1,t) = h(1,t), h_x(-1,t) = h_x(1,t)
-Parameters: D = 0.0001 (standard Raissi/PirateNet benchmark)
+Parameters: D = 0.0001 (standard benchmark, matches Kiyani et al. 2025)
 
 Uses Fourier pseudo-spectral method for spatial discretization and
 ETDRK4 (Exponential Time Differencing RK4) for time integration.
@@ -44,8 +44,8 @@ def solve_allen_cahn(
 
     k = np.fft.fftfreq(nx, d=dx) * 2.0 * np.pi
 
-    # Initial condition: h(x, 0) = x^2 * cos(pi*x)
-    h0 = x_grid ** 2 * np.cos(np.pi * x_grid)
+    # Initial condition: h(x, 0) = x^2 * sin(2*pi*x)
+    h0 = x_grid ** 2 * np.sin(2.0 * np.pi * x_grid)
     v = np.fft.fft(h0)
 
     h_solution = np.zeros((nt, nx), dtype=np.float64)
@@ -223,8 +223,8 @@ def generate_dataset(
     mask_bc = torch.zeros(N, dtype=torch.bool, device=device)
     mask_bc[n_residual + n_ic:] = True
 
-    # Overwrite IC with exact analytical values
-    h_gt[mask_ic, 0] = (x[mask_ic, 0] ** 2 * torch.cos(np.pi * x[mask_ic, 0])).float()
+    # Overwrite IC with exact analytical values: h(x,0) = x^2 * sin(2*pi*x)
+    h_gt[mask_ic, 0] = (x[mask_ic, 0] ** 2 * torch.sin(2.0 * np.pi * x[mask_ic, 0])).float()
 
     print("  Dataset generated successfully")
     return {

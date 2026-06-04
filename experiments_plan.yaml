@@ -60,7 +60,7 @@ base_config:
   n_freq_grid: 128
   eval_every: 100                    # Evaluate every N epochs
   print_every: 100                   # Print progress every N epochs
-  save_every: 1000                   # Save checkpoint every N epochs
+  save_every: 5000                   # Save checkpoint every N epochs
   inner_metrics_eval_every: 1000     # Run NCC/probes/derivatives analysis every N epochs
   seed: 42
 
@@ -499,7 +499,7 @@ base_config:
     expert_grad_clip_norm: null
     time_marching:
       enabled: true                       # Kiyani: 20 windows for t in [0, 1]
-      num_windows: 10
+      num_windows: 20
       freeze_previous_windows: true
       m_distribution: equal               # Kiyani: equal distribution
 
@@ -585,6 +585,24 @@ experiments:
   # Vanilla PINNs with Adam + SSBroyden optimizer, float64 precision
   # ══════════════════════════════════════════════════════════════════════════════
 
+  # KS (Case 2 from paper - 5 hidden x 30, with Fourier features M=10)
+  # Paper: 20 windows, t in [0, 1], SSBroyden + RAD resampling
+  # Paper result: ~6.51e-4 relative L2 error
+  - name: ks_kiyani
+    problem: ks
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    adaptive_pinn:
+      initial_train:
+        epochs: 31000
+        optimizer_1: adam
+        optimizer_2: ssbroyden
+        optimizer_switch_epoch: 1000
+        lr: 0.005
+        lr_schedule: exponential
+        lr_decay_rate: 0.98
+        lr_decay_steps: 1000
+        lr_warmup_steps: 0
+
   # BURGERS (Case 4 from paper - 8 hidden x 20, 3021 params)
   # Paper result: ~1e-5 relative L2 error with SSBroyden
   - name: burgers_kiyani
@@ -612,24 +630,6 @@ experiments:
         optimizer_1: adam
         optimizer_2: ssbroyden
         optimizer_switch_epoch: 5000
-        lr: 0.005
-        lr_schedule: exponential
-        lr_decay_rate: 0.98
-        lr_decay_steps: 1000
-        lr_warmup_steps: 0
-
-  # KS (Case 2 from paper - 5 hidden x 30, with Fourier features M=10)
-  # Paper: 20 windows, t in [0, 1], SSBroyden + RAD resampling
-  # Paper result: ~6.51e-4 relative L2 error
-  - name: ks_kiyani
-    problem: ks
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
-    adaptive_pinn:
-      initial_train:
-        epochs: 31000
-        optimizer_1: adam
-        optimizer_2: ssbroyden
-        optimizer_switch_epoch: 1000
         lr: 0.005
         lr_schedule: exponential
         lr_decay_rate: 0.98
