@@ -455,43 +455,6 @@ def train(
     print(f"  Train data device: {train_data['x'].device}")
     print(f"  Eval data device: {eval_data['x'].device}")
 
-    # DIAGNOSTIC: Verify IC values for Burgers1D
-    problem = cfg['problem']
-    if problem == 'burgers1d':
-        print(f"\n  [DIAG-BURGERS] ========== INITIAL DATA IC CHECK ==========")
-        train_ic_mask = train_data['mask']['IC']
-        if train_ic_mask.sum() > 0:
-            train_x_ic = train_data['x'][train_ic_mask, 0]
-            train_t_ic = train_data['t'][train_ic_mask, 0]
-            train_h_gt_ic = train_data['h_gt'][train_ic_mask, 0]
-            expected_ic = -torch.sin(torch.pi * train_x_ic)
-            ic_diff = (train_h_gt_ic - expected_ic).abs()
-            print(f"  [DIAG-BURGERS] Train IC points: {train_ic_mask.sum().item()}")
-            print(f"  [DIAG-BURGERS] Train IC t values: min={train_t_ic.min().item():.6f}, max={train_t_ic.max().item():.6f}")
-            print(f"  [DIAG-BURGERS] Train h_gt (actual): min={train_h_gt_ic.min().item():.6f}, max={train_h_gt_ic.max().item():.6f}")
-            print(f"  [DIAG-BURGERS] Expected -sin(πx): min={expected_ic.min().item():.6f}, max={expected_ic.max().item():.6f}")
-            print(f"  [DIAG-BURGERS] |h_gt - expected|: max={ic_diff.max().item():.6e}, mean={ic_diff.mean().item():.6e}")
-            # Sample some specific points
-            sample_idx = torch.randperm(len(train_x_ic))[:5]
-            print(f"  [DIAG-BURGERS] Sample points (x, h_gt, expected):")
-            for i in sample_idx:
-                x_val = train_x_ic[i].item()
-                h_gt_val = train_h_gt_ic[i].item()
-                exp_val = expected_ic[i].item()
-                print(f"    x={x_val:+.4f}: h_gt={h_gt_val:+.6f}, expected={exp_val:+.6f}, diff={abs(h_gt_val-exp_val):.2e}")
-        
-        # Also check eval data
-        eval_ic_mask = eval_data['mask']['IC']
-        if eval_ic_mask.sum() > 0:
-            eval_x_ic = eval_data['x'][eval_ic_mask, 0]
-            eval_h_gt_ic = eval_data['h_gt'][eval_ic_mask, 0]
-            expected_eval_ic = -torch.sin(torch.pi * eval_x_ic)
-            eval_ic_diff = (eval_h_gt_ic - expected_eval_ic).abs()
-            print(f"  [DIAG-BURGERS] Eval IC points: {eval_ic_mask.sum().item()}")
-            print(f"  [DIAG-BURGERS] Eval h_gt: min={eval_h_gt_ic.min().item():.6f}, max={eval_h_gt_ic.max().item():.6f}")
-            print(f"  [DIAG-BURGERS] Eval |h_gt - expected|: max={eval_ic_diff.max().item():.6e}")
-        print(f"  [DIAG-BURGERS] ================================================\n")
-
     # Create DataLoaders
     train_loader = _create_dataloader(train_data, cfg['batch_size'],
                                       shuffle=True)
@@ -1122,23 +1085,6 @@ def train(
             )
             # Override IC h_gt for time marching (windows 1+)
             train_data = _override_ic_for_time_marching(train_data, cfg, device)
-            
-            # DIAGNOSTIC: Verify IC values after resampling for Burgers1D
-            if problem == 'burgers1d':
-                print(f"  [DIAG-BURGERS] ========== POST-RESAMPLE IC CHECK (epoch {epoch}) ==========")
-                train_ic_mask = train_data['mask']['IC']
-                if train_ic_mask.sum() > 0:
-                    train_x_ic = train_data['x'][train_ic_mask, 0]
-                    train_t_ic = train_data['t'][train_ic_mask, 0]
-                    train_h_gt_ic = train_data['h_gt'][train_ic_mask, 0]
-                    expected_ic = -torch.sin(torch.pi * train_x_ic)
-                    ic_diff = (train_h_gt_ic - expected_ic).abs()
-                    print(f"  [DIAG-BURGERS] IC points: {train_ic_mask.sum().item()}, t: [{train_t_ic.min().item():.4f}, {train_t_ic.max().item():.4f}]")
-                    print(f"  [DIAG-BURGERS] h_gt: [{train_h_gt_ic.min().item():+.6f}, {train_h_gt_ic.max().item():+.6f}]")
-                    print(f"  [DIAG-BURGERS] expected: [{expected_ic.min().item():+.6f}, {expected_ic.max().item():+.6f}]")
-                    print(f"  [DIAG-BURGERS] max|diff|: {ic_diff.max().item():.6e}")
-                print(f"  [DIAG-BURGERS] =========================================================")
-            
             train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
             metrics['resample_events'].append({
                 'epoch': epoch,
@@ -1531,38 +1477,6 @@ def train(
                   f"Eval Loss: {eval_loss:.6f} | "
                   f"Eval Rel-L2: {eval_rel_l2:.6f} | "
                   f"Eval Inf: {eval_inf_norm:.6f}")
-
-            # DIAGNOSTIC: Check model predictions on IC points for Burgers1D
-            if problem == 'burgers1d':
-                with torch.no_grad():
-                    # Use train_data IC points
-                    train_ic_mask = train_data['mask']['IC']
-                    if train_ic_mask.sum() > 0:
-                        x_ic = train_data['x'][train_ic_mask]
-                        t_ic = train_data['t'][train_ic_mask]
-                        h_gt_ic = train_data['h_gt'][train_ic_mask]
-                        inputs_ic = torch.cat([x_ic, t_ic], dim=1)
-                        h_pred_ic = model(inputs_ic)
-                        
-                        # Compare predictions to targets
-                        pred_min = h_pred_ic.min().item()
-                        pred_max = h_pred_ic.max().item()
-                        gt_min = h_gt_ic.min().item()
-                        gt_max = h_gt_ic.max().item()
-                        ic_mse = ((h_pred_ic - h_gt_ic) ** 2).mean().item()
-                        
-                        # Check sign: if pred and gt have opposite signs at extremes, there's a sign flip
-                        print(f"  [DIAG-BURGERS] IC pred: [{pred_min:+.4f}, {pred_max:+.4f}], gt: [{gt_min:+.4f}, {gt_max:+.4f}], MSE: {ic_mse:.6e}")
-                        
-                        # Sample a few specific x values
-                        sample_x = torch.tensor([-0.5, 0.0, 0.5], device=device).view(-1, 1)
-                        sample_t = torch.zeros_like(sample_x)
-                        sample_inputs = torch.cat([sample_x, sample_t], dim=1)
-                        sample_pred = model(sample_inputs)
-                        expected_vals = -torch.sin(torch.pi * sample_x)
-                        print(f"  [DIAG-BURGERS] x=-0.5: pred={sample_pred[0,0].item():+.4f}, expect={expected_vals[0,0].item():+.4f} (should be +1)")
-                        print(f"  [DIAG-BURGERS] x= 0.0: pred={sample_pred[1,0].item():+.4f}, expect={expected_vals[1,0].item():+.4f} (should be 0)")
-                        print(f"  [DIAG-BURGERS] x=+0.5: pred={sample_pred[2,0].item():+.4f}, expect={expected_vals[2,0].item():+.4f} (should be -1)")
 
             # DIAGNOSTIC: Causal weight progression
             if causal_state is not None and causal_epoch_min_weight is not None:

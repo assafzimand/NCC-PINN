@@ -510,7 +510,7 @@ base_config:
     boundary_train_ratio: 0.026      # ~260 BC points (with n_residual=20000). Papers use 200+.
     eval_train_ratio: 0.25           # eval = 25% of train (all types)
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
-    resample_every_epochs: 5       # Kiyani: resample every 500 iterations (only during Adam phase)
+    resample_every_epochs: 500       # Kiyani: resample every 500 iterations (only during Adam phase)
     min_points_per_leaf: 50          # Minimum adaptive points per leaf (per_leaf_sampling only); 0 = disabled
 
   # ── Adaptive Expert PINN configuration (Tree-Based Spawning) ──
@@ -592,46 +592,46 @@ experiments:
     base_architecture: [2, 20, 20, 20, 20, 20, 20, 20, 20, 1]
     adaptive_pinn:
       initial_train:
-        epochs: 10
+        epochs: 31000
         optimizer_1: adam
         optimizer_2: ssbroyden
-        optimizer_switch_epoch: 7
+        optimizer_switch_epoch: 1000
         lr: 0.001
         lr_schedule: none
         lr_warmup_steps: 0
 
-  # # ALLEN-CAHN (Case 3 from paper - 3 hidden x 30, 1981 params)
-  # # Paper result: ~9.43e-7 with kappa continuation (we cannot reproduce kappa trick)
-  # # Expected without kappa continuation: ~1e-4
-  # - name: allen_cahn_kiyani
-  #   problem: allen_cahn
-  #   base_architecture: [2, 30, 30, 30, 1]
-  #   adaptive_pinn:
-  #     initial_train:
-  #       epochs: 35000
-  #       optimizer_1: adam
-  #       optimizer_2: ssbroyden
-  #       optimizer_switch_epoch: 5000
-  #       lr: 0.005
-  #       lr_schedule: exponential
-  #       lr_decay_rate: 0.98
-  #       lr_decay_steps: 1000
-  #       lr_warmup_steps: 0
+  # ALLEN-CAHN (Case 3 from paper - 3 hidden x 30, 1981 params)
+  # Paper result: ~9.43e-7 with kappa continuation (we cannot reproduce kappa trick)
+  # Expected without kappa continuation: ~1e-4
+  - name: allen_cahn_kiyani
+    problem: allen_cahn
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      initial_train:
+        epochs: 35000
+        optimizer_1: adam
+        optimizer_2: ssbroyden
+        optimizer_switch_epoch: 5000
+        lr: 0.005
+        lr_schedule: exponential
+        lr_decay_rate: 0.98
+        lr_decay_steps: 1000
+        lr_warmup_steps: 0
 
-  # # KS (Case 2 from paper - 5 hidden x 30, with Fourier features M=10)
-  # # Paper: 20 windows, t in [0, 1], SSBroyden + RAD resampling
-  # # Paper result: ~6.51e-4 relative L2 error
-  # - name: ks_kiyani
-  #   problem: ks
-  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
-  #   adaptive_pinn:
-  #     initial_train:
-  #       epochs: 31000
-  #       optimizer_1: adam
-  #       optimizer_2: ssbroyden
-  #       optimizer_switch_epoch: 1000
-  #       lr: 0.005
-  #       lr_schedule: exponential
-  #       lr_decay_rate: 0.98
-  #       lr_decay_steps: 1000
-  #       lr_warmup_steps: 0
+  # KS (Case 2 from paper - 5 hidden x 30, with Fourier features M=10)
+  # Paper: 20 windows, t in [0, 1], SSBroyden + RAD resampling
+  # Paper result: ~6.51e-4 relative L2 error
+  - name: ks_kiyani
+    problem: ks
+    base_architecture: [2, 30, 30, 30, 30, 30, 1]
+    adaptive_pinn:
+      initial_train:
+        epochs: 31000
+        optimizer_1: adam
+        optimizer_2: ssbroyden
+        optimizer_switch_epoch: 1000
+        lr: 0.005
+        lr_schedule: exponential
+        lr_decay_rate: 0.98
+        lr_decay_steps: 1000
+        lr_warmup_steps: 0
