@@ -195,7 +195,7 @@ base_config:
       scheme: grad_norm
       epsilon: 1.0e-5
     adaptive_sampling:
-      enabled: true
+      enabled: false
       adaptive_ratio: 0.5
       per_leaf_sampling: false
       phi: quadratic
@@ -600,23 +600,23 @@ experiments:
         lr_schedule: none
         lr_warmup_steps: 0
 
-  # ALLEN-CAHN (Case 3 from paper - 3 hidden x 30, 1981 params)
-  # Paper result: ~9.43e-7 with kappa continuation (we cannot reproduce kappa trick)
-  # Expected without kappa continuation: ~1e-4
-  - name: allen_cahn_kiyani
-    problem: allen_cahn
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      initial_train:
-        epochs: 35000
-        optimizer_1: adam
-        optimizer_2: ssbroyden
-        optimizer_switch_epoch: 5000
-        lr: 0.005
-        lr_schedule: exponential
-        lr_decay_rate: 0.98
-        lr_decay_steps: 1000
-        lr_warmup_steps: 0
+  # # ALLEN-CAHN (Case 3 from paper - 3 hidden x 30, 1981 params)
+  # # Paper result: ~9.43e-7 with kappa continuation (we cannot reproduce kappa trick)
+  # # Expected without kappa continuation: ~1e-4
+  # - name: allen_cahn_kiyani
+  #   problem: allen_cahn
+  #   base_architecture: [2, 30, 30, 30, 1]
+  #   adaptive_pinn:
+  #     initial_train:
+  #       epochs: 35000
+  #       optimizer_1: adam
+  #       optimizer_2: ssbroyden
+  #       optimizer_switch_epoch: 5000
+  #       lr: 0.005
+  #       lr_schedule: exponential
+  #       lr_decay_rate: 0.98
+  #       lr_decay_steps: 1000
+  #       lr_warmup_steps: 0
 
   # KS (Case 2 from paper - 5 hidden x 30, with Fourier features M=10)
   # Paper: 20 windows, t in [0, 1], SSBroyden + RAD resampling

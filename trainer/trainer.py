@@ -2766,9 +2766,12 @@ def _create_dataloader(
         
         return result
 
-    # Explicit CPU generator avoids device conflicts when torch.set_default_dtype
-    # or device context managers are active (shuffling always happens on CPU)
-    generator = torch.Generator(device='cpu') if shuffle else None
+    # Generator must match data device to avoid RuntimeError on newer PyTorch versions
+    if shuffle:
+        data_device = data['x'].device
+        generator = torch.Generator(device=data_device)
+    else:
+        generator = None
     
     return DataLoader(
         dataset,
