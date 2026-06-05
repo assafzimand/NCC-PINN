@@ -2766,13 +2766,8 @@ def _create_dataloader(
         
         return result
 
-    # Generator must match data device to avoid RuntimeError on newer PyTorch versions
-    if shuffle:
-        data_device = data['x'].device
-        generator = torch.Generator(device=data_device)
-    else:
-        generator = None
-    
+    # No explicit generator - uses global random state from torch.manual_seed()
+    # This avoids device mismatch issues while maintaining reproducibility
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -2780,7 +2775,6 @@ def _create_dataloader(
         collate_fn=collate_fn,
         pin_memory=False,  # Data already on device
         num_workers=0,  # Keep data on GPU
-        generator=generator
     )
 
 
