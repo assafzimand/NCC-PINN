@@ -455,6 +455,14 @@ def train(
     print(f"  Train data device: {train_data['x'].device}")
     print(f"  Eval data device: {eval_data['x'].device}")
 
+    # Reset default device context to CPU before creating DataLoaders.
+    # This fixes a PyTorch issue where CUDA inference (e.g., prev_model forward pass
+    # in time marching) can corrupt the global device context, causing RandomSampler
+    # to fail with "Expected 'cuda' device type for generator but found 'cpu'".
+    # This does NOT affect training device - model and data are already on CUDA
+    # via explicit .to(device) calls; this only affects internal generator creation.
+    torch.set_default_device(None)
+
     # Create DataLoaders
     train_loader = _create_dataloader(train_data, cfg['batch_size'],
                                       shuffle=True)
@@ -1085,6 +1093,7 @@ def train(
             )
             # Override IC h_gt for time marching (windows 1+)
             train_data = _override_ic_for_time_marching(train_data, cfg, device)
+            torch.set_default_device(None)  # Reset device context after CUDA inference
             train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
             metrics['resample_events'].append({
                 'epoch': epoch,
@@ -2384,6 +2393,7 @@ def train(
                 )
                 # Override IC h_gt for time marching (windows 1+)
                 _spawn_train_data = _override_ic_for_time_marching(_spawn_train_data, cfg, device)
+                torch.set_default_device(None)  # Reset device context after CUDA inference
                 train_loader = _create_dataloader(_spawn_train_data, cfg['batch_size'], shuffle=True)
                 n_new_leaves = len(_spawn_leaf_info) if _spawn_leaf_info else 0
                 print(f"  [PostSpawnResample] Rebuilt dataset for {n_new_leaves} leaves")

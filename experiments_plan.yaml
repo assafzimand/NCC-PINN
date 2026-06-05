@@ -592,7 +592,7 @@ experiments:
     base_architecture: [2, 20, 20, 20, 20, 20, 20, 20, 20, 1]
     adaptive_pinn:
       initial_train:
-        epochs: 15000
+        epochs: 31000
         optimizer_1: adam
         optimizer_2: ssbroyden
         optimizer_switch_epoch: 1000
