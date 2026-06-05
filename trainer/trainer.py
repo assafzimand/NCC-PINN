@@ -1320,6 +1320,11 @@ def train(
             print(f"\n{'='*60}")
             print(f"OPTIMIZER SWITCH: {current_optimizer_name} -> {optimizer_2_name.upper()} at epoch {epoch}")
             print(f"{'='*60}\n")
+            # Restore default device to CUDA before creating SSBroyden/LBFGS optimizer.
+            # This ensures optimizer state tensors (e.g., Hessian approximation) are created
+            # on the correct device, not CPU (which can happen if default was reset earlier
+            # for DataLoader compatibility in time-marching windows 1+).
+            torch.set_default_device(device)
             _prev_opt = current_optimizer_name
             optimizer, current_optimizer_name = _create_optimizer_by_name(
                 optimizer_2_name, model, active_cfg)
