@@ -7,7 +7,7 @@ Implements the three-component loss:
 where:
 - MSE_f: PDE residual loss (h_t + h*h_x - (nu/pi)*h_xx = 0)
 - MSE_0: Initial condition loss (h(0,x) = -sin(pi*x))
-- MSE_b: Boundary condition loss (Periodic: h(t,-1) = h(t,1), h_x(t,-1) = h_x(t,1))
+- MSE_b: Boundary condition loss (Dirichlet: h(t,-1) = h(t,1) = 0)
 """
 
 import torch
@@ -420,10 +420,6 @@ def build_loss(**cfg) -> Callable:
     
     # Get viscosity parameter
     nu = problem_config['nu']
-    
-    # Get spatial domain bounds for periodic BC
-    spatial_domain = problem_config['spatial_domain'][0]  # (x_min, x_max)
-    x_lo, x_hi = spatial_domain
 
     causal_state = create_causal_state(problem_config)
     
@@ -557,75 +553,25 @@ def build_loss(**cfg) -> Callable:
         
         # ============================================================
         # MSE_b: Boundary Condition Loss
-        # h(t, -1) = h(t, 1), h_x(t, -1) = h_x(t, 1) (Periodic)
+        # h(t, -1) = h(t, 1) = 0 (Dirichlet)
         # ============================================================
         if masks['BC'].sum() > 0:
             x_b = x[masks['BC']].contiguous()
             t_b = t[masks['BC']].contiguous()
             
-            # Separate left (x ~ x_lo) and right (x ~ x_hi) boundary points
-            x_mid = 0.5 * (x_lo + x_hi)
-            left_mask = (x_b[:, 0] < x_mid)
-            right_mask = ~left_mask
+            # Model prediction at boundary points
+            xt_b = torch.cat([x_b, t_b], dim=1)
+            if _t: _t.start('loss.bc.forward')
+            h_pred_b = model(xt_b)  # (N_b, 1)
+            if _t: _t.stop('loss.bc.forward')
             
-            n_left = left_mask.sum().item()
-            n_right = right_mask.sum().item()
-            n_pairs = min(n_left, n_right)
+            # BC: h should be 0 at boundaries (Dirichlet)
+            bc_squared = h_pred_b ** 2
             
-            if n_pairs > 0:
-                # Get paired t values (dataset generates them with same t values)
-                t_left = t_b[left_mask][:n_pairs].clone().detach()
-                t_right = t_b[right_mask][:n_pairs].clone().detach()
-                
-                # Create inputs for left and right boundaries with explicit x values
-                x_left_pts = torch.full((n_pairs, 1), x_lo, device=device, dtype=x_b.dtype)
-                x_right_pts = torch.full((n_pairs, 1), x_hi, device=device, dtype=x_b.dtype)
-                
-                # Enable gradients for derivative computation
-                x_left_pts = x_left_pts.requires_grad_(True)
-                x_right_pts = x_right_pts.requires_grad_(True)
-                t_left = t_left.requires_grad_(True)
-                t_right = t_right.requires_grad_(True)
-                
-                xt_left = torch.cat([x_left_pts, t_left], dim=1)
-                xt_right = torch.cat([x_right_pts, t_right], dim=1)
-                
-                # Model predictions at both boundaries
-                if _t: _t.start('loss.bc.forward')
-                h_left = model(xt_left)  # (n_pairs, 1)
-                h_right = model(xt_right)  # (n_pairs, 1)
-                if _t: _t.stop('loss.bc.forward')
-                
-                # Periodic BC 1: h(-1, t) = h(1, t)
-                bc_value_diff = (h_left - h_right) ** 2
-                
-                # Periodic BC 2: h_x(-1, t) = h_x(1, t)
-                ones_left = torch.ones_like(h_left)
-                ones_right = torch.ones_like(h_right)
-                
-                h_x_left = torch.autograd.grad(
-                    h_left, x_left_pts, grad_outputs=ones_left,
-                    create_graph=True, retain_graph=True
-                )[0]
-                h_x_right = torch.autograd.grad(
-                    h_right, x_right_pts, grad_outputs=ones_right,
-                    create_graph=True, retain_graph=True
-                )[0]
-                
-                bc_deriv_diff = (h_x_left - h_x_right) ** 2
-                
-                # Combined BC loss (equal weight on value and derivative matching)
-                bc_squared_pairs = bc_value_diff + bc_deriv_diff
-                
-                if for_tree_spawning:
-                    # For tree spawning, assign average to all BC points
-                    bc_avg = bc_squared_pairs.mean()
-                    bc_per_sample[masks['BC']] = bc_avg.expand(masks['BC'].sum())
-                else:
-                    mse_bc = torch.mean(bc_squared_pairs)
+            if for_tree_spawning:
+                bc_per_sample[masks['BC']] = bc_squared.squeeze(-1)
             else:
-                if not for_tree_spawning:
-                    mse_bc = torch.tensor(0.0, device=device)
+                mse_bc = torch.mean(bc_squared)
         else:
             if not for_tree_spawning:
                 mse_bc = torch.tensor(0.0, device=device)
