@@ -8,7 +8,7 @@ All PDEs implemented in this project with their mathematical formulation, domain
 
 | # | PDE | Equation | Domain | Key Parameters | Output Dim |
 |---|-----|----------|--------|----------------|------------|
-| 1 | Burgers 1D | $h_t + h h_x - \frac{\nu}{\pi} h_{xx} = 0$ | $x \in [-1,1],\; t \in [0,1]$ | $\nu = \pi/1000$ | 1 |
+| 1 | Burgers 1D | $h_t + h h_x - \frac{\nu}{\pi} h_{xx} = 0$ | $x \in [-1,1],\; t \in [0,1]$ | $\nu = 0.01$ | 1 |
 | 2 | Schrödinger (NLS) | $i h_t + \tfrac{1}{2} h_{xx} + \|h\|^2 h = 0$ | $x \in [-5,5],\; t \in [0,\pi/2]$ | — | 2 |
 | 3 | Wave 1D | $h_{tt} - h_{xx} = 0$ | $x \in [-5,5],\; t \in [0,2\pi]$ | — | 1 |
 | 4 | Burgers 2D | $h_t + h(h_{x_0} + h_{x_1}) - \nu(h_{x_0 x_0} + h_{x_1 x_1}) = 0$ | $(x_0,x_1) \in [0,1]^2,\; t \in [0,2]$ | $\nu = 0.1$ | 1 |
@@ -30,7 +30,7 @@ $$h_t + h\, h_x - \frac{\nu}{\pi}\, h_{xx} = 0$$
 |----------|-------|
 | **Spatial domain** | $x \in [-1, 1]$ |
 | **Temporal domain** | $t \in [0, 1]$ |
-| **Parameters** | $\nu = \pi/1000 \approx 0.00314$ (effective viscosity $\nu/\pi = 1/1000$) |
+| **Parameters** | $\nu = 0.01$ (effective viscosity $\nu/\pi \approx 0.00318$) |
 | **Initial condition** | $h(x, 0) = -\sin(\pi x)$ |
 | **Boundary conditions** | Dirichlet: $h(-1, t) = h(1, t) = 0$ |
 | **Character** | Sharp shock formation with very thin viscous layer; standard "hard" PINN benchmark |
@@ -45,7 +45,7 @@ $$h_t + h\, h_x - \frac{\nu}{\pi}\, h_{xx} = 0$$
 | RAD | 2023 | Adam+L-BFGS | varies | MLP `[2,64×4,1]`, tanh | **12,737** | 1 | [Wu et al., 2023](https://jmlr.org/papers/v24/22-1258.html) |
 | Vanilla PINN | 2019 | L-BFGS | 6.7 × 10⁻⁴ | MLP `[2,20×8,1]`, tanh | **3,021** | 1 | [Raissi et al., 2019](https://doi.org/10.1016/j.jcp.2018.10.045) |
 
-> **Comparability:** Results above are for the $\nu/\pi = 1/1000$ variant matching our config and are directly comparable. For the easier $\nu/\pi = 1/100$ variant, SOTA is vRBA: 8.25 × 10⁻⁹ and PirateNet (Adam): 8.20 × 10⁻⁵ (not directly comparable).
+> **Comparability:** Results above are for the standard $\nu = 0.01$ variant (effective viscosity $\nu/\pi \approx 0.00318$) matching our config and all listed papers. For the easier $\nu/\pi = 1/100$ variant, SOTA is vRBA: 8.25 × 10⁻⁹ and PirateNet (Adam): 8.20 × 10⁻⁵ (not directly comparable).
 
 ---
 

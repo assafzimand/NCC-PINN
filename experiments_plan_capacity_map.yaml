@@ -168,8 +168,7 @@ base_config:
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
-    nu: 0.003141592653589793         # Viscosity (effective viscosity = nu/pi = 1/1000, "hard" benchmark)
-    wavelet_threshold: 0.001
+    nu: 0.01
     new_norm_threshold: 0.015
     tree_smoothness_threshold: 0.5
     loss_weights:
