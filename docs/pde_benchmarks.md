@@ -32,7 +32,7 @@ $$h_t + h\, h_x - \frac{\nu}{\pi}\, h_{xx} = 0$$
 | **Temporal domain** | $t \in [0, 1]$ |
 | **Parameters** | $\nu = \pi/1000 \approx 0.00314$ (effective viscosity $\nu/\pi = 1/1000$) |
 | **Initial condition** | $h(x, 0) = -\sin(\pi x)$ |
-| **Boundary conditions** | Dirichlet: $h(-1, t) = h(1, t) = 0$ |
+| **Boundary conditions** | Periodic: $h(-1, t) = h(1, t)$, $h_x(-1, t) = h_x(1, t)$ |
 | **Character** | Sharp shock formation with very thin viscous layer; standard "hard" PINN benchmark |
 
 **PINN Benchmark Results (Rel. L₂ Error):**

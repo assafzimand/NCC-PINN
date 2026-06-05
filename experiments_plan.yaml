@@ -195,7 +195,7 @@ base_config:
       scheme: grad_norm
       epsilon: 1.0e-5
     adaptive_sampling:
-      enabled: false
+      enabled: true
       adaptive_ratio: 0.5
       per_leaf_sampling: false
       phi: quadratic
@@ -592,7 +592,7 @@ experiments:
     base_architecture: [2, 20, 20, 20, 20, 20, 20, 20, 20, 1]
     adaptive_pinn:
       initial_train:
-        epochs: 31000
+        epochs: 15000
         optimizer_1: adam
         optimizer_2: ssbroyden
         optimizer_switch_epoch: 1000
@@ -626,7 +626,7 @@ experiments:
     base_architecture: [2, 30, 30, 30, 30, 30, 1]
     adaptive_pinn:
       initial_train:
-        epochs: 31000
+        epochs: 10000
         optimizer_1: adam
         optimizer_2: ssbroyden
         optimizer_switch_epoch: 1000
