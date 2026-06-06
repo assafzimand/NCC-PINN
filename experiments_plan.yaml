@@ -313,7 +313,7 @@ base_config:
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
-    mu: 0.000484                     # mu^2 = 4.84e-4 (Zabusky & Kruskal values)
+    mu: 0.022
     wavelet_threshold: 0.0025
     new_norm_threshold: 0.2
     tree_smoothness_threshold: 0.4

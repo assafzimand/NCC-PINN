@@ -5,7 +5,7 @@ Implements the three-component loss:
     L = w_res*MSE_f + w_ic*MSE_0 + w_bc*MSE_b
 
 where:
-- MSE_f: PDE residual loss (h_t + h*h_x + mu*h_xxx = 0)
+- MSE_f: PDE residual loss (h_t + h*h_x + mu^2*h_xxx = 0, mu = 0.022)
 - MSE_0: Initial condition loss (h(x,0) = cos(pi*x))
 - MSE_b: Boundary condition loss (periodic: h(-1,t)=h(1,t), h_x(-1,t)=h_x(1,t))
 
@@ -86,25 +86,25 @@ def pde_residual(
     h_t: torch.Tensor,
     h_x: torch.Tensor,
     h_xxx: torch.Tensor,
-    mu: float = 0.000484,
+    mu: float = 0.022,
 ) -> torch.Tensor:
     """
-    Compute the PDE residual: h_t + h*h_x + mu*h_xxx.
-    
-    For the KdV equation: h_t + h*h_x + mu*h_xxx = 0
-    where mu = 0.022^2 = 0.000484 (Zabusky & Kruskal, 1965).
-    
+    Compute the PDE residual: h_t + h*h_x + mu^2*h_xxx.
+
+    For the KdV equation: h_t + h*h_x + mu^2*h_xxx = 0
+    where mu = 0.022 (Zabusky & Kruskal, 1965 dispersion coefficient).
+
     Args:
         h: Solution field h
         h_t: Time derivative dh/dt
         h_x: Spatial derivative dh/dx
         h_xxx: Third spatial derivative d³h/dx³
-        mu: Dispersion coefficient (default 0.000484 = 0.022^2)
-        
+        mu: Dispersion coefficient (default 0.022; code uses mu^2 = 0.000484)
+
     Returns:
         Residual tensor
     """
-    residual = h_t + h * h_x + mu * h_xxx
+    residual = h_t + h * h_x + mu**2 * h_xxx
     return residual
 
 

@@ -1,11 +1,11 @@
 """
 Korteweg-de Vries (KdV) Equation Solver using Pseudo-Spectral + ETDRK4.
 
-Solves: h_t + h * h_x + mu * h_xxx = 0
+Solves: h_t + h * h_x + mu^2 * h_xxx = 0
 Domain: x in [-1, 1], t in [0, 1]
 Initial Condition: h(x, 0) = cos(pi*x)
 Boundary Conditions: Periodic
-Parameters: mu = 0.022^2 = 0.000484 (Zabusky & Kruskal, 1965; PirateNet benchmark)
+Parameters: mu = 0.022 (Zabusky & Kruskal 1965 dispersion coefficient; code uses mu^2 = 0.000484)
 
 Uses Fourier pseudo-spectral method for spatial discretization and
 ETDRK4 (Exponential Time Differencing RK4) for time integration.
@@ -26,14 +26,14 @@ def solve_kdv(
     t_max: float = 1.0,
     nx: int = 256,
     nt: int = 201,
-    mu: float = 0.000484,
+    mu: float = 0.022,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Solve the KdV equation using Fourier pseudo-spectral + ETDRK4.
 
-    Equation: h_t + h * h_x + mu * h_xxx = 0
+    Equation: h_t + h * h_x + mu^2 * h_xxx = 0
     Rewritten in Fourier space: dv/dt = Lk*v + N_hat(v)
-      where Lk = i*mu*k^3 (stiff dispersive part, handled exactly)
+      where Lk = i*mu^2*k^3 (stiff dispersive part, handled exactly)
       and N_hat = FFT(-u*u_x) (nonlinear part, stepped explicitly)
     """
     domain_len = x_max - x_min
@@ -50,10 +50,10 @@ def solve_kdv(
     u_solution = np.zeros((nt, nx), dtype=np.float64)
     u_solution[0, :] = u0.copy()
 
-    # Linear operator in Fourier space: Lk = i*mu*k^3
-    # Derived from: h_t = -h*h_x - mu*h_xxx
-    # F[h_xxx] = (ik)^3 * v = -ik^3 * v, so -mu*F[h_xxx] = i*mu*k^3 * v
-    Lk = 1j * mu * k ** 3
+    # Linear operator in Fourier space: Lk = i*mu^2*k^3
+    # Derived from: h_t = -h*h_x - mu^2*h_xxx
+    # F[h_xxx] = (ik)^3 * v = -ik^3 * v, so -mu^2*F[h_xxx] = i*mu^2*k^3 * v
+    Lk = 1j * mu**2 * k ** 3
 
     # Timestep: only limited by nonlinear CFL (ETDRK4 handles linear part exactly)
     k_max = np.max(np.abs(k))
