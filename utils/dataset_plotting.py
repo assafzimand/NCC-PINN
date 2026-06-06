@@ -162,6 +162,7 @@ def save_spawn_prediction_plot(
         output_names = [f'u{i}' if output_dim > 1 else 'u' for i in range(output_dim)]
 
     device = next(model.parameters()).device
+    model_dtype = next(model.parameters()).dtype
 
     x_min, t_min = domain_bounds['lower']
     x_max, t_max = domain_bounds['upper']
@@ -171,7 +172,7 @@ def save_spawn_prediction_plot(
 
     x_flat = X_grid.ravel().astype(np.float32)
     t_flat = T_grid.ravel().astype(np.float32)
-    inputs = torch.from_numpy(np.stack([x_flat, t_flat], axis=1)).to(device)
+    inputs = torch.from_numpy(np.stack([x_flat, t_flat], axis=1)).to(device=device, dtype=model_dtype)
 
     model.eval()
     with torch.no_grad():
