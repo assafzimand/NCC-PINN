@@ -495,8 +495,8 @@ base_config:
       phi: quadratic
       phi_epsilon: 1.0
       phi_power: 2.0
-    grad_clip_norm: null
-    expert_grad_clip_norm: null
+    grad_clip_norm: 0.0001
+    expert_grad_clip_norm: 0.0001
     time_marching:
       enabled: true                       
       num_windows: 10
@@ -645,12 +645,12 @@ experiments:
     model: AToE
     base_architecture: [2, 30, 30, 1]
 
-  - name: ks_ANT_capacity_map
-    problem: ks
-    model: ANT
-    base_architecture: [2, 30, 30, 1]
+  # - name: ks_ANT_capacity_map
+  #   problem: ks
+  #   model: ANT
+  #   base_architecture: [2, 30, 30, 1]
 
-  - name: ks_AToELeaves_capacity_map
-    problem: ks
-    model: AToELeaves
-    base_architecture: [2, 30, 30, 1]
+  # - name: ks_AToELeaves_capacity_map
+  #   problem: ks
+  #   model: AToELeaves
+  #   base_architecture: [2, 30, 30, 1]

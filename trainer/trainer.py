@@ -2805,6 +2805,20 @@ def _save_checkpoint(
     metrics: Dict
 ) -> None:
     """Save model checkpoint with full information."""
+    # With spectral norm (nn.utils.parametrizations), live model objects cannot be
+    # pickled by torch.save. In time-marching mode, cfg['_time_marching_window']
+    # carries a 'prev_model' reference that would fail serialization.
+    # Strip it only when spectral norm is active — the reference is transient and
+    # is never read back from a checkpoint (time_marching.py manages it in memory).
+    cfg_to_save = cfg
+    if (cfg.get('init', {}).get('spectral_norm', False)
+            and '_time_marching_window' in cfg
+            and cfg['_time_marching_window'].get('prev_model') is not None):
+        cfg_to_save = dict(cfg)
+        tm = dict(cfg['_time_marching_window'])
+        tm['prev_model'] = None
+        cfg_to_save['_time_marching_window'] = tm
+
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
@@ -2812,7 +2826,7 @@ def _save_checkpoint(
         'optimizer_state_dict': optimizer.state_dict(),
         'train_loss': train_loss,
         'eval_loss': eval_loss,
-        'config': cfg,
+        'config': cfg_to_save,
         'metrics': metrics
     }
     
