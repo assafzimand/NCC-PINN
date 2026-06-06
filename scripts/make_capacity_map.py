@@ -44,6 +44,13 @@ def _find_run_dirs(batch_path: Path):
     if not child_dirs:
         return []
 
+    # If the path itself is a time-marching run (window_* dirs present), return it
+    # directly instead of treating window_* as model-name dirs, which would cause
+    # the nested-layout fallback to enumerate adaptive_plots/, training_plots/, etc.
+    # as fake timestamp dirs.
+    if _is_time_marching_run(batch_path):
+        return [(batch_path.name, batch_path)]
+
     # Flat layout: batch_path contains timestamp dirs directly
     # Include both regular runs (have metrics.json) and time-marching runs (have window_0/)
     def _is_valid_run(d):
