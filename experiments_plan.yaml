@@ -20,7 +20,7 @@ base_config:
   optimizer_1: adam                  # First optimizer: 'adam' | 'soap' | 'ssbroyden'
   optimizer_2: ssbroyden             # Second optimizer (Kiyani: Adam warmup then SSBroyden)
   optimizer_switch_epoch: 1000       # Switch to SSBroyden after 1000 Adam epochs
-  lr: 0.001                          # Base (peak) learning rate
+  lr: 0.00000001                          # Base (peak) learning rate
 
   # ── LR scheduling (applies to optimizer_1 only, step-based) ──
   lr_schedule: none                  # 'none' (constant lr), 'exponential' (step decay), 'cosine' (cosine annealing to 0)
@@ -480,7 +480,7 @@ base_config:
       hidden: glorot
       output: default                # Kiyani: no LS init
       ls_use_bias: false
-      spectral_norm: false
+      spectral_norm: true
       spectral_norm_init_std: 1.0e-6
     lra:
       enabled: false
