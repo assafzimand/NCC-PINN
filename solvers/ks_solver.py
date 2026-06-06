@@ -113,16 +113,31 @@ _cached_config_hash = None
 
 def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Get cached KS solution grid.
-    
+
+    In time-marching mode the config's temporal_domain is narrowed per window,
+    but the numerical solution must always start from t=0 with the true IC.
+    We detect this via _time_marching_window.original_temporal_domain and solve
+    the full domain once, letting the interpolator serve every window's time slice.
+
     Returns:
         (x_grid, t_grid, h_solution): Native grid arrays from the solver
     """
     global _cached_solution, _cached_config_hash
     problem = config.get('problem', 'ks')
     pc = config[problem]
+
+    # Use the original (full) temporal domain if supplied by time-marching narrowing,
+    # so we solve [0, T] once and cache it regardless of which window calls us.
+    tm_window = config.get('_time_marching_window', {})
+    original_td = tm_window.get('original_temporal_domain')
+    if original_td is not None:
+        t_min, t_max = original_td
+    else:
+        t_min, t_max = pc['temporal_domain']
+
     config_tuple = (
         tuple(pc['spatial_domain'][0]),
-        tuple(pc['temporal_domain']),
+        (t_min, t_max),
         pc['alpha'],
         pc['beta'],
         pc['gamma'],
@@ -130,11 +145,10 @@ def _get_solution_cached(config: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     if _cached_solution is None or _cached_config_hash != config_tuple:
         print("  Generating KS solution (512x500 grid, ETDRK4)...")
         x_min, x_max = pc['spatial_domain'][0]
-        t_min, t_max = pc['temporal_domain']
         alpha = pc['alpha']
         beta = pc['beta']
         gamma_val = pc['gamma']
-        
+
         x_grid, t_grid, h_sol = solve_ks(
             x_min=x_min, x_max=x_max, t_min=t_min, t_max=t_max,
             nx=512, nt=500, alpha=alpha, beta=beta, gamma=gamma_val,

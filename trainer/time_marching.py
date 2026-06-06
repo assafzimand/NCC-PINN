@@ -55,28 +55,34 @@ def compute_m_per_window(global_M: int, num_windows: int, distribution: str) -> 
         return result
     
     elif distribution == 'linear':
-        # M_i proportional to (i+1)
-        # Sum of 1+2+...+n = n*(n+1)/2
+        # M_i proportional to (i+1).  Sum of 1+2+...+n = n*(n+1)/2.
+        # Guarantee >= 1 per window: give each window 1 first, then distribute
+        # the remainder with the largest-remainder (Hamilton) method so the
+        # rounding correction is never dumped onto a single window.
         weights = [(i + 1) for i in range(num_windows)]
         total_weight = sum(weights)
-        raw = [global_M * w / total_weight for w in weights]
-        result = [max(1, round(r)) for r in raw]
-        # Adjust to ensure sum equals global_M
-        diff = global_M - sum(result)
-        result[-1] += diff
-        return result
-    
+        remaining = global_M - num_windows
+        raw = [remaining * w / total_weight for w in weights]
+        floors = [int(r) for r in raw]
+        leftover = remaining - sum(floors)
+        order = sorted(range(num_windows), key=lambda i: raw[i] - floors[i], reverse=True)
+        for i in order[:leftover]:
+            floors[i] += 1
+        return [1 + f for f in floors]
+
     elif distribution == 'quadratic':
-        # M_i proportional to (i+1)^2
-        # Sum of 1^2+2^2+...+n^2 = n*(n+1)*(2n+1)/6
+        # M_i proportional to (i+1)^2.  Sum of 1^2+...+n^2 = n*(n+1)*(2n+1)/6.
+        # Same Hamilton approach as linear to prevent any window from getting 0.
         weights = [(i + 1) ** 2 for i in range(num_windows)]
         total_weight = sum(weights)
-        raw = [global_M * w / total_weight for w in weights]
-        result = [max(1, round(r)) for r in raw]
-        # Adjust to ensure sum equals global_M
-        diff = global_M - sum(result)
-        result[-1] += diff
-        return result
+        remaining = global_M - num_windows
+        raw = [remaining * w / total_weight for w in weights]
+        floors = [int(r) for r in raw]
+        leftover = remaining - sum(floors)
+        order = sorted(range(num_windows), key=lambda i: raw[i] - floors[i], reverse=True)
+        for i in order[:leftover]:
+            floors[i] += 1
+        return [1 + f for f in floors]
     
     else:
         raise ValueError(f"Unknown m_distribution: {distribution}. Use 'equal', 'linear', or 'quadratic'.")
@@ -137,12 +143,17 @@ def narrow_config_for_window(cfg: Dict, window: TimeWindow, prev_model: nn.Modul
     window_cfg = copy.deepcopy(cfg)
     problem = window_cfg['problem']
     
+    # Save original temporal domain BEFORE narrowing — solvers need it to compute
+    # the full-domain numerical solution once and cache it, then serve each window
+    # from the correct time slice rather than re-solving with a wrong per-window IC.
+    original_temporal_domain = cfg[problem]['temporal_domain'][:]
+
     # Narrow temporal domain
     window_cfg[problem]['temporal_domain'] = [window.t_start, window.t_end]
-    
+
     # Set window-specific M
     window_cfg['adaptive_pinn']['M_experts_num'] = window.M
-    
+
     # Add flag to indicate time marching is active (for eval filtering and IC override)
     # prev_model is stored as reference for IC override after resampling
     window_cfg['_time_marching_window'] = {
@@ -150,7 +161,8 @@ def narrow_config_for_window(cfg: Dict, window: TimeWindow, prev_model: nn.Modul
         't_start': window.t_start,
         't_end': window.t_end,
         'idx': window.idx,
-        'prev_model': prev_model  # None for window 0, model for windows 1+
+        'prev_model': prev_model,  # None for window 0, model for windows 1+
+        'original_temporal_domain': original_temporal_domain,
     }
     
     return window_cfg
@@ -225,17 +237,70 @@ def override_ic_with_model(
     return dataset
 
 
-def _plot_combined_loss_curves(windows: List[TimeWindow], run_dir: Path) -> None:
+def _compute_full_domain_rel_l2(
+    combined_model: nn.Module,
+    config: Dict,
+    device: torch.device,
+    n_x: int = 256,
+    n_t: int = 200,
+) -> float:
+    """Compute rel-L2 of the combined model over the full temporal domain.
+
+    Uses a dense regular grid so the metric is independent of the training
+    dataset composition (per-window splits, IC overrides, etc.).
+    """
+    import importlib
+
+    problem = config['problem']
+    pc = config[problem]
+    x_min, x_max = pc['spatial_domain'][0]
+    t_min, t_max = pc['temporal_domain']
+
+    x_vals = np.linspace(x_min, x_max, n_x)
+    t_vals = np.linspace(t_min, t_max, n_t)
+    X, T = np.meshgrid(x_vals, t_vals)
+    x_flat = X.flatten()
+    t_flat = T.flatten()
+
+    # Ground truth from solver (full-domain solve, cached)
+    solver_mod = importlib.import_module(f'solvers.{problem}_solver')
+    interp = solver_mod._get_interpolator(config)
+    gt = np.asarray(interp(x_flat, t_flat), dtype=np.float64)
+
+    # Model predictions — chunk to avoid OOM on large grids
+    precision = config.get('precision', 'float32')
+    dtype = torch.float64 if precision == 'float64' else torch.float32
+    combined_model.eval()
+    xt = torch.tensor(np.column_stack([x_flat, t_flat]), dtype=dtype, device=device)
+    chunk = 8192
+    preds = []
+    with torch.no_grad():
+        for i in range(0, len(xt), chunk):
+            preds.append(combined_model(xt[i:i + chunk])[:, 0])
+    pred = torch.cat(preds).cpu().numpy().astype(np.float64)
+
+    diff = pred - gt
+    rel_l2 = float(np.sqrt((diff ** 2).sum()) / (np.sqrt((gt ** 2).sum()) + 1e-10))
+    return rel_l2
+
+
+def _plot_combined_loss_curves(
+    windows: List[TimeWindow],
+    run_dir: Path,
+    final_rel_l2: float = None,
+) -> None:
     """
     Create a combined loss curve plot showing all windows concatenated.
-    
+
     Reads metrics.json from each window and creates a single plot with:
     - Train loss and eval loss curves concatenated across windows
     - Vertical lines showing window boundaries
-    
+    - (Optional) horizontal marker for the final full-domain rel-L2
+
     Args:
         windows: List of TimeWindow objects
         run_dir: Root run directory containing window subdirectories
+        final_rel_l2: Full-domain rel-L2 of the combined model (added as annotation)
     """
     print(f"\n  Creating combined loss curve plot...")
     
@@ -303,22 +368,26 @@ def _plot_combined_loss_curves(windows: List[TimeWindow], run_dir: Path) -> None
     
     # Plot 2: Relative L2 error
     ax = axes[1]
-    ax.plot(all_eval_epochs, all_eval_rel_l2, 'r-', label='Eval Rel. L2',
+    ax.plot(all_eval_epochs, all_eval_rel_l2, 'r-', label='Per-window Eval Rel-L2',
             linewidth=2, alpha=0.8)
-    
+
+    if final_rel_l2 is not None:
+        ax.axhline(y=final_rel_l2, color='black', linestyle='--', linewidth=2,
+                   label=f'Full-domain Rel-L2: {final_rel_l2:.4e}', alpha=0.9)
+
     # Add window boundary markers
     for i, boundary in enumerate(window_boundaries[1:-1], start=1):
-        ax.axvline(x=boundary, color='gray', linestyle='--', 
+        ax.axvline(x=boundary, color='gray', linestyle='--',
                    linewidth=1.5, alpha=0.5)
-        ax.text(boundary, ax.get_ylim()[1]*0.95, f'W{i}', 
+        ax.text(boundary, ax.get_ylim()[1]*0.95, f'W{i}',
                 ha='center', va='top', fontsize=9, alpha=0.7)
-    
+
     ax.set_xlabel('Epoch (Cumulative)', fontsize=12)
     ax.set_ylabel('Relative L2 Error', fontsize=12)
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
     ax.set_yscale('log')
-    ax.set_title(f'Time Marching: Combined Relative L2 Error', 
+    ax.set_title('Time Marching: Combined Relative L2 Error',
                  fontsize=14, fontweight='bold')
     
     plt.tight_layout()
@@ -530,14 +599,39 @@ def train_with_time_marching(
     torch.save(combined_checkpoint, combined_checkpoint_path)
     print(f"  Combined checkpoint saved: {combined_checkpoint_path}")
     
-    # 11. Create combined visualizations
+    # 11. Compute full-domain rel-L2 using the combined model
+    print(f"\n{'='*60}")
+    print(f"  Computing full-domain rel-L2...")
+    print(f"{'='*60}")
+    final_rel_l2 = None
+    try:
+        final_rel_l2 = _compute_full_domain_rel_l2(combined_model, config, device)
+        print(f"  Full-domain Rel-L2: {final_rel_l2:.6e}")
+    except Exception as e:
+        print(f"  Warning: Could not compute full-domain rel-L2: {e}")
+
+    # Save final metrics file
+    import json as _json
+    final_metrics = {
+        'full_domain_rel_l2': final_rel_l2,
+        'num_windows': len(windows),
+        'm_per_window': [w.M for w in windows],
+        'total_m': sum(w.M for w in windows),
+        'problem': config['problem'],
+    }
+    final_metrics_path = run_dir / 'time_marching_final_metrics.json'
+    with open(final_metrics_path, 'w') as _f:
+        _json.dump(final_metrics, _f, indent=2)
+    print(f"  Final metrics saved to {final_metrics_path}")
+
+    # 12. Create combined visualizations
     print(f"\n{'='*60}")
     print(f"  Generating time marching visualizations")
     print(f"{'='*60}")
-    
-    # Plot combined loss curves from all windows
-    _plot_combined_loss_curves(windows, run_dir)
-    
+
+    # Plot combined loss curves from all windows (with full-domain rel-L2 marker)
+    _plot_combined_loss_curves(windows, run_dir, final_rel_l2=final_rel_l2)
+
     # Plot combined prediction heatmap vs ground truth
     _plot_combined_heatmap(combined_model, config, run_dir, device)
     
