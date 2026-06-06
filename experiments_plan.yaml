@@ -570,10 +570,10 @@ base_config:
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
     initial_train:
-      epochs: 31000                            # Kiyani Burgers: 1000 Adam + 30000 SSBroyden
+      epochs: 100000                            # Kiyani Burgers: 1000 Adam + 30000 SSBroyden
       optimizer_1: adam
       optimizer_2: ssbroyden
-      optimizer_switch_epoch: 1000
+      optimizer_switch_epoch: 90000
       lr: 0.001
       lr_schedule: none
       lr_warmup_steps: 0
