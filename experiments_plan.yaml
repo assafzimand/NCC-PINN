@@ -592,11 +592,11 @@ experiments:
     base_architecture: [2, 20, 20, 20, 20, 20, 20, 20, 20, 1]
     adaptive_pinn:
       initial_train:
-        epochs: 31000
+        epochs: 100000
         optimizer_1: adam
-        optimizer_2: ssbroyden
-        optimizer_switch_epoch: 1000
-        lr: 0.001
+        optimizer_2: lbfgs
+        optimizer_switch_epoch: 90000
+        lr: 0.0001
         lr_schedule: none
         lr_warmup_steps: 0
 
@@ -618,20 +618,20 @@ experiments:
   #       lr_decay_steps: 1000
   #       lr_warmup_steps: 0
 
-  # KS (Case 2 from paper - 5 hidden x 30, with Fourier features M=10)
-  # Paper: 20 windows, t in [0, 1], SSBroyden + RAD resampling
-  # Paper result: ~6.51e-4 relative L2 error
-  - name: ks_kiyani
-    problem: ks
-    base_architecture: [2, 30, 30, 30, 30, 30, 1]
-    adaptive_pinn:
-      initial_train:
-        epochs: 10000
-        optimizer_1: adam
-        optimizer_2: ssbroyden
-        optimizer_switch_epoch: 1000
-        lr: 0.005
-        lr_schedule: exponential
-        lr_decay_rate: 0.98
-        lr_decay_steps: 1000
-        lr_warmup_steps: 0
+  # # KS (Case 2 from paper - 5 hidden x 30, with Fourier features M=10)
+  # # Paper: 20 windows, t in [0, 1], SSBroyden + RAD resampling
+  # # Paper result: ~6.51e-4 relative L2 error
+  # - name: ks_kiyani
+  #   problem: ks
+  #   base_architecture: [2, 30, 30, 30, 30, 30, 1]
+  #   adaptive_pinn:
+  #     initial_train:
+  #       epochs: 10000
+  #       optimizer_1: adam
+  #       optimizer_2: ssbroyden
+  #       optimizer_switch_epoch: 1000
+  #       lr: 0.005
+  #       lr_schedule: exponential
+  #       lr_decay_rate: 0.98
+  #       lr_decay_steps: 1000
+  #       lr_warmup_steps: 0
