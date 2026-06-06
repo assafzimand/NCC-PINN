@@ -61,7 +61,7 @@ base_config:
   eval_every: 100
   print_every: 100
   save_every: 5000
-  inner_metrics_eval_every: 1000
+  inner_metrics_eval_every: 9999999
   seed: 42
 
   # ══════════════════════════════════════════════════════════════════════════════
@@ -214,7 +214,7 @@ base_config:
   adaptive_pinn:
     enabled: true
     max_experts: 150
-    spawn_every_epochs: 99999
+    spawn_every_epochs: 2000
     variable_for_node_accept: norm
     variable_for_expert_size: norm
     AToE_threshold_capacity: null
