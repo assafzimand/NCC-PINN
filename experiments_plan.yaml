@@ -1,16 +1,17 @@
-# KdV Smoke Test
-# Identical to kdv_01_main.yaml except:
-#   - initial_train.epochs: 100  (fast Phase 1)
-#   - epochs: 1                  (minimal Phase 3)
+# KdV Smoke Test — Feature Ablation for Phase 1 Convergence
 #
-# Purpose: verify that the 3-phase pipeline runs end-to-end, trees are generated
-# and visually sensible, expert regions spawn without errors, and all 3 variants
-# work with both M values — before committing to 50k-epoch production runs.
+# Purpose: find the right feature set for initial_train (Phase 1).
+# The old M_term_tree_verification run got ~0.2 rel-L2 at 2000 epochs with
+# ZERO extra features (no causal, no FF, no LRA, no RWF).
+# Our kdv_01_main config with all paper features got stuck at 0.67-0.71 because:
+#   - Causal tol=0.10 keeps min_weight at 0.96-0.97, blocks convergence
+#   - LRA pumps BC weight to 2.4× while residual/IC stay ~0.94 (noise for KdV)
 #
-# NOTE on gradient steps: full-batch at 100 epochs ≈ 100 optimizer steps.
-# The old KS run used batch_size=4096 → ~2.5 batches/epoch → ~250 steps per 100 epochs.
-# For real Phase 1 we'll need ~2000 epochs full-batch (=2000 steps) or revisit
-# batch_size to match the old run's ~5000 steps at 2000 epochs.
+# All 6 experiments: AToE, M=10, [2,37,37,37,1].
+# Base config = minimal "clean" (no causal, no FF, no LRA, no RWF).
+# Each experiment adds features to isolate which ones hurt or help.
+#
+# Hypothesis: causal (hard tol) is the main killer; FF+RWF may help; LRA is neutral/harmful.
 
 experiment_name: "kdv_00_smoketest"
 
@@ -20,18 +21,18 @@ base_config:
   activation: tanh
   precision: float64
 
-  # ── Phase 3: 1 epoch only — just verify spawning completes ──
+  # ── Phase 3: 1 epoch ──
   epochs: 1
   batch_size: 99999
   patience_epochs: 999999
   min_epochs: 1
 
-  # ── Phase 3 optimizer (inherited but nearly unused with epochs=1) ──
+  # ── Phase 3 optimizer ──
   optimizer_1: soap
   optimizer_2: null
   optimizer_switch_epoch: 999999
   lr: 0.001
-  soap_betas: [0.99, 0.999]
+  soap_betas: [0.95, 0.95]          # match old successful run
   soap_precondition_frequency: 10
   soap_weight_decay: 0.0
   lr_schedule: exponential
@@ -58,16 +59,15 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 10
-  print_every: 10
+  eval_every: 1000
+  print_every: 1000
   save_every: 9999
   inner_metrics_eval_every: 999999
   seed: 42
 
   # ══════════════════════════════════════════════════════════════════════════════
-  # PER-PROBLEM CONFIGURATION  (identical to kdv_01_main.yaml)
+  # KDV: MINIMAL baseline — no extra features (matches old successful run)
   # ══════════════════════════════════════════════════════════════════════════════
-
   kdv:
     spatial_dim: 1
     output_dim: 1
@@ -82,14 +82,14 @@ base_config:
       ic: 1.0
       bc: 1.0
     causal_training:
-      enabled: true
+      enabled: false                 # OFF in base — experiments override
       num_chunks: 16
-      tol_schedule: [0.1, 1.0, 10.0]
+      tol_schedule: [0.01]           # easy single-stage when used
       min_weight_threshold: 0.99
       per_leaf_causal: false
-    rwf: true
+    rwf: false                       # OFF in base
     fourier_features:
-      enabled: true
+      enabled: false                 # OFF in base
       dim: 10
       scale: 2.0
       periodic: false
@@ -100,7 +100,7 @@ base_config:
       spectral_norm: false
       spectral_norm_init_std: 1.0e-6
     lra:
-      enabled: true
+      enabled: false                 # OFF in base
       update_every: 1000
       alpha: 0.1
       scheme: grad_norm
@@ -211,7 +211,7 @@ base_config:
   adaptive_pinn:
     enabled: true
     max_experts: 150
-    spawn_every_epochs: 2000
+    spawn_every_epochs: 10000
     variable_for_node_accept: norm
     variable_for_expert_size: norm
     AToE_threshold_capacity: null
@@ -242,59 +242,135 @@ base_config:
     spawn_retry_after: 10
     reinitialize_base_after_spawn: false
 
-    # ── Phase 1: 2000 epochs — mirrors production; goal is to verify convergence ──
     initial_train:
-      epochs: 2000
+      epochs: 10000
       optimizer_1: soap
       optimizer_2: null
       lr: 0.001
       lr_schedule: exponential
       lr_decay_rate: 0.98
       lr_decay_steps: 500
-      lr_warmup_steps: 0
+      lr_warmup_steps: 500
 
 
 experiments:
-  # Same 6 experiments as kdv_01_main.yaml — all should complete in minutes
+  # ══════════════════════════════════════════════════════════════════════════════
+  # All 6 use: AToE, M=10, [2,37,37,37,1]
+  # Base = clean (no causal, no FF, no LRA, no RWF)
+  # Each experiment adds features to isolate their effect on Phase 1
+  # ══════════════════════════════════════════════════════════════════════════════
 
-  - name: kdv_atoe_m10
+  # 1. CLEAN baseline — should reproduce ~0.2 rel-L2 from old successful run
+  - name: kdv_clean
     problem: kdv
     model: AToE
     base_architecture: [2, 37, 37, 37, 1]
     adaptive_pinn:
-      M_experts_num: 10
+      M_experts_num: 20
+    # all features inherit from base (all disabled)
 
-  - name: kdv_atoe_m20
+  # 2. RWF + Fourier only — do these two basic enhancements help?
+  - name: kdv_rwf_ff
     problem: kdv
     model: AToE
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      M_experts_num: 20
-
-  - name: kdv_atoe_leaves_m10
-    problem: kdv
-    model: AToELeaves
     base_architecture: [2, 37, 37, 37, 1]
     adaptive_pinn:
-      M_experts_num: 10
-
-  - name: kdv_atoe_leaves_m20
-    problem: kdv
-    model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
       M_experts_num: 20
+    kdv:
+      rwf: true
+      fourier_features:
+        enabled: true
+        dim: 10
+        scale: 2.0
+        periodic: false
 
-  - name: kdv_ant_m10
+  # 3. Easy causal only — single tol=0.01 (very easy to satisfy, minimal constraint)
+  - name: kdv_causal_easy
     problem: kdv
-    model: ANT
+    model: AToE
     base_architecture: [2, 37, 37, 37, 1]
     adaptive_pinn:
-      M_experts_num: 10
+      M_experts_num: 20
+    kdv:
+      causal_training:
+        enabled: true
+        num_chunks: 16
+        tol_schedule: [0.01]         # single easy stage, very low bar
+        min_weight_threshold: 0.99
+        per_leaf_causal: false
 
-  - name: kdv_ant_m20
+  # 4. All paper features EXCEPT causal — isolate causal as the killer
+  - name: kdv_no_causal
     problem: kdv
-    model: ANT
-    base_architecture: [2, 30, 30, 30, 1]
+    model: AToE
+    base_architecture: [2, 37, 37, 37, 1]
     adaptive_pinn:
       M_experts_num: 20
+    kdv:
+      rwf: true
+      fourier_features:
+        enabled: true
+        dim: 10
+        scale: 2.0
+        periodic: false
+      lra:
+        enabled: true
+        update_every: 1000
+        alpha: 0.1
+        scheme: grad_norm
+        epsilon: 1.0e-5
+      # causal stays disabled
+
+  # 5. All paper features + easy causal tol=[0.01] — best candidate for production?
+  - name: kdv_paper_easy_causal
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 37, 37, 37, 1]
+    adaptive_pinn:
+      M_experts_num: 20
+    kdv:
+      rwf: true
+      fourier_features:
+        enabled: true
+        dim: 10
+        scale: 2.0
+        periodic: false
+      lra:
+        enabled: true
+        update_every: 1000
+        alpha: 0.1
+        scheme: grad_norm
+        epsilon: 1.0e-5
+      causal_training:
+        enabled: true
+        num_chunks: 16
+        tol_schedule: [0.01]         # easy single stage
+        min_weight_threshold: 0.99
+        per_leaf_causal: false
+
+  # 6. ALL paper features with hard causal tol=[0.1, 1.0, 10.0] — our broken config, for comparison
+  - name: kdv_paper_hard_causal
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 37, 37, 37, 1]
+    adaptive_pinn:
+      M_experts_num: 20
+    kdv:
+      rwf: true
+      fourier_features:
+        enabled: true
+        dim: 10
+        scale: 2.0
+        periodic: false
+      lra:
+        enabled: true
+        update_every: 1000
+        alpha: 0.1
+        scheme: grad_norm
+        epsilon: 1.0e-5
+      causal_training:
+        enabled: true
+        num_chunks: 16
+        tol_schedule: [0.1, 1.0, 10.0]   # hard — this is what broke the first run
+        min_weight_threshold: 0.99
+        per_leaf_causal: false
