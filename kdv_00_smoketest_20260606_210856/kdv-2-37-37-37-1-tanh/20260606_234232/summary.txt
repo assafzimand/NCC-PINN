@@ -1,0 +1,19 @@
+Training Summary
+============================================================
+
+Problem: kdv
+Architecture: [2, 37, 37, 37, 1]
+Activation: tanh
+Epochs: 10000
+Batch size: 99999
+Learning rate: 0.001
+Device: cuda
+
+Final train loss: 16.598472
+Final eval loss: 14.470831
+Final eval rel-L2: 0.900378
+Final eval inf-norm: 2.313750
+Best eval loss: 0.000791
+
+Best checkpoint: outputs/kdv-2-37-37-37-1-tanh/20260606_234232/checkpoints/best_model.pt
+Final checkpoint: outputs/kdv-2-37-37-37-1-tanh/20260606_234232/checkpoints/final_model.pt

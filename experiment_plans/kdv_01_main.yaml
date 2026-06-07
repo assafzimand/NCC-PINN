@@ -1,14 +1,23 @@
 # KdV Primary PAFA Experiments
-# Goal: All three variants × M=10 and M=20 with full paper-matching feature set.
-# Target: beat arXiv:2502.00604 PirateNet (~500k params, 3.40e-4 rel-L2) at ~50-80k total params.
+# Goal: 3 variants × 3 M values × 3 optimizers = 27 runs.
+# Purpose: independently select the best (variant, M, optimizer).
+# Best result feeds kdv_02_ablation.yaml for feature addition study.
 #
-# Architecture sizing (ResNet, no Fourier baseline; ~15-20% more with Fourier dim=10):
-#   M=10, [2,37,37,37,1]: ~4367 params/model × 11 = ~48k total
-#   M=20, [2,30,30,30,1]: ~2911 params/model × 21 = ~61k total
+# Features (both phases): RWF + Fourier(dim=10,scale=2.0) ONLY.
+# No causal, no LRA — from smoke test (kdv_00_smoketest): these are the
+# features that give the best Phase 1 convergence without stalling.
 #
-# Phase 1 (initial_train): 2000 epochs SOAP — short tree-discovery pass only.
-# Phase 3 (epochs):        50000 epochs SOAP — the real training.
-# Features (both phases):  LRA + causal + Fourier(scale=2.0) + RWF + adaptive sampling.
+# Architecture sizing (ResNet, 3 hidden layers, Fourier adds ~15-20%):
+#   M=10, [2,37,37,37,1]: ~4,367 params/model × 11 = ~48k total
+#   M=20, [2,30,30,30,1]: ~2,911 params/model × 21 = ~61k total
+#   M=30, [2,29,29,29,1]: ~1,857 params/model × 31 = ~58k total
+#
+# Optimizer epochs (mirroring Kiyani et al. arXiv:2501.16371):
+#   SOAP:  50 000 epochs (paper comparison budget)
+#   LBFGS: 1 000 Adam (warmup) + 30 000 LBFGS  = 31 000 total
+#   SSB:   1 000 Adam (warmup) + 30 000 SSBroyden = 31 000 total
+#
+# Phase 1 (initial_train): always SOAP 10k, betas=[0.95,0.95] (smoke-test validated).
 
 experiment_name: "kdv_01_main"
 
@@ -18,18 +27,18 @@ base_config:
   activation: tanh
   precision: float64
 
-  # ── Phase 3 duration ──
+  # ── Default Phase 3: SOAP ──────────────────────────────────────────────────
+  # LBFGS and SSB experiments override epochs, optimizer_1/2, switch point, lr_schedule.
   epochs: 50000
-  batch_size: 99999                    # full-batch
+  batch_size: 99999
   patience_epochs: 999999
   min_epochs: 1
 
-  # ── Phase 3 optimizer: SOAP (paper's best) ──
   optimizer_1: soap
   optimizer_2: null
   optimizer_switch_epoch: 999999
   lr: 0.001
-  soap_betas: [0.99, 0.999]
+  soap_betas: [0.99, 0.999]            # paper values (arXiv:2502.00604)
   soap_precondition_frequency: 10
   soap_weight_decay: 0.0
   lr_schedule: exponential
@@ -39,11 +48,10 @@ base_config:
   lr_warmup_start_factor: 0.01
   new_expert_lr_decay: 1.0
 
-  # ── Adam / LBFGS / SSBroyden hyperparams (unused here, kept for completeness) ──
   adam_betas: [0.9, 0.999]
   adam_eps: 1.0e-8
   lbfgs_lr: 1.0
-  lbfgs_max_iter: 1
+  lbfgs_max_iter: 1                    # 1 quasi-Newton step per epoch (Kiyani style)
   lbfgs_history_size: 100
   lbfgs_line_search: 'strong_wolfe'
   lbfgs_tolerance_grad: 0.0
@@ -51,29 +59,27 @@ base_config:
   ssbroyden_lr: 1.0
   ssbroyden_tolerance_grad: 1.0e-10
 
-  # ── General settings ──
   cuda: true
   eval_only: false
   resume_from: null
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 100
-  print_every: 100
+  eval_every: 1000
+  print_every: 1000
   save_every: 5000
   inner_metrics_eval_every: 9999999
   seed: 42
 
-  # ══════════════════════════════════════════════════════════════════════════════
-  # PER-PROBLEM CONFIGURATION
-  # ══════════════════════════════════════════════════════════════════════════════
-
+  # ══════════════════════════════════════════════════════════════════════════
+  # KDV — minimal features: RWF + FF only
+  # ══════════════════════════════════════════════════════════════════════════
   kdv:
     spatial_dim: 1
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
-    mu: 0.022                          # Zabusky & Kruskal 1965 (code uses mu^2 = 0.000484)
+    mu: 0.022
     wavelet_threshold: 0.0025
     new_norm_threshold: 0.2
     tree_smoothness_threshold: 0.4
@@ -82,16 +88,16 @@ base_config:
       ic: 1.0
       bc: 1.0
     causal_training:
-      enabled: true
-      num_chunks: 16                   # paper: 16
-      tol_schedule: [0.1, 1.0, 10.0]
+      enabled: false
+      num_chunks: 16
+      tol_schedule: [0.01]
       min_weight_threshold: 0.99
       per_leaf_causal: false
     rwf: true
     fourier_features:
       enabled: true
-      dim: 10                          # spatial only → effective input 1+2×10=21
-      scale: 2.0                       # paper value
+      dim: 10
+      scale: 2.0
       periodic: false
     init:
       hidden: glorot
@@ -100,8 +106,8 @@ base_config:
       spectral_norm: false
       spectral_norm_init_std: 1.0e-6
     lra:
-      enabled: true
-      update_every: 1000               # paper: every 1000 iters
+      enabled: false
+      update_every: 1000
       alpha: 0.1
       scheme: grad_norm
       epsilon: 1.0e-5
@@ -120,7 +126,7 @@ base_config:
       freeze_previous_windows: true
       m_distribution: quadratic
 
-  # ── Other problems (required by schema; not used in this plan) ──
+  # ── Other problems (required by schema; not used) ──────────────────────────
   schrodinger:
     spatial_dim: 1
     output_dim: 2
@@ -200,7 +206,7 @@ base_config:
     expert_grad_clip_norm: null
     time_marching: {enabled: true, num_windows: 20, freeze_previous_windows: true, m_distribution: equal}
 
-  # ── Dataset sampling ──
+  # ── Dataset sampling ───────────────────────────────────────────────────────
   sampling:
     sample_volume_ratio: 35
     initial_train_ratio: 0.026
@@ -210,21 +216,21 @@ base_config:
     resample_every_epochs: 500
     min_points_per_leaf: 50
 
-  # ── Adaptive PINN ──
+  # ── Adaptive PINN ──────────────────────────────────────────────────────────
   adaptive_pinn:
     enabled: true
     max_experts: 150
-    spawn_every_epochs: 2000
+    spawn_every_epochs: 10000          # matches initial_train.epochs
     variable_for_node_accept: norm
     variable_for_expert_size: norm
     AToE_threshold_capacity: null
     ANT_threshold_architecture: null
-    ANT_default_hidden_layers: 29      # aligns with [2,29,29,1] bank entry
+    ANT_default_hidden_layers: 29      # for M=10/20; ANT M=30 overrides to 22
     expert_type: resnet
     freeze_mode: none
     blending_mode: soft
     sigma_fraction: 0.2
-    base_weight: 0.3                   # from existing KdV run
+    base_weight: 0.3
     base_everywhere: true
     tree_max_depth: 15
     tree_min_samples_leaf: 50
@@ -245,14 +251,14 @@ base_config:
     spawn_retry_after: 10
     reinitialize_base_after_spawn: false
 
-    # ── Phase 1: always the same — short tree-discovery pass ──
-    # Features (lra, rwf, fourier, causal) are NOT overridden here;
-    # they inherit from the kdv section above, so Phase 1 and Phase 3
-    # share identical feature settings.
+    # ── Phase 1: same for all 27 runs ─────────────────────────────────────
+    # Features (rwf, fourier, causal, lra) inherit from base config above.
+    # soap_betas overridden to [0.95,0.95]: smoke-test validated for 10k Phase 1.
     initial_train:
-      epochs: 2000
+      epochs: 10000
       optimizer_1: soap
       optimizer_2: null
+      soap_betas: [0.95, 0.95]
       lr: 0.001
       lr_schedule: exponential
       lr_decay_rate: 0.98
@@ -261,51 +267,353 @@ base_config:
 
 
 experiments:
-  # ══════════════════════════════════════════════════════════════════════════════
-  # 6 runs: 3 variants × 2 M values
-  # ══════════════════════════════════════════════════════════════════════════════
+  # ════════════════════════════════════════════════════════════════════════════
+  # SOAP  —  50 000 epochs, β=[0.99,0.999], exponential LR decay
+  # No optimizer override needed; inherits base_config defaults.
+  # ════════════════════════════════════════════════════════════════════════════
 
-  # ── AToE ──────────────────────────────────────────────────────────────────────
-  - name: kdv_atoe_m10
+  # ── AToE ──────────────────────────────────────────────────────────────────
+  - name: kdv_atoe_m10_soap
     problem: kdv
     model: AToE
-    base_architecture: [2, 37, 37, 37, 1]   # ~4367 params × 11 = ~48k total
+    base_architecture: [2, 37, 37, 37, 1]
     adaptive_pinn:
       M_experts_num: 10
 
-  - name: kdv_atoe_m20
+  - name: kdv_atoe_m20_soap
     problem: kdv
     model: AToE
-    base_architecture: [2, 30, 30, 30, 1]   # ~2911 params × 21 = ~61k total
+    base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       M_experts_num: 20
 
-  # ── AToELeaves ────────────────────────────────────────────────────────────────
-  - name: kdv_atoe_leaves_m10
+  - name: kdv_atoe_m30_soap
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 29, 29, 29, 1]
+    adaptive_pinn:
+      M_experts_num: 30
+
+  # ── AToELeaves ────────────────────────────────────────────────────────────
+  - name: kdv_leaves_m10_soap
     problem: kdv
     model: AToELeaves
     base_architecture: [2, 37, 37, 37, 1]
     adaptive_pinn:
       M_experts_num: 10
 
-  - name: kdv_atoe_leaves_m20
+  - name: kdv_leaves_m20_soap
     problem: kdv
     model: AToELeaves
     base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       M_experts_num: 20
 
-  # ── ANT ───────────────────────────────────────────────────────────────────────
-  - name: kdv_ant_m10
+  - name: kdv_leaves_m30_soap
+    problem: kdv
+    model: AToELeaves
+    base_architecture: [2, 29, 29, 29, 1]
+    adaptive_pinn:
+      M_experts_num: 30
+
+  # ── ANT ───────────────────────────────────────────────────────────────────
+  - name: kdv_ant_m10_soap
     problem: kdv
     model: ANT
     base_architecture: [2, 37, 37, 37, 1]
     adaptive_pinn:
       M_experts_num: 10
+      ANT_default_hidden_layers: 29
 
-  - name: kdv_ant_m20
+  - name: kdv_ant_m20_soap
     problem: kdv
     model: ANT
     base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       M_experts_num: 20
+      ANT_default_hidden_layers: 29
+
+  - name: kdv_ant_m30_soap
+    problem: kdv
+    model: ANT
+    base_architecture: [2, 29, 29, 29, 1]
+    adaptive_pinn:
+      M_experts_num: 30
+      ANT_default_hidden_layers: 22   # scaled down for smaller per-model budget
+
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # LBFGS  —  Adam(1k epochs) → L-BFGS(30k epochs) = 31k total
+  # Constant Adam lr=0.001 (no schedule), then L-BFGS with lr=1.0 (line search).
+  # Mirrors Kiyani et al. arXiv:2501.16371 quasi-Newton setup.
+  # ════════════════════════════════════════════════════════════════════════════
+
+  # ── AToE ──────────────────────────────────────────────────────────────────
+  - name: kdv_atoe_m10_lbfgs
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 37, 37, 37, 1]
+    adaptive_pinn:
+      M_experts_num: 10
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: lbfgs
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_atoe_m20_lbfgs
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      M_experts_num: 20
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: lbfgs
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_atoe_m30_lbfgs
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 29, 29, 29, 1]
+    adaptive_pinn:
+      M_experts_num: 30
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: lbfgs
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  # ── AToELeaves ────────────────────────────────────────────────────────────
+  - name: kdv_leaves_m10_lbfgs
+    problem: kdv
+    model: AToELeaves
+    base_architecture: [2, 37, 37, 37, 1]
+    adaptive_pinn:
+      M_experts_num: 10
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: lbfgs
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_leaves_m20_lbfgs
+    problem: kdv
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      M_experts_num: 20
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: lbfgs
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_leaves_m30_lbfgs
+    problem: kdv
+    model: AToELeaves
+    base_architecture: [2, 29, 29, 29, 1]
+    adaptive_pinn:
+      M_experts_num: 30
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: lbfgs
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  # ── ANT ───────────────────────────────────────────────────────────────────
+  - name: kdv_ant_m10_lbfgs
+    problem: kdv
+    model: ANT
+    base_architecture: [2, 37, 37, 37, 1]
+    adaptive_pinn:
+      M_experts_num: 10
+      ANT_default_hidden_layers: 29
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: lbfgs
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_ant_m20_lbfgs
+    problem: kdv
+    model: ANT
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      M_experts_num: 20
+      ANT_default_hidden_layers: 29
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: lbfgs
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_ant_m30_lbfgs
+    problem: kdv
+    model: ANT
+    base_architecture: [2, 29, 29, 29, 1]
+    adaptive_pinn:
+      M_experts_num: 30
+      ANT_default_hidden_layers: 22
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: lbfgs
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # SSBroyden  —  Adam(1k epochs) → SSBroyden(30k epochs) = 31k total
+  # Same structure as LBFGS but uses SSBroyden (Kiyani paper's preferred quasi-Newton).
+  # ════════════════════════════════════════════════════════════════════════════
+
+  # ── AToE ──────────────────────────────────────────────────────────────────
+  - name: kdv_atoe_m10_ssb
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 37, 37, 37, 1]
+    adaptive_pinn:
+      M_experts_num: 10
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_atoe_m20_ssb
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      M_experts_num: 20
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_atoe_m30_ssb
+    problem: kdv
+    model: AToE
+    base_architecture: [2, 29, 29, 29, 1]
+    adaptive_pinn:
+      M_experts_num: 30
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  # ── AToELeaves ────────────────────────────────────────────────────────────
+  - name: kdv_leaves_m10_ssb
+    problem: kdv
+    model: AToELeaves
+    base_architecture: [2, 37, 37, 37, 1]
+    adaptive_pinn:
+      M_experts_num: 10
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_leaves_m20_ssb
+    problem: kdv
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      M_experts_num: 20
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_leaves_m30_ssb
+    problem: kdv
+    model: AToELeaves
+    base_architecture: [2, 29, 29, 29, 1]
+    adaptive_pinn:
+      M_experts_num: 30
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  # ── ANT ───────────────────────────────────────────────────────────────────
+  - name: kdv_ant_m10_ssb
+    problem: kdv
+    model: ANT
+    base_architecture: [2, 37, 37, 37, 1]
+    adaptive_pinn:
+      M_experts_num: 10
+      ANT_default_hidden_layers: 29
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_ant_m20_ssb
+    problem: kdv
+    model: ANT
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      M_experts_num: 20
+      ANT_default_hidden_layers: 29
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
+
+  - name: kdv_ant_m30_ssb
+    problem: kdv
+    model: ANT
+    base_architecture: [2, 29, 29, 29, 1]
+    adaptive_pinn:
+      M_experts_num: 30
+      ANT_default_hidden_layers: 22
+    epochs: 31000
+    optimizer_1: adam
+    optimizer_2: ssbroyden
+    optimizer_switch_epoch: 1000
+    lr: 0.001
+    lr_schedule: none
+    lr_warmup_steps: 0
