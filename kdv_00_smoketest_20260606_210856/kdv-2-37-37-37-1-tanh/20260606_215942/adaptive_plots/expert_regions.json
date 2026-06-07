@@ -1,0 +1,1974 @@
+{
+  "n_experts": 28,
+  "n_rejected": 0,
+  "regions": [
+    {
+      "bounds_lower": [
+        -1.0,
+        0.0
+      ],
+      "bounds_upper": [
+        0.564453125,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.06467515284801172,
+      "new_wavelet_norm_squared": 0.21297265996636427,
+      "spawn_epoch": 10000,
+      "depth": 1,
+      "parent_idx": -1,
+      "smoothness_alpha": 0.10169077056518006,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.564453125,
+        0.0
+      ],
+      "bounds_upper": [
+        1.0,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.19165803555999153,
+      "new_wavelet_norm_squared": 0.008992457673775106,
+      "spawn_epoch": 10000,
+      "depth": 1,
+      "parent_idx": -1,
+      "smoothness_alpha": 0.5170481946594974,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        -1.0,
+        0.0
+      ],
+      "bounds_upper": [
+        -0.419921875,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.12597745955923118,
+      "new_wavelet_norm_squared": 0.025170711321492747,
+      "spawn_epoch": 10000,
+      "depth": 2,
+      "parent_idx": 0,
+      "smoothness_alpha": 0.4457355187088775,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        -0.419921875,
+        0.0
+      ],
+      "bounds_upper": [
+        0.564453125,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.0869952004071331,
+      "new_wavelet_norm_squared": 0.013949660671134153,
+      "spawn_epoch": 10000,
+      "depth": 2,
+      "parent_idx": 0,
+      "smoothness_alpha": -0.04589598448460864,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.564453125,
+        0.0
+      ],
+      "bounds_upper": [
+        1.0,
+        0.7464929819107056
+      ],
+      "wavelet_norm_squared": 0.00209533123416914,
+      "new_wavelet_norm_squared": 0.0007448789463338235,
+      "spawn_epoch": 10000,
+      "depth": 2,
+      "parent_idx": 1,
+      "smoothness_alpha": 0.38913146309713315,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.564453125,
+        0.7464929819107056
+      ],
+      "bounds_upper": [
+        1.0,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.006897126439605965,
+      "new_wavelet_norm_squared": 0.001786261401954054,
+      "spawn_epoch": 10000,
+      "depth": 2,
+      "parent_idx": 1,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        -1.0,
+        0.0
+      ],
+      "bounds_upper": [
+        -0.701171875,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.012453092424214652,
+      "new_wavelet_norm_squared": 0.007449619066744887,
+      "spawn_epoch": 10000,
+      "depth": 3,
+      "parent_idx": 2,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        -0.701171875,
+        0.0
+      ],
+      "bounds_upper": [
+        -0.419921875,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.012717618897278096,
+      "new_wavelet_norm_squared": 0.002921252135419871,
+      "spawn_epoch": 10000,
+      "depth": 3,
+      "parent_idx": 2,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        -0.419921875,
+        0.0
+      ],
+      "bounds_upper": [
+        0.517578125,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.0008956287998040246,
+      "new_wavelet_norm_squared": 0.021306182254910704,
+      "spawn_epoch": 10000,
+      "depth": 3,
+      "parent_idx": 3,
+      "smoothness_alpha": -0.0267111214379624,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.517578125,
+        0.0
+      ],
+      "bounds_upper": [
+        0.564453125,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.013054031871330129,
+      "new_wavelet_norm_squared": 1.556909493831203,
+      "spawn_epoch": 10000,
+      "depth": 3,
+      "parent_idx": 3,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        -0.419921875,
+        0.0
+      ],
+      "bounds_upper": [
+        0.041015625,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.011154391065731349,
+      "new_wavelet_norm_squared": 0.015120071401732969,
+      "spawn_epoch": 10000,
+      "depth": 4,
+      "parent_idx": 8,
+      "smoothness_alpha": 0.45538007853899487,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.041015625,
+        0.0
+      ],
+      "bounds_upper": [
+        0.517578125,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.010151791189179355,
+      "new_wavelet_norm_squared": 0.012172412645223325,
+      "spawn_epoch": 10000,
+      "depth": 4,
+      "parent_idx": 8,
+      "smoothness_alpha": -0.14159570525887397,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        -0.419921875,
+        0.0
+      ],
+      "bounds_upper": [
+        0.041015625,
+        0.5370741486549377
+      ],
+      "wavelet_norm_squared": 0.006775694398349119,
+      "new_wavelet_norm_squared": 0.007516005693193047,
+      "spawn_epoch": 10000,
+      "depth": 5,
+      "parent_idx": 10,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        -0.419921875,
+        0.5370741486549377
+      ],
+      "bounds_upper": [
+        0.041015625,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.008344377003383849,
+      "new_wavelet_norm_squared": 0.005129212644533354,
+      "spawn_epoch": 10000,
+      "depth": 5,
+      "parent_idx": 10,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.041015625,
+        0.0
+      ],
+      "bounds_upper": [
+        0.138671875,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.009502999107083965,
+      "new_wavelet_norm_squared": 0.0021238005453393504,
+      "spawn_epoch": 10000,
+      "depth": 5,
+      "parent_idx": 11,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.138671875,
+        0.0
+      ],
+      "bounds_upper": [
+        0.517578125,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.0026694135381393597,
+      "new_wavelet_norm_squared": 0.010868391779572262,
+      "spawn_epoch": 10000,
+      "depth": 5,
+      "parent_idx": 11,
+      "smoothness_alpha": -0.2706237401521451,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.138671875,
+        0.0
+      ],
+      "bounds_upper": [
+        0.517578125,
+        0.8837675452232361
+      ],
+      "wavelet_norm_squared": 0.0011787992392449142,
+      "new_wavelet_norm_squared": 0.0042479849031532985,
+      "spawn_epoch": 10000,
+      "depth": 6,
+      "parent_idx": 15,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.138671875,
+        0.8837675452232361
+      ],
+      "bounds_upper": [
+        0.517578125,
+        1.0
+      ],
+      "wavelet_norm_squared": 0.00968959254032735,
+      "new_wavelet_norm_squared": 0.48242410151430143,
+      "spawn_epoch": 10000,
+      "depth": 6,
+      "parent_idx": 15,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.138671875,
+        0.0
+      ],
+      "bounds_upper": [
+        0.330078125,
+        0.8837675452232361
+      ],
+      "wavelet_norm_squared": 0.002176295167323234,
+      "new_wavelet_norm_squared": 0.01623179287786079,
+      "spawn_epoch": 10000,
+      "depth": 7,
+      "parent_idx": 16,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.330078125,
+        0.0
+      ],
+      "bounds_upper": [
+        0.517578125,
+        0.8837675452232361
+      ],
+      "wavelet_norm_squared": 0.002071689735830065,
+      "new_wavelet_norm_squared": 0.00712363387358739,
+      "spawn_epoch": 10000,
+      "depth": 7,
+      "parent_idx": 16,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.138671875,
+        0.0
+      ],
+      "bounds_upper": [
+        0.255859375,
+        0.8837675452232361
+      ],
+      "wavelet_norm_squared": 0.00572927733705562,
+      "new_wavelet_norm_squared": 0.01999119669673846,
+      "spawn_epoch": 10000,
+      "depth": 8,
+      "parent_idx": 18,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.255859375,
+        0.0
+      ],
+      "bounds_upper": [
+        0.330078125,
+        0.8837675452232361
+      ],
+      "wavelet_norm_squared": 0.01050251554080517,
+      "new_wavelet_norm_squared": 0.15807433670734689,
+      "spawn_epoch": 10000,
+      "depth": 8,
+      "parent_idx": 18,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.330078125,
+        0.0
+      ],
+      "bounds_upper": [
+        0.455078125,
+        0.8837675452232361
+      ],
+      "wavelet_norm_squared": 0.0026250139020735684,
+      "new_wavelet_norm_squared": 0.017416960798082033,
+      "spawn_epoch": 10000,
+      "depth": 8,
+      "parent_idx": 19,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.455078125,
+        0.0
+      ],
+      "bounds_upper": [
+        0.517578125,
+        0.8837675452232361
+      ],
+      "wavelet_norm_squared": 0.004498619971513821,
+      "new_wavelet_norm_squared": 1.336993515596104,
+      "spawn_epoch": 10000,
+      "depth": 8,
+      "parent_idx": 19,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.138671875,
+        0.0
+      ],
+      "bounds_upper": [
+        0.255859375,
+        0.5420841574668884
+      ],
+      "wavelet_norm_squared": 0.008761936088638789,
+      "new_wavelet_norm_squared": 0.13390412307166003,
+      "spawn_epoch": 10000,
+      "depth": 9,
+      "parent_idx": 20,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.138671875,
+        0.5420841574668884
+      ],
+      "bounds_upper": [
+        0.255859375,
+        0.8837675452232361
+      ],
+      "wavelet_norm_squared": 0.011229260608099673,
+      "new_wavelet_norm_squared": 0.10999659372088512,
+      "spawn_epoch": 10000,
+      "depth": 9,
+      "parent_idx": 20,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.330078125,
+        0.0
+      ],
+      "bounds_upper": [
+        0.455078125,
+        0.5240481197834015
+      ],
+      "wavelet_norm_squared": 0.005900328815464125,
+      "new_wavelet_norm_squared": 0.06778789478505512,
+      "spawn_epoch": 10000,
+      "depth": 9,
+      "parent_idx": 22,
+      "smoothness_alpha": null,
+      "spawned": true
+    },
+    {
+      "bounds_lower": [
+        0.330078125,
+        0.5240481197834015
+      ],
+      "bounds_upper": [
+        0.455078125,
+        0.8837675452232361
+      ],
+      "wavelet_norm_squared": 0.011516631982617907,
+      "new_wavelet_norm_squared": 0.2621783016181852,
+      "spawn_epoch": 10000,
+      "depth": 9,
+      "parent_idx": 22,
+      "smoothness_alpha": null,
+      "spawned": true
+    }
+  ],
+  "spawning_method": "M_term_tree_by_norm",
+  "spawning_diagnostics": [
+    {
+      "epoch": 10000,
+      "method": "M_term_tree_by_norm",
+      "M_experts_num": 20,
+      "variable_for_node_accept": "norm",
+      "total_tree_nodes": 79,
+      "accepted_count": 28,
+      "spawned_count": 28,
+      "depth_stats": {
+        "1": {
+          "n_nodes": 2,
+          "n_from_top_M": 2,
+          "n_added_for_closure": 0,
+          "metric_min": 0.06467515284801172,
+          "metric_max": 0.19165803555999153,
+          "metric_median": 0.12816659420400162
+        },
+        "2": {
+          "n_nodes": 4,
+          "n_from_top_M": 3,
+          "n_added_for_closure": 1,
+          "metric_min": 0.00209533123416914,
+          "metric_max": 0.12597745955923118,
+          "metric_median": 0.04694616342336953
+        },
+        "3": {
+          "n_nodes": 4,
+          "n_from_top_M": 3,
+          "n_added_for_closure": 1,
+          "metric_min": 0.0008956287998040246,
+          "metric_max": 0.013054031871330129,
+          "metric_median": 0.012585355660746374
+        },
+        "4": {
+          "n_nodes": 2,
+          "n_from_top_M": 2,
+          "n_added_for_closure": 0,
+          "metric_min": 0.010151791189179355,
+          "metric_max": 0.011154391065731349,
+          "metric_median": 0.010653091127455352
+        },
+        "5": {
+          "n_nodes": 4,
+          "n_from_top_M": 3,
+          "n_added_for_closure": 1,
+          "metric_min": 0.0026694135381393597,
+          "metric_max": 0.009502999107083965,
+          "metric_median": 0.007560035700866484
+        },
+        "6": {
+          "n_nodes": 2,
+          "n_from_top_M": 1,
+          "n_added_for_closure": 1,
+          "metric_min": 0.0011787992392449142,
+          "metric_max": 0.00968959254032735,
+          "metric_median": 0.005434195889786131
+        },
+        "7": {
+          "n_nodes": 2,
+          "n_from_top_M": 0,
+          "n_added_for_closure": 2,
+          "metric_min": 0.002071689735830065,
+          "metric_max": 0.002176295167323234,
+          "metric_median": 0.0021239924515766492
+        },
+        "8": {
+          "n_nodes": 4,
+          "n_from_top_M": 2,
+          "n_added_for_closure": 2,
+          "metric_min": 0.0026250139020735684,
+          "metric_max": 0.01050251554080517,
+          "metric_median": 0.00511394865428472
+        },
+        "9": {
+          "n_nodes": 4,
+          "n_from_top_M": 4,
+          "n_added_for_closure": 0,
+          "metric_min": 0.005900328815464125,
+          "metric_max": 0.011516631982617907,
+          "metric_median": 0.00999559834836923
+        }
+      },
+      "nodes": [
+        {
+          "node_id": 1,
+          "parent_node_id": 0,
+          "wavelet_norm_squared": 0.06467515284801172,
+          "n_samples": 2013,
+          "is_leaf": false,
+          "bounds_lower": [
+            -1.0,
+            0.0
+          ],
+          "bounds_upper": [
+            0.564453125,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 1
+        },
+        {
+          "node_id": 2,
+          "parent_node_id": 1,
+          "wavelet_norm_squared": 0.12597745955923118,
+          "n_samples": 784,
+          "is_leaf": false,
+          "bounds_lower": [
+            -1.0,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.419921875,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 2
+        },
+        {
+          "node_id": 3,
+          "parent_node_id": 2,
+          "wavelet_norm_squared": 0.012453092424214652,
+          "n_samples": 400,
+          "is_leaf": false,
+          "bounds_lower": [
+            -1.0,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.701171875,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 3
+        },
+        {
+          "node_id": 4,
+          "parent_node_id": 3,
+          "wavelet_norm_squared": 0.004171488021718595,
+          "n_samples": 163,
+          "is_leaf": false,
+          "bounds_lower": [
+            -1.0,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.701171875,
+            0.3757514953613281
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 4
+        },
+        {
+          "node_id": 5,
+          "parent_node_id": 4,
+          "wavelet_norm_squared": 0.0006856657247108952,
+          "n_samples": 100,
+          "is_leaf": false,
+          "bounds_lower": [
+            -1.0,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.826171875,
+            0.3757514953613281
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 6,
+          "parent_node_id": 5,
+          "wavelet_norm_squared": 0.0002930274356271396,
+          "n_samples": 50,
+          "is_leaf": true,
+          "bounds_lower": [
+            -1.0,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.826171875,
+            0.15130260586738586
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 7,
+          "parent_node_id": 5,
+          "wavelet_norm_squared": 0.00043468968786574563,
+          "n_samples": 50,
+          "is_leaf": true,
+          "bounds_lower": [
+            -1.0,
+            0.15130260586738586
+          ],
+          "bounds_upper": [
+            -0.826171875,
+            0.3757514953613281
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 8,
+          "parent_node_id": 4,
+          "wavelet_norm_squared": 0.001242285192871072,
+          "n_samples": 63,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.826171875,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.701171875,
+            0.3757514953613281
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 9,
+          "parent_node_id": 3,
+          "wavelet_norm_squared": 0.0032781310450262914,
+          "n_samples": 237,
+          "is_leaf": false,
+          "bounds_lower": [
+            -1.0,
+            0.3757514953613281
+          ],
+          "bounds_upper": [
+            -0.701171875,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 4
+        },
+        {
+          "node_id": 10,
+          "parent_node_id": 9,
+          "wavelet_norm_squared": 0.0006515019618727529,
+          "n_samples": 100,
+          "is_leaf": false,
+          "bounds_lower": [
+            -1.0,
+            0.3757514953613281
+          ],
+          "bounds_upper": [
+            -0.884765625,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 11,
+          "parent_node_id": 10,
+          "wavelet_norm_squared": 0.00018784743764297074,
+          "n_samples": 50,
+          "is_leaf": true,
+          "bounds_lower": [
+            -1.0,
+            0.3757514953613281
+          ],
+          "bounds_upper": [
+            -0.884765625,
+            0.6873747408390045
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 12,
+          "parent_node_id": 10,
+          "wavelet_norm_squared": 0.0001884514545307551,
+          "n_samples": 50,
+          "is_leaf": true,
+          "bounds_lower": [
+            -1.0,
+            0.6873747408390045
+          ],
+          "bounds_upper": [
+            -0.884765625,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 13,
+          "parent_node_id": 9,
+          "wavelet_norm_squared": 0.0005530322215051665,
+          "n_samples": 137,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.884765625,
+            0.3757514953613281
+          ],
+          "bounds_upper": [
+            -0.701171875,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 14,
+          "parent_node_id": 13,
+          "wavelet_norm_squared": 0.00012397805189197952,
+          "n_samples": 63,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.884765625,
+            0.3757514953613281
+          ],
+          "bounds_upper": [
+            -0.806640625,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 15,
+          "parent_node_id": 13,
+          "wavelet_norm_squared": 0.00012130989750639299,
+          "n_samples": 74,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.806640625,
+            0.3757514953613281
+          ],
+          "bounds_upper": [
+            -0.701171875,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 16,
+          "parent_node_id": 2,
+          "wavelet_norm_squared": 0.012717618897278096,
+          "n_samples": 384,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.701171875,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.419921875,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 3
+        },
+        {
+          "node_id": 17,
+          "parent_node_id": 16,
+          "wavelet_norm_squared": 0.0018458934701149365,
+          "n_samples": 161,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.701171875,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.568359375,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 4
+        },
+        {
+          "node_id": 18,
+          "parent_node_id": 17,
+          "wavelet_norm_squared": 0.0004133777646724585,
+          "n_samples": 50,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.701171875,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.568359375,
+            0.25450901687145233
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 19,
+          "parent_node_id": 17,
+          "wavelet_norm_squared": 0.00024568598615969843,
+          "n_samples": 111,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.701171875,
+            0.25450901687145233
+          ],
+          "bounds_upper": [
+            -0.568359375,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 20,
+          "parent_node_id": 19,
+          "wavelet_norm_squared": 0.00010715958046632705,
+          "n_samples": 53,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.701171875,
+            0.25450901687145233
+          ],
+          "bounds_upper": [
+            -0.623046875,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 21,
+          "parent_node_id": 19,
+          "wavelet_norm_squared": 6.263611268458299e-05,
+          "n_samples": 58,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.623046875,
+            0.25450901687145233
+          ],
+          "bounds_upper": [
+            -0.568359375,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 22,
+          "parent_node_id": 16,
+          "wavelet_norm_squared": 0.0010753586653049346,
+          "n_samples": 223,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.568359375,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.419921875,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 4
+        },
+        {
+          "node_id": 23,
+          "parent_node_id": 22,
+          "wavelet_norm_squared": 0.00010488641094155184,
+          "n_samples": 97,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.568359375,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.505859375,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 24,
+          "parent_node_id": 22,
+          "wavelet_norm_squared": 8.547208558547245e-05,
+          "n_samples": 126,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.505859375,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.419921875,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 25,
+          "parent_node_id": 24,
+          "wavelet_norm_squared": 9.267817122781308e-05,
+          "n_samples": 72,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.505859375,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.419921875,
+            0.504008024930954
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 26,
+          "parent_node_id": 24,
+          "wavelet_norm_squared": 0.0001621407311674543,
+          "n_samples": 54,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.505859375,
+            0.504008024930954
+          ],
+          "bounds_upper": [
+            -0.419921875,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 27,
+          "parent_node_id": 1,
+          "wavelet_norm_squared": 0.0869952004071331,
+          "n_samples": 1229,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.419921875,
+            0.0
+          ],
+          "bounds_upper": [
+            0.564453125,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 2
+        },
+        {
+          "node_id": 28,
+          "parent_node_id": 27,
+          "wavelet_norm_squared": 0.0008956287998040246,
+          "n_samples": 1161,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.419921875,
+            0.0
+          ],
+          "bounds_upper": [
+            0.517578125,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 3
+        },
+        {
+          "node_id": 29,
+          "parent_node_id": 28,
+          "wavelet_norm_squared": 0.011154391065731349,
+          "n_samples": 562,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.419921875,
+            0.0
+          ],
+          "bounds_upper": [
+            0.041015625,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 4
+        },
+        {
+          "node_id": 30,
+          "parent_node_id": 29,
+          "wavelet_norm_squared": 0.006775694398349119,
+          "n_samples": 306,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.419921875,
+            0.0
+          ],
+          "bounds_upper": [
+            0.041015625,
+            0.5370741486549377
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 31,
+          "parent_node_id": 30,
+          "wavelet_norm_squared": 0.003984249295830796,
+          "n_samples": 138,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.419921875,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.220703125,
+            0.5370741486549377
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 32,
+          "parent_node_id": 31,
+          "wavelet_norm_squared": 0.00047780907570281456,
+          "n_samples": 65,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.419921875,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.341796875,
+            0.5370741486549377
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 7
+        },
+        {
+          "node_id": 33,
+          "parent_node_id": 31,
+          "wavelet_norm_squared": 0.0005871743637659597,
+          "n_samples": 73,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.341796875,
+            0.0
+          ],
+          "bounds_upper": [
+            -0.220703125,
+            0.5370741486549377
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 7
+        },
+        {
+          "node_id": 34,
+          "parent_node_id": 30,
+          "wavelet_norm_squared": 0.0035317563973622517,
+          "n_samples": 168,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.220703125,
+            0.0
+          ],
+          "bounds_upper": [
+            0.041015625,
+            0.5370741486549377
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 35,
+          "parent_node_id": 34,
+          "wavelet_norm_squared": 0.0011846761356274407,
+          "n_samples": 83,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.220703125,
+            0.0
+          ],
+          "bounds_upper": [
+            0.041015625,
+            0.265531063079834
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 7
+        },
+        {
+          "node_id": 36,
+          "parent_node_id": 34,
+          "wavelet_norm_squared": 0.001155157993667485,
+          "n_samples": 85,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.220703125,
+            0.265531063079834
+          ],
+          "bounds_upper": [
+            0.041015625,
+            0.5370741486549377
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 7
+        },
+        {
+          "node_id": 37,
+          "parent_node_id": 29,
+          "wavelet_norm_squared": 0.008344377003383849,
+          "n_samples": 256,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.419921875,
+            0.5370741486549377
+          ],
+          "bounds_upper": [
+            0.041015625,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 38,
+          "parent_node_id": 37,
+          "wavelet_norm_squared": 0.0014764231874236174,
+          "n_samples": 195,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.419921875,
+            0.5370741486549377
+          ],
+          "bounds_upper": [
+            -0.048828125,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 39,
+          "parent_node_id": 38,
+          "wavelet_norm_squared": 0.0017568787987096274,
+          "n_samples": 140,
+          "is_leaf": false,
+          "bounds_lower": [
+            -0.419921875,
+            0.5370741486549377
+          ],
+          "bounds_upper": [
+            -0.162109375,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 7
+        },
+        {
+          "node_id": 40,
+          "parent_node_id": 39,
+          "wavelet_norm_squared": 0.0002838951855856563,
+          "n_samples": 87,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.419921875,
+            0.5370741486549377
+          ],
+          "bounds_upper": [
+            -0.263671875,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 8
+        },
+        {
+          "node_id": 41,
+          "parent_node_id": 39,
+          "wavelet_norm_squared": 0.0004972309465302933,
+          "n_samples": 53,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.263671875,
+            0.5370741486549377
+          ],
+          "bounds_upper": [
+            -0.162109375,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 8
+        },
+        {
+          "node_id": 42,
+          "parent_node_id": 38,
+          "wavelet_norm_squared": 0.005001802700658896,
+          "n_samples": 55,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.162109375,
+            0.5370741486549377
+          ],
+          "bounds_upper": [
+            -0.048828125,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 7
+        },
+        {
+          "node_id": 43,
+          "parent_node_id": 37,
+          "wavelet_norm_squared": 0.003652789457109737,
+          "n_samples": 61,
+          "is_leaf": true,
+          "bounds_lower": [
+            -0.048828125,
+            0.5370741486549377
+          ],
+          "bounds_upper": [
+            0.041015625,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 44,
+          "parent_node_id": 28,
+          "wavelet_norm_squared": 0.010151791189179355,
+          "n_samples": 599,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.041015625,
+            0.0
+          ],
+          "bounds_upper": [
+            0.517578125,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 4
+        },
+        {
+          "node_id": 45,
+          "parent_node_id": 44,
+          "wavelet_norm_squared": 0.009502999107083965,
+          "n_samples": 127,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.041015625,
+            0.0
+          ],
+          "bounds_upper": [
+            0.138671875,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 46,
+          "parent_node_id": 45,
+          "wavelet_norm_squared": 0.0012675868715970125,
+          "n_samples": 51,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.041015625,
+            0.0
+          ],
+          "bounds_upper": [
+            0.080078125,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 47,
+          "parent_node_id": 45,
+          "wavelet_norm_squared": 0.0008562136737423378,
+          "n_samples": 76,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.080078125,
+            0.0
+          ],
+          "bounds_upper": [
+            0.138671875,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 48,
+          "parent_node_id": 44,
+          "wavelet_norm_squared": 0.0026694135381393597,
+          "n_samples": 472,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.138671875,
+            0.0
+          ],
+          "bounds_upper": [
+            0.517578125,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 49,
+          "parent_node_id": 48,
+          "wavelet_norm_squared": 0.0011787992392449142,
+          "n_samples": 419,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.138671875,
+            0.0
+          ],
+          "bounds_upper": [
+            0.517578125,
+            0.8837675452232361
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 50,
+          "parent_node_id": 49,
+          "wavelet_norm_squared": 0.002176295167323234,
+          "n_samples": 208,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.138671875,
+            0.0
+          ],
+          "bounds_upper": [
+            0.330078125,
+            0.8837675452232361
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 7
+        },
+        {
+          "node_id": 51,
+          "parent_node_id": 50,
+          "wavelet_norm_squared": 0.00572927733705562,
+          "n_samples": 131,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.138671875,
+            0.0
+          ],
+          "bounds_upper": [
+            0.255859375,
+            0.8837675452232361
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 8
+        },
+        {
+          "node_id": 52,
+          "parent_node_id": 51,
+          "wavelet_norm_squared": 0.008761936088638789,
+          "n_samples": 77,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.138671875,
+            0.0
+          ],
+          "bounds_upper": [
+            0.255859375,
+            0.5420841574668884
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 9
+        },
+        {
+          "node_id": 53,
+          "parent_node_id": 51,
+          "wavelet_norm_squared": 0.011229260608099673,
+          "n_samples": 54,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.138671875,
+            0.5420841574668884
+          ],
+          "bounds_upper": [
+            0.255859375,
+            0.8837675452232361
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 9
+        },
+        {
+          "node_id": 54,
+          "parent_node_id": 50,
+          "wavelet_norm_squared": 0.01050251554080517,
+          "n_samples": 77,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.255859375,
+            0.0
+          ],
+          "bounds_upper": [
+            0.330078125,
+            0.8837675452232361
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 8
+        },
+        {
+          "node_id": 55,
+          "parent_node_id": 49,
+          "wavelet_norm_squared": 0.002071689735830065,
+          "n_samples": 211,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.330078125,
+            0.0
+          ],
+          "bounds_upper": [
+            0.517578125,
+            0.8837675452232361
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 7
+        },
+        {
+          "node_id": 56,
+          "parent_node_id": 55,
+          "wavelet_norm_squared": 0.0026250139020735684,
+          "n_samples": 137,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.330078125,
+            0.0
+          ],
+          "bounds_upper": [
+            0.455078125,
+            0.8837675452232361
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 8
+        },
+        {
+          "node_id": 57,
+          "parent_node_id": 56,
+          "wavelet_norm_squared": 0.005900328815464125,
+          "n_samples": 86,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.330078125,
+            0.0
+          ],
+          "bounds_upper": [
+            0.455078125,
+            0.5240481197834015
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 9
+        },
+        {
+          "node_id": 58,
+          "parent_node_id": 56,
+          "wavelet_norm_squared": 0.011516631982617907,
+          "n_samples": 51,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.330078125,
+            0.5240481197834015
+          ],
+          "bounds_upper": [
+            0.455078125,
+            0.8837675452232361
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 9
+        },
+        {
+          "node_id": 59,
+          "parent_node_id": 55,
+          "wavelet_norm_squared": 0.004498619971513821,
+          "n_samples": 74,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.455078125,
+            0.0
+          ],
+          "bounds_upper": [
+            0.517578125,
+            0.8837675452232361
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 8
+        },
+        {
+          "node_id": 60,
+          "parent_node_id": 48,
+          "wavelet_norm_squared": 0.00968959254032735,
+          "n_samples": 53,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.138671875,
+            0.8837675452232361
+          ],
+          "bounds_upper": [
+            0.517578125,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 61,
+          "parent_node_id": 27,
+          "wavelet_norm_squared": 0.013054031871330129,
+          "n_samples": 68,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.517578125,
+            0.0
+          ],
+          "bounds_upper": [
+            0.564453125,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 3
+        },
+        {
+          "node_id": 62,
+          "parent_node_id": 0,
+          "wavelet_norm_squared": 0.19165803555999153,
+          "n_samples": 617,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.564453125,
+            0.0
+          ],
+          "bounds_upper": [
+            1.0,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 1
+        },
+        {
+          "node_id": 63,
+          "parent_node_id": 62,
+          "wavelet_norm_squared": 0.00209533123416914,
+          "n_samples": 467,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.564453125,
+            0.0
+          ],
+          "bounds_upper": [
+            1.0,
+            0.7464929819107056
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 2
+        },
+        {
+          "node_id": 64,
+          "parent_node_id": 63,
+          "wavelet_norm_squared": 0.00017906601884364783,
+          "n_samples": 345,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.564453125,
+            0.0
+          ],
+          "bounds_upper": [
+            1.0,
+            0.535070151090622
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 3
+        },
+        {
+          "node_id": 65,
+          "parent_node_id": 64,
+          "wavelet_norm_squared": 0.0008633108769985496,
+          "n_samples": 66,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.564453125,
+            0.0
+          ],
+          "bounds_upper": [
+            0.638671875,
+            0.535070151090622
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 4
+        },
+        {
+          "node_id": 66,
+          "parent_node_id": 64,
+          "wavelet_norm_squared": 0.00023519864154191542,
+          "n_samples": 279,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.638671875,
+            0.0
+          ],
+          "bounds_upper": [
+            1.0,
+            0.535070151090622
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 4
+        },
+        {
+          "node_id": 67,
+          "parent_node_id": 66,
+          "wavelet_norm_squared": 5.078643981374661e-05,
+          "n_samples": 206,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.638671875,
+            0.0
+          ],
+          "bounds_upper": [
+            1.0,
+            0.4058116227388382
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 68,
+          "parent_node_id": 67,
+          "wavelet_norm_squared": 0.00013219844292537128,
+          "n_samples": 72,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.638671875,
+            0.0
+          ],
+          "bounds_upper": [
+            0.759765625,
+            0.4058116227388382
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 69,
+          "parent_node_id": 67,
+          "wavelet_norm_squared": 7.57173067852141e-05,
+          "n_samples": 134,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.759765625,
+            0.0
+          ],
+          "bounds_upper": [
+            1.0,
+            0.4058116227388382
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 6
+        },
+        {
+          "node_id": 70,
+          "parent_node_id": 69,
+          "wavelet_norm_squared": 1.758104045670351e-05,
+          "n_samples": 80,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.759765625,
+            0.0
+          ],
+          "bounds_upper": [
+            1.0,
+            0.23146292567253113
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 7
+        },
+        {
+          "node_id": 71,
+          "parent_node_id": 69,
+          "wavelet_norm_squared": 2.9065265575887088e-05,
+          "n_samples": 54,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.759765625,
+            0.23146292567253113
+          ],
+          "bounds_upper": [
+            1.0,
+            0.4058116227388382
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 7
+        },
+        {
+          "node_id": 72,
+          "parent_node_id": 66,
+          "wavelet_norm_squared": 0.00012881641709926883,
+          "n_samples": 73,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.638671875,
+            0.4058116227388382
+          ],
+          "bounds_upper": [
+            1.0,
+            0.535070151090622
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 5
+        },
+        {
+          "node_id": 73,
+          "parent_node_id": 63,
+          "wavelet_norm_squared": 0.0005658129274901757,
+          "n_samples": 122,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.564453125,
+            0.535070151090622
+          ],
+          "bounds_upper": [
+            1.0,
+            0.7464929819107056
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 3
+        },
+        {
+          "node_id": 74,
+          "parent_node_id": 73,
+          "wavelet_norm_squared": 0.00044973957311242655,
+          "n_samples": 61,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.564453125,
+            0.535070151090622
+          ],
+          "bounds_upper": [
+            0.79296875,
+            0.7464929819107056
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 4
+        },
+        {
+          "node_id": 75,
+          "parent_node_id": 73,
+          "wavelet_norm_squared": 0.0004074563653839059,
+          "n_samples": 61,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.79296875,
+            0.535070151090622
+          ],
+          "bounds_upper": [
+            1.0,
+            0.7464929819107056
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 4
+        },
+        {
+          "node_id": 76,
+          "parent_node_id": 62,
+          "wavelet_norm_squared": 0.006897126439605965,
+          "n_samples": 150,
+          "is_leaf": false,
+          "bounds_lower": [
+            0.564453125,
+            0.7464929819107056
+          ],
+          "bounds_upper": [
+            1.0,
+            1.0
+          ],
+          "accepted": true,
+          "spawned_as_expert": true,
+          "tree_depth": 2
+        },
+        {
+          "node_id": 77,
+          "parent_node_id": 76,
+          "wavelet_norm_squared": 0.0008027890525124295,
+          "n_samples": 91,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.564453125,
+            0.7464929819107056
+          ],
+          "bounds_upper": [
+            1.0,
+            0.913827657699585
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 3
+        },
+        {
+          "node_id": 78,
+          "parent_node_id": 76,
+          "wavelet_norm_squared": 0.0009834723494416245,
+          "n_samples": 59,
+          "is_leaf": true,
+          "bounds_lower": [
+            0.564453125,
+            0.913827657699585
+          ],
+          "bounds_upper": [
+            1.0,
+            1.0
+          ],
+          "accepted": false,
+          "spawned_as_expert": false,
+          "tree_depth": 3
+        }
+      ]
+    }
+  ]
+}
