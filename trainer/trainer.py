@@ -2153,11 +2153,14 @@ def train(
                             _new_exp, _parent_model, cfg,
                             copy_output=isinstance(model, (AToELeaves, ANT)),
                         )
+                        _par_label = 'base' if _par_idx == -1 else f'expert {_par_idx}'
+                        print(f"  [ParentInit] Expert {_new_exp_idx}: hidden layers copied from {_par_label}, output zeroed")
                     else:
                         apply_expert_init(_new_exp, cfg)
                     apply_spectral_norm(_new_exp, cfg)
 
                 # ── 3-phase: reinitialize base + transition to Phase 3 ──
+                _p3_optimizer_recreated = False
                 if use_three_phase and spawning_complete and current_phase == 1:
                     if reinit_base_after_spawn:
                         model.reinitialize_base()
@@ -2179,6 +2182,21 @@ def train(
                     print(f"\n  [3-Phase] Transitioning to Phase 3: {phase3_epochs} epochs of full model training")
                     print(f"  [3-Phase] Total epochs now: {total_epochs} (Phase 1: {epoch}, Phase 3: {phase3_epochs})")
                     print(f"  [3-Phase] Optimizer: {_p3_opt1}, lr: {active_cfg['lr']}, schedule: {active_cfg['lr_schedule']}")
+                    # Recreate optimizer + LR scheduler with Phase 3 config.
+                    # The freeze>0 branch below creates its own grouped optimizer, so skip here.
+                    if freeze_epochs_after_spawn == 0:
+                        optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
+                        lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_p3)
+                        step_count = 0
+                        epochs_without_improvement = 0
+                        best_train_loss = float('inf')
+                        _p3_betas = active_cfg.get('soap_betas', active_cfg.get('adam_betas', '?'))
+                        _p3_lr_steps = active_cfg.get('lr_decay_steps', '?')
+                        _p3_warmup = active_cfg.get('lr_warmup_steps', 0)
+                        print(f"  [3-Phase FIX] Phase 3 optimizer recreated: {current_optimizer_name}")
+                        print(f"  [3-Phase FIX]   soap_betas={_p3_betas}, lr_decay_steps={_p3_lr_steps}, warmup={_p3_warmup} steps")
+                        print(f"  [3-Phase FIX]   total params: {sum(len(pg['params']) for pg in optimizer.param_groups)}")
+                        _p3_optimizer_recreated = True
 
                 # Collect new expert parameters before any freeze/optimizer logic.
                 import copy
@@ -2284,8 +2302,10 @@ def train(
                     # current state and LR without any restart. Add new expert params as a
                     # separate fresh param group at the initial LR (AB-PINNs pattern: new
                     # subdomains declared under their own optimizer entry with independent LRs).
+                    # Exception: when Phase 3 optimizer was just recreated (3-phase transition),
+                    # the new optimizer already includes all params — skip the add-param-group step.
                     model.freeze_models()  # applies configured freeze_mode (typically 'none')
-                    if _new_expert_params:
+                    if _new_expert_params and not _p3_optimizer_recreated:
                         _current_lr = optimizer.param_groups[0]['lr']
                         _new_expert_lr = _current_lr * active_cfg['new_expert_lr_decay']
                         optimizer.add_param_group({
