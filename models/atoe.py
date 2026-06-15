@@ -380,6 +380,19 @@ class AToE(nn.Module):
         """
         self.batched_models.sync_from_models(self.base_model, self.experts)
 
+    def reinitialize_base(self):
+        """Reinitialize base model weights (fresh random init via reset_parameters).
+
+        Preserves expert regions and weights. Used in 3-phase training when
+        reinitialize_base_after_spawn=True to give the base a clean start for Phase 3.
+        """
+        for module in self.base_model.modules():
+            if hasattr(module, 'reset_parameters'):
+                module.reset_parameters()
+        n_params = sum(p.numel() for p in self.base_model.parameters())
+        print(f"  [Reinit] Base model reinitialized ({n_params} params)")
+        self.batched_models.sync_from_models(self.base_model, self.experts)
+
     def spawn_expert(self, region: RegionDescriptor,
                      zero_init: bool = True) -> int:
         """

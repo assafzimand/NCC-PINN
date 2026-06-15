@@ -524,6 +524,14 @@ class ANT(nn.Module):
             for p in expert.parameters():
                 p.requires_grad = not is_ancestor
 
+    def reinitialize_base(self):
+        """Reinitialize base model weights (fresh random init via reset_parameters)."""
+        for module in self.base_model.modules():
+            if hasattr(module, 'reset_parameters'):
+                module.reset_parameters()
+        n_params = sum(p.numel() for p in self.base_model.parameters())
+        print(f"  [Reinit] Base model reinitialized ({n_params} params)")
+
     def freeze_models(self, mode: Optional[str] = None):
         mode = mode or self.freeze_mode
 
