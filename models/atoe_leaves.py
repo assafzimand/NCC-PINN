@@ -44,7 +44,6 @@ class AToELeaves(nn.Module):
         self.sigma_fraction = adaptive_config['sigma_fraction']
         self.base_weight = adaptive_config['base_weight']
         self.base_everywhere = adaptive_config['base_everywhere']
-        self.freeze_mode = adaptive_config['freeze_mode']
         self.expert_type = adaptive_config['expert_type']
         self.blending_mode = 'soft'
 
@@ -278,49 +277,6 @@ class AToELeaves(nn.Module):
                 module.reset_parameters()
         n_params = sum(p.numel() for p in self.base_model.parameters())
         print(f"  [Reinit] Base model reinitialized ({n_params} params)")
-
-    def freeze_models(self, mode: Optional[str] = None):
-        mode = mode or self.freeze_mode
-
-        if mode == 'none':
-            for param in self.base_model.parameters():
-                param.requires_grad = True
-            for expert in self.experts:
-                for param in expert.parameters():
-                    param.requires_grad = True
-
-        elif mode == 'base_only':
-            for param in self.base_model.parameters():
-                param.requires_grad = False
-            for expert in self.experts:
-                for param in expert.parameters():
-                    param.requires_grad = True
-
-        elif mode == 'previous':
-            for param in self.base_model.parameters():
-                param.requires_grad = False
-            for i, expert in enumerate(self.experts):
-                is_last = (i == len(self.experts) - 1)
-                for param in expert.parameters():
-                    param.requires_grad = is_last
-        else:
-            raise ValueError(f"Unknown freeze_mode: {mode}")
-
-        if -1 not in self.leaf_indices:
-            for param in self.base_model.parameters():
-                param.requires_grad = False
-        for i, expert in enumerate(self.experts):
-            for param in expert.parameters():
-                param.requires_grad = (i in self.leaf_indices)
-
-    def freeze_base_model(self) -> None:
-        for param in self.base_model.parameters():
-            param.requires_grad = False
-
-    def unfreeze_experts(self) -> None:
-        for expert in self.experts:
-            for param in expert.parameters():
-                param.requires_grad = True
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         threshold = self.adaptive_config.get('expert_activation_threshold', None)
@@ -628,7 +584,6 @@ class AToELeaves(nn.Module):
             self.leaf_indices = set(state_dict['leaf_indices'])
 
         self.sync_batched_indicators()
-        self.freeze_models()
 
     @staticmethod
     def _infer_architecture_from_state_dict(state_dict: Dict) -> List[int]:

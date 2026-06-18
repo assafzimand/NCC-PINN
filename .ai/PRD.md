@@ -157,7 +157,32 @@ For **AToELeaves/ANT**: `copy_output=True` — parent is retired, children must 
 
 ## Training Phases
 
-### Spawning Method Determines Phase Structure
+> **Current state (branch `M_term_AToE-AToE-leaves-ANT`):** the pipeline supports **only**
+> `M_term_tree_by_norm`, with these corrections vs. the legacy multi-method design below:
+> 1. The other three spawning methods (`by_mean_residual`, `accept_split_by_norm`,
+>    `use_perfect_trees`) are removed from the trainer.
+> 2. `spawning_method` is kept as a config field but **validated** to equal `M_term_tree_by_norm`.
+> 3. **No freezing mechanism** at all — `freeze_mode`, `freeze_epochs_after_spawn`, the
+>    grouped-optimizer/ancestor-freeze/unfreeze path, and `new_expert_lr_decay` are gone.
+> 4. Phase 3 **always** recreates the optimizer + LR scheduler over all params, resetting
+>    `step_count`/warmup/patience (the `[3-Phase FIX]`).
+> 5. New per-problem `pretrained_base_checkpoint`: when set, Phase-1 training is skipped and the
+>    base is loaded from the checkpoint; the tree is then built from that base.
+> 6. `parent_weights` init copies the parent's **output** layer for all variants (a continuous
+>    handoff under the normalized soft indicators).
+> 7. Spawning happens **only in Phase 1** (one shot); it is impossible in Phase 3.
+> 8. Patience early-stop runs **only in Phase 3** (and only after the optimizer switch when a
+>    second optimizer is configured), using a relative min-delta (`patience_rel_delta`) so it
+>    actually stops on a plateau.
+> 9. Dead code removed: `AdaptiveExpertPINN`, `perfect_trees_path`, and the perfect-tree runtime
+>    branch (the standalone `perfect_tree_examples/create_prefect_trees.py` generator is kept).
+>
+> See `docs/training_flow_spec.md` for the authoritative spec.
+
+### Spawning Method Determines Phase Structure — LEGACY (pre-cleanup; branch `AToE-AToE-leaves-ANT`)
+
+*The table and `use_perfect_trees` notes below describe the historical multi-method design and are
+retained for reference only; only `M_term_tree_by_norm` exists on the current branch.*
 
 | spawning_method | Phases | Description |
 |-----------------|--------|-------------|

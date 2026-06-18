@@ -33,6 +33,7 @@ base_config:
   batch_size: 99999
   patience_epochs: 999999
   min_epochs: 1
+  patience_rel_delta: 0.01            # min relative train-loss improvement to reset patience
 
   optimizer_1: soap
   optimizer_2: null
@@ -46,7 +47,6 @@ base_config:
   lr_decay_steps: 1000
   lr_warmup_steps: 500
   lr_warmup_start_factor: 0.01
-  new_expert_lr_decay: 1.0
 
   adam_betas: [0.9, 0.999]
   adam_eps: 1.0e-8
@@ -75,6 +75,7 @@ base_config:
   # KDV — minimal features: RWF + FF only
   # ══════════════════════════════════════════════════════════════════════════
   kdv:
+    pretrained_base_checkpoint: null   # path to a base checkpoint to skip Phase-1 training; null = train Phase 1
     spatial_dim: 1
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
@@ -227,7 +228,6 @@ base_config:
     ANT_threshold_architecture: null
     ANT_default_hidden_layers: 29      # for M=10/20; ANT M=30 overrides to 22
     expert_type: resnet
-    freeze_mode: none
     blending_mode: soft
     sigma_fraction: 0.2
     base_weight: 0.3
@@ -242,8 +242,6 @@ base_config:
     relevant_samples_to_activate_expert: 0
     spawning_method: M_term_tree_by_norm
     M_experts_num: 10                  # overridden per experiment
-    perfect_trees_path: perfect_tree_examples/perfect_trees.json
-    freeze_epochs_after_spawn: 0
     spawn_require_plateau: false
     spawn_plateau_epochs: 50
     spawn_plateau_delta: 0.05
