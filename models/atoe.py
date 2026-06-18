@@ -98,7 +98,6 @@ class AToE(nn.Module):
         self.sigma_fraction = adaptive_config['sigma_fraction']
         self.base_weight = adaptive_config['base_weight']
         self.base_everywhere = adaptive_config['base_everywhere']
-        self.freeze_mode = adaptive_config['freeze_mode']
         self.expert_type = adaptive_config['expert_type']
 
         self.atoe_threshold_capacity = adaptive_config.get(
@@ -403,8 +402,8 @@ class AToE(nn.Module):
             zero_init: If True, zero-initialize the final layer so the expert
                        initially contributes nothing (smooth integration during
                        on-the-fly spawning). If False, keep PyTorch default
-                       random init (used when all experts are created at once
-                       before training, e.g. M_term_tree_by_norm / use_perfect_trees).
+                       random init (e.g. when reinitialize_base_after_spawn is set
+                       and all M_term experts are created at once before Phase 3).
 
         Returns:
             Index of the new expert
@@ -448,50 +447,6 @@ class AToE(nn.Module):
         self.sync_batched_models()
 
         return expert_idx
-
-    def freeze_models(self, mode: Optional[str] = None):
-        """
-        Apply freezing strategy to models.
-
-        Args:
-            mode: 'none', 'previous', or 'base_only' (uses self.freeze_mode if None)
-        """
-        mode = mode or self.freeze_mode
-
-        if mode == 'none':
-            for param in self.base_model.parameters():
-                param.requires_grad = True
-            for expert in self.experts:
-                for param in expert.parameters():
-                    param.requires_grad = True
-
-        elif mode == 'base_only':
-            for param in self.base_model.parameters():
-                param.requires_grad = False
-            for expert in self.experts:
-                for param in expert.parameters():
-                    param.requires_grad = True
-
-        elif mode == 'previous':
-            for param in self.base_model.parameters():
-                param.requires_grad = False
-            for i, expert in enumerate(self.experts):
-                is_last = (i == len(self.experts) - 1)
-                for param in expert.parameters():
-                    param.requires_grad = is_last
-        else:
-            raise ValueError(f"Unknown freeze_mode: {mode}")
-
-    def freeze_base_model(self) -> None:
-        """Freeze base model weights (convenience method)."""
-        for param in self.base_model.parameters():
-            param.requires_grad = False
-
-    def unfreeze_experts(self) -> None:
-        """Unfreeze all expert weights (for training after tree building)."""
-        for expert in self.experts:
-            for param in expert.parameters():
-                param.requires_grad = True
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """

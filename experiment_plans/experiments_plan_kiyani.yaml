@@ -14,6 +14,7 @@ base_config:
   batch_size: 99999                  # Full-batch for Adam too (>= dataset size)
   patience_epochs: 50000             # No early stopping
   min_epochs: 1                      # No minimum
+  patience_rel_delta: 0.01            # min relative train-loss improvement to reset patience
 
   # ── Primary optimizer ──
   # ── Optimizer configuration ──
@@ -28,7 +29,6 @@ base_config:
   lr_warmup_start_factor: 0.01       # Warmup starts at this fraction of base lr (0.01 = 1% of lr)
   lr_decay_rate: 0.98                # For exponential: multiply lr by this factor every lr_decay_steps
   lr_decay_steps: 1000               # Kiyani: decay every 1000 iterations for KS/Allen-Cahn
-  new_expert_lr_decay: 1.0           # DISABLED: 1.0 = no decay (match old behavior)
 
   # ── SOAP-specific (only used when optimizer_1 or _2 is 'soap') ──
   soap_betas: [0.95, 0.95]          # KS-tuned: symmetric betas work better for chaotic dynamics
@@ -164,6 +164,7 @@ base_config:
       m_distribution: quadratic
 
   burgers1d:
+    pretrained_base_checkpoint: null   # path to a base checkpoint to skip Phase-1 training; null = train Phase 1
     spatial_dim: 1
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
@@ -525,7 +526,6 @@ base_config:
     ANT_threshold_architecture: null           # null = uses ANT_default_hidden_layers, int = threshold width with scaling
     ANT_default_hidden_layers: 50              # Neuron width for ANT experts (int; expands to [n] mlp or [n,n] resnet)
     expert_type: mlp                           # Kiyani: vanilla MLP
-    freeze_mode: none                          # "none" | "previous" | "base_only" — Fix 2 uses this; 'previous' = freeze base+old experts post-spawn
     blending_mode: soft                        # "hard" | "soft" (soft = partition of unity)
     sigma_fraction: 0.2                        # For soft blending: sigma = fraction * region_size (per-dimension)
     base_weight: 1.0                           # Uniform weight for base model (soft blending only)
@@ -540,12 +540,10 @@ base_config:
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
     spawning_method: M_term_tree_by_norm          # "by_mean_residual" | "accept_split_by_norm" | "M_term_tree_by_norm" | "use_perfect_trees"
     M_experts_num: 40                              # Number of top-norm nodes to select (only for M_term_tree_by_norm)
-    perfect_trees_path: perfect_tree_examples/perfect_trees.json  # Path to pre-computed perfect trees JSON (only for use_perfect_trees)
 
     # ── Post-spawn freeze (Fix 2) ── DISABLED for tree verification
     # After spawning, freeze base+old experts for N epochs so only the newest expert trains.
     # 0 = disabled (all models train together immediately after spawn).
-    freeze_epochs_after_spawn: 0               # DISABLED: match old config (not present = 0)
 
     # ── Plateau-gated spawning (Fix 3) ── DISABLED for tree verification
     # spawn_every_epochs = minimum interval between spawns.

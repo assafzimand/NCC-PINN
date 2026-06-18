@@ -560,7 +560,7 @@ def save_regions_metadata(
         rejected_regions: List of RegionDescriptor for rejected candidates
         leaf_loss_history: Per-spawn-epoch list of dicts with leaf mean losses.
             Each entry: {'epoch': int, 'leaves': [{'leaf_idx', 'mean_loss', ...}]}
-        spawning_method: Name of spawning method used (by_mean_loss, accept_split_by_norm, full_tree_by_norm)
+        spawning_method: Name of spawning method used (M_term_tree_by_norm)
         spawning_diagnostics: Full spawning diagnostics list from metrics
     """
     import json
@@ -651,7 +651,7 @@ def load_regions_metadata(
 
 
 def plot_expert_soft_weights(
-    model,  # AdaptiveExpertPINN with soft blending
+    model,  # adaptive model (AToE/AToELeaves/ANT) with soft blending
     domain_bounds: Dict[str, List[float]],
     output_path: Union[str, Path],
     resolution: int = 100,
@@ -669,7 +669,7 @@ def plot_expert_soft_weights(
     - Lighter/white = lower weight (less influence)
 
     Args:
-        model: AdaptiveExpertPINN instance with soft blending enabled
+        model: adaptive model (AToE/AToELeaves/ANT) with soft blending enabled
         domain_bounds: {'lower': [x_min, t_min], 'upper': [x_max, t_max]}
         output_path: Path to save the plot
         resolution: Grid resolution for each dimension

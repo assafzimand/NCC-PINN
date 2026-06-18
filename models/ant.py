@@ -42,7 +42,6 @@ class ANT(nn.Module):
         self.blending_mode = adaptive_config['blending_mode']
         self.sigma_fraction = adaptive_config['sigma_fraction']
         self.base_weight = adaptive_config['base_weight']
-        self.freeze_mode = adaptive_config['freeze_mode']
         self.expert_type = adaptive_config['expert_type']
         if self.expert_type == 'piratenet':
             raise ValueError(
@@ -494,36 +493,6 @@ class ANT(nn.Module):
         result['weights_normalized'] = weights_normalized
         return result
 
-    def get_ancestor_indices(self, new_expert_indices: List[int]) -> set:
-        """Return indices of all ancestors of the given new experts (including -1 for base).
-
-        Uses self.parent_indices to walk upward. Only ancestors have overlapping regions
-        with the new experts; sibling leaves on other branches are untouched.
-        """
-        ancestors: set = set()
-        for idx in new_expert_indices:
-            parent = self.parent_indices[idx]
-            while True:
-                ancestors.add(parent)
-                if parent == -1:
-                    break
-                parent = self.parent_indices[parent]
-        return ancestors
-
-    def freeze_ancestors(self, ancestor_indices: set) -> None:
-        """Freeze only the specified ancestors; leave all other models trainable.
-
-        Args:
-            ancestor_indices: Set of expert indices to freeze (-1 = base model).
-        """
-        freeze_base = -1 in ancestor_indices
-        for p in self.base_model.parameters():
-            p.requires_grad = not freeze_base
-        for i, expert in enumerate(self.experts):
-            is_ancestor = i in ancestor_indices
-            for p in expert.parameters():
-                p.requires_grad = not is_ancestor
-
     def reinitialize_base(self):
         """Reinitialize base model weights (fresh random init via reset_parameters)."""
         for module in self.base_model.modules():
@@ -531,36 +500,6 @@ class ANT(nn.Module):
                 module.reset_parameters()
         n_params = sum(p.numel() for p in self.base_model.parameters())
         print(f"  [Reinit] Base model reinitialized ({n_params} params)")
-
-    def freeze_models(self, mode: Optional[str] = None):
-        mode = mode or self.freeze_mode
-
-        if mode == 'none':
-            for p in self.base_model.parameters():
-                p.requires_grad = True
-            for expert in self.experts:
-                for p in expert.parameters():
-                    p.requires_grad = True
-
-        elif mode == 'base_only':
-            for p in self.base_model.parameters():
-                p.requires_grad = False
-            for expert in self.experts:
-                for p in expert.parameters():
-                    p.requires_grad = True
-
-        elif mode == 'previous':
-            for p in self.base_model.parameters():
-                p.requires_grad = False
-            for i, expert in enumerate(self.experts):
-                is_leaf = self.leaf_status[i]
-                for p in expert.parameters():
-                    p.requires_grad = is_leaf
-
-        else:
-            raise ValueError(
-                f"Unknown freeze_mode: {mode}"
-            )
 
     def get_domain_bounds(
         self,

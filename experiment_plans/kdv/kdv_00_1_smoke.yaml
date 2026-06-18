@@ -1,42 +1,40 @@
-# KdV Follow-up — Targeted Fix Experiments
+# KdV 00.1 Smoke Test
 #
-# Background: kdv_01_main revealed a trainer bug where Phase 3 optimizer is
-# NOT recreated for M_term_tree_by_norm spawning. The trainer.py fix (Step 6
-# in the plan) must be applied before running this file.
+# Run this BEFORE kdv_00_1.yaml to verify the trainer.py fix works.
+# Overrides: 100 Phase 1 epochs + 200 Phase 3 epochs (completes in ~10 min).
+# Patience disabled during smoke test (don't want early stopping to interfere).
 #
-# Root cause of the 0.12 rel-L2 floor:
-#   Phase 1 end (epoch 10000): 0.1416 rel-L2
-#   Phase 3 first eval (epoch 11000): 0.5944 rel-L2 (+4×!)
-#   → Phase 3 ran with Phase 1's soap_betas=[0.95,0.95] and lr_decay_steps=500
-#     instead of the intended [0.99,0.999] and 1000.
-#
-# After the fix, Phase 3 starts correctly and should NOT spike.
-# All 7 experiments are single-variable ablations on top of the fixed baseline.
-#
-# Base: AToE M=10 [2,37,37,37,1] (Run A from kdv_01_main — best performer)
-# Phase 1: SOAP [0.95,0.95], 10k epochs (unchanged — was working correctly)
-# Phase 3: SOAP [0.99,0.999], 90k epochs, lr=0.001, exp decay 0.98/1000
-# Patience: stop if train loss flat for 10k epochs (after min 20k Phase 3 epochs)
+# Checks to perform after running:
+#   kdv_00_1_fixed:
+#     → Look for: "[3-Phase FIX] Phase 3 optimizer recreated: soap"
+#     → soap_betas=[0.99, 0.999] and lr_decay_steps=1000 in the print
+#     → Phase 3 start eval should be ≤ Phase 1 final (no spike)
+#   kdv_00_1_reinit:
+#     → No crash; "[3-Phase FIX]" print appears after reinitialize_base() call
+#   kdv_00_1_parent:
+#     → Look for: "[ParentInit] Expert N: hidden layers copied from base, output zeroed"
+#     → One line per expert spawned (should be 10 lines for M=10)
+#   kdv_00_1_fp32:
+#     → No NaN loss; runs complete without numerical errors
 
-experiment_name: "kdv_00_1"
+experiment_name: "kdv_00_1_smoke"
 
 base_config:
   problem: kdv
   model: AToE
   activation: tanh
-  precision: float64                    # override to float32 in fp32 experiment
+  precision: float64
 
-  # ── Phase 3: SOAP, 90k epochs ──────────────────────────────────────────────
-  epochs: 90000
+  epochs: 200
   batch_size: 99999
-  patience_epochs: 10000               # stop if 10k epochs without train-loss improvement
-  min_epochs: 20000                    # must run 20k Phase 3 epochs before patience applies
+  patience_epochs: 999999              # disabled in smoke test
+  min_epochs: 1
   patience_rel_delta: 0.01            # min relative train-loss improvement to reset patience
 
   optimizer_1: soap
   optimizer_2: null
   optimizer_switch_epoch: 999999
-  lr: 0.001                            # override to 0.002 in lr_high experiment
+  lr: 0.001
   soap_betas: [0.99, 0.999]
   soap_precondition_frequency: 10
   soap_weight_decay: 0.0
@@ -63,15 +61,12 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 1000
-  print_every: 1000
-  save_every: 10000
+  eval_every: 50
+  print_every: 50
+  save_every: 9999
   inner_metrics_eval_every: 9999999
   seed: 42
 
-  # ══════════════════════════════════════════════════════════════════════════
-  # KDV — same minimal features as kdv_01_main (RWF + FF, no causal, no LRA)
-  # ══════════════════════════════════════════════════════════════════════════
   kdv:
     pretrained_base_checkpoint: null   # path to a base checkpoint to skip Phase-1 training; null = train Phase 1
     spatial_dim: 1
@@ -99,7 +94,7 @@ base_config:
       scale: 2.0
       periodic: false
     init:
-      hidden: glorot                   # override to 'parent_weights' in parent experiment
+      hidden: glorot
       output: default
       ls_use_bias: false
       spectral_norm: false
@@ -125,7 +120,6 @@ base_config:
       freeze_previous_windows: true
       m_distribution: quadratic
 
-  # ── Other problems (required by schema; not used) ──────────────────────
   schrodinger:
     spatial_dim: 1
     output_dim: 2
@@ -205,21 +199,19 @@ base_config:
     expert_grad_clip_norm: null
     time_marching: {enabled: true, num_windows: 20, freeze_previous_windows: true, m_distribution: equal}
 
-  # ── Dataset sampling ────────────────────────────────────────────────────
   sampling:
     sample_volume_ratio: 35
     initial_train_ratio: 0.026
     boundary_train_ratio: 0.026
     eval_train_ratio: 0.25
     ncc_train_ratio: 0.25
-    resample_every_epochs: 500         # override to 100 in resample experiment
+    resample_every_epochs: 500
     min_points_per_leaf: 50
 
-  # ── Adaptive PINN ────────────────────────────────────────────────────────
   adaptive_pinn:
     enabled: true
     max_experts: 150
-    spawn_every_epochs: 10000
+    spawn_every_epochs: 100            # matches smoke-test initial_train.epochs
     variable_for_node_accept: norm
     variable_for_expert_size: norm
     AToE_threshold_capacity: null
@@ -245,11 +237,10 @@ base_config:
     spawn_plateau_delta: 0.05
     spawn_retries_before_stop: false
     spawn_retry_after: 10
-    reinitialize_base_after_spawn: false  # override to true in reinit experiments
+    reinitialize_base_after_spawn: false
 
-    # ── Phase 1: 10k epochs, SOAP [0.95,0.95] (working correctly) ──────────
     initial_train:
-      epochs: 10000
+      epochs: 100                      # short Phase 1 for smoke test
       optimizer_1: soap
       optimizer_2: null
       soap_betas: [0.95, 0.95]
@@ -261,36 +252,19 @@ base_config:
 
 
 experiments:
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 1: FIXED BASELINE
-  # Run A config (kdv_atoe_m10_soap from kdv_01_main) + trainer fix only.
-  # Expected: no spike at epoch 11000; Phase 3 starts at ~0.14 not 0.59.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_fixed
+  - name: kdv_00_1_smoke_fixed
     problem: kdv
     model: AToE
     base_architecture: [2, 37, 37, 37, 1]
 
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 2: REINITIALIZE BASE AFTER SPAWN
-  # Hypothesis: Phase 1 may trap the base in a local minimum. Reinitializing
-  # before Phase 3 forces a fresh start with the expert structure already in
-  # place — experts provide structural bias while base relearns from scratch.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_reinit
+  - name: kdv_00_1_smoke_reinit
     problem: kdv
     model: AToE
     base_architecture: [2, 37, 37, 37, 1]
     adaptive_pinn:
       reinitialize_base_after_spawn: true
 
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 3: PARENT-WEIGHTS EXPERT INIT
-  # Experts copy hidden layers from base model at spawn (glorot → base weights),
-  # output layer stays zero. Experts start with the base's learned spatial
-  # representation and immediately learn meaningful residuals.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_parent
+  - name: kdv_00_1_smoke_parent
     problem: kdv
     model: AToE
     base_architecture: [2, 37, 37, 37, 1]
@@ -299,48 +273,26 @@ experiments:
         hidden: parent_weights
         output: default
 
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 4: FASTER RESAMPLING
-  # Adaptive sampling every 100 epochs (was 500). Collocation points track
-  # residual hotspots 5× more frequently — useful when Phase 3 loss landscape
-  # shifts quickly after the optimizer/spawn transition.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_resample
+  - name: kdv_00_1_smoke_resample
     problem: kdv
     model: AToE
     base_architecture: [2, 37, 37, 37, 1]
     sampling:
       resample_every_epochs: 100
 
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 5: HIGHER LEARNING RATE
-  # lr=0.002 instead of 0.001. Tests if Phase 3 is limited by gradient step
-  # size rather than model capacity or local minima depth.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_lr_high
+  - name: kdv_00_1_smoke_lr_high
     problem: kdv
     model: AToE
     base_architecture: [2, 37, 37, 37, 1]
     lr: 0.002
 
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 6: FLOAT32 PRECISION
-  # 2× throughput at the cost of reduced numerical precision. KdV with
-  # third-order derivative h_xxx can amplify float32 errors — this test
-  # determines if float64 is strictly necessary.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_fp32
+  - name: kdv_00_1_smoke_fp32
     problem: kdv
     model: AToE
     base_architecture: [2, 37, 37, 37, 1]
     precision: float32
 
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 7: COMBINED BEST
-  # All promising individual changes combined: reinit base, parent-weights
-  # expert init, faster resampling, higher LR. Expected best performer.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_best
+  - name: kdv_00_1_smoke_best
     problem: kdv
     model: AToE
     base_architecture: [2, 37, 37, 37, 1]

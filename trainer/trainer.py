@@ -210,31 +210,6 @@ def _create_primary_optimizer(model: nn.Module, cfg: Dict) -> Tuple[torch.optim.
     return _create_optimizer_by_name(opt_name, model, cfg)
 
 
-def _create_grouped_optimizer(param_groups: list, cfg: Dict) -> torch.optim.Optimizer:
-    """Create an optimizer with explicit param groups, each with its own LR.
-
-    Used at spawn/unfreeze to give ancestors, untouched leaves, and new experts
-    separate LRs and fresh/preserved state independently.
-    Supports Adam and SOAP; raises ValueError for others.
-    """
-    opt_name = cfg['optimizer_1'].lower()
-    if opt_name == 'adam':
-        betas = tuple(cfg['adam_betas'])
-        eps = cfg['adam_eps']
-        return torch.optim.Adam(param_groups, betas=betas, eps=eps)
-    elif opt_name == 'soap':
-        from optimizers.soap import SOAP
-        return SOAP(
-            param_groups,
-            betas=tuple(cfg['soap_betas']),
-            eps=cfg['adam_eps'],
-            precondition_frequency=cfg['soap_precondition_frequency'],
-            weight_decay=cfg['soap_weight_decay'],
-        )
-    else:
-        raise ValueError(f"_create_grouped_optimizer not supported for optimizer: {opt_name}")
-
-
 def _create_lr_scheduler(optimizer, cfg, total_steps):
     """Create an LR scheduler composed of optional warmup + decay.
 
@@ -469,23 +444,51 @@ def train(
     eval_loader = _create_dataloader(eval_data, cfg['batch_size'],
                                      shuffle=False)
 
-    # ── 3-phase logic for M_term_tree_by_norm / use_perfect_trees ──
+    # ── 3-phase logic for M_term_tree_by_norm (the only spawning method) ──
     adaptive_cfg_init = cfg['adaptive_pinn']
+    is_adaptive_init = adaptive_cfg_init['enabled']
     spawning_method_init = adaptive_cfg_init['spawning_method']
+    if is_adaptive_init and spawning_method_init != 'M_term_tree_by_norm':
+        raise ValueError(
+            f"spawning_method must be 'M_term_tree_by_norm' "
+            f"(got '{spawning_method_init}'). The other spawning methods were "
+            f"removed in the M_term cleanup.")
     initial_train_cfg = adaptive_cfg_init.get('initial_train', None)
-    use_three_phase = (spawning_method_init == 'M_term_tree_by_norm' and initial_train_cfg is not None)
-    use_perfect_trees = (spawning_method_init == 'use_perfect_trees')
     reinit_base_after_spawn = adaptive_cfg_init['reinitialize_base_after_spawn']
+    pretrained_base_checkpoint = problem_cfg.get('pretrained_base_checkpoint', None)
+    _pretrained_force_spawn = False  # set True to force first-epoch spawn (checkpoint flow)
 
-    if use_perfect_trees:
-        # Skip Phase 1: spawn from pre-computed tree, then Phase 3
+    if not is_adaptive_init:
+        # Non-adaptive base-only training: single phase, no spawning.
+        active_cfg = cfg
+        epochs = cfg['epochs']
+        phase3_epochs = 0
+        current_phase = 0
+        use_three_phase = False
+    elif pretrained_base_checkpoint is not None:
+        # Phase 1 supplied as a checkpoint: load the base, skip Phase-1 training,
+        # force the spawn on the first loop epoch, then transition to Phase 3.
+        if reinit_base_after_spawn:
+            raise ValueError(
+                "reinitialize_base_after_spawn must be false when "
+                "pretrained_base_checkpoint is set (loading then reinitializing "
+                "would discard the checkpoint).")
+        _load_pretrained_base(model, pretrained_base_checkpoint)
         phase3_epochs = cfg['epochs']
         active_cfg = cfg
-        epochs = phase3_epochs
-        current_phase = 3
-        print(f"\n  [PerfectTree] Skipping Phase 1: loading pre-computed tree")
-        print(f"  [PerfectTree] Phase 3 will run for {phase3_epochs} epochs")
-    elif use_three_phase:
+        epochs = 1            # one loop epoch to trigger the forced spawn
+        current_phase = 1
+        use_three_phase = True
+        _pretrained_force_spawn = True
+        print(f"\n  [3-Phase] Phase 1 skipped: base loaded from "
+              f"{pretrained_base_checkpoint}")
+        print(f"  [3-Phase] Phase 3 will run for {phase3_epochs} epochs after spawning")
+    else:
+        # Phase 1 trains the base for initial_train.epochs.
+        if initial_train_cfg is None:
+            raise ValueError(
+                "adaptive_pinn.initial_train is required for M_term_tree_by_norm "
+                "when pretrained_base_checkpoint is null.")
         phase1_cfg = dict(cfg)
         for k, v in initial_train_cfg.items():
             phase1_cfg[k] = v
@@ -494,14 +497,11 @@ def train(
         active_cfg = phase1_cfg
         epochs = phase1_epochs
         current_phase = 1
+        use_three_phase = True
         print(f"\n  [3-Phase] Phase 1: initial training for {phase1_epochs} epochs")
         print(f"  [3-Phase] Phase 3 will run for {phase3_epochs} epochs after spawning")
         if reinit_base_after_spawn:
             print(f"  [3-Phase] Base model will be reinitialized after spawning")
-    else:
-        active_cfg = cfg
-        epochs = cfg['epochs']
-        current_phase = 0  # single-phase (legacy)
 
     # Determine optimizer strategy (new config: optimizer_1/optimizer_2/optimizer_switch_epoch)
     optimizer_1_name = active_cfg['optimizer_1'].lower()
@@ -575,6 +575,9 @@ def train(
     best_checkpoint_path = None
     patience_epochs = cfg['patience_epochs']
     min_epochs = cfg['min_epochs']
+    # Relative-improvement threshold for the plateau test: an epoch only counts as
+    # an improvement if it beats the anchored best by at least this fraction.
+    patience_rel_delta = cfg.get('patience_rel_delta', 0.0)
     epochs_without_improvement = 0
 
     # LRA: adaptive loss component weighting (read from per-problem config)
@@ -639,13 +642,6 @@ def train(
     # Read configurable norm variables
     variable_for_node_accept = adaptive_cfg['variable_for_node_accept']
     variable_for_expert_size = adaptive_cfg['variable_for_expert_size']
-    
-    # Build thresholds dict
-    thresholds = {
-        'norm': problem_cfg['wavelet_threshold'],
-        'new_norm': problem_cfg['new_norm_threshold'],
-        'smoothness': problem_cfg['tree_smoothness_threshold'],
-    }
 
     if is_adaptive:
         tree_max_depth = adaptive_cfg['tree_max_depth']
@@ -656,12 +652,9 @@ def train(
         print(f"  Spawn every: {spawn_every} epochs")
         print(f"  Tree max depth: {tree_max_depth}")
         print(f"  Tree min samples leaf: {tree_min_samples_leaf}")
-        if spawning_method in ('accept_split_by_norm', 'M_term_tree_by_norm', 'use_perfect_trees'):
-            if spawning_method == 'M_term_tree_by_norm':
-                print(f"  M experts num: {adaptive_cfg['M_experts_num']}")
-            print(f"  Wavelet threshold: {wavelet_threshold}")
+        print(f"  M experts num: {adaptive_cfg['M_experts_num']}")
+        print(f"  Wavelet threshold: {wavelet_threshold}")
         print(f"  Blending mode: {adaptive_cfg['blending_mode']}")
-        print(f"  Freeze mode: {adaptive_cfg['freeze_mode']}")
         print(f"  Model type: {type(model).__name__}")
         enable_timing_cfg = adaptive_cfg['enable_timing']
         print(f"  Timing profiling: {'enabled' if enable_timing_cfg else 'disabled'}")
@@ -671,7 +664,6 @@ def train(
             plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
             plot_expert_soft_weights
         )
-        from adaptive.residual_utils import compute_loss_components
         from adaptive.indicators import RegionDescriptor
 
         domain_bounds = model.get_domain_bounds()
@@ -679,7 +671,7 @@ def train(
 
         region_detector = RegionDetector(
             n_estimators=1,
-            max_depth=tree_max_depth if spawning_method in ('M_term_tree_by_norm', 'use_perfect_trees') else 1,
+            max_depth=tree_max_depth,
             min_samples_leaf=tree_min_samples_leaf,
             domain_bounds=domain_bounds
         )
@@ -690,143 +682,6 @@ def train(
     
     rejected_regions = []
     leaf_loss_history = []
-
-    # ── use_perfect_trees: spawn experts from JSON before training ──
-    if use_perfect_trees and is_adaptive:
-        import json as _json
-        perfect_trees_path = adaptive_cfg.get(
-            'perfect_trees_path',
-            'perfect_tree_examples/perfect_trees.json')
-        problem_name = cfg.get('problem', '')
-        print(f"\n  [PerfectTree] Loading tree from: {perfect_trees_path}")
-
-        with open(perfect_trees_path, 'r') as _f:
-            all_perfect_trees = _json.load(_f)
-
-        if problem_name not in all_perfect_trees:
-            raise ValueError(
-                f"Problem '{problem_name}' not found in "
-                f"{perfect_trees_path}. "
-                f"Available: {list(all_perfect_trees.keys())}")
-
-        pt_data = all_perfect_trees[problem_name]
-        pt_nodes = pt_data['accepted_nodes_bfs']
-        pt_summary = pt_data['summary']
-        print(f"  [PerfectTree] Tree has "
-              f"{pt_summary['accepted_nodes']} accepted nodes "
-              f"({pt_summary['pruned_tree_leaves']} leaves)")
-
-        is_copy_spawn = isinstance(model, AToELeaves)
-        is_atoe_plain = isinstance(model, AToE) and not isinstance(model, AToELeaves)
-        atoe_zero_init = not reinit_base_after_spawn
-        if isinstance(model, AToELeaves):
-            nodes_to_spawn = [
-                n for n in pt_nodes
-                if n['is_leaf_in_pruned_tree']]
-        else:
-            nodes_to_spawn = pt_nodes
-
-        node_to_expert = {}
-        experts_spawned_pt = 0
-        for nd in nodes_to_spawn:
-            parent_tree_nid = nd['parent_tree_node_id']
-            parent_expert_idx = node_to_expert.get(
-                parent_tree_nid, -1)
-            depth = nd['tree_depth']
-
-            child_region = RegionDescriptor(
-                bounds_lower=nd['bounds_lower'],
-                bounds_upper=nd['bounds_upper'],
-                wavelet_norm_squared=nd['wavelet_norm_squared'],
-                new_wavelet_norm_squared=nd.get('new_wavelet_norm_squared', 0.0),
-                spawn_epoch=0,
-                depth=depth,
-                parent_idx=parent_expert_idx,
-            )
-
-            if is_copy_spawn:
-                expert_idx = model.spawn_expert(
-                    child_region,
-                    copy_from_idx=parent_expert_idx)
-            elif is_atoe_plain:
-                expert_idx = model.spawn_expert(
-                    child_region, zero_init=False)
-            else:
-                expert_idx = model.spawn_expert(child_region)
-            if expert_idx >= 0:
-                node_to_expert[nd['node_id']] = expert_idx
-                experts_spawned_pt += 1
-
-        print(f"  [PerfectTree] Spawned {experts_spawned_pt} "
-              f"experts from perfect tree")
-
-        if reinit_base_after_spawn:
-            model.reinitialize_base()
-
-        spawning_complete = True
-        model.freeze_models()
-
-        # Save metrics
-        if 'spawning_diagnostics' not in metrics:
-            metrics['spawning_diagnostics'] = []
-        metrics['spawning_diagnostics'].append({
-            'epoch': 0,
-            'method': 'use_perfect_trees',
-            'source_file': perfect_trees_path,
-            'accepted_count': len(nodes_to_spawn),
-            'spawned_count': experts_spawned_pt,
-            'nodes': pt_data.get('all_nodes', []),
-            'wavelet_threshold': pt_data['tree_params'].get(
-                'wavelet_threshold', 0),
-        })
-
-        # Plot initial expert regions
-        problem_type = (
-            '2d' if len(domain_bounds['lower']) == 2
-            else '3d')
-        leaf_info = model.get_leaf_info()
-        leaf_expert_indices = [
-            idx for _, idx in leaf_info if idx >= 0]
-        regions_to_plot = (
-            [model.regions[i] for i in leaf_expert_indices]
-            if isinstance(model, (AToELeaves, ANT))
-            else model.regions)
-        plot_expert_regions(
-            regions=regions_to_plot,
-            domain_bounds=domain_bounds,
-            output_path=(
-                adaptive_plots_dir
-                / "expert_regions_perfect_tree.png"),
-            problem_type=problem_type,
-            title=(
-                f"Perfect Tree Regions "
-                f"({len(regions_to_plot)} experts)"),
-            ground_truth=gt_grid,
-            grid_x=gt_x,
-            grid_t=gt_t,
-        )
-
-        # Recreate optimizer for Phase 3 (fresh state)
-        optimizer, current_optimizer_name = (
-            _create_primary_optimizer(model, active_cfg))
-        total_steps_p3 = phase3_epochs * batches_per_epoch
-        lr_scheduler = _create_lr_scheduler(
-            optimizer, active_cfg, total_steps_p3)
-        # Recalculate switch epoch for Phase 3 with new config keys
-        _pt_opt2_cfg = active_cfg.get('optimizer_2', None)
-        optimizer_2_name = _pt_opt2_cfg.lower() if _pt_opt2_cfg else None
-        if optimizer_2_name is not None:
-            _pt_switch = active_cfg.get('optimizer_switch_epoch', None)
-            switch_epoch = _pt_switch if _pt_switch else epochs + 1
-            patience_start_epoch = switch_epoch
-        else:
-            switch_epoch = epochs + 1
-            patience_start_epoch = 1
-        step_count = 0
-        print(f"  [PerfectTree] Phase 3 optimizer: "
-              f"{current_optimizer_name}, "
-              f"lr={active_cfg['lr']}, "
-              f"schedule={active_cfg['lr_schedule']}")
 
     # Training loop
     total_epochs = epochs  # may extend when transitioning to Phase 3
@@ -851,18 +706,6 @@ def train(
     # Tighter clip for all expert params (separate from base); only active when experts exist.
     # When no experts exist (base-only phase), grad_clip_norm applies to all params as usual.
     expert_grad_clip_norm = problem_cfg['expert_grad_clip_norm']
-
-    # Freeze-after-spawn state (Fix 2)
-    # freeze_mode: none takes priority — if explicitly set to none, disable post-spawn freeze entirely.
-    freeze_epochs_after_spawn = adaptive_cfg['freeze_epochs_after_spawn'] if is_adaptive else 0
-    if adaptive_cfg['freeze_mode'] == 'none':
-        freeze_epochs_after_spawn = 0
-    _unfreeze_at_epoch = None           # set after each spawn
-    _pre_freeze_lr = None               # LR of all groups before freeze (restored to ancestors at unfreeze)
-    _ancestor_indices: set = set()      # expert indices frozen as ancestors (includes -1 for base)
-    _ancestor_params: list = []         # ancestor parameter tensors (saved at freeze, used at unfreeze)
-    _ancestor_state_snapshot: dict = {} # {id(p): state} for ancestor params
-    _untouched_leaf_params: list = []   # leaf params kept in the freeze-period optimizer
 
     # Plateau-gated spawning state (Fix 3)
     # spawn_every acts as minimum interval; once elapsed, plateau is checked every epoch until met.
@@ -990,39 +833,6 @@ def train(
     while epoch < total_epochs:
         epoch += 1
         timer.start_epoch(epoch, num_experts=model.num_experts if (is_adaptive and hasattr(model, 'num_experts')) else 0)
-
-        # Unfreeze ancestors after freeze_epochs_after_spawn has elapsed
-        if _unfreeze_at_epoch is not None and epoch == _unfreeze_at_epoch:
-            print(f"\n  [Freeze] Unfreezing ancestors at epoch {epoch} — restoring full training")
-            metrics['freeze_events'].append({'epoch': epoch, 'action': 'unfreeze', 'reason': 'freeze_epochs_elapsed'})
-            _unfreeze_at_epoch = None
-            model.freeze_models(mode='none')
-            # Add ancestor params back as a NEW param group at their pre-freeze LR.
-            # Existing groups (untouched leaves, new experts) keep their current LRs — no rebuild,
-            # no scheduler restart, no warmup re-applied to anything.
-            if _ancestor_params and _pre_freeze_lr is not None:
-                optimizer.add_param_group({
-                    'params': _ancestor_params,
-                    'lr': _pre_freeze_lr,
-                })
-                if _ancestor_state_snapshot:
-                    for p in _ancestor_params:
-                        saved = _ancestor_state_snapshot.get(id(p))
-                        if saved:
-                            optimizer.state[p] = copy.deepcopy(saved)
-                n_anc = len([i for i in _ancestor_indices if i >= 0])
-                base_note = '+base' if -1 in _ancestor_indices else ''
-                print(f"  [Freeze] Ancestors ({n_anc} expert(s){base_note}) restored "
-                      f"at lr={_pre_freeze_lr:.2e} with preserved moments")
-            _ancestor_params = []
-            _ancestor_state_snapshot = {}
-            _ancestor_indices = set()
-            _pre_freeze_lr = None
-            metrics['optimizer_snapshots'].append({
-                'epoch': epoch,
-                'event': 'unfreeze',
-                **_get_optimizer_snapshot(optimizer, lr_scheduler, step_count),
-            })
 
         # Enable residual caching for adaptive sampling if needed
         # Cache THIS epoch's residuals for NEXT epoch's resampling
@@ -1573,18 +1383,25 @@ def train(
             _save_checkpoint(best_checkpoint_path, model, optimizer, current_optimizer_name, epoch,
                            train_loss, eval_loss, cfg, metrics)
 
-        # Patience-based early stopping on train loss (only active from patience_start_epoch)
-        if train_loss is not None and patience_epochs > 0 and epoch >= patience_start_epoch:
-            if train_loss < best_train_loss:
+        # Patience-based early stopping on train loss. Active ONLY in Phase 3
+        # (current_phase != 1; non-adaptive single-phase is current_phase 0) and only
+        # from patience_start_epoch — which equals the optimizer switch epoch when a
+        # second optimizer is configured, so patience watches only the second optimizer.
+        # Plateau test uses a relative min-delta so a loss creeping down by a negligible
+        # amount each epoch still counts as "no improvement" and eventually stops.
+        if (train_loss is not None and patience_epochs > 0
+                and current_phase != 1 and epoch >= patience_start_epoch):
+            if train_loss < best_train_loss * (1.0 - patience_rel_delta):
                 best_train_loss = train_loss
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
-            if (epoch >= min_epochs
+            # min_epochs is a grace period measured within the active window.
+            if (epoch - patience_start_epoch >= min_epochs
                     and epochs_without_improvement >= patience_epochs):
                 print(f"\n  [EarlyStop] No train loss improvement "
-                      f"for {epochs_without_improvement} epochs "
-                      f"(best={best_train_loss:.6f}). "
+                      f">{patience_rel_delta:.1%} for {epochs_without_improvement} "
+                      f"epochs (best={best_train_loss:.6f}). "
                       f"Stopping at epoch {epoch}.")
                 break
 
@@ -1617,16 +1434,14 @@ def train(
             if freq_metrics is not None:
                 metrics['freq_history'].append((epoch, freq_metrics))
 
-        # Adaptive PINN: Hierarchical expert spawning from leaf nodes
+        # Adaptive PINN: one-shot expert spawning (M_term_tree_by_norm).
+        # Spawning is only possible in Phase 1 (current_phase == 1); the spawn epoch is
+        # also the Phase 1 -> Phase 3 transition, so it can never recur in Phase 3.
         # Normal trigger: epoch % spawn_every == 0.
         # After a failed spawn: also trigger spawn_retry_after epochs after the failure
         # (tracked from _spawn_last_fail_epoch). Plateau gating still applies at retries.
-        if spawning_method in ('M_term_tree_by_norm', 'use_perfect_trees'):
-            _base_spawn_eligible = is_adaptive and not spawning_complete
-        else:
-            _base_spawn_eligible = (is_adaptive and
-                                    hasattr(model, 'num_experts') and
-                                    model.num_experts < max_experts)
+        _base_spawn_eligible = (is_adaptive and not spawning_complete
+                                and current_phase == 1)
 
         _at_spawn_interval = epoch % spawn_every == 0
         _at_retry = (_spawn_retry_after is not None
@@ -1634,7 +1449,11 @@ def train(
                      and epoch == _spawn_last_fail_epoch + _spawn_retry_after)
         _at_interval = _at_spawn_interval or _at_retry
 
-        if _base_spawn_eligible and _spawn_require_plateau:
+        if _pretrained_force_spawn and _base_spawn_eligible:
+            # Checkpoint flow: build the tree on the loaded base immediately (no
+            # Phase-1 training, no interval/plateau wait), then transition to Phase 3.
+            spawn_check_triggered = True
+        elif _base_spawn_eligible and _spawn_require_plateau:
             if _at_interval:
                 # Check training-loss plateau over the look-back window
                 _lookback = max(1, _spawn_plateau_epochs)
@@ -1710,25 +1529,6 @@ def train(
                     cfg=cfg,
                 )
 
-            # Only compute per-sample losses for by_mean_residual (expensive)
-            loss_components = None
-            if spawning_method == 'by_mean_residual':
-                problem = cfg['problem']
-                loss_weights = cfg[problem]['loss_weights']
-                loss_components = compute_loss_components(
-                    model=model,
-                    x=eval_data['x'],
-                    t=eval_data['t'],
-                    target=eval_data.get('h_gt', eval_data.get('u_gt')),
-                    masks=eval_data['mask'],
-                    loss_fn=loss_fn,
-                    weights={
-                        'residual': loss_weights['residual'],
-                        'ic': loss_weights['ic'],
-                        'bc': loss_weights['bc'],
-                    }
-                )
-
             import numpy as np
             is_copy_spawn = isinstance(model, AToELeaves)
             experts_spawned_this_step = 0
@@ -1740,267 +1540,7 @@ def train(
             # Dispatch on spawning_method
             # =============================================================
 
-            if spawning_method == 'by_mean_residual':
-                # Pick the single leaf with highest mean residual, split it
-                _spawned_children_diag = []
-                per_sample_total = loss_components['residual']
-
-                leaf_mean_losses = []
-                for leaf_region, leaf_idx in leaf_nodes:
-                    if leaf_region is None:
-                        mask = np.ones(len(X_eval), dtype=bool)
-                    else:
-                        mask = np.ones(len(X_eval), dtype=bool)
-                        for dim in range(len(leaf_region.bounds_lower)):
-                            mask &= (X_eval[:, dim] >= leaf_region.bounds_lower[dim])
-                            mask &= (X_eval[:, dim] <= leaf_region.bounds_upper[dim])
-                    n_in_region = mask.sum()
-                    if n_in_region > 0:
-                        mean_loss = float(per_sample_total[mask].mean())
-                    else:
-                        mean_loss = 0.0
-                    leaf_mean_losses.append((mean_loss, leaf_region, leaf_idx, n_in_region))
-                    leaf_str = f"Expert {leaf_idx+1}" if leaf_idx >= 0 else "Base Model"
-                    print(f"    Leaf {leaf_str}: mean_loss={mean_loss:.6f} ({n_in_region} samples)")
-
-                leaf_loss_history.append({
-                    'epoch': epoch,
-                    'leaves': [
-                        {
-                            'leaf_idx': idx,
-                            'mean_loss': ml,
-                            'n_samples': int(n),
-                            'bounds_lower': list(reg.bounds_lower) if reg is not None else list(domain_bounds['lower']),
-                            'bounds_upper': list(reg.bounds_upper) if reg is not None else list(domain_bounds['upper']),
-                        }
-                        for ml, reg, idx, n in leaf_mean_losses
-                    ]
-                })
-
-                leaf_mean_losses.sort(key=lambda x: x[0], reverse=True)
-
-                for candidate_loss, candidate_region, candidate_idx, candidate_n in leaf_mean_losses:
-                    candidate_str = f"Expert {candidate_idx+1}" if candidate_idx >= 0 else "Base Model"
-                    print(f"\n  [Spawning] Trying leaf: {candidate_str} "
-                          f"(mean_loss={candidate_loss:.6f}, {candidate_n} samples)")
-
-                    parent_region = candidate_region
-                    parent_idx = candidate_idx
-                    parent_depth = 0 if parent_region is None else parent_region.depth
-
-                    children = region_detector.spawn_children_for_node(
-                        parent_region=parent_region if parent_region is not None else
-                                     RegionDescriptor(
-                                         bounds_lower=list(domain_bounds['lower']),
-                                         bounds_upper=list(domain_bounds['upper']),
-                                         wavelet_norm_squared=0.0,
-                                         spawn_epoch=0,
-                                         depth=0,
-                                         parent_idx=-1
-                                     ),
-                        X=X_eval,
-                        y=y_eval,
-                        loss_components=loss_components,
-                        verbose=True
-                    )
-
-                    if not children:
-                        print(f"      [Spawning] Could not split {candidate_str} "
-                              f"(too few samples?), trying next leaf...")
-                        continue
-
-                    child_depth = parent_depth + 1
-                    for child_node, _ in children:
-                        child_region = RegionDescriptor(
-                            bounds_lower=child_node.bounds_lower,
-                            bounds_upper=child_node.bounds_upper,
-                            wavelet_norm_squared=child_node.wavelet_norm_squared,
-                            new_wavelet_norm_squared=child_node.new_wavelet_norm_squared,
-                            spawn_epoch=epoch,
-                            depth=child_depth,
-                            parent_idx=parent_idx,
-                            smoothness_alpha=child_node.smoothness_alpha,
-                        )
-
-                        if is_copy_spawn:
-                            expert_idx = model.spawn_expert(child_region, copy_from_idx=parent_idx)
-                        else:
-                            expert_idx = model.spawn_expert(child_region)
-                        if expert_idx >= 0:
-                            experts_spawned_this_step += 1
-                            if 'expert_spawns' not in metrics:
-                                metrics['expert_spawns'] = []
-                            metrics['expert_spawns'].append({
-                                'epoch': epoch,
-                                'expert_idx': expert_idx,
-                                'region': child_region.to_dict(),
-                                'depth': child_depth,
-                                'parent_idx': parent_idx,
-                                **(({'num_experts': model.num_experts} if hasattr(model, 'num_experts') else {}))
-                            })
-
-                    _spawned_children_diag = [
-                        {
-                            'node_id': c.node_id,
-                            'wavelet_norm_squared': c.wavelet_norm_squared,
-                            'n_samples': c.n_samples,
-                            'bounds_lower': c.bounds_lower,
-                            'bounds_upper': c.bounds_upper,
-                        }
-                        for c, _ in children
-                    ]
-                    if experts_spawned_this_step > 0:
-                        print(f"      [Spawning] Spawned {experts_spawned_this_step} children from {candidate_str}")
-                    break
-
-                # Save diagnostics for by_mean_residual
-                diag = {
-                    'epoch': epoch,
-                    'method': 'by_mean_residual',
-                    'evaluated_leaves': [
-                        {
-                            'leaf_idx': idx,
-                            'mean_loss': ml,
-                            'n_samples': int(n),
-                            'selected': (idx == leaf_mean_losses[0][2]),
-                            'bounds_lower': list(
-                                reg.bounds_lower) if reg is not None else list(domain_bounds['lower']),
-                            'bounds_upper': list(
-                                reg.bounds_upper) if reg is not None else list(domain_bounds['upper']),
-                        }
-                        for ml, reg, idx, n in leaf_mean_losses
-                    ],
-                    'spawned_children': _spawned_children_diag,
-                }
-                metrics['spawning_diagnostics'].append(diag)
-
-            elif spawning_method == 'accept_split_by_norm':
-                # Iterate all leaves, split each, accept if wavelet norm above threshold
-                norm_diag_leaves = []
-                for leaf_region, leaf_idx in leaf_nodes:
-                    if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
-                        break
-
-                    parent_region = leaf_region
-                    parent_idx = leaf_idx
-                    parent_depth = 0 if parent_region is None else parent_region.depth
-                    leaf_str = f"Expert {leaf_idx+1}" if leaf_idx >= 0 else "Base Model"
-
-                    children = region_detector.spawn_children_for_node(
-                        parent_region=parent_region if parent_region is not None else
-                                     RegionDescriptor(
-                                         bounds_lower=list(domain_bounds['lower']),
-                                         bounds_upper=list(domain_bounds['upper']),
-                                         wavelet_norm_squared=0.0,
-                                         spawn_epoch=0,
-                                         depth=0,
-                                         parent_idx=-1
-                                     ),
-                        X=X_eval,
-                        y=y_eval,
-                        loss_components=loss_components,
-                        verbose=True
-                    )
-
-                    parent_bounds_lower = list(parent_region.bounds_lower) if parent_region is not None else list(domain_bounds['lower'])
-                    parent_bounds_upper = list(parent_region.bounds_upper) if parent_region is not None else list(domain_bounds['upper'])
-
-                    if not children:
-                        norm_diag_leaves.append({
-                            'leaf_idx': leaf_idx,
-                            'parent_bounds_lower': parent_bounds_lower,
-                            'parent_bounds_upper': parent_bounds_upper,
-                            'children': [],
-                            'accepted': False,
-                            'reason': 'no_split',
-                        })
-                        continue
-
-                    # Check acceptance based on configured variable
-                    def _get_child_metric_value(c):
-                        if variable_for_node_accept == 'norm':
-                            return c.wavelet_norm_squared
-                        elif variable_for_node_accept == 'new_norm':
-                            return c.new_wavelet_norm_squared
-                        elif variable_for_node_accept == 'smoothness':
-                            return c.smoothness_alpha if c.smoothness_alpha is not None else 0.0
-                        return c.wavelet_norm_squared
-                    
-                    threshold = thresholds.get(variable_for_node_accept, 0.0)
-                    
-                    if variable_for_node_accept == 'smoothness':
-                        # For smoothness: lower alpha = rougher = keep (alpha < threshold)
-                        above = any(_get_child_metric_value(c) < threshold and c.smoothness_r2 is not None and c.smoothness_r2 >= 0.5 for c, _ in children)
-                    else:
-                        # For norm/new_norm: higher = more variation = keep (value >= threshold)
-                        above = any(_get_child_metric_value(c) >= threshold for c, _ in children)
-                    
-                    child_diags = [
-                        {
-                            'node_id': c.node_id,
-                            'wavelet_norm_squared': c.wavelet_norm_squared,
-                            'new_wavelet_norm_squared': c.new_wavelet_norm_squared,
-                            'smoothness_alpha': c.smoothness_alpha,
-                            'n_samples': c.n_samples,
-                            'bounds_lower': c.bounds_lower,
-                            'bounds_upper': c.bounds_upper,
-                            'is_leaf': bool(c.is_leaf),
-                        }
-                        for c, _ in children
-                    ]
-                    norm_diag_leaves.append({
-                        'leaf_idx': leaf_idx,
-                        'parent_bounds_lower': parent_bounds_lower,
-                        'parent_bounds_upper': parent_bounds_upper,
-                        'children': child_diags,
-                        'accepted': above,
-                        'reason': 'above_threshold' if above else 'below_threshold',
-                    })
-
-                    if not above:
-                        print(f"    [Spawning] {leaf_str}: children below {variable_for_node_accept} threshold "
-                              f"({threshold}), skipping")
-                        continue
-
-                    child_depth = parent_depth + 1
-                    for child_node, _ in children:
-                        if hasattr(model, 'num_experts') and model.num_experts >= max_experts:
-                            break
-                        child_region = RegionDescriptor(
-                            bounds_lower=child_node.bounds_lower,
-                            bounds_upper=child_node.bounds_upper,
-                            wavelet_norm_squared=child_node.wavelet_norm_squared,
-                            new_wavelet_norm_squared=child_node.new_wavelet_norm_squared,
-                            spawn_epoch=epoch,
-                            depth=child_depth,
-                            parent_idx=parent_idx,
-                            smoothness_alpha=child_node.smoothness_alpha,
-                        )
-                        if is_copy_spawn:
-                            expert_idx = model.spawn_expert(child_region, copy_from_idx=parent_idx)
-                        else:
-                            expert_idx = model.spawn_expert(child_region)
-                        if expert_idx >= 0:
-                            experts_spawned_this_step += 1
-                            if 'expert_spawns' not in metrics:
-                                metrics['expert_spawns'] = []
-                            metrics['expert_spawns'].append({
-                                'epoch': epoch,
-                                'expert_idx': expert_idx,
-                                'region': child_region.to_dict(),
-                                'depth': child_depth,
-                                'parent_idx': parent_idx,
-                                **(({'num_experts': model.num_experts} if hasattr(model, 'num_experts') else {}))
-                            })
-
-                metrics['spawning_diagnostics'].append({
-                    'epoch': epoch,
-                    'method': 'accept_split_by_norm',
-                    'wavelet_threshold': wavelet_threshold,
-                    'evaluated_leaves': norm_diag_leaves,
-                })
-
-            elif spawning_method == 'M_term_tree_by_norm':
+            if spawning_method == 'M_term_tree_by_norm':
                 # One-shot: fit full tree, select top M by norm, spawn all accepted
                 M = adaptive_cfg['M_experts_num']
                 print(f"  [M-term Tree] Fitting full tree (max_depth={region_detector.max_depth}, "
@@ -2133,8 +1673,9 @@ def train(
                 _spawn_last_fail_epoch = -1
                 _no_spawn_retries_remaining = _no_spawn_retries_max  # reset on success
 
-                # Apply smart init to newly spawned experts (Glorot hidden + zero output,
-                # or parent_weights: copy hidden layers from parent expert for stability).
+                # Apply smart init to newly spawned experts (glorot: Glorot hidden + zero
+                # output; or parent_weights: copy hidden AND output layers from the parent,
+                # which is the continuous handoff under normalized soft indicators).
                 _init_mode = problem_cfg['init']['hidden']
                 _new_exp_start_idx = len(model.experts) - experts_spawned_this_step
                 for _ei, _new_exp in enumerate(model.experts[-experts_spawned_this_step:]):
@@ -2151,16 +1692,18 @@ def train(
                                          else model.experts[_par_idx])
                         apply_parent_copy_init(
                             _new_exp, _parent_model, cfg,
-                            copy_output=isinstance(model, (AToELeaves, ANT)),
+                            copy_output=True,
                         )
                         _par_label = 'base' if _par_idx == -1 else f'expert {_par_idx}'
-                        print(f"  [ParentInit] Expert {_new_exp_idx}: hidden layers copied from {_par_label}, output zeroed")
+                        print(f"  [ParentInit] Expert {_new_exp_idx}: hidden layers copied from {_par_label}, output copied")
                     else:
                         apply_expert_init(_new_exp, cfg)
                     apply_spectral_norm(_new_exp, cfg)
 
                 # ── 3-phase: reinitialize base + transition to Phase 3 ──
-                _p3_optimizer_recreated = False
+                # The spawn epoch is also the Phase 1 -> Phase 3 transition. There is no
+                # freezing: the Phase 3 optimizer is recreated over ALL params (base + every
+                # spawned expert), so every parameter enters the optimizer exactly once.
                 if use_three_phase and spawning_complete and current_phase == 1:
                     if reinit_base_after_spawn:
                         model.reinitialize_base()
@@ -2182,147 +1725,23 @@ def train(
                     print(f"\n  [3-Phase] Transitioning to Phase 3: {phase3_epochs} epochs of full model training")
                     print(f"  [3-Phase] Total epochs now: {total_epochs} (Phase 1: {epoch}, Phase 3: {phase3_epochs})")
                     print(f"  [3-Phase] Optimizer: {_p3_opt1}, lr: {active_cfg['lr']}, schedule: {active_cfg['lr_schedule']}")
-                    # Recreate optimizer + LR scheduler with Phase 3 config.
-                    # The freeze>0 branch below creates its own grouped optimizer, so skip here.
-                    if freeze_epochs_after_spawn == 0:
-                        optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
-                        lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_p3)
-                        step_count = 0
-                        epochs_without_improvement = 0
-                        best_train_loss = float('inf')
-                        _p3_betas = active_cfg.get('soap_betas', active_cfg.get('adam_betas', '?'))
-                        _p3_lr_steps = active_cfg.get('lr_decay_steps', '?')
-                        _p3_warmup = active_cfg.get('lr_warmup_steps', 0)
-                        print(f"  [3-Phase FIX] Phase 3 optimizer recreated: {current_optimizer_name}")
-                        print(f"  [3-Phase FIX]   soap_betas={_p3_betas}, lr_decay_steps={_p3_lr_steps}, warmup={_p3_warmup} steps")
-                        print(f"  [3-Phase FIX]   total params: {sum(len(pg['params']) for pg in optimizer.param_groups)}")
-                        _p3_optimizer_recreated = True
-
-                # Collect new expert parameters before any freeze/optimizer logic.
-                import copy
-                _new_expert_params = [
-                    p for _exp in model.experts[-experts_spawned_this_step:]
-                    for p in _exp.parameters() if p.requires_grad
-                ]
-
-                if freeze_epochs_after_spawn > 0:
-                    # freeze>0: freeze only the ANCESTORS of newly spawned experts.
-                    # Ancestors are the only experts with overlapping regions.
-                    # Sibling leaves on other branches keep training uninterrupted.
-
-                    _new_expert_indices = list(range(
-                        len(model.experts) - experts_spawned_this_step,
-                        len(model.experts)
-                    ))
-                    if hasattr(model, 'get_ancestor_indices'):
-                        _ancestor_indices = model.get_ancestor_indices(_new_expert_indices)
-                    else:
-                        # Fallback for model types without ancestor tracking
-                        _ancestor_indices = set(range(len(model.experts) - experts_spawned_this_step)) | {-1}
-
-                    # Collect ancestor params (all currently trainable, before any freezing)
-                    _ancestor_params = []
-                    if -1 in _ancestor_indices:
-                        _ancestor_params.extend(model.base_model.parameters())
-                    for _ai in sorted(i for i in _ancestor_indices if i >= 0):
-                        _ancestor_params.extend(model.experts[_ai].parameters())
-                    _ancestor_param_ids = {id(p) for p in _ancestor_params}
-                    _new_expert_param_ids = {id(p) for p in _new_expert_params}
-
-                    # Untouched leaf params: in current optimizer but not ancestor or new expert
-                    _untouched_leaf_params = [
-                        p for pg in optimizer.param_groups for p in pg['params']
-                        if id(p) not in _ancestor_param_ids and id(p) not in _new_expert_param_ids
-                    ]
-                    _untouched_state = {
-                        id(p): copy.deepcopy(optimizer.state.get(p, {}))
-                        for p in _untouched_leaf_params
-                    }
-
-                    _pre_freeze_lr = optimizer.param_groups[0]['lr']
-                    _ancestor_state_snapshot = {
-                        id(p): copy.deepcopy(optimizer.state.get(p, {}))
-                        for p in _ancestor_params
-                    }
-
-                    _unfreeze_at_epoch = epoch + freeze_epochs_after_spawn
-                    n_anc = len([i for i in _ancestor_indices if i >= 0])
-                    base_note = '+base' if -1 in _ancestor_indices else ''
-                    print(f"  [Freeze] Freezing {n_anc} ancestor(s){base_note} for "
-                          f"{freeze_epochs_after_spawn} epochs (unfreeze at epoch {_unfreeze_at_epoch})")
-                    print(f"  [Freeze] {len(_untouched_leaf_params)} untouched leaf params continue training")
-                    metrics['freeze_events'].append({
-                        'epoch': epoch,
-                        'action': 'freeze',
-                        'reason': 'post_spawn',
-                        'freeze_mode_applied': 'ancestors',
-                        'ancestor_indices': sorted(_ancestor_indices),
-                        'unfreeze_at': _unfreeze_at_epoch,
-                        'experts_spawned': experts_spawned_this_step,
-                    })
-                    metrics['optimizer_snapshots'].append({
-                        'epoch': epoch,
-                        'event': 'freeze',
-                        'experts_spawned': experts_spawned_this_step,
-                        **_get_optimizer_snapshot(optimizer, lr_scheduler, step_count),
-                    })
-
-                    if hasattr(model, 'freeze_ancestors'):
-                        model.freeze_ancestors(_ancestor_indices)
-                    else:
-                        model.freeze_models(mode='previous')
-
-                    # Build freeze-period optimizer with two groups:
-                    # Group 0: untouched leaves (restored state, same LR — keep training)
-                    # Group 1: new expert params (fresh state, initial LR)
-                    # No scheduler: LRs stay fixed during freeze period (no warmup restart).
-                    _freeze_groups = []
-                    if _untouched_leaf_params:
-                        _freeze_groups.append({'params': _untouched_leaf_params, 'lr': _pre_freeze_lr})
-                    if _new_expert_params:
-                        _new_expert_lr = _pre_freeze_lr * active_cfg['new_expert_lr_decay']
-                        _freeze_groups.append({'params': _new_expert_params, 'lr': _new_expert_lr})
-                        if _new_expert_lr != _pre_freeze_lr:
-                            print(f"  [SpawnGroup] New expert LR: {_new_expert_lr:.2e} "
-                                  f"({active_cfg['new_expert_lr_decay']:.2f}× current {_pre_freeze_lr:.2e})")
-                    if _freeze_groups:
-                        try:
-                            optimizer = _create_grouped_optimizer(_freeze_groups, active_cfg)
-                            for p in _untouched_leaf_params:
-                                saved = _untouched_state.get(id(p))
-                                if saved:
-                                    optimizer.state[p] = saved
-                        except ValueError:
-                            optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
-                    else:
-                        optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
-                    lr_scheduler = None  # no scheduler during freeze; LRs are fixed per group
-                else:
-                    # freeze==0: keep existing optimizer intact so old params preserve their
-                    # current state and LR without any restart. Add new expert params as a
-                    # separate fresh param group at the initial LR (AB-PINNs pattern: new
-                    # subdomains declared under their own optimizer entry with independent LRs).
-                    # Exception: when Phase 3 optimizer was just recreated (3-phase transition),
-                    # the new optimizer already includes all params — skip the add-param-group step.
-                    model.freeze_models()  # applies configured freeze_mode (typically 'none')
-                    if _new_expert_params and not _p3_optimizer_recreated:
-                        _current_lr = optimizer.param_groups[0]['lr']
-                        _new_expert_lr = _current_lr * active_cfg['new_expert_lr_decay']
-                        optimizer.add_param_group({
-                            'params': _new_expert_params,
-                            'lr': _new_expert_lr,
-                        })
-                        print(f"  [SpawnGroup] New expert params added as fresh param group "
-                              f"{len(optimizer.param_groups) - 1} "
-                              f"at lr={_new_expert_lr:.2e} "
-                              f"({active_cfg['new_expert_lr_decay']:.2f}× current {_current_lr:.2e}); "
-                              f"old params unchanged")
+                    # Recreate optimizer + LR scheduler with Phase 3 config over ALL params.
+                    optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
+                    lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_p3)
+                    step_count = 0
+                    epochs_without_improvement = 0
+                    best_train_loss = float('inf')
+                    _p3_betas = active_cfg.get('soap_betas', active_cfg.get('adam_betas', '?'))
+                    _p3_lr_steps = active_cfg.get('lr_decay_steps', '?')
+                    _p3_warmup = active_cfg.get('lr_warmup_steps', 0)
+                    print(f"  [3-Phase FIX] Phase 3 optimizer recreated: {current_optimizer_name}")
+                    print(f"  [3-Phase FIX]   soap_betas={_p3_betas}, lr_decay_steps={_p3_lr_steps}, warmup={_p3_warmup} steps")
+                    print(f"  [3-Phase FIX]   total params: {sum(len(pg['params']) for pg in optimizer.param_groups)}")
 
                 metrics['optimizer_snapshots'].append({
                     'epoch': epoch,
                     'event': 'spawn',
                     'experts_spawned': experts_spawned_this_step,
-                    'freeze_epochs_after_spawn': freeze_epochs_after_spawn,
                     **_get_optimizer_snapshot(optimizer, lr_scheduler, step_count),
                 })
 
@@ -2850,12 +2269,44 @@ def _save_checkpoint(
         'metrics': metrics
     }
     
-    # For AdaptiveExpertPINN, also save extended state
+    # For adaptive models, also save extended state
     if hasattr(model, 'state_dict_extended'):
         checkpoint['adaptive_state'] = model.state_dict_extended()
         checkpoint['is_adaptive'] = True
-    
+
     torch.save(checkpoint, path)
+
+
+def _load_pretrained_base(model: nn.Module, ckpt_path: str) -> None:
+    """Load base-network weights from a checkpoint into ``model.base_model``.
+
+    Supplies Phase 1 without training (the ``pretrained_base_checkpoint`` flow).
+    Accepts either an adaptive checkpoint (uses ``adaptive_state['base_model']``)
+    or a plain base checkpoint (uses ``model_state_dict``).
+    """
+    from pathlib import Path as _Path
+    p = _Path(ckpt_path)
+    if not p.exists():
+        raise FileNotFoundError(
+            f"pretrained_base_checkpoint not found: {ckpt_path}")
+    ckpt = torch.load(p, map_location='cpu')
+    adaptive_state = ckpt.get('adaptive_state') if isinstance(ckpt, dict) else None
+    if adaptive_state and 'base_model' in adaptive_state:
+        base_sd = adaptive_state['base_model']
+    elif isinstance(ckpt, dict) and 'model_state_dict' in ckpt:
+        base_sd = ckpt['model_state_dict']
+    else:
+        raise ValueError(
+            f"Could not find base weights in checkpoint {ckpt_path} "
+            f"(expected 'adaptive_state.base_model' or 'model_state_dict').")
+    base = getattr(model, 'base_model', model)
+    base.load_state_dict(base_sd)
+    n_params = sum(q.numel() for q in base.parameters())
+    print(f"  [PretrainedBase] Loaded base weights from {ckpt_path} "
+          f"({n_params} params)")
+    # Re-sync AToE's batched container so the forward pass sees the loaded base.
+    if hasattr(model, 'batched_models'):
+        model.batched_models.sync_from_models(model.base_model, model.experts)
 
 
 def _run_intermediate_ncc(model, cfg, run_dir, epoch):
