@@ -6,6 +6,15 @@ import torch
 import importlib
 from pathlib import Path
 
+# Windows consoles default to a non-UTF-8 code page (e.g. cp1255 on Hebrew
+# Windows), which raises UnicodeEncodeError when the trainer prints unicode
+# (->, Sigma, psi). Force UTF-8 stdout/stderr so logging never crashes a run.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 from utils.io import load_config, make_run_dir
 from utils.config_validation import (
     validate_problem_config,

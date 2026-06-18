@@ -11,6 +11,14 @@ import subprocess
 import sys
 import torch
 
+# Force UTF-8 stdout/stderr so unicode in logs doesn't crash on non-UTF-8
+# Windows consoles (e.g. cp1255).
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 
 def load_experiment_plan(plan_path="experiments_plan.yaml"):
     """Load experiment plan from YAML file."""

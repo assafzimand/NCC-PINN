@@ -5,6 +5,14 @@ import torch
 import importlib
 from pathlib import Path
 
+# Force UTF-8 stdout/stderr so unicode in logs doesn't crash on non-UTF-8
+# Windows consoles (e.g. cp1255).
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 from utils.io import load_config, make_run_dir
 from utils.dataset_gen import generate_and_save_datasets
 from models.fc_model import FCNet

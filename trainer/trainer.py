@@ -473,7 +473,7 @@ def train(
                 "reinitialize_base_after_spawn must be false when "
                 "pretrained_base_checkpoint is set (loading then reinitializing "
                 "would discard the checkpoint).")
-        _load_pretrained_base(model, pretrained_base_checkpoint)
+        _load_pretrained_base(model, pretrained_base_checkpoint, cfg)
         phase3_epochs = cfg['epochs']
         active_cfg = cfg
         epochs = 1            # one loop epoch to trigger the forced spawn
@@ -2277,33 +2277,97 @@ def _save_checkpoint(
     torch.save(checkpoint, path)
 
 
-def _load_pretrained_base(model: nn.Module, ckpt_path: str) -> None:
-    """Load base-network weights from a checkpoint into ``model.base_model``.
+def _infer_base_arch_from_state_dict(sd: Dict) -> list:
+    """Best-effort base architecture from a plain FCNet state dict.
+
+    Counts ``network.layer_{i}.weight`` tensors. Only used as a fallback when the
+    checkpoint does not store its nominal ``base_architecture`` (e.g. an old vanilla
+    base checkpoint). Note: with Fourier features the inferred input dim reflects the
+    expanded input, so a saved nominal arch is always preferred when available.
+    """
+    arch = []
+    i = 1
+    while f'network.layer_{i}.weight' in sd:
+        w = sd[f'network.layer_{i}.weight']
+        if i == 1:
+            arch.append(int(w.shape[1]))
+        arch.append(int(w.shape[0]))
+        i += 1
+    return arch
+
+
+def _load_pretrained_base(model: nn.Module, ckpt_path: str, cfg: Dict) -> None:
+    """Load the BASE network from a checkpoint into ``model.base_model``.
 
     Supplies Phase 1 without training (the ``pretrained_base_checkpoint`` flow).
-    Accepts either an adaptive checkpoint (uses ``adaptive_state['base_model']``)
-    or a plain base checkpoint (uses ``model_state_dict``).
+    Accepts either an adaptive/MoE checkpoint (takes only ``adaptive_state['base_model']``,
+    ignoring its experts) or a plain base checkpoint (uses ``model_state_dict``).
+
+    If the checkpoint's base architecture differs from the run's, the base is rebuilt
+    to the checkpoint's architecture and that architecture is written back into ``cfg``
+    (and ``model.config_base_architecture``) so that experts spawned later — in
+    particular ``init.hidden == 'parent_weights'``, which copies the parent's layers —
+    are shape-compatible with the loaded base.
     """
     from pathlib import Path as _Path
     p = _Path(ckpt_path)
     if not p.exists():
         raise FileNotFoundError(
             f"pretrained_base_checkpoint not found: {ckpt_path}")
-    ckpt = torch.load(p, map_location='cpu')
+    # Trusted local checkpoint: weights_only=False (PyTorch 2.6+ defaults to True,
+    # which rejects the numpy scalars stored in the saved config/metrics).
+    try:
+        ckpt = torch.load(p, map_location='cpu', weights_only=False)
+    except TypeError:  # older torch without the weights_only kwarg
+        ckpt = torch.load(p, map_location='cpu')
+
     adaptive_state = ckpt.get('adaptive_state') if isinstance(ckpt, dict) else None
     if adaptive_state and 'base_model' in adaptive_state:
         base_sd = adaptive_state['base_model']
+        saved_arch = adaptive_state.get('base_architecture')
+        saved_activation = adaptive_state.get('activation')
+        saved_expert_type = (adaptive_state.get('adaptive_config') or {}).get('expert_type')
+        print(f"  [PretrainedBase] Source is an adaptive/MoE checkpoint; "
+              f"loading its base only (ignoring {adaptive_state.get('num_experts', '?')} experts).")
     elif isinstance(ckpt, dict) and 'model_state_dict' in ckpt:
         base_sd = ckpt['model_state_dict']
+        _cfg_in = ckpt.get('config') or {}
+        saved_arch = _cfg_in.get('base_architecture')
+        saved_activation = _cfg_in.get('activation')
+        saved_expert_type = (_cfg_in.get('adaptive_pinn') or {}).get('expert_type')
     else:
         raise ValueError(
             f"Could not find base weights in checkpoint {ckpt_path} "
             f"(expected 'adaptive_state.base_model' or 'model_state_dict').")
-    base = getattr(model, 'base_model', model)
-    base.load_state_dict(base_sd)
-    n_params = sum(q.numel() for q in base.parameters())
-    print(f"  [PretrainedBase] Loaded base weights from {ckpt_path} "
-          f"({n_params} params)")
+
+    if not saved_arch:
+        saved_arch = _infer_base_arch_from_state_dict(base_sd)
+        print(f"  [PretrainedBase] Checkpoint has no stored base_architecture; "
+              f"inferred {saved_arch} from weights.")
+
+    # Adopt the checkpoint's base architecture if it differs from the run's.
+    if list(saved_arch) != list(model.base_architecture):
+        from models.network_factory import create_network
+        _old = next(model.base_model.parameters())
+        device, dtype = _old.device, _old.dtype
+        activation = saved_activation or getattr(model, 'activation', cfg.get('activation'))
+        expert_type = saved_expert_type or cfg['adaptive_pinn'].get('expert_type', 'mlp')
+        print(f"  [PretrainedBase] Adopting checkpoint base architecture: "
+              f"{model.base_architecture} -> {list(saved_arch)}")
+        model.base_model = create_network(
+            list(saved_arch), activation, cfg, is_base=True, expert_type=expert_type
+        ).to(device=device, dtype=dtype)
+        model.base_architecture = list(saved_arch)
+        if hasattr(model, 'config_base_architecture'):
+            # Drives the architecture of experts spawned later (incl. parent_weights copy).
+            model.config_base_architecture = list(saved_arch)
+        cfg['base_architecture'] = list(saved_arch)
+        print(f"  [PretrainedBase] Updated config base_architecture to {list(saved_arch)} "
+              f"so spawned experts match the loaded base.")
+
+    model.base_model.load_state_dict(base_sd)
+    n_params = sum(q.numel() for q in model.base_model.parameters())
+    print(f"  [PretrainedBase] Loaded base weights from {ckpt_path} ({n_params} params)")
     # Re-sync AToE's batched container so the forward pass sees the loaded base.
     if hasattr(model, 'batched_models'):
         model.batched_models.sync_from_models(model.base_model, model.experts)
