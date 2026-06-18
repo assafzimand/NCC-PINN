@@ -52,8 +52,15 @@ Phase 1 produces a trained base network whose residuals drive the tree. Two mutu
 - Train for `initial_train.epochs`. `current_phase = 1`. **No early stopping in Phase 1.**
 
 ### 1b. `pretrained_base_checkpoint == <path>` — load the base
-- Load the checkpoint and copy its base weights into `model.base_model` (reuse the existing
-  `load_state_dict_extended` / `load_state_dict` paths that consume `_save_checkpoint`'s format).
+- `_load_pretrained_base(model, path, cfg)` loads the checkpoint with `weights_only=False` (trusted local
+  file) and copies **only the base** into `model.base_model`:
+  - adaptive/MoE checkpoint → uses `adaptive_state['base_model']` (its experts are ignored);
+  - plain base checkpoint → uses `model_state_dict`.
+- **Architecture adoption:** if the checkpoint's base architecture differs from the run's
+  `base_architecture`, the base is rebuilt to the checkpoint's architecture and that architecture is
+  written back into `cfg['base_architecture']` and `model.config_base_architecture`. This is required so
+  that experts spawned later — especially `init.hidden == 'parent_weights'`, which copies the parent's
+  layers — are shape-compatible with the loaded base.
 - **No Phase-1 training.** Force the spawn check to fire on the first loop epoch so the tree is built from
   the loaded base, then transition immediately to Phase 3.
 - `reinitialize_base_after_spawn` must be `false` (loading then reinitializing would discard the
