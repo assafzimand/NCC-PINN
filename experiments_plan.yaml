@@ -1,49 +1,48 @@
-# KdV Follow-up — Targeted Fix Experiments
+# PirateNet KdV Reproduction
+# Goal: faithfully reproduce the SOAP paper (arXiv:2502.00604) KdV result
+# (rel-L2 ~3.4e-4) using a vanilla PirateNet base (M=0 experts).
 #
-# Background: kdv_01_main revealed a trainer bug where Phase 3 optimizer is
-# NOT recreated for M_term_tree_by_norm spawning. The trainer.py fix (Step 6
-# in the plan) must be applied before running this file.
-#
-# Root cause of the 0.12 rel-L2 floor:
-#   Phase 1 end (epoch 10000): 0.1416 rel-L2
-#   Phase 3 first eval (epoch 11000): 0.5944 rel-L2 (+4×!)
-#   → Phase 3 ran with Phase 1's soap_betas=[0.95,0.95] and lr_decay_steps=500
-#     instead of the intended [0.99,0.999] and 1000.
-#
-# After the fix, Phase 3 starts correctly and should NOT spike.
-# All 7 experiments are single-variable ablations on top of the fixed baseline.
-#
-# Base: AToE M=10 [2,37,37,37,1] (Run A from kdv_01_main — best performer)
-# Phase 1: SOAP [0.95,0.95], 10k epochs (unchanged — was working correctly)
-# Phase 3: SOAP [0.99,0.999], 90k epochs, lr=0.001, exp decay 0.98/1000
-# Patience: stop if train loss flat for 10k epochs (after min 20k Phase 3 epochs)
+# Architecture:  PirateNet 3 blocks × 256 hidden units = 9 hidden layers
+#                base_architecture [2,256×9,1]
+# Optimizer:     SOAP, betas=[0.99,0.95], precondition_freq=2
+# LR schedule:   1e-3, exponential, decay_rate=0.9, decay_steps=2000,
+#                warmup=5000 steps (factor 0.01)
+# Epochs:        100 000 (Phase 1 only; M=0 so no tree spawn)
+# Batch:         full batch (batch_size >> dataset size → 1 step/epoch)
+# Features:      Periodic FF (dim=128, scale=2.0), RWF (mean=1.0,std=0.1),
+#                Causal-16 (tol=[1.0]), LRA grad_norm (alpha=0.1)
+# n_residual:    8192 (matches JaxPI), resampled every epoch (residual only)
+# Precision:     float32 (matches JaxPI)
+# BC loss:       auto-skipped because periodic FF is enabled (use_bc=False)
 
-experiment_name: "kdv_00_1"
+experiment_name: "piratenet_reproduce"
 
 base_config:
   problem: kdv
   model: AToE
   activation: tanh
-  precision: float64                    # override to float32 in fp32 experiment
+  precision: float32
 
-  # ── Phase 3: SOAP, 90k epochs ──────────────────────────────────────────────
-  epochs: 90000
-  batch_size: 99999
-  patience_epochs: 10000               # stop if 10k epochs without train-loss improvement
-  min_epochs: 20000                    # must run 20k Phase 3 epochs before patience applies
-  patience_rel_delta: 0.01            # min relative train-loss improvement to reset patience
+  # ── Optimizer (Phase 1 inherits these; Phase 3 unused because M=0) ─────────
+  # Paper Table 6: lr=1e-3, betas=[0.99,0.95], precondition_freq=2,
+  #               decay 0.9 every 2 000 steps, 5 000-step warmup.
+  epochs: 1                        # Phase 3 epochs (M=0 → never reaches Phase 3)
+  batch_size: 99999                # full-batch → 1 gradient step per epoch
+  patience_epochs: 999999
+  min_epochs: 1
+  patience_rel_delta: 0.01
 
   optimizer_1: soap
   optimizer_2: null
   optimizer_switch_epoch: 999999
-  lr: 0.001                            # override to 0.002 in lr_high experiment
-  soap_betas: [0.99, 0.999]
-  soap_precondition_frequency: 10
+  lr: 0.001
+  soap_betas: [0.99, 0.95]
+  soap_precondition_frequency: 2
   soap_weight_decay: 0.0
   lr_schedule: exponential
-  lr_decay_rate: 0.98
-  lr_decay_steps: 1000
-  lr_warmup_steps: 500
+  lr_decay_rate: 0.9
+  lr_decay_steps: 2000
+  lr_warmup_steps: 5000
   lr_warmup_start_factor: 0.01
 
   adam_betas: [0.9, 0.999]
@@ -70,10 +69,10 @@ base_config:
   seed: 42
 
   # ══════════════════════════════════════════════════════════════════════════
-  # KDV — same minimal features as kdv_01_main (RWF + FF, no causal, no LRA)
+  # KDV — full PirateNet feature set matching SOAP paper Table 6
   # ══════════════════════════════════════════════════════════════════════════
   kdv:
-    pretrained_base_checkpoint: null   # path to a base checkpoint to skip Phase-1 training; null = train Phase 1
+    pretrained_base_checkpoint: null
     spatial_dim: 1
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
@@ -85,36 +84,41 @@ base_config:
     loss_weights:
       residual: 1.0
       ic: 1.0
-      bc: 1.0
+      bc: 1.0    # bc term auto-skipped when periodic=true (use_bc guard)
+    # Causal training: 16 chunks, tolerance=[1.0] (JaxPI setting)
     causal_training:
-      enabled: false
+      enabled: true
       num_chunks: 16
-      tol_schedule: [0.01]
+      tol_schedule: [1.0]
       min_weight_threshold: 0.99
       per_leaf_causal: false
+    # RWF: mu=1.0, sigma=0.1 (JaxPI defaults, now correct init)
     rwf:
       enabled: true
       mean: 1.0
       std: 0.1
+    # Periodic FF: dim=128, scale=2.0 — enforces periodicity in architecture
     fourier_features:
       enabled: true
-      dim: 10
+      dim: 128
       scale: 2.0
-      periodic: false
+      periodic: true
     init:
-      hidden: glorot                   # override to 'parent_weights' in parent experiment
+      hidden: glorot
       output: default
       ls_use_bias: false
       spectral_norm: false
       spectral_norm_init_std: 1.0e-6
+    # LRA: grad_norm weighting, alpha=0.1, update every 1000 iters
     lra:
-      enabled: false
-      update_every: 1000
-      alpha: 0.1
-      scheme: grad_norm
-      epsilon: 1.0e-5
-    adaptive_sampling:
       enabled: true
+      scheme: grad_norm
+      alpha: 0.1
+      update_every: 1000
+      epsilon: 1.0e-5
+    # Adaptive sampling disabled (JaxPI uses uniform residual sampling)
+    adaptive_sampling:
+      enabled: false
       adaptive_ratio: 0.3
       per_leaf_sampling: false
       phi: quadratic
@@ -128,7 +132,7 @@ base_config:
       freeze_previous_windows: true
       m_distribution: quadratic
 
-  # ── Other problems (required by schema; not used) ──────────────────────
+  # ── Other problems (required by schema; not used in this run) ─────────────
   schrodinger:
     spatial_dim: 1
     output_dim: 2
@@ -138,10 +142,7 @@ base_config:
     new_norm_threshold: 2.0
     tree_smoothness_threshold: 0.7
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
-    rwf:
-      enabled: false
-      mean: 1.0
-      std: 0.1
+    rwf: {enabled: false, mean: 1.0, std: 0.1}
     fourier_features: {enabled: false, dim: 128, scale: 1.0, periodic: false}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
@@ -160,14 +161,11 @@ base_config:
     new_norm_threshold: 0.015
     tree_smoothness_threshold: 0.5
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
-    rwf:
-      enabled: false
-      mean: 1.0
-      std: 0.1
+    rwf: {enabled: false, mean: 1.0, std: 0.1}
     fourier_features: {enabled: false, dim: 128, scale: 1.0, periodic: false}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
-    adaptive_sampling: {enabled: true, adaptive_ratio: 0.5, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
+    adaptive_sampling: {enabled: false, adaptive_ratio: 0.3, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
     grad_clip_norm: null
     expert_grad_clip_norm: null
     time_marching: {enabled: false, num_windows: 5, freeze_previous_windows: true, m_distribution: quadratic}
@@ -183,10 +181,7 @@ base_config:
     tree_smoothness_threshold: 0.5
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
     causal_training: {enabled: false, num_chunks: 32, tol_schedule: [0.01, 0.1, 1.0], min_weight_threshold: 0.99}
-    rwf:
-      enabled: false
-      mean: 1.0
-      std: 0.1
+    rwf: {enabled: false, mean: 1.0, std: 0.1}
     fourier_features: {enabled: false, dim: 128, scale: 3.0, periodic: false}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
@@ -208,39 +203,39 @@ base_config:
     tree_smoothness_threshold: 0.3
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
     causal_training: {enabled: false, num_chunks: 32, tol_schedule: [0.01, 0.1, 1], min_weight_threshold: 0.99, per_leaf_causal: false}
-    rwf:
-      enabled: false
-      mean: 1.0
-      std: 0.1
+    rwf: {enabled: false, mean: 1.0, std: 0.1}
     fourier_features: {enabled: true, dim: 10, scale: 1.0, periodic: true}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
-    adaptive_sampling: {enabled: true, adaptive_ratio: 0.5, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
+    adaptive_sampling: {enabled: false, adaptive_ratio: 0.3, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
     grad_clip_norm: null
     expert_grad_clip_norm: null
-    time_marching: {enabled: true, num_windows: 20, freeze_previous_windows: true, m_distribution: equal}
+    time_marching: {enabled: false, num_windows: 20, freeze_previous_windows: true, m_distribution: equal}
 
-  # ── Dataset sampling ────────────────────────────────────────────────────
+  # ── Dataset sampling ────────────────────────────────────────────────────────
+  # n_residual_train overrides the hardcoded 10000 default.
+  # resample_every_epochs: 1 → lightweight residual-only resample each epoch.
   sampling:
+    n_residual_train: 8192         # JaxPI batch size; overrides hardcoded 10000
     sample_volume_ratio: 35
-    initial_train_ratio: 0.026
-    boundary_train_ratio: 0.026
+    initial_train_ratio: 0.026     # ~213 IC points
+    boundary_train_ratio: 0.026    # ~213 BC points (skipped in loss when periodic)
     eval_train_ratio: 0.25
     ncc_train_ratio: 0.25
-    resample_every_epochs: 500         # override to 100 in resample experiment
+    resample_every_epochs: 1       # new residual (x,t) every epoch (cheap)
     min_points_per_leaf: 50
 
-  # ── Adaptive PINN ────────────────────────────────────────────────────────
+  # ── Adaptive PINN: vanilla base (M=0 = no experts) ─────────────────────────
   adaptive_pinn:
     enabled: true
-    max_experts: 150
-    spawn_every_epochs: 10000
+    max_experts: 0
+    spawn_every_epochs: 999999     # effectively never spawn
     variable_for_node_accept: norm
     variable_for_expert_size: norm
     AToE_threshold_capacity: null
     ANT_threshold_architecture: null
-    ANT_default_hidden_layers: 29
-    expert_type: resnet
+    ANT_default_hidden_layers: 256
+    expert_type: piratenet         # future AToE experts will also be PirateNet
     blending_mode: soft
     sigma_fraction: 0.2
     base_weight: 0.3
@@ -254,117 +249,35 @@ base_config:
     expert_activation_threshold: 0
     relevant_samples_to_activate_expert: 0
     spawning_method: M_term_tree_by_norm
-    M_experts_num: 10
+    M_experts_num: 0               # vanilla PINN — no tree, no experts
     spawn_require_plateau: false
     spawn_plateau_epochs: 50
     spawn_plateau_delta: 0.05
     spawn_retries_before_stop: false
     spawn_retry_after: 10
-    reinitialize_base_after_spawn: false  # override to true in reinit experiments
+    reinitialize_base_after_spawn: false
 
-    # ── Phase 1: 10k epochs, SOAP [0.95,0.95] (working correctly) ──────────
+    # Phase 1: 100 000 SOAP steps (= paper's 1e5 iterations)
     initial_train:
-      epochs: 10000
+      epochs: 100000
       optimizer_1: soap
       optimizer_2: null
-      soap_betas: [0.95, 0.95]
+      soap_betas: [0.99, 0.95]
+      soap_precondition_frequency: 2
+      soap_weight_decay: 0.0
       lr: 0.001
       lr_schedule: exponential
-      lr_decay_rate: 0.98
-      lr_decay_steps: 500
-      lr_warmup_steps: 0
+      lr_decay_rate: 0.9
+      lr_decay_steps: 2000
+      lr_warmup_steps: 5000
+      lr_warmup_start_factor: 0.01
 
 
 experiments:
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 1: FIXED BASELINE
-  # Run A config (kdv_atoe_m10_soap from kdv_01_main) + trainer fix only.
-  # Expected: no spike at epoch 11000; Phase 3 starts at ~0.14 not 0.59.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_fixed
+  # Single run: vanilla PirateNet (M=0) matching SOAP paper Table 6 KdV setup.
+  # PirateNet 3 blocks × 256 hidden = 9 hidden layers = architecture below.
+  - name: piratenet_reproduce_kdv
     problem: kdv
     model: AToE
-    base_architecture: [2, 37, 37, 37, 1]
-
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 2: REINITIALIZE BASE AFTER SPAWN
-  # Hypothesis: Phase 1 may trap the base in a local minimum. Reinitializing
-  # before Phase 3 forces a fresh start with the expert structure already in
-  # place — experts provide structural bias while base relearns from scratch.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_reinit
-    problem: kdv
-    model: AToE
-    base_architecture: [2, 37, 37, 37, 1]
-    adaptive_pinn:
-      reinitialize_base_after_spawn: true
-
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 3: PARENT-WEIGHTS EXPERT INIT
-  # Experts copy hidden layers from base model at spawn (glorot → base weights),
-  # output layer stays zero. Experts start with the base's learned spatial
-  # representation and immediately learn meaningful residuals.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_parent
-    problem: kdv
-    model: AToE
-    base_architecture: [2, 37, 37, 37, 1]
-    kdv:
-      init:
-        hidden: parent_weights
-        output: default
-
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 4: FASTER RESAMPLING
-  # Adaptive sampling every 100 epochs (was 500). Collocation points track
-  # residual hotspots 5× more frequently — useful when Phase 3 loss landscape
-  # shifts quickly after the optimizer/spawn transition.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_resample
-    problem: kdv
-    model: AToE
-    base_architecture: [2, 37, 37, 37, 1]
-    sampling:
-      resample_every_epochs: 100
-
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 5: HIGHER LEARNING RATE
-  # lr=0.002 instead of 0.001. Tests if Phase 3 is limited by gradient step
-  # size rather than model capacity or local minima depth.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_lr_high
-    problem: kdv
-    model: AToE
-    base_architecture: [2, 37, 37, 37, 1]
-    lr: 0.002
-
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 6: FLOAT32 PRECISION
-  # 2× throughput at the cost of reduced numerical precision. KdV with
-  # third-order derivative h_xxx can amplify float32 errors — this test
-  # determines if float64 is strictly necessary.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_fp32
-    problem: kdv
-    model: AToE
-    base_architecture: [2, 37, 37, 37, 1]
-    precision: float32
-
-  # ══════════════════════════════════════════════════════════════════════════
-  # Experiment 7: COMBINED BEST
-  # All promising individual changes combined: reinit base, parent-weights
-  # expert init, faster resampling, higher LR. Expected best performer.
-  # ══════════════════════════════════════════════════════════════════════════
-  - name: kdv_00_1_best
-    problem: kdv
-    model: AToE
-    base_architecture: [2, 37, 37, 37, 1]
-    lr: 0.002
-    sampling:
-      resample_every_epochs: 100
-    kdv:
-      init:
-        hidden: parent_weights
-        output: default
-    adaptive_pinn:
-      reinitialize_base_after_spawn: true
+    # [2, 256×9, 1] → 3 PirateNet residual blocks of width 256
+    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]
