@@ -167,6 +167,8 @@ class PirateNet(nn.Module):
         use_rwf = _rwf['enabled']
         rwf_mean = _rwf.get('mean', 1.0)
         rwf_std = _rwf.get('std', 0.1)
+        self.rwf_mean = rwf_mean
+        self.rwf_std = rwf_std
         LinearCls = partial(RWFLinear, mean=rwf_mean, std=rwf_std) if use_rwf else nn.Linear
 
         self.activation = _get_activation(activation)
@@ -235,6 +237,18 @@ class PirateNet(nn.Module):
         self.activations = {}
         self.hook_handles = []
 
+    def debug_state(self):
+        """Return per-block alpha values and W1/W2/W3 weight L2-norms for diagnostics."""
+        alphas, wnorms = [], []
+        for blk in self.blocks:
+            alphas.append(blk.alpha.item())
+            wnorms.append([
+                blk.W1.weight.norm().item(),
+                blk.W2.weight.norm().item(),
+                blk.W3.weight.norm().item(),
+            ])
+        return {'alphas': alphas, 'block_w_norms': wnorms}
+
     def __repr__(self) -> str:
         ff_info = f"ff_out={self.ff_emb.output_dim}" if self.ff_emb else "no_ff"
         return (
@@ -244,6 +258,6 @@ class PirateNet(nn.Module):
             f"  hidden_dim: {self.hidden_dim}, n_blocks: {self.n_blocks}, "
             f"n_layers: {self.n_layers}\n"
             f"  {ff_info}, rwf={isinstance(self.input_proj, RWFLinear)}, "
-            f"rwf_mean={rwf_mean}, rwf_std={rwf_std}\n"
+            f"rwf_mean={self.rwf_mean}, rwf_std={self.rwf_std}\n"
             f")"
         )
