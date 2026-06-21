@@ -65,8 +65,8 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 1000
-  print_every: 1000
+  eval_every: 100
+  print_every: 100
   save_every: 10000
   inner_metrics_eval_every: 9999999
   seed: 42
@@ -92,7 +92,7 @@ base_config:
     causal_training:
       enabled: true
       num_chunks: 16
-      tol_schedule: [1.0]
+      tol_schedule: [0.001, 0.01, 0.1, 1.0]
       min_weight_threshold: 0.99
       per_leaf_causal: false
     # RWF: mu=1.0, sigma=0.1 (JaxPI defaults, now correct init)

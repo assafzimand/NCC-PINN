@@ -92,7 +92,7 @@ base_config:
     causal_training:
       enabled: true
       num_chunks: 16
-      tol_schedule: [1.0]
+      tol_schedule: [0.001, 0.01, 0.1, 1.0]
       min_weight_threshold: 0.99
       per_leaf_causal: false
     # RWF: mu=1.0, sigma=0.1 (JaxPI defaults, now correct init)
