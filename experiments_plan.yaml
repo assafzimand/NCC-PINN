@@ -263,7 +263,7 @@ base_config:
     # Phase 1: 20 000 SOAP steps (fast check; paper's full run is 1e5 iters)
     initial_train:
       epochs: 20000
-      optimizer_1: soap
+      optimizer_1: adam
       optimizer_2: null
       soap_betas: [0.99, 0.95]
       soap_precondition_frequency: 2
