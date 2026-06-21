@@ -97,7 +97,7 @@ base_config:
       per_leaf_causal: false
     # RWF: mu=1.0, sigma=0.1 (JaxPI defaults, now correct init)
     rwf:
-      enabled: true
+      enabled: false
       mean: 1.0
       std: 0.1
     # Periodic FF: dim=128, scale=2.0 — enforces periodicity in architecture
