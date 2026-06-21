@@ -14,7 +14,7 @@ Parameter counts for each bank entry (input_dim=2, output_dim=1, fourier_dim=64)
   - PirateNet:  UV-gated residual net with Fourier features (ff_out=128)
   - Pirate+RWF: PirateNet with RWF on input_proj, U/V projections, hidden layers
 
-  RWF overhead = n_hidden_layers × h  (one log_scale scalar per neuron per hidden layer)
+  RWF overhead = n_hidden_layers × h  (one scale scalar per neuron per hidden layer)
   PirateNet formula: 3×(128×h + h) + n_hidden×(h²+h) + h×1 + 1  [+ RWF overhead]
 
   MLP label  ->     MLP  MLP+RWF   ResNet  ResNet+RWF  PirateNet  Pirate+RWF  Architecture
