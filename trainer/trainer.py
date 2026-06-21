@@ -1401,6 +1401,50 @@ def train(
                     'grad_norms': {k: float(g.get(k, 0)) for k in w},
                 })
 
+            # DIAGNOSTIC: Full loss-term breakdown (raw → grad → weight → weighted-grad)
+            # Shows exactly what the optimizer sees, to diagnose why updates are tiny.
+            # ||sum|| << individual weighted grads ⇒ terms cancel (gradient conflict).
+            if cfg.get('debug_prints', False) and lra_weights is not None:
+                try:
+                    _dbg_batch = next(iter(train_loader))
+                    _dbg_params = [p for p in model.parameters() if p.requires_grad]
+                    _raw_comps = loss_fn(model, _dbg_batch, return_components=True)
+                    _w = lra_weights.weights
+                    _raw_vals, _raw_gn, _wtd_gn = {}, {}, {}
+                    _weighted_grad_flats = []
+                    for _k, _v in _raw_comps.items():
+                        _raw_vals[_k] = _v.item()
+                        if isinstance(_v, torch.Tensor) and _v.requires_grad:
+                            _grads = torch.autograd.grad(
+                                _v, _dbg_params, retain_graph=True, allow_unused=True)
+                            _flat = torch.cat([gg.flatten() for gg in _grads if gg is not None])
+                            _raw_gn[_k] = _flat.norm().item()
+                            _wk = _w.get(_k, 1.0)
+                            _wtd_gn[_k] = _wk * _raw_gn[_k]
+                            _weighted_grad_flats.append(_wk * _flat)
+                        else:
+                            _raw_gn[_k] = 0.0
+                            _wtd_gn[_k] = 0.0
+                    model.zero_grad(set_to_none=True)
+                    # Norm of the summed weighted gradient = actual update-direction magnitude
+                    _total_wg = 0.0
+                    if _weighted_grad_flats:
+                        _total_wg = torch.stack(_weighted_grad_flats, dim=0).sum(dim=0).norm().item()
+                    _keys = list(_raw_comps.keys())
+                    print("  [LossDiag] raw terms:      " +
+                          ', '.join(f'{k}={_raw_vals[k]:.4e}' for k in _keys))
+                    print("  [LossDiag] raw grad norms: " +
+                          ', '.join(f'{k}={_raw_gn[k]:.4e}' for k in _keys))
+                    print("  [LossDiag] LRA weights:    " +
+                          ', '.join(f'{k}={_w.get(k, 1.0):.4f}' for k in _keys))
+                    print("  [LossDiag] weighted terms: " +
+                          ', '.join(f'{k}={_w.get(k, 1.0) * _raw_vals[k]:.4e}' for k in _keys))
+                    print("  [LossDiag] weighted grads: " +
+                          ', '.join(f'{k}={_wtd_gn[k]:.4e}' for k in _keys) +
+                          f"  (||sum||={_total_wg:.4e})")
+                except Exception as _e:
+                    print(f"  [LossDiag] failed: {_e}")
+
             # DIAGNOSTIC: PirateNet alphas, causal chunks, LR
             if cfg.get('debug_prints', False):
                 # PirateNet alpha cold-start check

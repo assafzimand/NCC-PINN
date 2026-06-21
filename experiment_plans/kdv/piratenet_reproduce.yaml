@@ -118,7 +118,7 @@ base_config:
       scheme: grad_norm
       alpha: 0.1
       update_every: 1000
-      epsilon: 0.01
+      epsilon: 1.0e-5
     # Adaptive sampling disabled (JaxPI uses uniform residual sampling)
     adaptive_sampling:
       enabled: false
@@ -238,7 +238,7 @@ base_config:
     AToE_threshold_capacity: null
     ANT_threshold_architecture: null
     ANT_default_hidden_layers: 256
-    expert_type: piratenet         # future AToE experts will also be PirateNet
+    expert_type: resnet            # TEMP: resnet base to isolate PirateNet-specific bugs (revert to piratenet)
     blending_mode: soft
     sigma_fraction: 0.2
     base_weight: 0.3
