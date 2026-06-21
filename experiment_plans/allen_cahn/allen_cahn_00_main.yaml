@@ -285,12 +285,12 @@ experiments:
     adaptive_pinn:
       M_experts_num: 20
 
-  - name: allen_cahn_atoe_m30
-    problem: allen_cahn
-    model: AToE
-    base_architecture: [2, 29, 29, 29, 1]
-    adaptive_pinn:
-      M_experts_num: 30
+  # - name: allen_cahn_atoe_m30
+  #   problem: allen_cahn
+  #   model: AToE
+  #   base_architecture: [2, 29, 29, 29, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 30
 
   # ── AToELeaves ────────────────────────────────────────────────────────────
   - name: allen_cahn_leaves_m10
@@ -300,19 +300,19 @@ experiments:
     adaptive_pinn:
       M_experts_num: 10
 
-  - name: allen_cahn_leaves_m20
-    problem: allen_cahn
-    model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      M_experts_num: 20
+  # - name: allen_cahn_leaves_m20
+  #   problem: allen_cahn
+  #   model: AToELeaves
+  #   base_architecture: [2, 30, 30, 30, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 20
 
-  - name: allen_cahn_leaves_m30
-    problem: allen_cahn
-    model: AToELeaves
-    base_architecture: [2, 29, 29, 29, 1]
-    adaptive_pinn:
-      M_experts_num: 30
+  # - name: allen_cahn_leaves_m30
+  #   problem: allen_cahn
+  #   model: AToELeaves
+  #   base_architecture: [2, 29, 29, 29, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 30
 
   # ── ANT ───────────────────────────────────────────────────────────────────
   - name: allen_cahn_ant_m10
@@ -323,18 +323,18 @@ experiments:
       M_experts_num: 10
       ANT_default_hidden_layers: 29
 
-  - name: allen_cahn_ant_m20
-    problem: allen_cahn
-    model: ANT
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      M_experts_num: 20
-      ANT_default_hidden_layers: 29
+  # - name: allen_cahn_ant_m20
+  #   problem: allen_cahn
+  #   model: ANT
+  #   base_architecture: [2, 30, 30, 30, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 20
+  #     ANT_default_hidden_layers: 29
 
-  - name: allen_cahn_ant_m30
-    problem: allen_cahn
-    model: ANT
-    base_architecture: [2, 29, 29, 29, 1]
-    adaptive_pinn:
-      M_experts_num: 30
-      ANT_default_hidden_layers: 22
+  # - name: allen_cahn_ant_m30
+  #   problem: allen_cahn
+  #   model: ANT
+  #   base_architecture: [2, 29, 29, 29, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 30
+  #     ANT_default_hidden_layers: 22
