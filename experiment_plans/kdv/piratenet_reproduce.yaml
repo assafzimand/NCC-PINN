@@ -118,7 +118,7 @@ base_config:
       scheme: grad_norm
       alpha: 0.1
       update_every: 1000
-      epsilon: 1.0e-5
+      epsilon: 0.01
     # Adaptive sampling disabled (JaxPI uses uniform residual sampling)
     adaptive_sampling:
       enabled: false
