@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn as nn
+from functools import partial
 from typing import List, Dict, Optional
 from torch.utils.hooks import RemovableHandle
 from models.rwf_layer import RWFLinear
@@ -11,9 +12,10 @@ from models.fourier_features import FourierFeatureEmbedding, PeriodicSpatialFour
 class ResBlock(nn.Module):
     """Pre-activation residual block: x + act(Linear(act(Linear(x))))."""
 
-    def __init__(self, dim: int, activation: nn.Module, use_rwf: bool = False):
+    def __init__(self, dim: int, activation: nn.Module, LinearCls=None):
         super().__init__()
-        LinearCls = RWFLinear if use_rwf else nn.Linear
+        if LinearCls is None:
+            LinearCls = nn.Linear
         self.fc1 = LinearCls(dim, dim)
         self.fc2 = LinearCls(dim, dim)
         self.activation = activation
@@ -87,7 +89,11 @@ class ResNetModel(nn.Module):
 
         self.activation = self._get_activation(activation)
 
-        use_rwf = config['rwf']
+        # RWF — config['rwf'] is a dict {enabled, mean, std}
+        _rwf = config['rwf']
+        use_rwf = _rwf['enabled']
+        rwf_mean = _rwf.get('mean', 1.0)
+        rwf_std = _rwf.get('std', 0.1)
 
         # Fourier Features: embed input before input_proj
         ff_cfg = config['fourier_features']
@@ -99,21 +105,22 @@ class ResNetModel(nn.Module):
             ff_dim = ff_cfg['dim']
             ff_scale = ff_cfg['scale']
             if use_periodic:
-                L = problem_config['spatial_domain'][0][1]
+                _lo, _hi = problem_config['spatial_domain'][0]
+                L = _hi - _lo
                 self.ff_emb = PeriodicSpatialFourierEmbedding(spatial_dim, ff_dim, ff_scale, L)
             else:
                 self.ff_emb = FourierFeatureEmbedding(layers[0], ff_dim, ff_scale)
             effective_input_dim = self.ff_emb.output_dim
 
         h = hidden[0]
-        LinearCls = RWFLinear if use_rwf else nn.Linear
+        LinearCls = partial(RWFLinear, mean=rwf_mean, std=rwf_std) if use_rwf else nn.Linear
         self.input_proj = LinearCls(effective_input_dim, h)
 
         n_blocks = len(hidden) // 2
         has_leftover = len(hidden) % 2 == 1
 
         self.res_blocks = nn.ModuleList(
-            [ResBlock(h, self.activation, use_rwf=use_rwf) for _ in range(n_blocks)]
+            [ResBlock(h, self.activation, LinearCls=LinearCls) for _ in range(n_blocks)]
         )
         self.leftover = LinearCls(h, h) if has_leftover else None
 

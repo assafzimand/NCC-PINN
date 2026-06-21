@@ -42,9 +42,9 @@ def calculate_dataset_sizes(config: Dict) -> Dict[str, int]:
     # Calculate n_residual_train from: ratio = S^(1/d) / V^(1/d)
     # Solving: S = (ratio * V^(1/d))^d
     ratio = sampling['sample_volume_ratio']
-    # NOTE: We set the number of residual training samples to 20000 for faster testing
+    # Allow explicit override via sampling.n_residual_train; default 10000.
     # n_residual_train = int(round((ratio * (V ** (1/d))) ** d))
-    n_residual_train = 10000
+    n_residual_train = sampling.get('n_residual_train', 10000)
     # Calculate other sizes from ratios
     sizes = {
         'n_residual_train': n_residual_train,
@@ -802,6 +802,122 @@ def regenerate_training_data(
         "x": x, "t": t, "h_gt": h_gt,
         "mask": {"residual": mask_res, "IC": mask_ic, "BC": mask_bc},
     }
+
+
+def sample_residual_points(
+    config: Dict,
+    device: torch.device,
+    n_res: int,
+    cached_residuals: list = None,
+    run_dir=None,
+    epoch=None,
+    causal_state: dict = None,
+    leaf_info=None,
+    leaf_causal_states: dict = None,
+):
+    """Sample n_res residual (x, t) pairs.
+
+    Returns:
+        Tuple (x_res, t_res) each of shape (n_res, spatial_dim/1).
+    """
+    problem = config['problem']
+    pc = config[problem]
+    spatial_dim = pc['spatial_dim']
+    spatial_domain = pc['spatial_domain']
+    t_min, t_max = pc['temporal_domain']
+
+    problem_as = config.get(problem, {}).get('adaptive_sampling', {})
+    as_cfg = problem_as if problem_as else config['adaptive_sampling']
+    has_cache = cached_residuals is not None and len(cached_residuals) > 0
+    as_enabled = as_cfg['enabled'] and has_cache
+    as_ratio = as_cfg['adaptive_ratio']
+    per_leaf_sampling = as_cfg['per_leaf_sampling']
+    phi_cfg = {
+        'phi': as_cfg['phi'],
+        'phi_epsilon': as_cfg['phi_epsilon'],
+        'phi_power': as_cfg['phi_power'],
+    }
+
+    x_res = torch.zeros(n_res, spatial_dim, device=device)
+    t_res = torch.zeros(n_res, 1, device=device)
+    idx = 0
+
+    if as_enabled:
+        n_adaptive = int(n_res * as_ratio)
+        n_uniform = n_res - n_adaptive
+        for d in range(spatial_dim):
+            lo, hi = spatial_domain[d]
+            x_res[idx:idx + n_uniform, d] = (
+                torch.rand(n_uniform, device=device) * (hi - lo) + lo
+            )
+        t_res[idx:idx + n_uniform, 0] = (
+            torch.rand(n_uniform, device=device) * (t_max - t_min) + t_min
+        )
+        idx += n_uniform
+
+        if per_leaf_sampling and leaf_info is not None and len(leaf_info) > 0:
+            n_leaves = len(leaf_info)
+            _min_per_leaf = config['sampling']['min_points_per_leaf']
+            n_per_leaf_base = max(_min_per_leaf, max(1, n_adaptive // n_leaves))
+            x_parts, t_parts = [], []
+            for _leaf_i, (_region, _expert_idx) in enumerate(leaf_info):
+                n_this = (n_adaptive - n_per_leaf_base * (n_leaves - 1)
+                          if _leaf_i == n_leaves - 1 else n_per_leaf_base)
+                leaf_cached = _filter_cache_to_region(cached_residuals, _region)
+                if leaf_cached:
+                    x_leaf, t_leaf = _sample_adaptive_residual_points(
+                        leaf_cached, config, device, n_this, phi_cfg)
+                else:
+                    x_leaf, t_leaf = _uniform_in_region(
+                        _region, n_this, spatial_dim, device)
+                x_parts.append(x_leaf)
+                t_parts.append(t_leaf)
+            x_adap = torch.cat(x_parts, dim=0)[:n_adaptive]
+            t_adap = torch.cat(t_parts, dim=0)[:n_adaptive]
+        else:
+            x_adap, t_adap = _sample_adaptive_residual_points(
+                cached_residuals, config, device, n_adaptive, phi_cfg,
+                run_dir, epoch, causal_state=causal_state)
+        x_res[idx:idx + n_adaptive] = x_adap
+        t_res[idx:idx + n_adaptive] = t_adap
+    else:
+        for d in range(spatial_dim):
+            lo, hi = spatial_domain[d]
+            x_res[:, d] = torch.rand(n_res, device=device) * (hi - lo) + lo
+        t_res[:, 0] = torch.rand(n_res, device=device) * (t_max - t_min) + t_min
+
+    return x_res, t_res
+
+
+def resample_residual_inplace(
+    train_data: Dict,
+    config: Dict,
+    device: torch.device,
+    resample_seed: int = 0,
+    cached_residuals: list = None,
+    run_dir=None,
+    epoch=None,
+    causal_state: dict = None,
+    leaf_info=None,
+    leaf_causal_states: dict = None,
+) -> Dict:
+    """Update only the residual rows in train_data with freshly sampled points.
+
+    IC/BC coordinates and their h_gt values are left untouched.  This is the
+    cheap per-epoch resample path; the full regenerate_training_data() is still
+    used on initial build and after tree spawning.
+
+    Returns train_data (modified in-place) for convenience.
+    """
+    res_mask = train_data['mask']['residual']
+    n_res = int(res_mask.sum().item())
+    torch.manual_seed(resample_seed)
+    x_res, t_res = sample_residual_points(
+        config, device, n_res, cached_residuals,
+        run_dir, epoch, causal_state, leaf_info, leaf_causal_states)
+    train_data['x'][res_mask] = x_res
+    train_data['t'][res_mask] = t_res
+    return train_data
 
 
 def load_dataset(

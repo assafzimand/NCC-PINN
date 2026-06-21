@@ -74,7 +74,10 @@ base_config:
       residual: 1.0
       ic: 1.0
       bc: 1.0
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features:
       enabled: false
       dim: 10
@@ -116,7 +119,10 @@ base_config:
     new_norm_threshold: 2.0
     tree_smoothness_threshold: 0.7
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features: {enabled: false, dim: 128, scale: 1.0, periodic: false}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
@@ -136,7 +142,10 @@ base_config:
     tree_smoothness_threshold: 0.5
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
     causal_training: {enabled: false, num_chunks: 32, tol_schedule: [0.01, 0.1, 1.0], min_weight_threshold: 0.99}
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features: {enabled: false, dim: 128, scale: 3.0, periodic: false}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
@@ -156,7 +165,10 @@ base_config:
     tree_smoothness_threshold: 0.4
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
     causal_training: {enabled: false, num_chunks: 16, tol_schedule: [0.01], min_weight_threshold: 0.99, per_leaf_causal: false}
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features: {enabled: false, dim: 10, scale: 2.0, periodic: false}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 1000, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
@@ -178,7 +190,10 @@ base_config:
     tree_smoothness_threshold: 0.3
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
     causal_training: {enabled: false, num_chunks: 32, tol_schedule: [0.01, 0.1, 1], min_weight_threshold: 0.99, per_leaf_causal: false}
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features: {enabled: true, dim: 10, scale: 1.0, periodic: true}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}

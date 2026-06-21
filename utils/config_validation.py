@@ -21,6 +21,7 @@ REQUIRED_PROBLEM_FEATURES = [
 
 # Required nested keys within each feature
 REQUIRED_NESTED_KEYS = {
+    'rwf': ['enabled'],
     'fourier_features': ['enabled', 'dim', 'scale', 'periodic'],
     'init': ['hidden', 'output', 'ls_use_bias', 'spectral_norm'],
     'lra': ['enabled', 'update_every', 'alpha'],
@@ -70,7 +71,8 @@ def validate_problem_config(cfg: Dict[str, Any]) -> None:
             f"{chr(10).join(error_parts)}\n\n"
             f"All per-problem features must be explicitly specified.\n"
             f"Required keys: {REQUIRED_PROBLEM_FEATURES}\n"
-            f"Add missing keys to '{problem}' section in experiments_plan.yaml."
+            f"Add missing keys to '{problem}' section in your "
+            f"experiments_plan.yaml."
         )
 
 

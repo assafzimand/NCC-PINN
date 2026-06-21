@@ -16,7 +16,11 @@ from trainer.timing import EpochTimer
 from models.atoe import AToE
 from models.atoe_leaves import AToELeaves
 from models.ant import ANT
-from utils.dataset_gen import regenerate_training_data, _save_adaptive_sampling_heatmap
+from utils.dataset_gen import (
+    regenerate_training_data,
+    resample_residual_inplace,
+    _save_adaptive_sampling_heatmap,
+)
 from utils.dataset_plotting import save_spawn_prediction_plot
 from utils.config_validation import validate_problem_config
 from losses.causal_weighting import advance_causal_schedule, create_causal_state
@@ -892,8 +896,9 @@ def train(
                     leaf_info=_leaf_info_for_sampling,
                     leaf_causal_states=_leaf_causal_states_for_plot,
                 )
-            train_data = regenerate_training_data(
-                cfg, device, resample_seed=resample_seed,
+            train_data = resample_residual_inplace(
+                train_data, cfg, device,
+                resample_seed=resample_seed,
                 cached_residuals=cached_residuals,
                 run_dir=run_dir,
                 epoch=epoch,
@@ -901,8 +906,6 @@ def train(
                 leaf_info=_leaf_info_for_sampling,
                 leaf_causal_states=_leaf_causal_states_for_plot,
             )
-            # Override IC h_gt for time marching (windows 1+)
-            train_data = _override_ic_for_time_marching(train_data, cfg, device)
             torch.set_default_device(None)  # Reset device context after CUDA inference
             train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
             metrics['resample_events'].append({
