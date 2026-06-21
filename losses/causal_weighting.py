@@ -141,6 +141,13 @@ def _apply_causal_weights(
         batch_min = weights.min().item()
         causal_state['min_weight'] = min(
             causal_state['min_weight'], batch_min)
+        causal_state['last_weights'] = weights.detach().tolist()
+        causal_state['last_chunk_losses'] = chunk_losses_t.detach().tolist()
+        t_sorted = t_flat[sort_idx]
+        causal_state['last_chunk_tmax'] = [
+            t_sorted[min((i + 1) * chunk_size, N) - 1].item()
+            for i in range(num_chunks)
+        ]
 
     weighted = torch.sum(weights * chunk_losses_t) / num_chunks
     return weighted

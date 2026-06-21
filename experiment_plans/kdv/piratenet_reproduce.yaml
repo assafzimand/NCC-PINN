@@ -24,6 +24,7 @@ base_config:
   model: AToE
   activation: tanh
   precision: float32
+  debug_prints: true         # gate PirateNet alpha/causal-chunk/LR prints
 
   # ── Optimizer (Phase 1 inherits these; Phase 3 unused because M=0) ─────────
   # Paper Table 6: lr=1e-3, betas=[0.99,0.95], precondition_freq=2,

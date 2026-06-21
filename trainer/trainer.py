@@ -869,7 +869,6 @@ def train(
         allow_resample_optimizer = current_optimizer_name not in ('LBFGS', 'SSBroyden')
         if resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0 and allow_resample_optimizer:
             resample_seed = base_seed + epoch
-            print(f"  [Resample] Regenerating training data (epoch {epoch}, seed {resample_seed})...")
             cached_residuals = getattr(model, '_residual_cache', [])
             model._residual_cache_enabled = False
             _leaf_info_for_sampling = None
@@ -1332,6 +1331,45 @@ def train(
                     'weights': {k: float(v) for k, v in w.items()},
                     'grad_norms': {k: float(g.get(k, 0)) for k in w},
                 })
+
+            # DIAGNOSTIC: PirateNet alphas, causal chunks, LR
+            if cfg.get('debug_prints', False):
+                # PirateNet alpha cold-start check
+                _net = getattr(model, 'base_model', model)
+                if hasattr(_net, 'debug_state'):
+                    _ds = _net.debug_state()
+                    _alphas_str = ', '.join(
+                        f'{a:.4f}' for a in _ds['alphas'])
+                    _wn0 = (
+                        _ds['block_w_norms'][0]
+                        if _ds['block_w_norms'] else []
+                    )
+                    _wn0_str = '/'.join(f'{w:.3f}' for w in _wn0)
+                    print(
+                        f"  [PirateNet] alphas=[{_alphas_str}] | "
+                        f"W-norms(block0)=[{_wn0_str}]"
+                    )
+
+                # Per-chunk causal breakdown
+                _cs = causal_state
+                if _cs is not None and 'last_weights' in _cs:
+                    _w_str = ', '.join(
+                        f'{w:.3f}' for w in _cs['last_weights'])
+                    _cl_str = ', '.join(
+                        f'{cl:.2e}'
+                        for cl in _cs['last_chunk_losses']
+                    )
+                    _t_str = ', '.join(
+                        f'{t:.3f}' for t in _cs['last_chunk_tmax'])
+                    print(f"  [CausalChunks] w=[{_w_str}]")
+                    print(f"  [CausalChunks] L=[{_cl_str}]")
+                    print(f"  [CausalChunks] tmax=[{_t_str}]")
+
+                # LR schedule sanity check
+                _cur_lr = optimizer.param_groups[0]['lr']
+                print(
+                    f"  [LR] lr={_cur_lr:.2e} | step={step_count}"
+                )
 
             # DIAGNOSTIC: Unweighted loss component breakdown
             # Compute on a sample eval batch
