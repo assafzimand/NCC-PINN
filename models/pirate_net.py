@@ -39,6 +39,7 @@ ls_init is read from config.get('piratenet', {}).get('ls_init', False).
 
 import torch
 import torch.nn as nn
+from functools import partial
 from typing import List, Dict
 from models.rwf_layer import RWFLinear
 from models.fourier_features import FourierFeatureEmbedding, PeriodicSpatialFourierEmbedding
@@ -151,7 +152,8 @@ class PirateNet(nn.Module):
             ff_dim = ff_cfg['dim']
             ff_scale = ff_cfg['scale']
             if use_periodic:
-                L = problem_config['spatial_domain'][0][1]
+                _lo, _hi = problem_config['spatial_domain'][0]
+                L = _hi - _lo
                 self.ff_emb = PeriodicSpatialFourierEmbedding(spatial_dim, ff_dim, ff_scale, L)
             else:
                 self.ff_emb = FourierFeatureEmbedding(input_dim, ff_dim, ff_scale)
@@ -160,9 +162,12 @@ class PirateNet(nn.Module):
             self.ff_emb = None
             ff_out = input_dim
 
-        # RWF
-        use_rwf = config['rwf']
-        LinearCls = RWFLinear if use_rwf else nn.Linear
+        # RWF — config['rwf'] is a dict {enabled, mean, std}
+        _rwf = config['rwf']
+        use_rwf = _rwf['enabled']
+        rwf_mean = _rwf.get('mean', 1.0)
+        rwf_std = _rwf.get('std', 0.1)
+        LinearCls = partial(RWFLinear, mean=rwf_mean, std=rwf_std) if use_rwf else nn.Linear
 
         self.activation = _get_activation(activation)
 
@@ -238,6 +243,7 @@ class PirateNet(nn.Module):
             f"  activation: {self.activation_name}\n"
             f"  hidden_dim: {self.hidden_dim}, n_blocks: {self.n_blocks}, "
             f"n_layers: {self.n_layers}\n"
-            f"  {ff_info}, rwf={isinstance(self.input_proj, RWFLinear)}\n"
+            f"  {ff_info}, rwf={isinstance(self.input_proj, RWFLinear)}, "
+            f"rwf_mean={rwf_mean}, rwf_std={rwf_std}\n"
             f")"
         )

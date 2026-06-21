@@ -84,7 +84,10 @@ base_config:
       ic: 1.0
       bc: 1.0
     # ── Per-problem features (no global defaults) ──
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features:
       enabled: false
       dim: 128
@@ -130,7 +133,10 @@ base_config:
       ic: 1.0
       bc: 1.0
     # ── Per-problem features (no global defaults) ──
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features:
       enabled: false
       dim: 128
@@ -178,7 +184,10 @@ base_config:
       ic: 1.0
       bc: 1.0
     # ── Per-problem features (no global defaults) ──
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features:
       enabled: false
       dim: 128
@@ -224,7 +233,10 @@ base_config:
       ic: 1.0
       bc: 1.0
     # ── Per-problem features (no global defaults) ──
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features:
       enabled: false
       dim: 128
@@ -276,7 +288,10 @@ base_config:
       tol_schedule: [0.01, 0.1, 1.0]
       min_weight_threshold: 0.99
     # ── Per-problem features (Kiyani: all disabled for vanilla PINN) ──
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features:
       enabled: false
       dim: 128
@@ -328,7 +343,10 @@ base_config:
       tol_schedule: [0.1, 1.0, 10.0]
       min_weight_threshold: 0.99
     # ── Per-problem features (no global defaults) ──
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features:
       enabled: false
       dim: 128
@@ -374,7 +392,10 @@ base_config:
       ic: 1.0
       bc: 1.0
     # ── Per-problem features (no global defaults) ──
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features:
       enabled: false
       dim: 128
@@ -422,7 +443,10 @@ base_config:
       ic: 1.0
       bc: 1.0
     # ── Per-problem features (no global defaults) ──
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features:
       enabled: false
       dim: 128
@@ -471,7 +495,10 @@ base_config:
       min_weight_threshold: 0.99
       per_leaf_causal: false
     # ── Per-problem features (Kiyani: Fourier M=10, RAD enabled) ──
-    rwf: false
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features:
       enabled: true
       dim: 10                        # Kiyani: M=10 Fourier modes (input dim = 1 + 2*10 = 21)

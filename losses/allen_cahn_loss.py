@@ -195,6 +195,10 @@ def build_loss(**cfg):
     weight_bc = loss_weights['bc']
     D = problem_config['D']
 
+    # Disable soft BC penalty when periodic Fourier embedding is used — BC is
+    # enforced exactly by the embedding so the MSE term is redundant noise.
+    use_bc = not cfg['fourier_features']['periodic']
+
     causal_state = create_causal_state(problem_config)
 
     def loss_fn(model, batch, for_tree_spawning=False, return_components=False, update_causal_state=True):
@@ -270,8 +274,9 @@ def build_loss(**cfg):
         # ============================================================
         # MSE_b: Boundary Condition Loss (Periodic)
         # h(-1,t) = h(1,t) and h_x(-1,t) = h_x(1,t)
+        # Skipped when periodic Fourier embedding is active (use_bc=False).
         # ============================================================
-        if masks['BC'].sum() > 0:
+        if use_bc and masks['BC'].sum() > 0:
             x_b = x[masks['BC']].contiguous()
             t_b = t[masks['BC']].contiguous()
 
@@ -375,9 +380,15 @@ def build_loss(**cfg):
         if for_tree_spawning:
             return {'residual': residual_per_sample, 'ic': ic_per_sample, 'bc': bc_per_sample}
         elif return_components:
-            return {'residual': mse_residual, 'ic': mse_ic, 'bc': mse_bc}
+            comps = {'residual': mse_residual, 'ic': mse_ic}
+            if use_bc:
+                comps['bc'] = mse_bc
+            return comps
         else:
-            return weight_residual * mse_residual + weight_ic * mse_ic + weight_bc * mse_bc
+            total_loss = weight_residual * mse_residual + weight_ic * mse_ic
+            if use_bc:
+                total_loss = total_loss + weight_bc * mse_bc
+            return total_loss
 
     loss_fn.causal_state = causal_state
     return loss_fn
