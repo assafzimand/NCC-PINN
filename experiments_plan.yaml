@@ -247,7 +247,7 @@ base_config:
     tree_min_samples_leaf: 50
     enable_timing: false
     inner_metrics_calculation: false
-    enable_gradient_diagnostics: false
+    enable_gradient_diagnostics: true
     use_decomposed_derivatives: false
     expert_activation_threshold: 0
     relevant_samples_to_activate_expert: 0
