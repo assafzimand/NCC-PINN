@@ -7,7 +7,9 @@
 # Optimizer:     SOAP, betas=[0.99,0.95], precondition_freq=2
 # LR schedule:   1e-3, exponential, decay_rate=0.9, decay_steps=2000,
 #                warmup=5000 steps (factor 0.01)
-# Epochs:        100 000 (Phase 1 only; M=0 so no tree spawn)
+# Epochs:        20 000 (Phase 1 only; M=0 so no tree spawn)
+#                paper notes SOAP reaches ~1e-4 within first ~10k iters,
+#                so 20k is a fast faithfulness check (full result uses 1e5)
 # Batch:         full batch (batch_size >> dataset size → 1 step/epoch)
 # Features:      Periodic FF (dim=128, scale=2.0), RWF (mean=1.0,std=0.1),
 #                Causal-16 (tol=[1.0]), LRA grad_norm (alpha=0.1)
@@ -257,9 +259,9 @@ base_config:
     spawn_retry_after: 10
     reinitialize_base_after_spawn: false
 
-    # Phase 1: 100 000 SOAP steps (= paper's 1e5 iterations)
+    # Phase 1: 20 000 SOAP steps (fast check; paper's full run is 1e5 iters)
     initial_train:
-      epochs: 100000
+      epochs: 20000
       optimizer_1: soap
       optimizer_2: null
       soap_betas: [0.99, 0.95]
