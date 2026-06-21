@@ -1,51 +1,44 @@
-# PirateNet KdV Reproduction
-# Goal: faithfully reproduce the SOAP paper (arXiv:2502.00604) KdV result
-# (rel-L2 ~3.4e-4) using a vanilla PirateNet base (M=0 experts).
+# Allen-Cahn Primary PAFA Experiments (clean Kiyani recipe)
+# Goal: 3 variants × 3 M values = 9 runs. Single optimizer (Kiyani Adam→SSBroyden).
+# Purpose: select the best (variant, M). Winner feeds allen_cahn_01_training.yaml.
 #
-# Architecture:  PirateNet 3 blocks × 256 hidden units = 9 hidden layers
-#                base_architecture [2,256×9,1]
-# Optimizer:     SOAP, betas=[0.99,0.95], precondition_freq=2
-# LR schedule:   1e-3, exponential, decay_rate=0.9, decay_steps=2000,
-#                warmup=5000 steps (factor 0.01)
-# Epochs:        20 000 (Phase 1 only; M=0 so no tree spawn)
-#                paper notes SOAP reaches ~1e-4 within first ~10k iters,
-#                so 20k is a fast faithfulness check (full result uses 1e5)
-# Batch:         full batch (batch_size >> dataset size → 1 step/epoch)
-# Features:      Periodic FF (dim=128, scale=2.0), RWF (mean=1.0,std=0.1),
-#                Causal-16 (tol=[1.0]), LRA grad_norm (alpha=0.1)
-# n_residual:    8192 (matches JaxPI), resampled every epoch (residual only)
-# Precision:     float32 (matches JaxPI)
-# BC loss:       auto-skipped because periodic FF is enabled (use_bc=False)
+# Training recipe = Kiyani reproduction (arXiv:2501.16371). Our verified-good vanilla PINN
+# run reached 9.8e-5 rel-L2 with [2,30,30,30,1]:
+#   adam(5k) → ssbroyden, lr=0.005, lr_schedule exponential (0.98/1000), float64.
+# Wrapped in PAFA 3-phase: short Phase 1 (10k) base pretrain → spawn M → full Phase 3 (35k).
+#
+# Clean config: NO extra features (rwf off, fourier off, adaptive_sampling off, causal off).
+# Those are evaluated in allen_cahn_01_training.yaml.
+#
+# Architecture sizing (param-balanced, 3 hidden layers, mirrors kdv_01_main):
+#   M=10, [2,37,37,37,1]   M=20, [2,30,30,30,1]   M=30, [2,29,29,29,1]
 
-experiment_name: "piratenet_reproduce"
+experiment_name: "allen_cahn_00_main"
 
 base_config:
-  problem: kdv
-  model: AToE
+  problem: allen_cahn
+  model: AToE                          # overridden per experiment
   activation: tanh
-  precision: float32
-  debug_prints: true         # gate PirateNet alpha/causal-chunk/LR prints
+  precision: float64
 
-  # ── Optimizer (Phase 1 inherits these; Phase 3 unused because M=0) ─────────
-  # Paper Table 6: lr=1e-3, betas=[0.99,0.95], precondition_freq=2,
-  #               decay 0.9 every 2 000 steps, 5 000-step warmup.
-  epochs: 1                        # Phase 3 epochs (M=0 → never reaches Phase 3)
-  batch_size: 99999                # full-batch → 1 gradient step per epoch
+  # ── Phase 3: full Kiyani schedule — adam(5k) → ssbroyden(30k) = 35k ──────────
+  epochs: 35000
+  batch_size: 99999
   patience_epochs: 999999
   min_epochs: 1
-  patience_rel_delta: 0.01
+  patience_rel_delta: 0.01            # min relative train-loss improvement to reset patience
 
-  optimizer_1: soap
-  optimizer_2: null
-  optimizer_switch_epoch: 999999
-  lr: 0.001
-  soap_betas: [0.99, 0.95]
-  soap_precondition_frequency: 2
+  optimizer_1: adam
+  optimizer_2: ssbroyden
+  optimizer_switch_epoch: 5000
+  lr: 0.005
+  soap_betas: [0.95, 0.95]
+  soap_precondition_frequency: 10
   soap_weight_decay: 0.0
   lr_schedule: exponential
-  lr_decay_rate: 0.9
-  lr_decay_steps: 2000
-  lr_warmup_steps: 5000
+  lr_decay_rate: 0.98
+  lr_decay_steps: 1000
+  lr_warmup_steps: 0
   lr_warmup_start_factor: 0.01
 
   adam_betas: [0.9, 0.999]
@@ -65,63 +58,57 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 100
-  print_every: 100
-  save_every: 10000
+  eval_every: 1000
+  print_every: 1000
+  save_every: 5000
   inner_metrics_eval_every: 9999999
   seed: 42
 
   # ══════════════════════════════════════════════════════════════════════════
-  # KDV — full PirateNet feature set matching SOAP paper Table 6
+  # ALLEN_CAHN — clean Kiyani config (no extra features)
   # ══════════════════════════════════════════════════════════════════════════
-  kdv:
-    pretrained_base_checkpoint: null
+  allen_cahn:
+    pretrained_base_checkpoint: null   # path to a base checkpoint to skip Phase-1 training; null = train Phase 1
     spatial_dim: 1
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
-    mu: 0.022
-    wavelet_threshold: 0.0025
-    new_norm_threshold: 0.2
-    tree_smoothness_threshold: 0.4
+    D: 0.0001
+    wavelet_threshold: 0.002
+    new_norm_threshold: 0.04
+    tree_smoothness_threshold: 0.5
     loss_weights:
       residual: 1.0
       ic: 1.0
-      bc: 1.0    # bc term auto-skipped when periodic=true (use_bc guard)
-    # Causal training: 16 chunks, tolerance=[1.0] (JaxPI setting)
+      bc: 1.0
     causal_training:
-      enabled: true
-      num_chunks: 16
-      tol_schedule: [0.001, 0.01, 0.1, 1.0]
+      enabled: false
+      num_chunks: 32
+      tol_schedule: [0.01, 0.1, 1.0]
       min_weight_threshold: 0.99
-      per_leaf_causal: false
-    # RWF: mu=1.0, sigma=0.1 (JaxPI defaults, now correct init)
     rwf:
       enabled: false
       mean: 1.0
       std: 0.1
-    # Periodic FF: dim=128, scale=2.0 — enforces periodicity in architecture
     fourier_features:
-      enabled: true
-      dim: 128
-      scale: 2.0
-      periodic: true
+      enabled: false
+      dim: 10
+      scale: 3.0
+      periodic: false
     init:
       hidden: glorot
       output: default
       ls_use_bias: false
       spectral_norm: false
       spectral_norm_init_std: 1.0e-6
-    # LRA: grad_norm weighting, alpha=0.1, update every 1000 iters
     lra:
-      enabled: true
-      scheme: grad_norm
-      alpha: 0.1
-      update_every: 1000
-      epsilon: 1.0e-5
-    # Adaptive sampling disabled (JaxPI uses uniform residual sampling)
-    adaptive_sampling:
       enabled: false
+      update_every: 100
+      alpha: 0.1
+      scheme: grad_norm
+      epsilon: 1.0e-5
+    adaptive_sampling:
+      enabled: false                   # CLEAN: off in 00; evaluated in 01_training
       adaptive_ratio: 0.3
       per_leaf_sampling: false
       phi: quadratic
@@ -135,7 +122,7 @@ base_config:
       freeze_previous_windows: true
       m_distribution: quadratic
 
-  # ── Other problems (required by schema; not used in this run) ─────────────
+  # ── Other problems (required by schema; not used) ──────────────────────────
   schrodinger:
     spatial_dim: 1
     output_dim: 2
@@ -145,7 +132,10 @@ base_config:
     new_norm_threshold: 2.0
     tree_smoothness_threshold: 0.7
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
-    rwf: {enabled: false, mean: 1.0, std: 0.1}
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features: {enabled: false, dim: 128, scale: 1.0, periodic: false}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
@@ -164,30 +154,36 @@ base_config:
     new_norm_threshold: 0.015
     tree_smoothness_threshold: 0.5
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
-    rwf: {enabled: false, mean: 1.0, std: 0.1}
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features: {enabled: false, dim: 128, scale: 1.0, periodic: false}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
-    adaptive_sampling: {enabled: false, adaptive_ratio: 0.3, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
+    adaptive_sampling: {enabled: false, adaptive_ratio: 0.5, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
     grad_clip_norm: null
     expert_grad_clip_norm: null
     time_marching: {enabled: false, num_windows: 5, freeze_previous_windows: true, m_distribution: quadratic}
 
-  allen_cahn:
+  kdv:
     spatial_dim: 1
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
     temporal_domain: [0.0, 1.0]
-    D: 0.0001
-    wavelet_threshold: 0.002
-    new_norm_threshold: 0.04
-    tree_smoothness_threshold: 0.5
+    mu: 0.022
+    wavelet_threshold: 0.0025
+    new_norm_threshold: 0.2
+    tree_smoothness_threshold: 0.4
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
-    causal_training: {enabled: false, num_chunks: 32, tol_schedule: [0.01, 0.1, 1.0], min_weight_threshold: 0.99}
-    rwf: {enabled: false, mean: 1.0, std: 0.1}
-    fourier_features: {enabled: false, dim: 128, scale: 3.0, periodic: false}
+    causal_training: {enabled: false, num_chunks: 16, tol_schedule: [0.01], min_weight_threshold: 0.99, per_leaf_causal: false}
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
+    fourier_features: {enabled: false, dim: 10, scale: 2.0, periodic: false}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
-    lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
+    lra: {enabled: false, update_every: 1000, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
     adaptive_sampling: {enabled: false, adaptive_ratio: 0.3, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
     grad_clip_norm: null
     expert_grad_clip_norm: null
@@ -206,39 +202,39 @@ base_config:
     tree_smoothness_threshold: 0.3
     loss_weights: {residual: 1.0, ic: 1.0, bc: 1.0}
     causal_training: {enabled: false, num_chunks: 32, tol_schedule: [0.01, 0.1, 1], min_weight_threshold: 0.99, per_leaf_causal: false}
-    rwf: {enabled: false, mean: 1.0, std: 0.1}
+    rwf:
+      enabled: false
+      mean: 1.0
+      std: 0.1
     fourier_features: {enabled: true, dim: 10, scale: 1.0, periodic: true}
     init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
-    adaptive_sampling: {enabled: false, adaptive_ratio: 0.3, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
+    adaptive_sampling: {enabled: true, adaptive_ratio: 0.5, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
     grad_clip_norm: null
     expert_grad_clip_norm: null
-    time_marching: {enabled: false, num_windows: 20, freeze_previous_windows: true, m_distribution: equal}
+    time_marching: {enabled: true, num_windows: 20, freeze_previous_windows: true, m_distribution: equal}
 
-  # ── Dataset sampling ────────────────────────────────────────────────────────
-  # n_residual_train overrides the hardcoded 10000 default.
-  # resample_every_epochs: 1 → lightweight residual-only resample each epoch.
+  # ── Dataset sampling ───────────────────────────────────────────────────────
   sampling:
-    n_residual_train: 8192         # JaxPI batch size; overrides hardcoded 10000
     sample_volume_ratio: 35
-    initial_train_ratio: 0.026     # ~213 IC points
-    boundary_train_ratio: 0.026    # ~213 BC points (skipped in loss when periodic)
+    initial_train_ratio: 0.026
+    boundary_train_ratio: 0.026
     eval_train_ratio: 0.25
     ncc_train_ratio: 0.25
-    resample_every_epochs: 1       # new residual (x,t) every epoch (cheap)
+    resample_every_epochs: 500
     min_points_per_leaf: 50
 
-  # ── Adaptive PINN: vanilla base (M=0 = no experts) ─────────────────────────
+  # ── Adaptive PINN ──────────────────────────────────────────────────────────
   adaptive_pinn:
     enabled: true
-    max_experts: 0
-    spawn_every_epochs: 999999     # effectively never spawn
+    max_experts: 150
+    spawn_every_epochs: 10000          # matches initial_train.epochs (Phase 1)
     variable_for_node_accept: norm
     variable_for_expert_size: norm
     AToE_threshold_capacity: null
     ANT_threshold_architecture: null
-    ANT_default_hidden_layers: 256
-    expert_type: piratenet            # TEMP: resnet base to isolate PirateNet-specific bugs (revert to piratenet)
+    ANT_default_hidden_layers: 29      # for M=10/20; ANT M=30 overrides to 22
+    expert_type: mlp                   # Kiyani-exact (resnet evaluated in 01_training)
     blending_mode: soft
     sigma_fraction: 0.2
     base_weight: 0.3
@@ -247,12 +243,12 @@ base_config:
     tree_min_samples_leaf: 50
     enable_timing: false
     inner_metrics_calculation: false
-    enable_gradient_diagnostics: true
+    enable_gradient_diagnostics: false
     use_decomposed_derivatives: false
     expert_activation_threshold: 0
     relevant_samples_to_activate_expert: 0
     spawning_method: M_term_tree_by_norm
-    M_experts_num: 0               # vanilla PINN — no tree, no experts
+    M_experts_num: 10                  # overridden per experiment
     spawn_require_plateau: false
     spawn_plateau_epochs: 50
     spawn_plateau_delta: 0.05
@@ -260,27 +256,85 @@ base_config:
     spawn_retry_after: 10
     reinitialize_base_after_spawn: false
 
-    # Phase 1: 20 000 SOAP steps (fast check; paper's full run is 1e5 iters)
+    # ── Phase 1: short base pretrain — adam(5k) → ssbroyden(5k) = 10k ─────────
     initial_train:
-      epochs: 20000
-      optimizer_1: soap
-      optimizer_2: null
-      soap_betas: [0.99, 0.95]
-      soap_precondition_frequency: 2
-      soap_weight_decay: 0.0
-      lr: 0.001
+      epochs: 10000
+      optimizer_1: adam
+      optimizer_2: ssbroyden
+      optimizer_switch_epoch: 5000
+      lr: 0.005
       lr_schedule: exponential
-      lr_decay_rate: 0.9
-      lr_decay_steps: 2000
-      lr_warmup_steps: 5000
-      lr_warmup_start_factor: 0.01
+      lr_decay_rate: 0.98
+      lr_decay_steps: 1000
+      lr_warmup_steps: 0
 
 
 experiments:
-  # Single run: vanilla PirateNet (M=0) matching SOAP paper Table 6 KdV setup.
-  # PirateNet 3 blocks × 256 hidden = 9 hidden layers = architecture below.
-  - name: piratenet_reproduce_kdv
-    problem: kdv
+  # ── AToE ──────────────────────────────────────────────────────────────────
+  - name: allen_cahn_atoe_m10
+    problem: allen_cahn
     model: AToE
-    # [2, 256×9, 1] → 3 PirateNet residual blocks of width 256
-    base_architecture: [2, 256, 256, 256, 256, 256, 256, 256, 256, 256, 1]
+    base_architecture: [2, 37, 37, 37, 1]
+    adaptive_pinn:
+      M_experts_num: 10
+
+  - name: allen_cahn_atoe_m20
+    problem: allen_cahn
+    model: AToE
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      M_experts_num: 20
+
+  # - name: allen_cahn_atoe_m30
+  #   problem: allen_cahn
+  #   model: AToE
+  #   base_architecture: [2, 29, 29, 29, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 30
+
+  # ── AToELeaves ────────────────────────────────────────────────────────────
+  - name: allen_cahn_leaves_m10
+    problem: allen_cahn
+    model: AToELeaves
+    base_architecture: [2, 37, 37, 37, 1]
+    adaptive_pinn:
+      M_experts_num: 10
+
+  # - name: allen_cahn_leaves_m20
+  #   problem: allen_cahn
+  #   model: AToELeaves
+  #   base_architecture: [2, 30, 30, 30, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 20
+
+  # - name: allen_cahn_leaves_m30
+  #   problem: allen_cahn
+  #   model: AToELeaves
+  #   base_architecture: [2, 29, 29, 29, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 30
+
+  # ── ANT ───────────────────────────────────────────────────────────────────
+  - name: allen_cahn_ant_m10
+    problem: allen_cahn
+    model: ANT
+    base_architecture: [2, 37, 37, 37, 1]
+    adaptive_pinn:
+      M_experts_num: 10
+      ANT_default_hidden_layers: 29
+
+  # - name: allen_cahn_ant_m20
+  #   problem: allen_cahn
+  #   model: ANT
+  #   base_architecture: [2, 30, 30, 30, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 20
+  #     ANT_default_hidden_layers: 29
+
+  # - name: allen_cahn_ant_m30
+  #   problem: allen_cahn
+  #   model: ANT
+  #   base_architecture: [2, 29, 29, 29, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 30
+  #     ANT_default_hidden_layers: 22
