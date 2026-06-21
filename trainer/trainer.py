@@ -948,6 +948,43 @@ def train(
                 loss.backward()
                 timer.stop('train.backward')
 
+                # DIAGNOSTIC: Gradient flow analysis (gated by debug_prints, every 100 epochs)
+                if cfg.get('debug_prints', False) and n_train_batches == 0 and epoch % 100 == 0:
+                    _net = getattr(model, 'base_model', model)
+                    
+                    # Alpha gradients (PirateNet specific)
+                    _alpha_grads = []
+                    _alpha_vals = []
+                    for name, param in _net.named_parameters():
+                        if 'alpha' in name and param.grad is not None:
+                            _alpha_grads.append((name, param.grad.norm().item(), param.item()))
+                            _alpha_vals.append(param.item())
+                    if _alpha_grads:
+                        _ag_str = ', '.join(f'{g:.2e}' for _, g, _ in _alpha_grads)
+                        print(f"  [GradDiag] alpha grads: [{_ag_str}]")
+                    
+                    # Per-layer gradient norms (top 5 smallest non-zero)
+                    _layer_grads = []
+                    for name, param in _net.named_parameters():
+                        if param.grad is not None:
+                            _gn = param.grad.norm().item()
+                            if _gn > 0:
+                                _layer_grads.append((name, _gn, param.data.norm().item()))
+                    if _layer_grads:
+                        _layer_grads.sort(key=lambda x: x[1])  # sort by grad norm
+                        _smallest = _layer_grads[:3]
+                        _largest = _layer_grads[-3:]
+                        _sm_str = ', '.join(f'{n.split(".")[-1]}={g:.2e}' for n, g, _ in _smallest)
+                        _lg_str = ', '.join(f'{n.split(".")[-1]}={g:.2e}' for n, g, _ in _largest)
+                        print(f"  [GradDiag] smallest grads: [{_sm_str}]")
+                        print(f"  [GradDiag] largest grads: [{_lg_str}]")
+                        
+                        # Gradient/weight ratio (indicates update magnitude)
+                        _ratios = [(n, g/w if w > 0 else 0) for n, g, w in _layer_grads]
+                        _ratios.sort(key=lambda x: x[1])
+                        _ratio_str = ', '.join(f'{n.split(".")[-1]}={r:.2e}' for n, r in _ratios[:3])
+                        print(f"  [GradDiag] grad/weight ratios (smallest): [{_ratio_str}]")
+
                 # DIAGNOSTIC: Check gradients immediately after backward (early epochs only, configurable)
                 enable_grad_diag = adaptive_cfg.get('enable_gradient_diagnostics', False) if is_adaptive else False
                 if enable_grad_diag and n_train_batches == 0 and hasattr(model, 'num_experts') and model.num_experts > 0 and epoch <= 10:
@@ -977,8 +1014,40 @@ def train(
                     torch.nn.utils.clip_grad_norm_(
                         [p for p in model.parameters() if p.requires_grad], grad_clip_norm)
                 timer.start('train.optim_step')
+                
+                # DIAGNOSTIC: Track parameter values before step for update magnitude calculation
+                _param_before = None
+                if cfg.get('debug_prints', False) and n_train_batches == 0 and epoch % 100 == 0:
+                    _net = getattr(model, 'base_model', model)
+                    _param_before = {name: param.data.clone() for name, param in _net.named_parameters() if param.requires_grad}
+                
                 optimizer.step()
                 timer.stop('train.optim_step')
+                
+                # DIAGNOSTIC: Compute actual parameter update magnitudes
+                if _param_before is not None:
+                    _net = getattr(model, 'base_model', model)
+                    _update_norms = []
+                    _alpha_updates = []
+                    for name, param in _net.named_parameters():
+                        if name in _param_before:
+                            _delta = (param.data - _param_before[name]).norm().item()
+                            _update_norms.append((name, _delta, param.data.norm().item()))
+                            if 'alpha' in name:
+                                _alpha_updates.append((name, _delta, param.item()))
+                    
+                    # Report alpha updates specifically
+                    if _alpha_updates:
+                        _au_str = ', '.join(f'{d:.2e}' for _, d, _ in _alpha_updates)
+                        print(f"  [UpdateDiag] alpha update magnitudes: [{_au_str}]")
+                    
+                    # Overall update stats
+                    if _update_norms:
+                        _total_update = sum(d for _, d, _ in _update_norms)
+                        _total_weight = sum(w for _, _, w in _update_norms)
+                        print(f"  [UpdateDiag] total update norm: {_total_update:.4e}, "
+                              f"total weight norm: {_total_weight:.2f}, "
+                              f"ratio: {_total_update/_total_weight:.2e}")
 
                 step_count += 1
                 if lr_scheduler is not None and current_optimizer_name != 'LBFGS':
@@ -1365,10 +1434,28 @@ def train(
                     print(f"  [CausalChunks] L=[{_cl_str}]")
                     print(f"  [CausalChunks] tmax=[{_t_str}]")
 
-                # LR schedule sanity check
+                # LR schedule sanity check (extended)
                 _cur_lr = optimizer.param_groups[0]['lr']
+                _warmup_steps = cfg.get('lr_warmup_steps', 0)
+                _decay_steps = cfg.get('lr_decay_steps', 2000)
+                _decay_rate = cfg.get('lr_decay_rate', 0.9)
+                _base_lr = cfg.get('lr', 0.001)
+                
+                # Calculate expected LR
+                if step_count <= _warmup_steps:
+                    _phase = "warmup"
+                    _expected_lr = _base_lr * (cfg.get('lr_warmup_start_factor', 0.01) + 
+                                               (1 - cfg.get('lr_warmup_start_factor', 0.01)) * step_count / _warmup_steps)
+                else:
+                    _steps_after_warmup = step_count - _warmup_steps
+                    _num_decays = _steps_after_warmup // _decay_steps
+                    _expected_lr = _base_lr * (_decay_rate ** _num_decays)
+                    _phase = f"decay (n={_num_decays})"
+                
+                _lr_match = "✓" if abs(_cur_lr - _expected_lr) / _expected_lr < 0.01 else "✗"
                 print(
-                    f"  [LR] lr={_cur_lr:.2e} | step={step_count}"
+                    f"  [LR] lr={_cur_lr:.2e} (expected={_expected_lr:.2e} {_lr_match}) | "
+                    f"step={step_count} | phase={_phase}"
                 )
 
             # DIAGNOSTIC: Unweighted loss component breakdown
