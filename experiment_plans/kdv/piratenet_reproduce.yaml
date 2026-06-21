@@ -35,7 +35,7 @@ base_config:
   min_epochs: 1
   patience_rel_delta: 0.01
 
-  optimizer_1: soap
+  optimizer_1: adam
   optimizer_2: null
   optimizer_switch_epoch: 999999
   lr: 0.001
