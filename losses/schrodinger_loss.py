@@ -557,10 +557,6 @@ def build_loss(**cfg) -> Callable:
         # Timer (attached to model by trainer)
         _t = getattr(model, '_timer', None)
         
-        use_decomposed = (cfg['adaptive_pinn']['use_decomposed_derivatives']
-                          and getattr(model, 'supports_decomposed', False)
-                          and len(getattr(model, 'experts', [])) > 0)
-        
         # Initialize per-sample arrays if needed
         if for_tree_spawning:
             residual_per_sample = torch.zeros(N, device=device)
@@ -582,33 +578,17 @@ def build_loss(**cfg) -> Callable:
             # Model prediction: concatenate x,t -> predict (u,v)
             xt_f = torch.cat([x_f, t_f], dim=1)
             
-            if use_decomposed:
-                # === Decomposed approach (Step C): product rule on per-expert outputs ===
-                if _t: _t.start('loss.residual.forward')
-                decomposed = model.forward_for_pde_derivatives(xt_f)
-                if _t: _t.stop('loss.residual.forward')
-                
-                composed = decomposed['composed']  # (N_f, 2)
-                u_f = composed[:, 0]
-                v_f = composed[:, 1]
-                
-                if _t: _t.start('loss.residual.derivatives')
-                h_t, h_x, h_xx = compute_derivatives_decomposed(
-                    decomposed['components'], x_f, t_f, need_ht=True, need_hxx=True,
-                    indicator_data=decomposed.get('indicator_data'))
-                if _t: _t.stop('loss.residual.derivatives')
-            else:
-                # === Standard approach: differentiate composed output directly ===
-                if _t: _t.start('loss.residual.forward')
-                uv_f = model(xt_f)  # (N_f, 2)
-                if _t: _t.stop('loss.residual.forward')
-                
-                u_f = uv_f[:, 0]
-                v_f = uv_f[:, 1]
-                
-                if _t: _t.start('loss.residual.derivatives')
-                h_t, h_x, h_xx = compute_derivatives(u_f, v_f, x_f, t_f)
-                if _t: _t.stop('loss.residual.derivatives')
+            # === Standard approach: differentiate composed output directly ===
+            if _t: _t.start('loss.residual.forward')
+            uv_f = model(xt_f)  # (N_f, 2)
+            if _t: _t.stop('loss.residual.forward')
+            
+            u_f = uv_f[:, 0]
+            v_f = uv_f[:, 1]
+            
+            if _t: _t.start('loss.residual.derivatives')
+            h_t, h_x, h_xx = compute_derivatives(u_f, v_f, x_f, t_f)
+            if _t: _t.stop('loss.residual.derivatives')
             
             # Compute PDE residual: i*h_t + 0.5*h_xx + |h|²*h
             # Need h for |h|² term
@@ -703,33 +683,16 @@ def build_loss(**cfg) -> Callable:
             # Single forward pass for both boundaries
             xt_stacked = torch.cat([x_stacked, t_stacked], dim=1)
             
-            if use_decomposed:
-                # === Decomposed approach: product rule (only h_x needed for BC) ===
-                if _t: _t.start('loss.bc.forward')
-                decomposed_bc = model.forward_for_pde_derivatives(xt_stacked)
-                if _t: _t.stop('loss.bc.forward')
-                
-                composed_bc = decomposed_bc['composed']
-                u_stacked = composed_bc[:, 0]
-                v_stacked = composed_bc[:, 1]
-                
-                if _t: _t.start('loss.bc.derivatives')
-                _, h_x_stacked, _ = compute_derivatives_decomposed(
-                    decomposed_bc['components'], x_stacked, t_stacked,
-                    need_ht=False, need_hxx=False,
-                    indicator_data=decomposed_bc.get('indicator_data'))
-                if _t: _t.stop('loss.bc.derivatives')
-            else:
-                # === Standard approach ===
-                if _t: _t.start('loss.bc.forward')
-                uv_stacked = model(xt_stacked)
-                if _t: _t.stop('loss.bc.forward')
-                u_stacked = uv_stacked[:, 0]
-                v_stacked = uv_stacked[:, 1]
-                
-                if _t: _t.start('loss.bc.derivatives')
-                _, h_x_stacked, _ = compute_derivatives(u_stacked, v_stacked, x_stacked, t_stacked)
-                if _t: _t.stop('loss.bc.derivatives')
+            # === Standard approach ===
+            if _t: _t.start('loss.bc.forward')
+            uv_stacked = model(xt_stacked)
+            if _t: _t.stop('loss.bc.forward')
+            u_stacked = uv_stacked[:, 0]
+            v_stacked = uv_stacked[:, 1]
+            
+            if _t: _t.start('loss.bc.derivatives')
+            _, h_x_stacked, _ = compute_derivatives(u_stacked, v_stacked, x_stacked, t_stacked)
+            if _t: _t.stop('loss.bc.derivatives')
             
             # Split predictions and derivatives
             u_left = u_stacked[:n_b_left]

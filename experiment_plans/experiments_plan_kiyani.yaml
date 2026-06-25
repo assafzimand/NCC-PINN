@@ -562,7 +562,6 @@ base_config:
     enable_timing: false                       # Enable epoch timing profiling (can slow down training)
     inner_metrics_calculation: false            # Disable NCC/probes during training (complex with experts)
     enable_gradient_diagnostics: false          # Enable detailed gradient flow diagnostics (verbose)
-    use_decomposed_derivatives: false
     expert_activation_threshold: 0             # null = disabled, float = only evaluate experts with psi > threshold
     relevant_samples_to_activate_expert: 0     # Min samples in batch for expert to be considered "active"
     spawning_method: M_term_tree_by_norm          # "by_mean_residual" | "accept_split_by_norm" | "M_term_tree_by_norm" | "use_perfect_trees"

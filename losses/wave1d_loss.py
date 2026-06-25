@@ -517,10 +517,6 @@ def build_loss(**cfg) -> Callable:
         # Timer (attached to model by trainer)
         _t = getattr(model, '_timer', None)
         
-        use_decomposed = (cfg['adaptive_pinn']['use_decomposed_derivatives']
-                          and getattr(model, 'supports_decomposed', False)
-                          and len(getattr(model, 'experts', [])) > 0)
-        
         # Initialize per-sample arrays if needed
         if for_tree_spawning:
             residual_per_sample = torch.zeros(N, device=device)
@@ -542,34 +538,18 @@ def build_loss(**cfg) -> Callable:
             # Model prediction: concatenate x,t -> predict h
             xt_f = torch.cat([x_f, t_f], dim=1)
             
-            if use_decomposed:
-                # === Decomposed approach: product rule on per-expert outputs ===
-                if _t: _t.start('loss.residual.forward')
-                decomposed = model.forward_for_pde_derivatives(xt_f)
-                if _t: _t.stop('loss.residual.forward')
-                
-                composed = decomposed['composed']  # (N_f, 1)
-                h_f = composed[:, 0]
-                
-                if _t: _t.start('loss.residual.derivatives')
-                h_t, h_tt, h_x, h_xx = compute_derivatives_decomposed(
-                    decomposed['components'], x_f, t_f,
-                    need_htt=True, need_hxx=True,
-                    indicator_data=decomposed.get('indicator_data'))
-                if _t: _t.stop('loss.residual.derivatives')
-            else:
-                # === Standard approach: differentiate composed output directly ===
-                if _t: _t.start('loss.residual.forward')
-                h_pred = model(xt_f)  # (N_f, 1)
-                if _t: _t.stop('loss.residual.forward')
-                
-                # Extract h (squeeze output dimension for derivative computation)
-                h_f = h_pred[:, 0]
-                
-                # Compute derivatives
-                if _t: _t.start('loss.residual.derivatives')
-                h_t, h_tt, h_x, h_xx = compute_derivatives(h_f, x_f, t_f)
-                if _t: _t.stop('loss.residual.derivatives')
+            # === Standard approach: differentiate composed output directly ===
+            if _t: _t.start('loss.residual.forward')
+            h_pred = model(xt_f)  # (N_f, 1)
+            if _t: _t.stop('loss.residual.forward')
+            
+            # Extract h (squeeze output dimension for derivative computation)
+            h_f = h_pred[:, 0]
+            
+            # Compute derivatives
+            if _t: _t.start('loss.residual.derivatives')
+            h_t, h_tt, h_x, h_xx = compute_derivatives(h_f, x_f, t_f)
+            if _t: _t.stop('loss.residual.derivatives')
             
             # Compute PDE residual: h_tt - h_xx
             residual = pde_residual(h_tt, h_xx)
