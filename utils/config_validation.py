@@ -76,6 +76,82 @@ def validate_problem_config(cfg: Dict[str, Any]) -> None:
         )
 
 
+# Config keys removed by the staged-training refactor (error if still present).
+REMOVED_ADAPTIVE_KEYS = ['freeze_mode', 'freeze_epochs_after_spawn']
+
+
+def validate_adaptive_staged_config(cfg: Dict[str, Any]) -> None:
+    """Validate the staged adaptive-PINN training config surface.
+
+    Enforces the contract from ``docs/training_flow_spec.md`` §1.1 / §6:
+
+      * ``adaptive_pinn.initial_train`` (with ``epochs``) is required for the
+        root segment unless a ``pretrained_base_checkpoint`` is supplied.
+      * AToE / ANT (staged) additionally require the per-level + fine-tune
+        surface: ``min_epochs_per_level``, ``max_epochs_per_level``,
+        ``new_expert_lr_decay``, and a ``fine_tune`` block (with ``epochs``).
+      * AToE-Leaves (joint) needs none of the per-level keys (its Phase-3 joint
+        training uses the effective top-level config).
+      * Removed keys (``freeze_mode``, ``freeze_epochs_after_spawn``) raise.
+
+    Raises:
+        ValueError: on a missing required key or a present removed key.
+    """
+    adaptive_cfg = cfg.get('adaptive_pinn', {})
+    if not adaptive_cfg or not adaptive_cfg.get('enabled', False):
+        return
+
+    errors = []
+
+    for k in REMOVED_ADAPTIVE_KEYS:
+        if k in adaptive_cfg:
+            errors.append(
+                f"adaptive_pinn.{k} was removed by the staged-training refactor "
+                f"(staged freezing is now per-level requires_grad). Remove it.")
+
+    model_type = cfg.get('model', 'AToE')
+    problem = cfg.get('problem')
+    problem_cfg = cfg.get(problem, {}) if problem else {}
+    pretrained = problem_cfg.get('pretrained_base_checkpoint', None)
+
+    # Root segment config (skipped only when a pretrained base is loaded).
+    if pretrained is None:
+        initial_train = adaptive_cfg.get('initial_train', None)
+        if not isinstance(initial_train, dict):
+            errors.append(
+                "adaptive_pinn.initial_train (dict with 'epochs') is required "
+                "for the root segment when pretrained_base_checkpoint is null.")
+        elif 'epochs' not in initial_train:
+            errors.append("adaptive_pinn.initial_train.epochs is required.")
+
+    # Staged variants need the per-level + fine-tune surface.
+    if model_type in ('AToE', 'ANT'):
+        for key in ('min_epochs_per_level', 'max_epochs_per_level',
+                    'new_expert_lr_decay'):
+            if key not in adaptive_cfg:
+                errors.append(
+                    f"adaptive_pinn.{key} is required for staged variant "
+                    f"'{model_type}'.")
+        if int(adaptive_cfg.get('max_epochs_per_level', 0) or 0) <= 0:
+            errors.append(
+                "adaptive_pinn.max_epochs_per_level must be a positive int.")
+        fine_tune = adaptive_cfg.get('fine_tune', None)
+        if not isinstance(fine_tune, dict):
+            errors.append(
+                "adaptive_pinn.fine_tune (dict with 'epochs', optimizer/lr/"
+                "schedule) is required for staged variant "
+                f"'{model_type}' (final joint fine-tune).")
+        elif 'epochs' not in fine_tune:
+            errors.append("adaptive_pinn.fine_tune.epochs is required.")
+
+    if errors:
+        raise ValueError(
+            "Invalid adaptive_pinn staged-training config:\n  - "
+            + "\n  - ".join(errors)
+            + "\n\nSee docs/training_flow_spec.md sections 1.1 and 6."
+        )
+
+
 def get_problem_feature(
     cfg: Dict[str, Any],
     feature: str,

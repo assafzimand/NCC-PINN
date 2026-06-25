@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from pathlib import Path
-from typing import Dict, Callable, Optional, Tuple
+from typing import Dict, Callable, Tuple
 import json
 import math
 import time
@@ -13,6 +13,7 @@ import numpy as np
 from trainer.plotting import plot_training_curves, plot_final_comparison
 from trainer.utils import compute_infinity_norm_error
 from trainer.timing import EpochTimer
+from trainer.training_context import TrainingContext, SegmentResult
 from models.atoe import AToE
 from models.atoe_leaves import AToELeaves
 from models.ant import ANT
@@ -22,7 +23,10 @@ from utils.dataset_gen import (
     _save_adaptive_sampling_heatmap,
 )
 from utils.dataset_plotting import save_spawn_prediction_plot
-from utils.config_validation import validate_problem_config
+from utils.config_validation import (
+    validate_problem_config,
+    validate_adaptive_staged_config,
+)
 from losses.causal_weighting import advance_causal_schedule, create_causal_state
 from losses.lra import LRAWeights
 import losses.ks_loss as _ks_loss_module
@@ -288,6 +292,11 @@ def train(
     """
     Train a PINN model with CUDA acceleration and vectorized operations.
 
+    Thin wrapper over three phases:
+      1. ``_setup_training``    — build data/optimizer/metrics/adaptive state.
+      2. ``train_orchestrator`` — per-variant segment + staged-spawning driver.
+      3. ``_finalize_training`` — checkpoints, plots, metrics, summary.
+
     Args:
         model: Neural network model
         loss_fn: Loss function (model, batch) -> scalar
@@ -297,7 +306,25 @@ def train(
         run_dir: Output directory for this run
 
     Returns:
-        Path to best checkpoint
+        Path to best checkpoint (or None on NaN divergence)
+    """
+    ctx = _setup_training(model, loss_fn, train_data_path, eval_data_path, cfg, run_dir)
+    train_orchestrator(ctx)
+    return _finalize_training(ctx)
+
+
+def _setup_training(
+    model: nn.Module,
+    loss_fn: Callable,
+    train_data_path: str,
+    eval_data_path: str,
+    cfg: Dict,
+    run_dir: Path
+) -> TrainingContext:
+    """Phase 1 of :func:`train`: build datasets, optimizer, metrics, adaptive state.
+
+    Behavior-preserving extraction of the original setup block (no logic changes).
+    Returns a :class:`TrainingContext` carrying all state into the loop + finalize.
     """
     print("\n" + "=" * 60)
     print("Starting Training")
@@ -305,6 +332,7 @@ def train(
 
     # Validate per-problem config (all features must be explicitly specified)
     validate_problem_config(cfg)
+    validate_adaptive_staged_config(cfg)
     problem = cfg['problem']
     problem_cfg = cfg[problem]
     
@@ -664,11 +692,7 @@ def train(
         print(f"  Timing profiling: {'enabled' if enable_timing_cfg else 'disabled'}")
 
         from adaptive.region_detector import RegionDetector
-        from adaptive.visualization import (
-            plot_expert_regions, save_regions_metadata, prepare_ground_truth_grid,
-            plot_expert_soft_weights
-        )
-        from adaptive.indicators import RegionDescriptor
+        from adaptive.visualization import prepare_ground_truth_grid
 
         domain_bounds = model.get_domain_bounds()
         gt_grid, gt_x, gt_t = prepare_ground_truth_grid(eval_data, domain_bounds)
@@ -789,7 +813,7 @@ def train(
     print("=" * 60 + "\n")
 
     # Smart initialization (Glorot hidden + zero/LS output) — base model only
-    from trainer.init import apply_hidden_init, apply_output_init, apply_expert_init, apply_parent_copy_init, apply_spectral_norm
+    from trainer.init import apply_hidden_init, apply_output_init, apply_spectral_norm
     _init_target = model.base_model if is_adaptive else model
     _init_cfg = cfg.get('init', {})
     if _init_cfg.get('hidden', 'default') != 'default' or _init_cfg.get('output', 'default') != 'default' or _init_cfg.get('spectral_norm', False):
@@ -805,37 +829,223 @@ def train(
         apply_spectral_norm(_init_target, cfg)
         print()
 
-    epoch = 0
+    # ── Build the context that carries all state into the loop + finalize ──
+    return TrainingContext(
+        model=model,
+        loss_fn=loss_fn,
+        cfg=cfg,
+        problem=problem,
+        problem_cfg=problem_cfg,
+        device=device,
+        run_dir=run_dir,
+        train_data=train_data,
+        eval_data=eval_data,
+        train_loader=train_loader,
+        eval_loader=eval_loader,
+        active_cfg=active_cfg,
+        epochs=epochs,
+        phase3_epochs=phase3_epochs,
+        current_phase=current_phase,
+        use_three_phase=use_three_phase,
+        optimizer_2_name=optimizer_2_name,
+        switch_epoch=switch_epoch,
+        batches_per_epoch=batches_per_epoch,
+        total_steps_estimate=total_steps_estimate,
+        patience_start_epoch=patience_start_epoch,
+        optimizer=optimizer,
+        current_optimizer_name=current_optimizer_name,
+        lr_scheduler=lr_scheduler,
+        step_count=step_count,
+        print_every=print_every,
+        eval_every=eval_every,
+        inner_metrics_every=inner_metrics_every,
+        save_every=save_every,
+        metrics=metrics,
+        best_eval_loss=best_eval_loss,
+        best_train_loss=best_train_loss,
+        best_checkpoint_path=best_checkpoint_path,
+        patience_epochs=patience_epochs,
+        min_epochs=min_epochs,
+        patience_rel_delta=patience_rel_delta,
+        epochs_without_improvement=epochs_without_improvement,
+        lra_weights=lra_weights,
+        checkpoint_dir=checkpoint_dir,
+        adaptive_cfg=adaptive_cfg,
+        is_adaptive=is_adaptive,
+        initial_train_cfg=initial_train_cfg,
+        reinit_base_after_spawn=reinit_base_after_spawn,
+        pretrained_base_checkpoint=pretrained_base_checkpoint,
+        _pretrained_force_spawn=_pretrained_force_spawn,
+        region_detector=region_detector,
+        spawn_every=spawn_every,
+        max_experts=max_experts,
+        spawning_method=spawning_method,
+        wavelet_threshold=wavelet_threshold,
+        adaptive_inner_metrics=adaptive_inner_metrics,
+        spawning_complete=spawning_complete,
+        _retries_before_stop=_retries_before_stop,
+        _stop_on_no_spawn=_stop_on_no_spawn,
+        _no_spawn_retries_max=_no_spawn_retries_max,
+        _no_spawn_retries_remaining=_no_spawn_retries_remaining,
+        _spawn_retry_after=_spawn_retry_after,
+        _spawn_last_fail_epoch=_spawn_last_fail_epoch,
+        _per_leaf_causal=_per_leaf_causal,
+        _per_leaf_sampling=_per_leaf_sampling,
+        variable_for_node_accept=variable_for_node_accept,
+        variable_for_expert_size=variable_for_expert_size,
+        domain_bounds=domain_bounds,
+        gt_grid=gt_grid,
+        gt_x=gt_x,
+        gt_t=gt_t,
+        adaptive_plots_dir=adaptive_plots_dir,
+        _spawn_require_plateau=_spawn_require_plateau,
+        _spawn_plateau_epochs=_spawn_plateau_epochs,
+        _spawn_plateau_delta=_spawn_plateau_delta,
+        _last_spawn_epoch=_last_spawn_epoch,
+        rejected_regions=rejected_regions,
+        leaf_loss_history=leaf_loss_history,
+        total_epochs=total_epochs,
+        start_time=start_time,
+        timer=timer,
+        train_loss=train_loss,
+        eval_loss=eval_loss,
+        eval_rel_l2=eval_rel_l2,
+        eval_inf_norm=eval_inf_norm,
+        resample_every=resample_every,
+        base_seed=base_seed,
+        grad_clip_norm=grad_clip_norm,
+        expert_grad_clip_norm=expert_grad_clip_norm,
+        adaptive_sampling_enabled=adaptive_sampling_enabled,
+        epoch=0,
+        _nan_detected=False,
+    )
 
-    # Emergency save: fires on any unhandled exception (or process exit) so metrics.json
-    # is never lost even if the training loop crashes with a Python exception.
-    import atexit as _atexit
 
-    def _emergency_metrics_save():
-        if _emergency_metrics_save.done:
-            return
-        import traceback as _tb_mod
-        exc = _tb_mod.format_exc()
-        metrics['exception_events'].append({
-            'epoch': epoch,
-            'note': 'process_exit_or_exception',
-            'traceback': exc if exc.strip() != 'NoneType: None' else None,
-        })
-        metrics['training_time_seconds'] = time.time() - start_time
-        _p = run_dir / "metrics.json"
-        try:
-            with open(_p, 'w') as _f:
-                json.dump(metrics, _f, indent=2, cls=_NumpySafeEncoder)
-            print(f"\n[Emergency] Metrics saved to {_p}")
-        except Exception as _se:
-            print(f"\n[Emergency] Could not save metrics: {_se}")
+def _train_segment(
+    ctx: TrainingContext,
+    segment_name: str,
+    epoch_budget: int,
+    segment_cfg: Dict,
+    *,
+    lr_override=None,
+    min_epochs_override=None,
+) -> SegmentResult:
+    """Run one training segment: a self-contained epoch loop with no spawning.
 
-    _emergency_metrics_save.done = False
-    _atexit.register(_emergency_metrics_save)
+    Builds a fresh optimizer + scheduler from ``segment_cfg`` over the model's
+    currently-trainable params (freezing is set by the caller), advances the
+    GLOBAL epoch counter ``ctx.epoch`` by up to ``epoch_budget`` epochs, and
+    handles the in-segment optimizer_1->optimizer_2 switch + patience early-stop
+    (with optimizer_1 fast-forward). Shared state is read from ``ctx``; values
+    reassigned during the segment are written back to ``ctx`` at the end.
 
+    The forward pass always evaluates the FULL model composition (base + every
+    spawned expert, frozen or not); only ``requires_grad`` controls which params
+    the optimizer updates.
+    """
+    # ── Unpack shared / per-epoch state from ctx (segment-local state is built below) ──
+    model = ctx.model
+    loss_fn = ctx.loss_fn
+    cfg = ctx.cfg
+    problem_cfg = ctx.problem_cfg
+    device = ctx.device
+    run_dir = ctx.run_dir
+    train_data = ctx.train_data
+    train_loader = ctx.train_loader
+    eval_loader = ctx.eval_loader
+    batches_per_epoch = ctx.batches_per_epoch
+    print_every = ctx.print_every
+    eval_every = ctx.eval_every
+    inner_metrics_every = ctx.inner_metrics_every
+    save_every = ctx.save_every
+    metrics = ctx.metrics
+    best_eval_loss = ctx.best_eval_loss
+    best_checkpoint_path = ctx.best_checkpoint_path
+    patience_epochs = ctx.patience_epochs
+    patience_rel_delta = ctx.patience_rel_delta
+    lra_weights = ctx.lra_weights
+    checkpoint_dir = ctx.checkpoint_dir
+    adaptive_cfg = ctx.adaptive_cfg
+    is_adaptive = ctx.is_adaptive
+    adaptive_inner_metrics = ctx.adaptive_inner_metrics
+    _per_leaf_causal = ctx._per_leaf_causal
+    _per_leaf_sampling = ctx._per_leaf_sampling
+    timer = ctx.timer
+    start_time = ctx.start_time
+    train_loss = ctx.train_loss
+    eval_loss = ctx.eval_loss
+    eval_rel_l2 = ctx.eval_rel_l2
+    eval_inf_norm = ctx.eval_inf_norm
+    resample_every = ctx.resample_every
+    base_seed = ctx.base_seed
+    grad_clip_norm = ctx.grad_clip_norm
+    expert_grad_clip_norm = ctx.expert_grad_clip_norm
+    adaptive_sampling_enabled = ctx.adaptive_sampling_enabled
+    # Diagnostic residual-heatmap plot cadence (defaults to the resample cadence).
+    plot_samples_every = cfg.get('sampling', {}).get(
+        'plot_samples_every', resample_every) or resample_every
+
+    # ── Segment setup: fresh optimizer + scheduler over current requires_grad params ──
+    seg_cfg = dict(segment_cfg)
+    if lr_override is not None:
+        seg_cfg['lr'] = lr_override
+    seg_min_epochs = (min_epochs_override
+                      if min_epochs_override is not None else ctx.min_epochs)
+
+    optimizer_1_name = seg_cfg['optimizer_1'].lower()
+    optimizer_2_name_cfg = seg_cfg.get('optimizer_2', None)
+    optimizer_2_name = optimizer_2_name_cfg.lower() if optimizer_2_name_cfg else None
+
+    segment_start_epoch = ctx.epoch
+    total_epochs = segment_start_epoch + epoch_budget
+
+    if optimizer_2_name is not None:
+        switch_epoch = segment_start_epoch + seg_cfg['optimizer_switch_epoch']
+    else:
+        switch_epoch = total_epochs + 1  # never switch
+
+    total_steps_estimate = max(1, epoch_budget) * batches_per_epoch
+
+    full_batch_opt1 = optimizer_1_name in ('lbfgs', 'ssbroyden')
+    if full_batch_opt1:
+        optimizer, current_optimizer_name = _create_optimizer_by_name(
+            optimizer_1_name, model, seg_cfg)
+        lr_scheduler = None
+    else:
+        optimizer, current_optimizer_name = _create_primary_optimizer(model, seg_cfg)
+        lr_scheduler = _create_lr_scheduler(optimizer, seg_cfg, total_steps_estimate)
+
+    step_count = 0
+    best_train_loss = float('inf')
+    epochs_without_improvement = 0
+    # optimizer_1 is watched from the segment start; reset to switch_epoch at the switch.
+    patience_start_epoch = segment_start_epoch
     _nan_detected = False
+    _stopped_early = False
+    _stop_reason = 'budget'
+
+    _n_train_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    _switch_str = (f" -> {optimizer_2_name.upper()}@{switch_epoch}"
+                   if optimizer_2_name is not None else "")
+    print(f"\n[Segment:{segment_name}] start | epochs "
+          f"{segment_start_epoch + 1}..{total_epochs} (budget {epoch_budget}) | "
+          f"optimizer={current_optimizer_name}{_switch_str} | lr={seg_cfg['lr']} | "
+          f"trainable_params={_n_train_params}")
+    metrics.setdefault('segment_events', []).append({
+        'segment': segment_name,
+        'start_epoch': segment_start_epoch + 1,
+        'epoch_budget': epoch_budget,
+        'optimizer_1': current_optimizer_name,
+        'optimizer_2': optimizer_2_name,
+        'switch_epoch': switch_epoch if optimizer_2_name is not None else None,
+        'lr': seg_cfg['lr'],
+        'trainable_params': _n_train_params,
+    })
+
+    epoch = segment_start_epoch
     while epoch < total_epochs:
         epoch += 1
+        ctx.epoch = epoch  # keep ctx in sync for the orchestrator's emergency save
         timer.start_epoch(epoch, num_experts=model.num_experts if (is_adaptive and hasattr(model, 'num_experts')) else 0)
 
         # Enable residual caching for adaptive sampling if needed
@@ -848,12 +1058,14 @@ def train(
             and resample_every > 0
             and epoch > 0 and epoch % resample_every == 0
         )
-        # Cache residuals for the diagnostic heatmap even when adaptive sampling is off
+        # Cache residuals for the diagnostic heatmap even when adaptive sampling is
+        # off. Cadence is controlled by sampling.plot_samples_every (independent of
+        # the resample cadence; defaults to it).
         _problem_spatial_dim = problem_cfg['spatial_dim']
         will_cache_for_plot = (
             not adaptive_sampling_enabled
-            and resample_every > 0
-            and epoch > 0 and epoch % resample_every == 0
+            and plot_samples_every > 0
+            and epoch > 0 and epoch % plot_samples_every == 0
             and _problem_spatial_dim == 1
         )
         if will_cache_for_resample or will_cache_for_plot:
@@ -882,8 +1094,12 @@ def train(
                 loss_fn._leaf_state.get('causal_states', {})
                 if _per_leaf_causal and hasattr(loss_fn, '_leaf_state') else None
             )
-            # Save residual heatmap when adaptive sampling is off (adaptive path saves it internally)
-            if not adaptive_sampling_enabled and cached_residuals and _problem_spatial_dim == 1:
+            # Save residual heatmap when adaptive sampling is off (adaptive path saves
+            # it internally). Gated by plot_samples_every so the plot can be rarer
+            # than the resample step.
+            if (not adaptive_sampling_enabled and cached_residuals
+                    and _problem_spatial_dim == 1
+                    and (epoch - 1) % plot_samples_every == 0):
                 all_x = torch.cat([r[0] for r in cached_residuals], dim=0)
                 all_t = torch.cat([r[1] for r in cached_residuals], dim=0)
                 all_r2 = torch.cat([r[2] for r in cached_residuals], dim=0)
@@ -1177,8 +1393,8 @@ def train(
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                     
-                    optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
-                    lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
+                    optimizer, current_optimizer_name = _create_primary_optimizer(model, seg_cfg)
+                    lr_scheduler = _create_lr_scheduler(optimizer, seg_cfg, total_steps_estimate)
                     
                     # Continue with Adam on first batch
                     optimizer.zero_grad()
@@ -1208,11 +1424,12 @@ def train(
             torch.set_default_device(device)
             _prev_opt = current_optimizer_name
             optimizer, current_optimizer_name = _create_optimizer_by_name(
-                optimizer_2_name, model, active_cfg)
+                optimizer_2_name, model, seg_cfg)
             lr_scheduler = None  # optimizer_2 uses its own LR / line search
-            # Reset patience counter at switch point
+            # Reset patience at the switch; optimizer_2 gets a fresh grace window.
             epochs_without_improvement = 0
             best_train_loss = float('inf')
+            patience_start_epoch = switch_epoch
             metrics['optimizer_events'].append({
                 'epoch': epoch,
                 'from': _prev_opt,
@@ -1555,27 +1772,50 @@ def train(
             _save_checkpoint(best_checkpoint_path, model, optimizer, current_optimizer_name, epoch,
                            train_loss, eval_loss, cfg, metrics)
 
-        # Patience-based early stopping on train loss. Active ONLY in Phase 3
-        # (current_phase != 1; non-adaptive single-phase is current_phase 0) and only
-        # from patience_start_epoch — which equals the optimizer switch epoch when a
-        # second optimizer is configured, so patience watches only the second optimizer.
-        # Plateau test uses a relative min-delta so a loss creeping down by a negligible
-        # amount each epoch still counts as "no improvement" and eventually stops.
+        # Patience-based early stopping on train loss. Active for BOTH optimizers
+        # (Step 5): the relative-improvement plateau test runs from the segment
+        # start. On an optimizer_1 plateau we fast-forward to the switch epoch (so
+        # the existing switch handler fires and optimizer_2 keeps its full budget)
+        # rather than stopping; an optimizer_2 (or no-switch) plateau stops the
+        # segment. The relative min-delta means a loss creeping down by a negligible
+        # amount each epoch still counts as "no improvement".
         if (train_loss is not None and patience_epochs > 0
-                and current_phase != 1 and epoch >= patience_start_epoch):
+                and epoch >= patience_start_epoch):
             if train_loss < best_train_loss * (1.0 - patience_rel_delta):
                 best_train_loss = train_loss
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
-            # min_epochs is a grace period measured within the active window.
-            if (epoch - patience_start_epoch >= min_epochs
+            # seg_min_epochs is a grace period measured within the active window.
+            if (epoch - patience_start_epoch >= seg_min_epochs
                     and epochs_without_improvement >= patience_epochs):
-                print(f"\n  [EarlyStop] No train loss improvement "
-                      f">{patience_rel_delta:.1%} for {epochs_without_improvement} "
-                      f"epochs (best={best_train_loss:.6f}). "
-                      f"Stopping at epoch {epoch}.")
-                break
+                _in_optimizer_1 = (optimizer_2_name is not None
+                                   and epoch < switch_epoch)
+                if _in_optimizer_1 and switch_epoch < total_epochs:
+                    # Fast-forward to the switch; preserves optimizer_2's budget.
+                    print(f"\n  [Patience] optimizer_1 plateau "
+                          f">{patience_rel_delta:.1%} for "
+                          f"{epochs_without_improvement} epochs at epoch {epoch}; "
+                          f"fast-forwarding to switch epoch {switch_epoch}.")
+                    metrics['plateau_events'].append({
+                        'epoch': epoch,
+                        'action': 'optimizer_1_fast_forward',
+                        'switch_epoch': switch_epoch,
+                    })
+                    epoch = switch_epoch - 1
+                    ctx.epoch = epoch
+                    epochs_without_improvement = 0
+                    best_train_loss = float('inf')
+                    continue
+                else:
+                    print(f"\n  [EarlyStop] No train loss improvement "
+                          f">{patience_rel_delta:.1%} for "
+                          f"{epochs_without_improvement} epochs "
+                          f"(best={best_train_loss:.6f}). "
+                          f"Stopping segment at epoch {epoch}.")
+                    _stopped_early = True
+                    _stop_reason = 'early_stop'
+                    break
 
         # Periodic inner metrics (NCC + probes + derivatives + frequency)
         # Skip if adaptive PINN and inner_metrics_calculation is disabled
@@ -1606,434 +1846,629 @@ def train(
             if freq_metrics is not None:
                 metrics['freq_history'].append((epoch, freq_metrics))
 
-        # Adaptive PINN: one-shot expert spawning (M_term_tree_by_norm).
-        # Spawning is only possible in Phase 1 (current_phase == 1); the spawn epoch is
-        # also the Phase 1 -> Phase 3 transition, so it can never recur in Phase 3.
-        # Normal trigger: epoch % spawn_every == 0.
-        # After a failed spawn: also trigger spawn_retry_after epochs after the failure
-        # (tracked from _spawn_last_fail_epoch). Plateau gating still applies at retries.
-        _base_spawn_eligible = (is_adaptive and not spawning_complete
-                                and current_phase == 1)
+    # ── Write reassigned segment state back to ctx ──
+    # (objects mutated in place — model, metrics, timer — need no write-back.)
+    ctx.epoch = epoch
+    ctx.total_epochs = epoch
+    ctx.optimizer = optimizer
+    ctx.current_optimizer_name = current_optimizer_name
+    ctx.lr_scheduler = lr_scheduler
+    ctx.step_count = step_count
+    ctx.switch_epoch = switch_epoch
+    ctx.optimizer_2_name = optimizer_2_name
+    ctx.best_eval_loss = best_eval_loss
+    ctx.best_train_loss = best_train_loss
+    ctx.best_checkpoint_path = best_checkpoint_path
+    ctx.train_loss = train_loss
+    ctx.eval_loss = eval_loss
+    ctx.eval_rel_l2 = eval_rel_l2
+    ctx.eval_inf_norm = eval_inf_norm
+    ctx.train_data = train_data
+    ctx.train_loader = train_loader
+    ctx._nan_detected = _nan_detected
 
-        _at_spawn_interval = epoch % spawn_every == 0
-        _at_retry = (_spawn_retry_after is not None
-                     and _spawn_last_fail_epoch >= 0
-                     and epoch == _spawn_last_fail_epoch + _spawn_retry_after)
-        _at_interval = _at_spawn_interval or _at_retry
+    if _nan_detected:
+        _stop_reason = 'nan'
+    if not _nan_detected:
+        _save_segment_pred_plot(ctx, segment_name)
+    _final_tl = train_loss if train_loss is not None else float('nan')
+    _final_el = eval_loss if eval_loss is not None else float('nan')
+    print(f"[Segment:{segment_name}] done | ran {epoch - segment_start_epoch} "
+          f"epochs (stop={_stop_reason}) | "
+          f"train_loss={_final_tl:.6f} eval_loss={_final_el:.6f}")
+    return SegmentResult(
+        nan_detected=_nan_detected,
+        stopped_early=_stopped_early,
+        stop_reason=_stop_reason,
+        epochs_run=epoch - segment_start_epoch,
+        final_train_loss=_final_tl,
+        final_eval_loss=_final_el,
+    )
 
-        if _pretrained_force_spawn and _base_spawn_eligible:
-            # Checkpoint flow: build the tree on the loaded base immediately (no
-            # Phase-1 training, no interval/plateau wait), then transition to Phase 3.
-            spawn_check_triggered = True
-        elif _base_spawn_eligible and _spawn_require_plateau:
-            if _at_interval:
-                # Check training-loss plateau over the look-back window
-                _lookback = max(1, _spawn_plateau_epochs)
-                _recent = metrics['train_loss'][-_lookback:]
-                _recent_valid = [r for r in _recent if not math.isnan(r) and not math.isinf(r)]
-                if len(_recent_valid) >= 2:
-                    _rel_drop = (_recent_valid[0] - _recent_valid[-1]) / (abs(_recent_valid[0]) + 1e-8)
-                    _plateau_met = _rel_drop <= _spawn_plateau_delta
-                else:
-                    _plateau_met = False
 
-                _drop_str = f"{_rel_drop*100:.2f}%" if len(_recent_valid) >= 2 else "n/a"
-                if _plateau_met:
-                    spawn_check_triggered = True
-                    metrics['plateau_events'].append({
-                        'epoch': epoch,
-                        'action': 'triggered',
-                        'rel_drop_pct': float(_rel_drop * 100) if len(_recent_valid) >= 2 else None,
-                        'threshold_pct': float(_spawn_plateau_delta * 100),
-                    })
-                else:
-                    spawn_check_triggered = False
-                    _spawn_last_fail_epoch = epoch
-                    print(f"  [Plateau] Spawn deferred — loss still dropping "
-                          f"({_drop_str} over last {_spawn_plateau_epochs} epochs, "
-                          f"threshold={_spawn_plateau_delta*100:.2f}%)")
-                    metrics['plateau_events'].append({
-                        'epoch': epoch,
-                        'action': 'deferred',
-                        'rel_drop_pct': float(_rel_drop * 100) if len(_recent_valid) >= 2 else None,
-                        'threshold_pct': float(_spawn_plateau_delta * 100),
-                    })
+# ======================================================================
+# Staged-spawning helpers (orchestrator level; called between segments)
+# ======================================================================
+
+def _save_segment_pred_plot(ctx: TrainingContext, segment_name: str) -> None:
+    """Save ``pred_after_<segment>.png`` (1D problems with ground truth).
+
+    Captures the full-composition prediction at the end of a segment so each
+    stage (root, every level, fine-tune, joint) leaves a visual checkpoint.
+    """
+    gt_grid = ctx.gt_grid
+    if gt_grid is None or ctx.problem_cfg.get('spatial_dim', None) != 1:
+        return
+    out_dir = ctx.adaptive_plots_dir or ctx.run_dir
+    if out_dir is None:
+        return
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        save_spawn_prediction_plot(
+            model=ctx.model,
+            domain_bounds=ctx.domain_bounds,
+            gt_grid=gt_grid,
+            grid_x=ctx.gt_x,
+            grid_t=ctx.gt_t,
+            output_path=out_dir / f"pred_after_{segment_name}.png",
+            epoch=ctx.epoch,
+            cfg=ctx.cfg,
+        )
+        print(f"  [Segment:{segment_name}] saved pred_after_{segment_name}.png")
+    except Exception as _e:
+        print(f"  [Segment:{segment_name}] prediction plot failed: {_e}")
+
+
+def _set_trainable(model: nn.Module, which: str) -> int:
+    """Set ``requires_grad`` across the model for a training segment.
+
+    ``which``:
+      * ``'all'``      — every parameter trainable (root w/o experts, joint, fine-tune).
+      * ``'base'``     — only the base/root network (staged root segment).
+      * ``'level:L'``  — only experts whose ``RegionDescriptor.depth == L``.
+
+    Frozen params still participate in the forward composition (AToE additive
+    background, ANT routing); only the optimizer (which filters on
+    ``requires_grad``) skips them. Returns the count of trainable param tensors.
+    """
+    if which == 'all':
+        for p in model.parameters():
+            p.requires_grad = True
+    else:
+        for p in model.parameters():
+            p.requires_grad = False
+        base = getattr(model, 'base_model', None)
+        if which == 'base':
+            if base is not None:
+                for p in base.parameters():
+                    p.requires_grad = True
             else:
-                spawn_check_triggered = False
+                for p in model.parameters():
+                    p.requires_grad = True
+        elif which.startswith('level:'):
+            target_depth = int(which.split(':', 1)[1])
+            regions = getattr(model, 'regions', [])
+            experts = getattr(model, 'experts', [])
+            for idx, expert in enumerate(experts):
+                depth = regions[idx].depth if idx < len(regions) else None
+                if depth == target_depth:
+                    for p in expert.parameters():
+                        p.requires_grad = True
         else:
-            # No plateau gating: fire at spawn_every, and at retry interval after a failure
-            spawn_check_triggered = _base_spawn_eligible and _at_interval
-        
-        if spawn_check_triggered:
-            print(f"\n{'='*60}")
-            print(f"Adaptive PINN: Spawning check at epoch {epoch}")
-            if hasattr(model, 'num_experts'):
-                print(f"  Current experts: {model.num_experts}/{max_experts}")
-            leaf_nodes = model.get_leaf_info()
-            print(f"  Current leaf nodes: {len(leaf_nodes)}")
-            print(f"{'='*60}")
+            raise ValueError(f"_set_trainable: unknown which={which!r}")
+    return sum(1 for p in model.parameters() if p.requires_grad)
 
-            model.eval()
-            with torch.no_grad():
-                eval_inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-                u_pred = model(eval_inputs)
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
 
-            X_eval = eval_inputs.cpu().numpy()
-            y_eval = u_pred.cpu().numpy()
+def _build_tree_once(ctx: TrainingContext, retain_siblings: bool) -> Dict:
+    """Fit the M-term tree once from the current model's eval prediction.
 
-            # Save prediction heatmap BEFORE spawning so it reflects the state that
-            # drove the spawn decision. Deleted below if spawn yields 0 experts.
-            _pending_spawn_plot = None
-            if _problem_spatial_dim == 1 and gt_grid is not None:
-                _pending_spawn_plot = adaptive_plots_dir / f"spawn_pred_epoch_{epoch}.png"
-                save_spawn_prediction_plot(
-                    model=model,
-                    domain_bounds=domain_bounds,
-                    gt_grid=gt_grid,
-                    grid_x=gt_x,
-                    grid_t=gt_t,
-                    output_path=_pending_spawn_plot,
-                    epoch=epoch,
-                    cfg=cfg,
-                )
+    No experts are spawned here. Returns a dict carrying the accepted nodes and
+    the tree maps needed to select levels and link parent experts.
+    """
+    model = ctx.model
+    eval_data = ctx.eval_data
+    region_detector = ctx.region_detector
+    adaptive_cfg = ctx.adaptive_cfg
+    variable_for_node_accept = ctx.variable_for_node_accept
+    M = adaptive_cfg['M_experts_num']
 
-            import numpy as np
-            is_copy_spawn = isinstance(model, AToELeaves)
-            experts_spawned_this_step = 0
+    model.eval()
+    with torch.no_grad():
+        eval_inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        u_pred = model(eval_inputs)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+    X_eval = eval_inputs.cpu().numpy()
+    y_eval = u_pred.cpu().numpy()
 
-            if 'spawning_diagnostics' not in metrics:
-                metrics['spawning_diagnostics'] = []
+    closure_desc = ("ancestors-only (AToE)" if not retain_siblings
+                    else "ancestors+siblings")
+    print(f"\n[Tree] Computing M-term tree (retain_siblings={retain_siblings}) — "
+          f"closure: {closure_desc}")
+    print(f"  [M-term Tree] Fitting full tree (max_depth={region_detector.max_depth}, "
+          f"min_samples_leaf={region_detector.min_samples_leaf}), selecting top M={M}...")
+    accepted_nodes, prune_depth_stats = region_detector.fit_full_tree_and_prune(
+        X=X_eval, y=y_eval, M=M,
+        variable_for_node_accept=variable_for_node_accept,
+        verbose=True, retain_siblings=retain_siblings,
+    )
 
-            # =============================================================
-            # Dispatch on spawning_method
-            # =============================================================
+    tree = region_detector.rf.estimators_[0].tree_
+    children_left = tree.children_left
+    children_right = tree.children_right
 
-            if spawning_method == 'M_term_tree_by_norm':
-                # One-shot: fit full tree, select top M by norm, spawn all accepted
-                M = adaptive_cfg['M_experts_num']
-                
-                # Tree closure: AToE uses ancestors-only (additive composition);
-                # ANT/AToE-Leaves use ancestors+siblings (routing/tiling).
-                is_atoe_additive = isinstance(model, AToE) and not isinstance(model, AToELeaves)
-                retain_siblings = not is_atoe_additive
-                closure_desc = "ancestors-only (AToE)" if not retain_siblings else "ancestors+siblings"
-                
-                print(f"  [M-term Tree] Fitting full tree (max_depth={region_detector.max_depth}, "
-                      f"min_samples_leaf={region_detector.min_samples_leaf}), selecting top M={M}...")
-                print(f"  [M-term Tree] Closure mode: {closure_desc}")
-                accepted_nodes, prune_depth_stats = \
-                    region_detector.fit_full_tree_and_prune(
-                        X=X_eval,
-                        y=y_eval,
-                        M=M,
-                        variable_for_node_accept=variable_for_node_accept,
-                        verbose=True,
-                        retain_siblings=retain_siblings,
-                    )
+    from collections import deque as _deque
+    parent_map = {}
+    node_tree_depth = {0: 0}
+    _bfs = _deque([0])
+    while _bfs:
+        nid = _bfs.popleft()
+        for child in (children_left[nid], children_right[nid]):
+            if child != -1:
+                parent_map[child] = nid
+                node_tree_depth[child] = node_tree_depth[nid] + 1
+                _bfs.append(child)
 
-                # Determine which nodes to spawn based on model type
-                tree = region_detector.rf.estimators_[0].tree_
-                children_left = tree.children_left
+    print(f"  [Tree] Accepted {len(accepted_nodes)} node(s) of "
+          f"{int(tree.node_count)} tree nodes.")
+    return {
+        'accepted_nodes': accepted_nodes,
+        'tree': tree,
+        'children_left': children_left,
+        'parent_map': parent_map,
+        'node_tree_depth': node_tree_depth,
+        'prune_depth_stats': prune_depth_stats,
+    }
 
-                if isinstance(model, AToELeaves):
-                    # Only leaf nodes of the pruned tree
-                    accepted_ids = {n.node_id for n, _ in accepted_nodes}
-                    nodes_to_spawn = [
-                        (node, parent_id) for node, parent_id in accepted_nodes
-                        if children_left[node.node_id] == -1
-                        or children_left[node.node_id] not in accepted_ids
-                    ]
-                else:
-                    # AToE and ANT: all accepted nodes
-                    nodes_to_spawn = accepted_nodes
 
-                # Pre-compute tree depth for each node and parent map
-                from collections import deque as _deque
-                _parent_map = {}
-                _node_tree_depth = {0: 0}
-                _bfs = _deque([0])
-                while _bfs:
-                    nid = _bfs.popleft()
-                    l, r = children_left[nid], tree.children_right[nid]
-                    for child in (l, r):
-                        if child != -1:
-                            _parent_map[child] = nid
-                            _node_tree_depth[child] = _node_tree_depth[nid] + 1
-                            _bfs.append(child)
+def _select_levels(ctx: TrainingContext, build_result: Dict, leaves_only: bool):
+    """Group spawnable nodes into ordered levels (coarse → fine).
 
-                node_to_expert = {}
-                is_atoe_plain = isinstance(model, AToE) and not isinstance(model, AToELeaves)
-                atoe_zero_init = not reinit_base_after_spawn
+    Returns ``(levels, nodes_to_spawn)`` where ``levels`` is a list (ordered by
+    increasing tree depth) of lists of ``(node, parent_tree_id)``.
+    """
+    accepted_nodes = build_result['accepted_nodes']
+    children_left = build_result['children_left']
+    node_tree_depth = build_result['node_tree_depth']
+    if leaves_only:
+        accepted_ids = {n.node_id for n, _ in accepted_nodes}
+        nodes_to_spawn = [
+            (node, parent_id) for node, parent_id in accepted_nodes
+            if children_left[node.node_id] == -1
+            or children_left[node.node_id] not in accepted_ids
+        ]
+    else:
+        nodes_to_spawn = list(accepted_nodes)
 
-                for node, parent_tree_id in nodes_to_spawn:
-                    parent_expert_idx = node_to_expert.get(parent_tree_id, -1)
-                    depth = _node_tree_depth.get(node.node_id, 1)
+    from collections import defaultdict as _dd
+    by_depth = _dd(list)
+    for node, parent_id in nodes_to_spawn:
+        by_depth[node_tree_depth.get(node.node_id, 1)].append((node, parent_id))
+    levels = [by_depth[d] for d in sorted(by_depth)]
+    print(f"  [Tree] {len(nodes_to_spawn)} node(s) to spawn across "
+          f"{len(levels)} level(s): {[len(lv) for lv in levels]}")
+    return levels, nodes_to_spawn
 
-                    child_region = RegionDescriptor(
-                        bounds_lower=node.bounds_lower,
-                        bounds_upper=node.bounds_upper,
-                        wavelet_norm_squared=node.wavelet_norm_squared,
-                        new_wavelet_norm_squared=node.new_wavelet_norm_squared,
-                        spawn_epoch=epoch,
-                        depth=depth,
-                        parent_idx=parent_expert_idx,
-                        smoothness_alpha=node.smoothness_alpha,
-                    )
 
-                    if is_copy_spawn:
-                        expert_idx = model.spawn_expert(child_region, copy_from_idx=parent_expert_idx)
-                    elif is_atoe_plain:
-                        expert_idx = model.spawn_expert(
-                            child_region, zero_init=atoe_zero_init)
-                    else:
-                        expert_idx = model.spawn_expert(child_region)
-                    if expert_idx >= 0:
-                        node_to_expert[node.node_id] = expert_idx
-                        experts_spawned_this_step += 1
-                        if 'expert_spawns' not in metrics:
-                            metrics['expert_spawns'] = []
-                        metrics['expert_spawns'].append({
-                            'epoch': epoch,
-                            'expert_idx': expert_idx,
-                            'region': child_region.to_dict(),
-                            'depth': depth,
-                            'parent_idx': parent_expert_idx,
-                            **(({'num_experts': model.num_experts} if hasattr(model, 'num_experts') else {}))
-                        })
+def _record_tree_diagnostics(ctx: TrainingContext, build_result: Dict,
+                             nodes_to_spawn) -> None:
+    """Append a full per-node tree-diagnostics record to ``metrics``."""
+    metrics = ctx.metrics
+    region_detector = ctx.region_detector
+    epoch = ctx.epoch
+    accepted_nodes = build_result['accepted_nodes']
+    tree = build_result['tree']
+    parent_map = build_result['parent_map']
+    node_tree_depth = build_result['node_tree_depth']
+    prune_depth_stats = build_result['prune_depth_stats']
 
-                # Save diagnostics for all tree nodes
-                accepted_ids_diag = {n.node_id for n, _ in accepted_nodes}
-                spawned_ids_diag = {n.node_id for n, _ in nodes_to_spawn}
-                all_tree_nodes = region_detector.compute_wavelet_norms()
-                tree_diag_nodes = []
-                for nd in all_tree_nodes:
-                    if nd.node_id == 0:
-                        continue
-                    tree_diag_nodes.append({
-                        'node_id': nd.node_id,
-                        'parent_node_id': _parent_map.get(nd.node_id, -1),
-                        'wavelet_norm_squared': nd.wavelet_norm_squared,
-                        'n_samples': nd.n_samples,
-                        'is_leaf': bool(nd.is_leaf),
-                        'bounds_lower': nd.bounds_lower,
-                        'bounds_upper': nd.bounds_upper,
-                        'accepted': bool(
-                            nd.node_id in accepted_ids_diag),
-                        'spawned_as_expert': bool(
-                            nd.node_id in spawned_ids_diag),
-                        'tree_depth': _node_tree_depth.get(
-                            nd.node_id, -1),
-                    })
-                # Convert depth_stats keys to strings for JSON
-                depth_stats_json = {
-                    str(k): v for k, v in
-                    prune_depth_stats.items()
-                }
-                metrics['spawning_diagnostics'].append({
-                    'epoch': epoch,
-                    'method': 'M_term_tree_by_norm',
-                    'M_experts_num': M,
-                    'variable_for_node_accept': variable_for_node_accept,
-                    'total_tree_nodes': int(tree.node_count),
-                    'accepted_count': len(accepted_ids_diag),
-                    'spawned_count': len(spawned_ids_diag),
-                    'depth_stats': depth_stats_json,
-                    'nodes': tree_diag_nodes,
-                })
+    accepted_ids = {n.node_id for n, _ in accepted_nodes}
+    spawned_ids = {n.node_id for n, _ in nodes_to_spawn}
+    tree_diag_nodes = []
+    for nd in region_detector.compute_wavelet_norms():
+        if nd.node_id == 0:
+            continue
+        tree_diag_nodes.append({
+            'node_id': nd.node_id,
+            'parent_node_id': parent_map.get(nd.node_id, -1),
+            'wavelet_norm_squared': nd.wavelet_norm_squared,
+            'n_samples': nd.n_samples,
+            'is_leaf': bool(nd.is_leaf),
+            'bounds_lower': nd.bounds_lower,
+            'bounds_upper': nd.bounds_upper,
+            'accepted': bool(nd.node_id in accepted_ids),
+            'spawned_as_expert': bool(nd.node_id in spawned_ids),
+            'tree_depth': node_tree_depth.get(nd.node_id, -1),
+        })
+    metrics.setdefault('spawning_diagnostics', []).append({
+        'epoch': epoch,
+        'method': 'M_term_tree_by_norm',
+        'M_experts_num': ctx.adaptive_cfg['M_experts_num'],
+        'variable_for_node_accept': ctx.variable_for_node_accept,
+        'total_tree_nodes': int(tree.node_count),
+        'accepted_count': len(accepted_ids),
+        'spawned_count': len(spawned_ids),
+        'depth_stats': {str(k): v for k, v in prune_depth_stats.items()},
+        'nodes': tree_diag_nodes,
+    })
 
-                spawning_complete = True
-                print(f"  [FullTree] Spawning complete. No further spawning steps.")
 
-            if experts_spawned_this_step > 0:
-                print(f"\n  [Spawning] Spawned {experts_spawned_this_step} experts in this step")
-                _last_spawn_epoch = epoch
-                _spawn_last_fail_epoch = -1
-                _no_spawn_retries_remaining = _no_spawn_retries_max  # reset on success
+def _spawn_nodes(ctx: TrainingContext, level_nodes, copy_output: bool,
+                 node_to_expert: Dict, node_tree_depth: Dict):
+    """Spawn one level's experts, link parents, init, and apply spectral norm.
 
-                # Apply smart init to newly spawned experts (glorot: Glorot hidden + zero
-                # output; or parent_weights: copy hidden layers from parent).
-                # copy_output depends on model type:
-                #   AToE (additive): copy_output=False -> zero output, expert starts at u=0
-                #   ANT/AToE-Leaves (PoU): copy_output=True -> continuous handoff
-                _init_mode = problem_cfg['init']['hidden']
-                _new_exp_start_idx = len(model.experts) - experts_spawned_this_step
-                
-                # Determine copy_output based on model type
-                is_atoe_additive = isinstance(model, AToE) and not isinstance(model, AToELeaves)
-                _copy_output = not is_atoe_additive  # False for AToE, True for ANT/AToE-Leaves
-                
-                for _ei, _new_exp in enumerate(model.experts[-experts_spawned_this_step:]):
-                    _new_exp_idx = _new_exp_start_idx + _ei
-                    if _init_mode == 'parent_weights':
-                        # Resolve parent model: AToE uses model.regions, ANT uses model.parent_indices
-                        if hasattr(model, 'regions') and _new_exp_idx < len(model.regions):
-                            _par_idx = model.regions[_new_exp_idx].parent_idx
-                        elif hasattr(model, 'parent_indices') and _new_exp_idx < len(model.parent_indices):
-                            _par_idx = model.parent_indices[_new_exp_idx]
-                        else:
-                            _par_idx = -1
-                        _parent_model = (model.base_model if _par_idx == -1
-                                         else model.experts[_par_idx])
-                        apply_parent_copy_init(
-                            _new_exp, _parent_model, cfg,
-                            copy_output=_copy_output,
-                        )
-                        _par_label = 'base' if _par_idx == -1 else f'expert {_par_idx}'
-                        _out_msg = "output copied" if _copy_output else "output zeroed (additive)"
-                        print(f"  [ParentInit] Expert {_new_exp_idx}: hidden from {_par_label}, {_out_msg}")
-                    else:
-                        apply_expert_init(_new_exp, cfg)
-                    apply_spectral_norm(_new_exp, cfg)
+    ``node_to_expert`` maps tree-node-id → expert index and is updated in place
+    so finer levels can resolve their parent expert. Returns
+    ``(num_spawned, new_expert_indices)``.
+    """
+    model = ctx.model
+    cfg = ctx.cfg
+    problem_cfg = ctx.problem_cfg
+    metrics = ctx.metrics
+    epoch = ctx.epoch
+    reinit_base_after_spawn = ctx.reinit_base_after_spawn
 
-                # ── 3-phase: reinitialize base + transition to Phase 3 ──
-                # The spawn epoch is also the Phase 1 -> Phase 3 transition. There is no
-                # freezing: the Phase 3 optimizer is recreated over ALL params (base + every
-                # spawned expert), so every parameter enters the optimizer exactly once.
-                if use_three_phase and spawning_complete and current_phase == 1:
-                    if reinit_base_after_spawn:
-                        model.reinitialize_base()
-                    current_phase = 3
-                    active_cfg = cfg
-                    total_epochs = epoch + phase3_epochs  # extend loop
-                    # Recalculate optimizer strategy from top-level config
-                    _p3_opt1 = active_cfg['optimizer_1'].lower()
-                    _p3_opt2_cfg = active_cfg.get('optimizer_2', None)
-                    optimizer_2_name = _p3_opt2_cfg.lower() if _p3_opt2_cfg else None
-                    total_steps_p3 = phase3_epochs * batches_per_epoch
-                    if optimizer_2_name is not None:
-                        _p3_switch = active_cfg.get('optimizer_switch_epoch', None)
-                        switch_epoch = (epoch + _p3_switch) if _p3_switch else (epoch + phase3_epochs + 1)
-                        patience_start_epoch = switch_epoch
-                    else:
-                        switch_epoch = epoch + phase3_epochs + 1
-                        patience_start_epoch = epoch + 1
-                    print(f"\n  [3-Phase] Transitioning to Phase 3: {phase3_epochs} epochs of full model training")
-                    print(f"  [3-Phase] Total epochs now: {total_epochs} (Phase 1: {epoch}, Phase 3: {phase3_epochs})")
-                    print(f"  [3-Phase] Optimizer: {_p3_opt1}, lr: {active_cfg['lr']}, schedule: {active_cfg['lr_schedule']}")
-                    # Recreate optimizer + LR scheduler with Phase 3 config over ALL params.
-                    optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
-                    lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_p3)
-                    step_count = 0
-                    epochs_without_improvement = 0
-                    best_train_loss = float('inf')
-                    _p3_betas = active_cfg.get('soap_betas', active_cfg.get('adam_betas', '?'))
-                    _p3_lr_steps = active_cfg.get('lr_decay_steps', '?')
-                    _p3_warmup = active_cfg.get('lr_warmup_steps', 0)
-                    print(f"  [3-Phase FIX] Phase 3 optimizer recreated: {current_optimizer_name}")
-                    print(f"  [3-Phase FIX]   soap_betas={_p3_betas}, lr_decay_steps={_p3_lr_steps}, warmup={_p3_warmup} steps")
-                    print(f"  [3-Phase FIX]   total params: {sum(len(pg['params']) for pg in optimizer.param_groups)}")
+    from trainer.init import (apply_expert_init, apply_parent_copy_init,
+                              apply_spectral_norm)
+    from adaptive.indicators import RegionDescriptor
 
-                metrics['optimizer_snapshots'].append({
-                    'epoch': epoch,
-                    'event': 'spawn',
-                    'experts_spawned': experts_spawned_this_step,
-                    **_get_optimizer_snapshot(optimizer, lr_scheduler, step_count),
-                })
+    is_copy_spawn = isinstance(model, AToELeaves)
+    is_atoe_plain = (isinstance(model, AToE)
+                     and not isinstance(model, (AToELeaves, ANT)))
+    atoe_zero_init = not reinit_base_after_spawn
+    init_mode = problem_cfg['init']['hidden']
 
-                problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
-                num_experts_str = f" ({model.num_experts} experts)" if hasattr(model, 'num_experts') else ""
-                leaf_info = model.get_leaf_info()
-                leaf_expert_indices = [idx for _, idx in leaf_info if idx >= 0]
-                regions_to_plot = (
-                    [model.regions[i] for i in leaf_expert_indices]
-                    if isinstance(model, (AToELeaves, ANT)) else model.regions
-                )
-                plot_expert_regions(
-                    regions=regions_to_plot,
-                    domain_bounds=domain_bounds,
-                    output_path=adaptive_plots_dir / f"expert_regions_epoch_{epoch}.png",
-                    problem_type=problem_type,
-                    title=f"Expert Regions at Epoch {epoch}{num_experts_str}",
-                    ground_truth=gt_grid,
-                    grid_x=gt_x,
-                    grid_t=gt_t
-                )
+    new_expert_indices = []
+    for node, parent_tree_id in level_nodes:
+        parent_expert_idx = node_to_expert.get(parent_tree_id, -1)
+        depth = node_tree_depth.get(node.node_id, 1)
+        child_region = RegionDescriptor(
+            bounds_lower=node.bounds_lower,
+            bounds_upper=node.bounds_upper,
+            wavelet_norm_squared=node.wavelet_norm_squared,
+            new_wavelet_norm_squared=node.new_wavelet_norm_squared,
+            spawn_epoch=epoch,
+            depth=depth,
+            parent_idx=parent_expert_idx,
+            smoothness_alpha=node.smoothness_alpha,
+        )
+        if is_copy_spawn:
+            expert_idx = model.spawn_expert(child_region,
+                                            copy_from_idx=parent_expert_idx)
+        elif is_atoe_plain:
+            expert_idx = model.spawn_expert(child_region, zero_init=atoe_zero_init)
+        else:
+            expert_idx = model.spawn_expert(child_region)
+        if expert_idx >= 0:
+            node_to_expert[node.node_id] = expert_idx
+            new_expert_indices.append(expert_idx)
+            metrics.setdefault('expert_spawns', []).append({
+                'epoch': epoch,
+                'expert_idx': expert_idx,
+                'region': child_region.to_dict(),
+                'depth': depth,
+                'parent_idx': parent_expert_idx,
+                **({'num_experts': model.num_experts}
+                   if hasattr(model, 'num_experts') else {}),
+            })
 
-                # spawn_pred plot was already saved before spawn (pre-spawn state)
-
-                if adaptive_cfg['blending_mode'] == 'soft' and problem_type == '2d':
-                    leaf_indices_set = (
-                        set(leaf_expert_indices) if isinstance(model, (AToELeaves, ANT)) else None
-                    )
-                    plot_expert_soft_weights(
-                        model=model,
-                        domain_bounds=domain_bounds,
-                        output_path=adaptive_plots_dir / f"soft_weights_epoch_{epoch}.png",
-                        title_prefix=f"Epoch {epoch}: ",
-                        leaf_indices=leaf_indices_set
-                    )
+    # Init newly spawned experts (after spawn so copy-init parents already exist).
+    for expert_idx in new_expert_indices:
+        new_exp = model.experts[expert_idx]
+        if init_mode == 'parent_weights':
+            if hasattr(model, 'regions') and expert_idx < len(model.regions):
+                par_idx = model.regions[expert_idx].parent_idx
+            elif (hasattr(model, 'parent_indices')
+                  and expert_idx < len(model.parent_indices)):
+                par_idx = model.parent_indices[expert_idx]
             else:
-                print(f"\n  [Spawning] No experts spawned this step")
-                _spawn_last_fail_epoch = epoch
-                if _pending_spawn_plot is not None and _pending_spawn_plot.exists():
-                    _pending_spawn_plot.unlink()
-                    _pending_spawn_plot = None
-                if _stop_on_no_spawn:
-                    if _no_spawn_retries_remaining > 0:
-                        _no_spawn_retries_remaining -= 1
-                        print(f"  [SpawnRetry] Zero experts spawned — "
-                              f"{_no_spawn_retries_remaining} retries remaining before stop.")
-                    else:
-                        print(f"  [SpawnRetry] Zero experts spawned and no retries remaining — "
-                              f"saving final checkpoint and stopping.")
-                        final_checkpoint_path = checkpoint_dir / "final_model.pt"
-                        _save_checkpoint(final_checkpoint_path, model, optimizer,
-                                         current_optimizer_name, epoch,
-                                         train_loss, eval_loss, cfg, metrics)
-                        model.train()
-                        break
+                par_idx = -1
+            parent_model = (model.base_model if par_idx == -1
+                            else model.experts[par_idx])
+            apply_parent_copy_init(new_exp, parent_model, cfg,
+                                   copy_output=copy_output)
+            par_label = 'base' if par_idx == -1 else f'expert {par_idx}'
+            out_msg = "output copied" if copy_output else "output zeroed (additive)"
+            print(f"  [ParentInit] Expert {expert_idx}: hidden from {par_label}, "
+                  f"{out_msg}")
+        else:
+            apply_expert_init(new_exp, cfg)
+        apply_spectral_norm(new_exp, cfg)
 
-            # Per-leaf causal: update leaf causal states after successful spawn
-            if experts_spawned_this_step > 0 and _per_leaf_causal and hasattr(loss_fn, '_leaf_state'):
-                if hasattr(model, 'get_leaf_info'):
-                    _new_leaf_info = model.get_leaf_info()
-                    _existing_leaf_states = loss_fn._leaf_state.get('causal_states', {})
-                    _new_states = {}
-                    for _region, _expert_idx in _new_leaf_info:
-                        if _expert_idx in _existing_leaf_states:
-                            _new_states[_expert_idx] = _existing_leaf_states[_expert_idx]
-                        else:
-                            _new_states[_expert_idx] = create_causal_state(problem_cfg)
-                    loss_fn._leaf_state['causal_states'] = _new_states
-                    loss_fn._leaf_state['leaf_info'] = _new_leaf_info
-                    print(f"  [PerLeafCausal] Updated leaf states: "
-                          f"{list(_new_states.keys())} ({len(_new_states)} leaves)")
+    return len(new_expert_indices), new_expert_indices
 
-            # Post-spawn resample: immediately rebuild dataset with new leaf structure so new leaves
-            # get their fair share of adaptive points instead of waiting for the next scheduled resample.
-            # Without this, newly spawned experts in tiny regions are starved of training points
-            # for up to resample_every_epochs batches, causing empty causal chunks and NaN.
-            if experts_spawned_this_step > 0 and _per_leaf_sampling and hasattr(model, 'get_leaf_info'):
-                _spawn_raw_leaf_info = model.get_leaf_info()
-                _spawn_leaf_info = [(r, idx) for r, idx in _spawn_raw_leaf_info if r is not None] or None
-                _spawn_cached = getattr(model, '_residual_cache', [])
-                _spawn_causal_states = (
-                    loss_fn._leaf_state.get('causal_states', {})
-                    if _per_leaf_causal and hasattr(loss_fn, '_leaf_state') else None
-                )
-                _spawn_train_data = regenerate_training_data(
-                    cfg, device, resample_seed=epoch,
-                    cached_residuals=_spawn_cached,
-                    run_dir=run_dir,
-                    epoch=epoch,
-                    causal_state=causal_state,
-                    leaf_info=_spawn_leaf_info,
-                    leaf_causal_states=_spawn_causal_states,
-                )
-                # Override IC h_gt for time marching (windows 1+)
-                _spawn_train_data = _override_ic_for_time_marching(_spawn_train_data, cfg, device)
-                torch.set_default_device(None)  # Reset device context after CUDA inference
-                train_loader = _create_dataloader(_spawn_train_data, cfg['batch_size'], shuffle=True)
-                n_new_leaves = len(_spawn_leaf_info) if _spawn_leaf_info else 0
-                print(f"  [PostSpawnResample] Rebuilt dataset for {n_new_leaves} leaves")
 
-            model.train()
+def _post_spawn_update(ctx: TrainingContext) -> None:
+    """After spawning: refresh per-leaf causal states + resample per-leaf data."""
+    model = ctx.model
+    loss_fn = ctx.loss_fn
+    cfg = ctx.cfg
+    problem_cfg = ctx.problem_cfg
+    device = ctx.device
+    run_dir = ctx.run_dir
+    epoch = ctx.epoch
+
+    if (ctx._per_leaf_causal and hasattr(loss_fn, '_leaf_state')
+            and hasattr(model, 'get_leaf_info')):
+        new_leaf_info = model.get_leaf_info()
+        existing = loss_fn._leaf_state.get('causal_states', {})
+        new_states = {}
+        for _region, expert_idx in new_leaf_info:
+            new_states[expert_idx] = (existing[expert_idx]
+                                      if expert_idx in existing
+                                      else create_causal_state(problem_cfg))
+        loss_fn._leaf_state['causal_states'] = new_states
+        loss_fn._leaf_state['leaf_info'] = new_leaf_info
+        print(f"  [PerLeafCausal] Updated leaf states: "
+              f"{list(new_states.keys())} ({len(new_states)} leaves)")
+
+    if ctx._per_leaf_sampling and hasattr(model, 'get_leaf_info'):
+        raw = model.get_leaf_info()
+        leaf_info = [(r, idx) for r, idx in raw if r is not None] or None
+        cached = getattr(model, '_residual_cache', [])
+        causal_states = (loss_fn._leaf_state.get('causal_states', {})
+                         if ctx._per_leaf_causal and hasattr(loss_fn, '_leaf_state')
+                         else None)
+        td = regenerate_training_data(
+            cfg, device, resample_seed=epoch, cached_residuals=cached,
+            run_dir=run_dir, epoch=epoch, causal_state=None,
+            leaf_info=leaf_info, leaf_causal_states=causal_states,
+        )
+        td = _override_ic_for_time_marching(td, cfg, device)
+        torch.set_default_device(None)
+        ctx.train_data = td
+        ctx.train_loader = _create_dataloader(td, cfg['batch_size'], shuffle=True)
+        n = len(leaf_info) if leaf_info else 0
+        print(f"  [PostSpawnResample] Rebuilt dataset for {n} leaves")
+
+
+def _plot_after_spawn(ctx: TrainingContext, tag: str) -> None:
+    """Save expert-region (and soft-weight) plots after a spawn event."""
+    model = ctx.model
+    if (not ctx.is_adaptive or not hasattr(model, 'num_experts')
+            or model.num_experts == 0):
+        return
+    from adaptive.visualization import (plot_expert_regions,
+                                        plot_expert_soft_weights)
+    domain_bounds = ctx.domain_bounds
+    adaptive_plots_dir = ctx.adaptive_plots_dir
+    gt_grid, gt_x, gt_t = ctx.gt_grid, ctx.gt_x, ctx.gt_t
+    adaptive_cfg = ctx.adaptive_cfg
+    problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
+    num_experts_str = f" ({model.num_experts} experts)"
+    leaf_info = model.get_leaf_info()
+    leaf_expert_indices = [idx for _, idx in leaf_info if idx >= 0]
+    regions_to_plot = (
+        [model.regions[i] for i in leaf_expert_indices]
+        if isinstance(model, (AToELeaves, ANT)) else model.regions
+    )
+    plot_expert_regions(
+        regions=regions_to_plot,
+        domain_bounds=domain_bounds,
+        output_path=adaptive_plots_dir / f"expert_regions_{tag}.png",
+        problem_type=problem_type,
+        title=f"Expert Regions ({tag}){num_experts_str}",
+        ground_truth=gt_grid, grid_x=gt_x, grid_t=gt_t,
+    )
+    if adaptive_cfg['blending_mode'] == 'soft' and problem_type == '2d':
+        leaf_indices_set = (set(leaf_expert_indices)
+                            if isinstance(model, (AToELeaves, ANT)) else None)
+        plot_expert_soft_weights(
+            model=model, domain_bounds=domain_bounds,
+            output_path=adaptive_plots_dir / f"soft_weights_{tag}.png",
+            title_prefix=f"{tag}: ", leaf_indices=leaf_indices_set,
+        )
+
+
+def train_orchestrator(ctx: TrainingContext) -> None:
+    """Drive training as a sequence of segments + staged tree spawning.
+
+    Per-variant dispatch:
+      * non-adaptive          → one ``main`` segment.
+      * AToE-Leaves           → root → spawn all leaves → joint ``phase3``.
+      * AToE / ANT (staged)   → root → per-level spawn+train (coarse→fine) →
+                                final joint ``fine_tune``.
+
+    Replaces the former monolithic ``_run_training_loop``.
+    """
+    cfg = ctx.cfg
+    model = ctx.model
+
+    # Emergency save spanning all segments (reads live ctx state).
+    import atexit as _atexit
+
+    def _emergency_metrics_save():
+        if _emergency_metrics_save.done:
+            return
+        import traceback as _tb_mod
+        exc = _tb_mod.format_exc()
+        ctx.metrics['exception_events'].append({
+            'epoch': ctx.epoch,
+            'note': 'process_exit_or_exception',
+            'traceback': exc if exc.strip() != 'NoneType: None' else None,
+        })
+        ctx.metrics['training_time_seconds'] = time.time() - ctx.start_time
+        _p = ctx.run_dir / "metrics.json"
+        try:
+            with open(_p, 'w') as _f:
+                json.dump(ctx.metrics, _f, indent=2, cls=_NumpySafeEncoder)
+            print(f"\n[Emergency] Metrics saved to {_p}")
+        except Exception as _se:
+            print(f"\n[Emergency] Could not save metrics: {_se}")
+
+    _emergency_metrics_save.done = False
+    _atexit.register(_emergency_metrics_save)
+    ctx._emergency_metrics_save = _emergency_metrics_save
+    ctx._atexit = _atexit
+
+    # ── Variant detection (classes are mutually exclusive) ──
+    if isinstance(model, AToELeaves):
+        variant = 'AToE-Leaves'
+    elif isinstance(model, ANT):
+        variant = 'ANT'
+    elif isinstance(model, AToE):
+        variant = 'AToE'
+    else:
+        variant = 'base'
+    print(f"\n[Orchestrator] variant={variant} | adaptive={ctx.is_adaptive}")
+
+    # ── Non-adaptive: single segment over all params ──
+    if not ctx.is_adaptive:
+        _set_trainable(model, 'all')
+        _train_segment(ctx, 'main', ctx.epochs, cfg)
+        ctx.total_epochs = ctx.epoch
+        return
+
+    # ── Root / base training (Phase 1) ──
+    if ctx.pretrained_base_checkpoint is not None:
+        print("[Orchestrator] Root skipped — base loaded from "
+              f"{ctx.pretrained_base_checkpoint}.")
+    else:
+        _set_trainable(model, 'base')
+        root_cfg = dict(cfg)
+        root_cfg.update(ctx.initial_train_cfg or {})
+        root_budget = ctx.initial_train_cfg['epochs']
+        print(f"[Orchestrator] [3-Phase] Phase 1: training root/base for "
+              f"{root_budget} epochs")
+        res = _train_segment(ctx, 'root', root_budget, root_cfg)
+        if res.nan_detected:
+            return
+
+    # ── Tree build (once) + level selection ──
+    retain_siblings = variant != 'AToE'   # AToE additive: ancestors-only
+    leaves_only = variant == 'AToE-Leaves'
+    copy_output = variant != 'AToE'       # AToE additive: zero expert output
+    build_result = _build_tree_once(ctx, retain_siblings)
+    levels, nodes_to_spawn = _select_levels(ctx, build_result, leaves_only)
+    _record_tree_diagnostics(ctx, build_result, nodes_to_spawn)
+    node_tree_depth = build_result['node_tree_depth']
+
+    if not nodes_to_spawn:
+        print("[Orchestrator] No nodes accepted — finishing after root.")
+        ctx.total_epochs = ctx.epoch
+        return
+
+    node_to_expert: Dict = {}
+
+    # ── AToE-Leaves: spawn all leaves at once, then joint Phase 3 ──
+    if leaves_only:
+        total = 0
+        for level in levels:
+            spawned, _ = _spawn_nodes(ctx, level, copy_output,
+                                      node_to_expert, node_tree_depth)
+            total += spawned
+        print(f"[FullTree] Spawning complete. {total} leaves spawned.")
+        _post_spawn_update(ctx)
+        _plot_after_spawn(ctx, f"epoch_{ctx.epoch}")
+        if total == 0:
+            print("[Orchestrator] Zero experts spawned — finishing after root.")
+            ctx.total_epochs = ctx.epoch
+            return
+        print("[3-Phase] Transitioning to Phase 3: joint training of all params")
+        _set_trainable(model, 'all')
+        _train_segment(ctx, 'phase3', cfg['epochs'], cfg)
+        ctx.total_epochs = ctx.epoch
+        return
+
+    # ── AToE / ANT staged: per-level spawn + train (coarse → fine) ──
+    adaptive_cfg = ctx.adaptive_cfg
+    base_lr = cfg['lr']
+    decay = adaptive_cfg.get('new_expert_lr_decay', 1.0)
+    min_per_level = adaptive_cfg.get('min_epochs_per_level', ctx.min_epochs)
+    max_per_level = adaptive_cfg.get('max_epochs_per_level', cfg['epochs'])
+
+    for level in levels:
+        level_depth = node_tree_depth.get(level[0][0].node_id, 1)
+        print(f"\n[Staged] Level {level_depth}: spawning {len(level)} node(s)")
+        spawned, _ = _spawn_nodes(ctx, level, copy_output,
+                                  node_to_expert, node_tree_depth)
+        if spawned == 0:
+            print(f"[Staged] Level {level_depth}: 0 experts spawned — skipping.")
+            continue
+        _post_spawn_update(ctx)
+        _set_trainable(model, f'level:{level_depth}')
+        print(f"[Freeze] Frozen base + levels < {level_depth}; training "
+              f"{spawned} expert(s) at level {level_depth}")
+        lr_level = base_lr * (decay ** level_depth)
+        res = _train_segment(ctx, f'level_{level_depth}', max_per_level, cfg,
+                             lr_override=lr_level,
+                             min_epochs_override=min_per_level)
+        _plot_after_spawn(ctx, f"level_{level_depth}")
+        if res.nan_detected:
+            return
+        print(f"[Freeze] Level {level_depth} training complete.")
+
+    # ── Final joint fine-tune (AToE / ANT) ──
+    fine_tune_cfg = adaptive_cfg.get('fine_tune', None)
+    if not fine_tune_cfg:
+        print("[FinalTune] No adaptive_pinn.fine_tune block — skipping final "
+              "joint fine-tune.")
+        ctx.total_epochs = ctx.epoch
+        return
+    print("[FinalTune] Unfreezing ALL params for final joint fine-tune.")
+    _set_trainable(model, 'all')
+    ft_cfg = dict(cfg)
+    ft_cfg.update(fine_tune_cfg)
+    ft_min = fine_tune_cfg.get('min_epochs', ctx.min_epochs)
+    _train_segment(ctx, 'fine_tune', fine_tune_cfg['epochs'], ft_cfg,
+                   min_epochs_override=ft_min)
+    ctx.total_epochs = ctx.epoch
+
+
+def _finalize_training(ctx: TrainingContext) -> Path:
+    """Phase 3 of :func:`train`: final checkpoints, plots, metrics, summary.
+
+    Behavior-preserving extraction of the original post-loop block. Returns the
+    best checkpoint path, or ``None`` on NaN divergence (matching the original).
+    """
+    # ── Unpack ctx into locals (finalize body below is unchanged) ──
+    model = ctx.model
+    cfg = ctx.cfg
+    device = ctx.device
+    run_dir = ctx.run_dir
+    eval_data = ctx.eval_data
+    metrics = ctx.metrics
+    timer = ctx.timer
+    checkpoint_dir = ctx.checkpoint_dir
+    optimizer = ctx.optimizer
+    current_optimizer_name = ctx.current_optimizer_name
+    epochs = ctx.epochs
+    total_epochs = ctx.total_epochs
+    train_loss = ctx.train_loss
+    eval_loss = ctx.eval_loss
+    eval_rel_l2 = ctx.eval_rel_l2
+    eval_inf_norm = ctx.eval_inf_norm
+    best_eval_loss = ctx.best_eval_loss
+    best_checkpoint_path = ctx.best_checkpoint_path
+    switch_epoch = ctx.switch_epoch
+    optimizer_2_name = ctx.optimizer_2_name
+    _nan_detected = ctx._nan_detected
+    is_adaptive = ctx.is_adaptive
+    adaptive_cfg = ctx.adaptive_cfg
+    adaptive_inner_metrics = ctx.adaptive_inner_metrics
+    adaptive_plots_dir = ctx.adaptive_plots_dir
+    domain_bounds = ctx.domain_bounds
+    gt_grid = ctx.gt_grid
+    gt_x = ctx.gt_x
+    gt_t = ctx.gt_t
+    rejected_regions = ctx.rejected_regions
+    leaf_loss_history = ctx.leaf_loss_history
+    spawning_method = ctx.spawning_method
+    max_experts = ctx.max_experts
+    wavelet_threshold = ctx.wavelet_threshold
+    start_time = ctx.start_time
+
+    # Finalize-only imports (originally imported in setup under is_adaptive)
+    if is_adaptive:
+        from adaptive.visualization import (
+            plot_expert_regions, save_regions_metadata, plot_expert_soft_weights
+        )
 
     # Disable emergency save (loop done or NaN exit)
+    _emergency_metrics_save = ctx._emergency_metrics_save
+    _atexit = ctx._atexit
     _emergency_metrics_save.done = True
     _atexit.unregister(_emergency_metrics_save)
 
