@@ -95,9 +95,10 @@ class ResNetModel(nn.Module):
         rwf_mean = _rwf.get('mean', 1.0)
         rwf_std = _rwf.get('std', 0.1)
 
-        # Fourier Features: embed input before input_proj
+        # Fourier Features: embed input before input_proj.
+        # Disabled for non-base experts whose input is a parent activation.
         ff_cfg = config['fourier_features']
-        use_ff = ff_cfg['enabled']
+        use_ff = ff_cfg['enabled'] and is_base
         use_periodic = ff_cfg['periodic']
         self.ff_emb: Optional[FourierFeatureEmbedding] = None
         effective_input_dim = layers[0]

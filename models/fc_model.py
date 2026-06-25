@@ -66,9 +66,11 @@ class FCNet(nn.Module):
         # Get activation function
         self.activation = self._get_activation(activation)
 
-        # Fourier Features: embed input before first linear layer
+        # Fourier Features: embed input before first linear layer.
+        # Disabled for non-base experts (e.g. ANT children) whose input is a
+        # parent activation, not raw (x, t) coordinates.
         ff_cfg = config['fourier_features']
-        use_ff = ff_cfg['enabled']
+        use_ff = ff_cfg['enabled'] and is_base
         use_periodic = ff_cfg['periodic']
         self.ff_emb: Optional[FourierFeatureEmbedding] = None
         effective_input_dim = layers[0]

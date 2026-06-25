@@ -144,9 +144,10 @@ class PirateNet(nn.Module):
         self.n_blocks = n_blocks
         self.n_layers = n_actual
 
-        # Fourier Feature embedding
+        # Fourier Feature embedding.
+        # Disabled for non-base experts whose input is a parent activation.
         ff_cfg = config['fourier_features']
-        use_ff = ff_cfg['enabled']
+        use_ff = ff_cfg['enabled'] and is_base
         use_periodic = ff_cfg['periodic']
         if use_ff:
             ff_dim = ff_cfg['dim']
