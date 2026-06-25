@@ -432,10 +432,6 @@ def build_loss(**cfg) -> Callable:
         
         _t = getattr(model, '_timer', None)
         
-        use_decomposed = (cfg['adaptive_pinn']['use_decomposed_derivatives']
-                          and getattr(model, 'supports_decomposed', False)
-                          and len(getattr(model, 'experts', [])) > 0)
-        
         if for_tree_spawning:
             residual_per_sample = torch.zeros(N, device=device)
             ic_per_sample = torch.zeros(N, device=device)
@@ -453,29 +449,15 @@ def build_loss(**cfg) -> Callable:
             
             xt_f = torch.cat([x_f, t_f], dim=1)
             
-            if use_decomposed:
-                if _t: _t.start('loss.residual.forward')
-                decomposed = model.forward_for_pde_derivatives(xt_f)
-                if _t: _t.stop('loss.residual.forward')
-                
-                composed = decomposed['composed']  # (N_f, 1)
-                h_f = composed[:, 0]
-                
-                if _t: _t.start('loss.residual.derivatives')
-                h_t_val, h_x_val, h_xx_val = compute_derivatives_decomposed(
-                    decomposed['components'], x_f, t_f, need_ht=True, need_hxx=True,
-                    indicator_data=decomposed.get('indicator_data'))
-                if _t: _t.stop('loss.residual.derivatives')
-            else:
-                if _t: _t.start('loss.residual.forward')
-                h_pred = model(xt_f)  # (N_f, 1)
-                if _t: _t.stop('loss.residual.forward')
-                
-                h_f = h_pred[:, 0]
-                
-                if _t: _t.start('loss.residual.derivatives')
-                h_t_val, h_x_val, h_xx_val = compute_derivatives(h_f, x_f, t_f)
-                if _t: _t.stop('loss.residual.derivatives')
+            if _t: _t.start('loss.residual.forward')
+            h_pred = model(xt_f)  # (N_f, 1)
+            if _t: _t.stop('loss.residual.forward')
+            
+            h_f = h_pred[:, 0]
+            
+            if _t: _t.start('loss.residual.derivatives')
+            h_t_val, h_x_val, h_xx_val = compute_derivatives(h_f, x_f, t_f)
+            if _t: _t.stop('loss.residual.derivatives')
             
             residual = pde_residual(h_f, h_t_val, h_x_val, h_xx_val, beta=beta, epsilon=epsilon)
             

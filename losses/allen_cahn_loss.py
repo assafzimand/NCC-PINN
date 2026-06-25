@@ -214,8 +214,6 @@ def build_loss(**cfg):
         masks = batch['mask']
         N = x.shape[0]; device = x.device
         _t = getattr(model, '_timer', None)
-        # LEGACY PATH DISABLED: use_decomposed = False (smoothstep windows use autograd only)
-        use_decomposed = False  # Config 'use_decomposed_derivatives' is ignored
         if for_tree_spawning:
             residual_per_sample = torch.zeros(N, device=device)
             ic_per_sample = torch.zeros(N, device=device)
@@ -226,25 +224,13 @@ def build_loss(**cfg):
             x_f = x_f.clone().detach().requires_grad_(True)
             t_f = t_f.clone().detach().requires_grad_(True)
             xt_f = torch.cat([x_f, t_f], dim=1)
-            if use_decomposed:
-                if _t: _t.start('loss.residual.forward')
-                decomposed = model.forward_for_pde_derivatives(xt_f)
-                if _t: _t.stop('loss.residual.forward')
-                composed = decomposed['composed']
-                h_f = composed[:, 0]
-                if _t: _t.start('loss.residual.derivatives')
-                h_t_val, h_x_val, h_xx_val = compute_derivatives_decomposed(
-                    decomposed['components'], x_f, t_f, need_ht=True, need_hxx=True,
-                    indicator_data=decomposed.get('indicator_data'))
-                if _t: _t.stop('loss.residual.derivatives')
-            else:
-                if _t: _t.start('loss.residual.forward')
-                h_pred = model(xt_f)
-                if _t: _t.stop('loss.residual.forward')
-                h_f = h_pred[:, 0]
-                if _t: _t.start('loss.residual.derivatives')
-                h_t_val, h_x_val, h_xx_val = compute_derivatives(h_f, x_f, t_f)
-                if _t: _t.stop('loss.residual.derivatives')
+            if _t: _t.start('loss.residual.forward')
+            h_pred = model(xt_f)
+            if _t: _t.stop('loss.residual.forward')
+            h_f = h_pred[:, 0]
+            if _t: _t.start('loss.residual.derivatives')
+            h_t_val, h_x_val, h_xx_val = compute_derivatives(h_f, x_f, t_f)
+            if _t: _t.stop('loss.residual.derivatives')
             residual = pde_residual(h_f, h_t_val, h_x_val, h_xx_val, D=D)
             residual_squared = residual ** 2
             if for_tree_spawning:
@@ -311,33 +297,18 @@ def build_loss(**cfg):
 
             xt_stacked = torch.cat([x_stacked, t_stacked], dim=1)
 
-            if use_decomposed:
-                if _t: _t.start('loss.bc.forward')
-                decomposed_bc = model.forward_for_pde_derivatives(xt_stacked)
-                if _t: _t.stop('loss.bc.forward')
+            if _t: _t.start('loss.bc.forward')
+            h_pred_stacked = model(xt_stacked)
+            if _t: _t.stop('loss.bc.forward')
 
-                composed_bc = decomposed_bc['composed']
-                h_stacked = composed_bc[:, 0]
+            h_stacked = h_pred_stacked[:, 0]
 
-                if _t: _t.start('loss.bc.derivatives')
-                _, h_x_stacked, _ = compute_derivatives_decomposed(
-                    decomposed_bc['components'], x_stacked, t_stacked,
-                    need_ht=False, need_hxx=False,
-                    indicator_data=decomposed_bc.get('indicator_data'))
-                if _t: _t.stop('loss.bc.derivatives')
-            else:
-                if _t: _t.start('loss.bc.forward')
-                h_pred_stacked = model(xt_stacked)
-                if _t: _t.stop('loss.bc.forward')
-
-                h_stacked = h_pred_stacked[:, 0]
-
-                if _t: _t.start('loss.bc.derivatives')
-                h_b_scalar = h_stacked
-                h_x_stacked = torch.autograd.grad(
-                    h_b_scalar.sum(), x_stacked, create_graph=True, retain_graph=True
-                )[0].squeeze(-1)
-                if _t: _t.stop('loss.bc.derivatives')
+            if _t: _t.start('loss.bc.derivatives')
+            h_b_scalar = h_stacked
+            h_x_stacked = torch.autograd.grad(
+                h_b_scalar.sum(), x_stacked, create_graph=True, retain_graph=True
+            )[0].squeeze(-1)
+            if _t: _t.stop('loss.bc.derivatives')
 
             h_left = h_stacked[:n_left]
             h_right = h_stacked[n_left:]
