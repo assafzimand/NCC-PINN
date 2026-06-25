@@ -603,6 +603,21 @@ base_config:
       lr_schedule: none
       lr_warmup_steps: 0
 
+    # ── Staged per-level (AToE / ANT) ──
+    new_expert_lr_decay: 1.0
+    min_epochs_per_level: 1
+    max_epochs_per_level: 15000
+
+    # ── Final joint fine-tune (AToE / ANT) ──
+    fine_tune:
+      epochs: 15000
+      optimizer_1: adam
+      optimizer_2: ssbroyden
+      optimizer_switch_epoch: 7500
+      lr: 0.001
+      lr_schedule: none
+      lr_warmup_steps: 0
+
 
 experiments:
   # ══════════════════════════════════════════════════════════════════════════════
@@ -621,6 +636,21 @@ experiments:
         optimizer_1: adam
         optimizer_2: lbfgs
         optimizer_switch_epoch: 90000
+        lr: 0.0001
+        lr_schedule: none
+        lr_warmup_steps: 0
+
+      # ── Staged per-level (AToE / ANT) ──
+      new_expert_lr_decay: 1.0
+      min_epochs_per_level: 1
+      max_epochs_per_level: 15000
+
+      # ── Final joint fine-tune (AToE / ANT) ──
+      fine_tune:
+        epochs: 15000
+        optimizer_1: adam
+        optimizer_2: lbfgs
+        optimizer_switch_epoch: 13500
         lr: 0.0001
         lr_schedule: none
         lr_warmup_steps: 0

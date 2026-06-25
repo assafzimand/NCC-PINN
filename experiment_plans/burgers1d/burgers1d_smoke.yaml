@@ -251,6 +251,21 @@ base_config:
       lr_schedule: none
       lr_warmup_steps: 0
 
+    # ── Staged per-level (AToE / ANT) ──
+    new_expert_lr_decay: 1.0
+    min_epochs_per_level: 1
+    max_epochs_per_level: 5000
+
+    # ── Final joint fine-tune (AToE / ANT) ──
+    fine_tune:
+      epochs: 5000
+      optimizer_1: adam
+      optimizer_2: ssbroyden
+      optimizer_switch_epoch: 1000
+      lr: 0.001
+      lr_schedule: none
+      lr_warmup_steps: 0
+
 
 experiments:
   - name: burgers1d_smoke_atoe
