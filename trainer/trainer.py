@@ -1855,10 +1855,17 @@ def train(
                 _no_spawn_retries_remaining = _no_spawn_retries_max  # reset on success
 
                 # Apply smart init to newly spawned experts (glorot: Glorot hidden + zero
-                # output; or parent_weights: copy hidden AND output layers from the parent,
-                # which is the continuous handoff under normalized soft indicators).
+                # output; or parent_weights: copy hidden layers from parent).
+                # copy_output depends on model type:
+                #   AToE (additive): copy_output=False -> zero output, expert starts at u=0
+                #   ANT/AToE-Leaves (PoU): copy_output=True -> continuous handoff
                 _init_mode = problem_cfg['init']['hidden']
                 _new_exp_start_idx = len(model.experts) - experts_spawned_this_step
+                
+                # Determine copy_output based on model type
+                is_atoe_additive = isinstance(model, AToE) and not isinstance(model, AToELeaves)
+                _copy_output = not is_atoe_additive  # False for AToE, True for ANT/AToE-Leaves
+                
                 for _ei, _new_exp in enumerate(model.experts[-experts_spawned_this_step:]):
                     _new_exp_idx = _new_exp_start_idx + _ei
                     if _init_mode == 'parent_weights':
@@ -1873,10 +1880,11 @@ def train(
                                          else model.experts[_par_idx])
                         apply_parent_copy_init(
                             _new_exp, _parent_model, cfg,
-                            copy_output=True,
+                            copy_output=_copy_output,
                         )
                         _par_label = 'base' if _par_idx == -1 else f'expert {_par_idx}'
-                        print(f"  [ParentInit] Expert {_new_exp_idx}: hidden layers copied from {_par_label}, output copied")
+                        _out_msg = "output copied" if _copy_output else "output zeroed (additive)"
+                        print(f"  [ParentInit] Expert {_new_exp_idx}: hidden from {_par_label}, {_out_msg}")
                     else:
                         apply_expert_init(_new_exp, cfg)
                     apply_spectral_norm(_new_exp, cfg)
