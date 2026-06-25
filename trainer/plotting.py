@@ -72,12 +72,14 @@ def plot_training_curves(
                    linewidth=1.5, alpha=0.7, label=label)
     
     # Add segment boundary markers (blue dotted), skip epoch 1 (start of first segment)
-    for i, epoch in enumerate(segment_start_epochs):
+    _seg_labeled = False
+    for epoch in segment_start_epochs:
         if epoch <= 1:
             continue
-        label = 'Segment Start' if i == 0 or segment_start_epochs[0] <= 1 else None
-        ax.axvline(x=epoch, color='blue', linestyle=':', 
-                   linewidth=1.5, alpha=0.6, label=label)
+        ax.axvline(x=epoch, color='blue', linestyle=':',
+                   linewidth=1.5, alpha=0.6,
+                   label='New Level Start' if not _seg_labeled else None)
+        _seg_labeled = True
     
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Loss', fontsize=12)
@@ -99,12 +101,14 @@ def plot_training_curves(
                    linewidth=1.5, alpha=0.7, label=label)
     
     # Add segment boundary markers (blue dotted), skip epoch 1
-    for i, epoch in enumerate(segment_start_epochs):
+    _seg_labeled = False
+    for epoch in segment_start_epochs:
         if epoch <= 1:
             continue
-        label = 'Segment Start' if i == 0 or segment_start_epochs[0] <= 1 else None
-        ax.axvline(x=epoch, color='blue', linestyle=':', 
-                   linewidth=1.5, alpha=0.6, label=label)
+        ax.axvline(x=epoch, color='blue', linestyle=':',
+                   linewidth=1.5, alpha=0.6,
+                   label='New Level Start' if not _seg_labeled else None)
+        _seg_labeled = True
     
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Relative L2 Error', fontsize=12)
