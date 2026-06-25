@@ -8,6 +8,12 @@ where:
 - MSE_f: PDE residual loss (h_t - D*h_xx - 5*(h - h^3) = 0)
 - MSE_0: Initial condition loss (h(x,0) = x^2*cos(pi*x))
 - MSE_b: Periodic boundary condition loss (h(-1,t) = h(1,t) and h_x(-1,t) = h_x(1,t))
+
+LEGACY PATHS (DISABLED):
+    - Decomposed derivative computation: DISABLED. With compact smoothstep windows,
+      all derivatives are computed via autograd on composed output.
+    - Analytical indicator derivatives: DISABLED. The compute_analytical_indicator_derivatives
+      function was specific to the legacy sigmoid window and is preserved for reference only.
 """
 
 import torch
@@ -129,7 +135,8 @@ def compute_derivatives_decomposed(
     if need_hxx:
         total_dh_dx = sum(h_grads[k][:, 0:spatial_dim].sum() for k in range(num_components))
         d2_h = torch.autograd.grad(total_dh_dx, all_inputs, create_graph=True, retain_graph=True)
-    use_analytical = (indicator_data is not None and indicator_data.get('all_sigma') is not None)
+    # LEGACY PATH DISABLED: analytical indicator derivatives not used with smoothstep windows
+    use_analytical = False  # Original: (indicator_data is not None and indicator_data.get('all_sigma') is not None)
     if use_analytical:
         inputs_orig = torch.cat([x, t], dim=1)
         active_indices = indicator_data['active_expert_indices']
@@ -207,9 +214,8 @@ def build_loss(**cfg):
         masks = batch['mask']
         N = x.shape[0]; device = x.device
         _t = getattr(model, '_timer', None)
-        use_decomposed = (cfg['adaptive_pinn']['use_decomposed_derivatives']
-                          and getattr(model, 'supports_decomposed', False)
-                          and len(getattr(model, 'experts', [])) > 0)
+        # LEGACY PATH DISABLED: use_decomposed = False (smoothstep windows use autograd only)
+        use_decomposed = False  # Config 'use_decomposed_derivatives' is ignored
         if for_tree_spawning:
             residual_per_sample = torch.zeros(N, device=device)
             ic_per_sample = torch.zeros(N, device=device)

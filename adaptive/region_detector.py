@@ -452,6 +452,7 @@ class RegionDetector:
         M: int,
         variable_for_node_accept: str = 'norm',
         verbose: bool = True,
+        retain_siblings: bool = True,
         **kwargs,
     ) -> Tuple[List[Tuple[TreeNodeInfo, int]], Dict]:
         """
@@ -464,9 +465,9 @@ class RegionDetector:
             - 'new_norm': highest new_wavelet_norm_squared
             - 'smoothness': lowest smoothness_alpha (roughest regions)
             
-        Then ensure valid binary tree structure by adding:
-            - All ancestors of selected nodes (paths to root)
-            - Siblings of any node in closure (so no node has exactly 1 child)
+        Then ensure valid structure by adding:
+            - All ancestors of selected nodes (paths to root) — always
+            - Siblings of any node in closure — only if retain_siblings=True
 
         Args:
             X: (N, n_dims) coordinates
@@ -474,6 +475,9 @@ class RegionDetector:
             M: Number of top nodes to select
             variable_for_node_accept: 'norm' | 'new_norm' | 'smoothness'
             verbose: print diagnostics
+            retain_siblings: If True (default), add siblings to ensure complete
+                           binary tree (needed for ANT routing, AToE-Leaves tiling).
+                           If False, keep only ancestors (AToE additive composition).
             **kwargs: ignored (backward compat)
 
         Returns:
@@ -563,10 +567,10 @@ class RegionDetector:
             else:
                 print(f"  [M-term Tree] Selected top M={M_actual} nodes by {variable_for_node_accept}")
 
-        # Build closure: add ancestors and siblings for valid binary tree structure
+        # Build closure: add ancestors (always) and siblings (conditional)
         accepted = set(top_M_nodes)
         
-        # Add all ancestors of selected nodes
+        # Add all ancestors of selected nodes (always needed for valid parent_idx linkage)
         for nid in list(top_M_nodes):
             cur = nid
             while cur in parent_map:
@@ -576,26 +580,33 @@ class RegionDetector:
                 accepted.add(cur)
 
         # Ensure binary tree structure: iteratively add siblings
-        changed = True
-        iterations = 0
-        max_iterations = tree.node_count  # Safety limit
-        while changed and iterations < max_iterations:
-            changed = False
-            iterations += 1
-            for nid in list(accepted):
-                if nid in sibling_map:
-                    sibling = sibling_map[nid]
-                    if sibling not in accepted:
-                        accepted.add(sibling)
-                        changed = True
-                        # Also add ancestors of newly added sibling
-                        cur = sibling
-                        while cur in parent_map:
-                            cur = parent_map[cur]
-                            if cur == 0 or cur in accepted:
-                                break
-                            accepted.add(cur)
+        # - retain_siblings=True: ANT (routing), AToE-Leaves (tiling) need complete binary tree
+        # - retain_siblings=False: AToE additive composition only needs ancestors
+        if retain_siblings:
+            changed = True
+            iterations = 0
+            max_iterations = tree.node_count  # Safety limit
+            while changed and iterations < max_iterations:
+                changed = False
+                iterations += 1
+                for nid in list(accepted):
+                    if nid in sibling_map:
+                        sibling = sibling_map[nid]
+                        if sibling not in accepted:
+                            accepted.add(sibling)
                             changed = True
+                            # Also add ancestors of newly added sibling
+                            cur = sibling
+                            while cur in parent_map:
+                                cur = parent_map[cur]
+                                if cur == 0 or cur in accepted:
+                                    break
+                                accepted.add(cur)
+                                changed = True
+        
+        closure_type = "ancestors+siblings" if retain_siblings else "ancestors-only"
+        if verbose:
+            print(f"  [M-term Tree] Closure: {closure_type} -> {len(accepted)} nodes")
 
         # Compute statistics by depth
         depth_stats = {}

@@ -12,13 +12,13 @@ where:
 Parameters: alpha = 100/16, beta = 100/16^2, gamma = 100/16^4
 (PirateNet benchmark; Wang et al., JMLR 2024)
 
-IMPORTANT DESIGN CHOICE - Decomposed Derivatives:
-    Decomposed derivative computation is DISABLED for KS residual loss.
-    Reason: The analytical 4th derivative of indicator functions (d⁴ψ/dx⁴)
-    involves terms like 1/σ⁴, causing even worse catastrophic cancellation
-    than KdV's 3rd-order case. Standard autograd on the composed output is
-    the only numerically stable approach.
-    See line ~485: use_decomposed = False (forced, not configurable).
+LEGACY PATHS (DISABLED):
+    - Decomposed derivative computation: DISABLED. The analytical 4th derivative
+      of sigmoid indicators (d⁴ψ/dx⁴) involves 1/σ⁴ terms causing catastrophic
+      cancellation. Standard autograd on composed output is numerically stable.
+    - Analytical indicator derivatives: DISABLED. The compute_analytical_indicator_derivatives
+      function was specific to the legacy sigmoid window. With the new compact smoothstep
+      windows, all derivatives are computed via autograd on the composed forward output.
 """
 
 import math
@@ -370,9 +370,10 @@ def compute_derivatives_decomposed(
         d4_h = torch.autograd.grad(
             total_d3h_dx3, all_inputs, create_graph=True, retain_graph=True)
 
-    # Indicator derivatives
-    use_analytical = (indicator_data is not None
-                      and indicator_data.get('all_sigma') is not None)
+    # Indicator derivatives: autograd only (analytical path is LEGACY)
+    # LEGACY: The analytical path checked for 'all_sigma' which was specific to sigmoid windows.
+    use_analytical = False  # LEGACY PATH DISABLED
+    # Original: (indicator_data is not None and indicator_data.get('all_sigma') is not None)
 
     if use_analytical:
         inputs_orig = torch.cat([x, t], dim=1)
@@ -530,10 +531,11 @@ def build_loss(**cfg) -> Callable:
 
         _t = getattr(model, '_timer', None)
 
-        # KS requires h_xxxx (4th spatial derivative). Same as KdV: the decomposed
-        # analytical indicator path has even worse catastrophic cancellation (1/sigma^4)
-        # than KdV's 3rd order. Force standard autograd on composed output.
-        use_decomposed = False
+        # LEGACY PATH DISABLED: use_decomposed = False
+        # The decomposed derivative path is disabled for all PDEs with smoothstep windows.
+        # For KS specifically, the analytical 4th derivative (1/σ⁴) caused catastrophic
+        # cancellation. Standard autograd on composed output is numerically stable.
+        use_decomposed = False  # Config key 'use_decomposed_derivatives' is ignored
 
         if for_tree_spawning:
             residual_per_sample = torch.zeros(N, device=device)

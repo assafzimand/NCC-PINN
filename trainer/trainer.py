@@ -566,7 +566,7 @@ def train(
         'causal_history': [],      # Causal training state (tol, min_weight, stage) at eval epochs
         'lra_history': [],         # LRA weights and grad norms at eval epochs
         'resample_events': [],     # Track resampling/skipping events
-        'freeze_events': [],       # Freeze/unfreeze events with epoch and reason
+        # 'freeze_events' removed - staged freezing now uses requires_grad=False per level
         'plateau_events': [],      # Plateau check outcomes (deferred / triggered)
         'optimizer_events': [],    # Optimizer switch events
         'optimizer_snapshots': [],  # Optimizer/scheduler state at spawn, freeze, unfreeze, resample
@@ -1715,8 +1715,16 @@ def train(
             if spawning_method == 'M_term_tree_by_norm':
                 # One-shot: fit full tree, select top M by norm, spawn all accepted
                 M = adaptive_cfg['M_experts_num']
+                
+                # Tree closure: AToE uses ancestors-only (additive composition);
+                # ANT/AToE-Leaves use ancestors+siblings (routing/tiling).
+                is_atoe_additive = isinstance(model, AToE) and not isinstance(model, AToELeaves)
+                retain_siblings = not is_atoe_additive
+                closure_desc = "ancestors-only (AToE)" if not retain_siblings else "ancestors+siblings"
+                
                 print(f"  [M-term Tree] Fitting full tree (max_depth={region_detector.max_depth}, "
                       f"min_samples_leaf={region_detector.min_samples_leaf}), selecting top M={M}...")
+                print(f"  [M-term Tree] Closure mode: {closure_desc}")
                 accepted_nodes, prune_depth_stats = \
                     region_detector.fit_full_tree_and_prune(
                         X=X_eval,
@@ -1724,6 +1732,7 @@ def train(
                         M=M,
                         variable_for_node_accept=variable_for_node_accept,
                         verbose=True,
+                        retain_siblings=retain_siblings,
                     )
 
                 # Determine which nodes to spawn based on model type

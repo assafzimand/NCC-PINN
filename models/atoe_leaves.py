@@ -54,6 +54,10 @@ class AToELeaves(nn.Module):
         problem_config = config[problem]
         self.input_dim = base_architecture[0]
         self.output_dim = problem_config['output_dim']
+        
+        # Window configuration: smoothstep (compact) or sigmoid (legacy)
+        self.window_type = problem_config.get('window_type', 'smoothstep')
+        self.window_smoothness_order = problem_config.get('window_smoothness_order', 2)
         if self.atoe_threshold_capacity is not None:
             # Read variable_for_expert_size and corresponding threshold
             self.variable_for_expert_size = adaptive_config['variable_for_expert_size']
@@ -231,7 +235,9 @@ class AToELeaves(nn.Module):
             regions=self.regions,
             device=device,
             mode='soft',
-            sigma_fraction=self.sigma_fraction
+            sigma_fraction=self.sigma_fraction,
+            window_type=self.window_type,
+            window_smoothness_order=self.window_smoothness_order
         )
 
     def spawn_expert(self, region: RegionDescriptor, copy_from_idx: Optional[int] = None) -> int:

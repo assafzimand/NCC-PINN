@@ -8,6 +8,12 @@ where:
 - MSE_f: PDE residual loss (h_t + h*h_x - (nu/pi)*h_xx = 0)
 - MSE_0: Initial condition loss (h(0,x) = -sin(pi*x))
 - MSE_b: Boundary condition loss (Dirichlet: h(t,-1) = h(t,1) = 0)
+
+LEGACY PATHS (DISABLED):
+    - Decomposed derivative computation: DISABLED. With compact smoothstep windows,
+      all derivatives are computed via autograd on composed output.
+    - Analytical indicator derivatives: DISABLED. The compute_analytical_indicator_derivatives
+      function was specific to the legacy sigmoid window and is preserved for reference only.
 """
 
 import torch
@@ -107,7 +113,14 @@ def compute_analytical_indicator_derivatives(
     need_hxx: bool = True,
 ) -> dict:
     """
+    [LEGACY - NOT USED WITH SMOOTHSTEP WINDOWS]
+    
     Compute normalized indicator derivatives ANALYTICALLY for all components.
+    
+    This function was designed for the legacy sigmoid window where analytical
+    derivatives could be computed. With the new compact smoothstep windows,
+    all derivatives are computed via autograd on the composed forward output.
+    This function is preserved for reference but will not be called.
     
     Uses closed-form sigmoid derivative formulas for soft indicators
     ψ_k = Π_d σ_L(d) · σ_U(d).
@@ -303,12 +316,16 @@ def compute_derivatives_decomposed(
             total_dh_dx, all_inputs, create_graph=True, retain_graph=True)
 
     # ====================================================================
-    # Indicator derivatives: analytical or autograd fallback
+    # Indicator derivatives: autograd only (analytical path is LEGACY)
     # ====================================================================
-    use_analytical = (indicator_data is not None
-                      and indicator_data.get('all_sigma') is not None)
+    # LEGACY: The analytical path checked for 'all_sigma' which was specific to
+    # sigmoid windows. With smoothstep windows, this key doesn't exist (renamed
+    # to all_delta with different semantics), so use_analytical is always False.
+    use_analytical = False  # LEGACY PATH DISABLED
+    # Original check was: (indicator_data is not None and indicator_data.get('all_sigma') is not None)
 
     if use_analytical:
+        # LEGACY: This branch is never taken with smoothstep windows
         inputs_orig = torch.cat([x, t], dim=1)  # (N, D)
         active_indices = indicator_data['active_expert_indices']
         psi_derivs = compute_analytical_indicator_derivatives(
@@ -459,9 +476,13 @@ def build_loss(**cfg) -> Callable:
         # Timer (attached to model by trainer)
         _t = getattr(model, '_timer', None)
         
-        use_decomposed = (cfg['adaptive_pinn']['use_decomposed_derivatives']
-                          and getattr(model, 'supports_decomposed', False)
-                          and len(getattr(model, 'experts', [])) > 0)
+        # LEGACY PATH DISABLED: use_decomposed = False
+        # The decomposed derivative path is disabled for all PDEs with smoothstep windows.
+        # Standard autograd on composed output is numerically stable and simpler.
+        use_decomposed = False  # Config key 'use_decomposed_derivatives' is ignored
+        # Original check was: (cfg['adaptive_pinn']['use_decomposed_derivatives']
+        #                      and getattr(model, 'supports_decomposed', False)
+        #                      and len(getattr(model, 'experts', [])) > 0)
         
         # Initialize per-sample arrays if needed
         if for_tree_spawning:
