@@ -1,17 +1,17 @@
-# Allen-Cahn Primary PAFA Experiments (clean Kiyani recipe)
-# Goal: 3 variants × 3 M values = 9 runs. Single optimizer (Kiyani Adam→SSBroyden).
-# Purpose: select the best (variant, M). Winner feeds allen_cahn_01_training.yaml.
+# Allen-Cahn Primary PAFA Experiments (full Kiyani recipe)
+# Goal: 3 variants (AToE, AToELeaves, ANT) × M=10 only = 3 runs.
+# Purpose: validate new staged training flow with proven Kiyani recipe.
 #
 # Training recipe = Kiyani reproduction (arXiv:2501.16371). Our verified-good vanilla PINN
 # run reached 9.8e-5 rel-L2 with [2,30,30,30,1]:
-#   adam(5k) → ssbroyden, lr=0.005, lr_schedule exponential (0.98/1000), float64.
-# Wrapped in PAFA 3-phase: short Phase 1 (10k) base pretrain → spawn M → full Phase 3 (35k).
+#   adam(5k) → ssbroyden(30k), lr=0.005, lr_schedule exponential (0.98/1000), float64.
+# Now applied to PAFA 3-phase: Phase 1 (35k) base pretrain → spawn M → Phase 3 (35k) joint.
 #
 # Clean config: NO extra features (rwf off, fourier off, adaptive_sampling off, causal off).
 # Those are evaluated in allen_cahn_01_training.yaml.
 #
-# Architecture sizing (param-balanced, 3 hidden layers, mirrors kdv_01_main):
-#   M=10, [2,37,37,37,1]   M=20, [2,30,30,30,1]   M=30, [2,29,29,29,1]
+# Architecture sizing (param-balanced, 3 hidden layers):
+#   M=10: [2,37,37,37,1]
 
 experiment_name: "allen_cahn_00_main"
 
@@ -24,7 +24,7 @@ base_config:
   # ── Phase 3: full Kiyani schedule — adam(5k) → ssbroyden(30k) = 35k ──────────
   epochs: 35000
   batch_size: 99999
-  patience_epochs: 999999
+  patience_epochs: 5000                # ~14% of budget; rides through optimizer transitions
   min_epochs: 1
   patience_rel_delta: 0.01            # min relative train-loss improvement to reset patience
 
@@ -58,8 +58,8 @@ base_config:
   bins: 5
   n_bin_visualize_ncc: 100
   n_freq_grid: 128
-  eval_every: 1000
-  print_every: 1000
+  eval_every: 100                      # Kiyani-exact: 350 eval points over 35k epochs
+  print_every: 100
   save_every: 5000
   inner_metrics_eval_every: 9999999
   seed: 42
@@ -228,12 +228,12 @@ base_config:
   adaptive_pinn:
     enabled: true
     max_experts: 150
-    spawn_every_epochs: 10000          # matches initial_train.epochs (Phase 1)
+    spawn_every_epochs: 35000          # matches initial_train.epochs (Phase 1)
     variable_for_node_accept: norm
     variable_for_expert_size: norm
     AToE_threshold_capacity: null
     ANT_threshold_architecture: null
-    ANT_default_hidden_layers: 29      # for M=10/20; ANT M=30 overrides to 22
+    ANT_default_hidden_layers: 29      # for M=10
     expert_type: mlp                   # Kiyani-exact (resnet evaluated in 01_training)
     blending_mode: soft
     sigma_fraction: 0.2
@@ -255,9 +255,9 @@ base_config:
     spawn_retry_after: 10
     reinitialize_base_after_spawn: false
 
-    # ── Phase 1: short base pretrain — adam(5k) → ssbroyden(5k) = 10k ─────────
+    # ── Phase 1: full Kiyani base pretrain — adam(5k) → ssbroyden(30k) = 35k ──
     initial_train:
-      epochs: 10000
+      epochs: 35000
       optimizer_1: adam
       optimizer_2: ssbroyden
       optimizer_switch_epoch: 5000
@@ -268,17 +268,17 @@ base_config:
       lr_warmup_steps: 0
 
     # ── Staged per-level (AToE / ANT) ──
-    new_expert_lr_decay: 1.0
+    new_expert_lr_decay: 1.0           # MoE papers use same LR for all subnets
     min_epochs_per_level: 1
-    max_epochs_per_level: 10000
+    max_epochs_per_level: 35000        # ceiling; patience terminates earlier
 
     # ── Final joint fine-tune (AToE / ANT) ──
     fine_tune:
-      epochs: 10000
+      epochs: 35000                    # same budget as Phase 1
       optimizer_1: adam
       optimizer_2: ssbroyden
       optimizer_switch_epoch: 5000
-      lr: 0.001
+      lr: 0.001                        # 5x below initial_train for gentle joint alignment
       lr_schedule: exponential
       lr_decay_rate: 0.98
       lr_decay_steps: 1000
@@ -294,20 +294,6 @@ experiments:
     adaptive_pinn:
       M_experts_num: 10
 
-  - name: allen_cahn_atoe_m20
-    problem: allen_cahn
-    model: AToE
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      M_experts_num: 20
-
-  # - name: allen_cahn_atoe_m30
-  #   problem: allen_cahn
-  #   model: AToE
-  #   base_architecture: [2, 29, 29, 29, 1]
-  #   adaptive_pinn:
-  #     M_experts_num: 30
-
   # ── AToELeaves ────────────────────────────────────────────────────────────
   - name: allen_cahn_leaves_m10
     problem: allen_cahn
@@ -315,20 +301,6 @@ experiments:
     base_architecture: [2, 37, 37, 37, 1]
     adaptive_pinn:
       M_experts_num: 10
-
-  # - name: allen_cahn_leaves_m20
-  #   problem: allen_cahn
-  #   model: AToELeaves
-  #   base_architecture: [2, 30, 30, 30, 1]
-  #   adaptive_pinn:
-  #     M_experts_num: 20
-
-  # - name: allen_cahn_leaves_m30
-  #   problem: allen_cahn
-  #   model: AToELeaves
-  #   base_architecture: [2, 29, 29, 29, 1]
-  #   adaptive_pinn:
-  #     M_experts_num: 30
 
   # ── ANT ───────────────────────────────────────────────────────────────────
   - name: allen_cahn_ant_m10
@@ -338,19 +310,3 @@ experiments:
     adaptive_pinn:
       M_experts_num: 10
       ANT_default_hidden_layers: 29
-
-  # - name: allen_cahn_ant_m20
-  #   problem: allen_cahn
-  #   model: ANT
-  #   base_architecture: [2, 30, 30, 30, 1]
-  #   adaptive_pinn:
-  #     M_experts_num: 20
-  #     ANT_default_hidden_layers: 29
-
-  # - name: allen_cahn_ant_m30
-  #   problem: allen_cahn
-  #   model: ANT
-  #   base_architecture: [2, 29, 29, 29, 1]
-  #   adaptive_pinn:
-  #     M_experts_num: 30
-  #     ANT_default_hidden_layers: 22
