@@ -374,20 +374,21 @@ Phase 1: Train root/base on full PDE loss.
 
 Tree Build + Spawn: Compute M-term tree; spawn ALL leaves in one epoch.
 
-Phase 3 (Joint):
-  1. Recreate optimizer/scheduler over ALL params (base + all leaves).
-  2. Train on full PDE loss to convergence (early stopping via patience).
+Phase 3 (Leaf Training):
+  1. Recreate optimizer/scheduler over leaf params only (base retired from composition).
+  2. Train leaves on full PDE loss to convergence (early stopping via patience).
 ```
 
-No staged build, no per-level freezing. This is the current 3-phase flow with the new window.
+No staged build, no per-level freezing. Base is retired once leaves spawn (discarded from `leaf_indices`);
+the forward pass computes a partition-of-unity sum over leaf experts only.
 
 ### 5.6 Console Markers (AToE-Leaves)
 
-- `[3-Phase] Phase 1 …`
+- `[Orchestrator] [3-Phase] Phase 1: training root/base for N epochs`
 - `[Tree] Computing M-term tree (retain_siblings=True) …`
 - `[FullTree] Spawning complete. K leaves spawned.`
-- `[3-Phase] Transitioning to Phase 3 …`
-- `[3-Phase FIX] Phase 3 optimizer recreated: …`
+- `[Phase 3] Training K leaf experts (base retired from composition)`
+- `[Segment:phase3] start | epochs …`
 - `[EarlyStop] …`
 
 ---
@@ -416,7 +417,7 @@ level 0 = root (its own training uses `initial_train`); the decay applies to eve
 | Moment | Config | Action |
 |--------|--------|--------|
 | Root start | `initial_train` | build optimizer over base params; build scheduler; `step_count = 0` |
-| Phase 3 transition | effective top-level cfg | recreate optimizer over all params; recreate scheduler; reset patience |
+| Phase 3 transition | effective top-level cfg | recreate optimizer over leaf params only (base retired); recreate scheduler; reset patience |
 | `optimizer_switch_epoch` | `optimizer_2` | build `optimizer_2`; `lr_scheduler = None`; reset patience |
 
 Optimizer factories: `_create_primary_optimizer`, `_create_optimizer_by_name`, `_create_lr_scheduler`.

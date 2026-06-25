@@ -97,7 +97,7 @@ base_config:
       scale: 2.0
       periodic: false
     init:
-      hidden: glorot
+      hidden: parent_weights
       output: default
       ls_use_bias: false
       spectral_norm: false
@@ -137,7 +137,7 @@ base_config:
       mean: 1.0
       std: 0.1
     fourier_features: {enabled: false, dim: 128, scale: 1.0, periodic: false}
-    init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
+    init: {hidden: parent_weights, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
     adaptive_sampling: {enabled: false, adaptive_ratio: 0.3, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
     grad_clip_norm: null
@@ -159,7 +159,7 @@ base_config:
       mean: 1.0
       std: 0.1
     fourier_features: {enabled: false, dim: 128, scale: 1.0, periodic: false}
-    init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false}
+    init: {hidden: parent_weights, output: default, ls_use_bias: false, spectral_norm: false}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
     adaptive_sampling: {enabled: true, adaptive_ratio: 0.5, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
     grad_clip_norm: null
@@ -182,7 +182,7 @@ base_config:
       mean: 1.0
       std: 0.1
     fourier_features: {enabled: false, dim: 128, scale: 3.0, periodic: false}
-    init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
+    init: {hidden: parent_weights, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
     adaptive_sampling: {enabled: false, adaptive_ratio: 0.3, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
     grad_clip_norm: null
@@ -207,7 +207,7 @@ base_config:
       mean: 1.0
       std: 0.1
     fourier_features: {enabled: true, dim: 10, scale: 1.0, periodic: true}
-    init: {hidden: glorot, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
+    init: {hidden: parent_weights, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
     adaptive_sampling: {enabled: true, adaptive_ratio: 0.5, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
     grad_clip_norm: null
@@ -235,7 +235,7 @@ base_config:
     expert_type: resnet
     blending_mode: soft
     sigma_fraction: 0.2
-    base_weight: 0.3
+    base_weight: 1.0
     base_everywhere: true
     tree_max_depth: 15
     tree_min_samples_leaf: 50
