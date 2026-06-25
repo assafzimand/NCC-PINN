@@ -192,7 +192,9 @@ def apply_parent_copy_init(
     copy_output=True (AToELeaves, ANT): output layer is also copied; parent is
         retired on spawn so children must start from the parent's full solution.
 
-    Only layers with matching weight shapes are copied; mismatched layers are skipped.
+    Hidden layers are aligned from the output end (reversed zip) so that layers
+    closer to output match even when architectures differ (e.g., ANT expert [16,16,1]
+    spawned from base [2,16,16,1]). Only layers with matching shapes are copied.
     """
     try:
         from models.rwf_layer import RWFLinear
@@ -203,41 +205,48 @@ def apply_parent_copy_init(
     out_layer_new = _get_output_layer(expert)
     out_layer_par = _get_output_layer(parent_model)
 
-    # Filter to linear_types only before zipping — spectral norm adds _SpectralNorm
-    # parametrization objects as submodules, which would misalign a raw zip of modules().
-    if copy_output:
-        expert_layers = [m for m in expert.modules() if isinstance(m, linear_types)]
-        parent_layers = [m for m in parent_model.modules() if isinstance(m, linear_types)]
-    else:
-        expert_layers = [m for m in expert.modules()
-                         if isinstance(m, linear_types) and m is not out_layer_new]
-        parent_layers = [m for m in parent_model.modules()
-                         if isinstance(m, linear_types) and m is not out_layer_par]
+    # Collect hidden layers only (exclude output) for both expert and parent.
+    expert_hidden = [m for m in expert.modules()
+                     if isinstance(m, linear_types) and m is not out_layer_new]
+    parent_hidden = [m for m in parent_model.modules()
+                     if isinstance(m, linear_types) and m is not out_layer_par]
 
-    n_copied = 0
-    for mod_new, mod_par in zip(expert_layers, parent_layers):
+    # Align hidden layers from the output end (reversed) so output-adjacent layers
+    # match even when expert has fewer layers than parent (e.g., ANT depth-1).
+    n_hidden_copied = 0
+    for mod_new, mod_par in zip(reversed(expert_hidden), reversed(parent_hidden)):
         if mod_new.weight.shape == mod_par.weight.shape:
             mod_new.weight.data.copy_(mod_par.weight.data)
             if mod_new.bias is not None and mod_par.bias is not None:
                 mod_new.bias.data.copy_(mod_par.bias.data)
-            n_copied += 1
+            n_hidden_copied += 1
 
-    if copy_output:
-        print(f"  [Init] Copied {n_copied} layers from parent (hidden + output)")
-        return
-
-    out_layer_new = _get_output_layer(expert)
+    # Handle output layer separately.
+    output_copied = False
     use_spectral = (cfg or {}).get('init', {}).get('spectral_norm', False)
-    with torch.no_grad():
-        if use_spectral:
-            std = cfg.get('init', {})['spectral_norm_init_std']
-            nn.init.normal_(out_layer_new.weight, mean=0.0, std=std)
-        else:
-            nn.init.zeros_(out_layer_new.weight)
-        if out_layer_new.bias is not None:
-            nn.init.zeros_(out_layer_new.bias)
+    if copy_output:
+        if out_layer_new.weight.shape == out_layer_par.weight.shape:
+            out_layer_new.weight.data.copy_(out_layer_par.weight.data)
+            if out_layer_new.bias is not None and out_layer_par.bias is not None:
+                out_layer_new.bias.data.copy_(out_layer_par.bias.data)
+            output_copied = True
+    
+    if not output_copied:
+        with torch.no_grad():
+            if use_spectral:
+                std = cfg.get('init', {})['spectral_norm_init_std']
+                nn.init.normal_(out_layer_new.weight, mean=0.0, std=std)
+            else:
+                nn.init.zeros_(out_layer_new.weight)
+            if out_layer_new.bias is not None:
+                nn.init.zeros_(out_layer_new.bias)
 
-    print(f"  [Init] Copied {n_copied} hidden layers from parent; output {'tiny-random' if use_spectral else 'zeroed'}")
+    # Log what actually happened.
+    if output_copied:
+        print(f"  [Init] Copied {n_hidden_copied} hidden layers from parent; output copied")
+    else:
+        out_status = 'tiny-random' if use_spectral else 'zeroed'
+        print(f"  [Init] Copied {n_hidden_copied} hidden layers from parent; output {out_status}")
 
 
 def apply_spectral_norm(model: nn.Module, cfg: dict) -> None:

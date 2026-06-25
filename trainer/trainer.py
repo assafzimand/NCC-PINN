@@ -2181,12 +2181,10 @@ def _spawn_nodes(ctx: TrainingContext, level_nodes, copy_output: bool,
                 par_idx = -1
             parent_model = (model.base_model if par_idx == -1
                             else model.experts[par_idx])
+            par_label = 'base' if par_idx == -1 else f'expert {par_idx}'
             apply_parent_copy_init(new_exp, parent_model, cfg,
                                    copy_output=copy_output)
-            par_label = 'base' if par_idx == -1 else f'expert {par_idx}'
-            out_msg = "output copied" if copy_output else "output zeroed (additive)"
-            print(f"  [ParentInit] Expert {expert_idx}: hidden from {par_label}, "
-                  f"{out_msg}")
+            print(f"  [ParentInit] Expert {expert_idx}: from {par_label}")
         else:
             apply_expert_init(new_exp, cfg)
         apply_spectral_norm(new_exp, cfg)
