@@ -219,7 +219,7 @@ base_config:
     adaptive_sampling: {enabled: true, adaptive_ratio: 0.5, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
     grad_clip_norm: null
     expert_grad_clip_norm: null
-    time_marching: {enabled: true, num_windows: 20, freeze_previous_windows: true, m_distribution: equal}
+    time_marching: {enabled: true, num_windows: 3, freeze_previous_windows: true, m_distribution: equal}
 
   sampling:
     sample_volume_ratio: 35
@@ -293,22 +293,22 @@ base_config:
 
 
 experiments:
-  - name: staged_smoke_atoe
-    problem: allen_cahn
+  - name: staged_smoke_atoe_ks
+    problem: ks
     model: AToE
     base_architecture: [2, 16, 16, 1]
     adaptive_pinn:
       M_experts_num: 3
 
-  - name: staged_smoke_leaves
-    problem: allen_cahn
+  - name: staged_smoke_leaves_ks
+    problem: ks
     model: AToELeaves
     base_architecture: [2, 16, 16, 1]
     adaptive_pinn:
       M_experts_num: 3
 
-  - name: staged_smoke_ant
-    problem: allen_cahn
+  - name: staged_smoke_ant_ks
+    problem: ks
     model: ANT
     base_architecture: [2, 16, 16, 1]
     adaptive_pinn:
