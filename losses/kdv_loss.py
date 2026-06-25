@@ -9,14 +9,14 @@ where:
 - MSE_0: Initial condition loss (h(x,0) = cos(pi*x))
 - MSE_b: Boundary condition loss (periodic: h(-1,t)=h(1,t), h_x(-1,t)=h_x(1,t))
 
-IMPORTANT DESIGN CHOICE - Decomposed Derivatives:
-    Decomposed derivative computation is DISABLED for KdV residual loss.
-    Reason: The analytical 3rd derivative of indicator functions (d³ψ/dx³)
-    involves terms like 1/σ³, which cause catastrophic cancellation when
-    combined with partition-of-unity subtraction. Standard autograd on the
-    composed output avoids this by chaining through numerically stable
-    bounded operations.
-    See line ~507: use_decomposed = False (forced, not configurable).
+LEGACY PATHS (DISABLED):
+    - Decomposed derivative computation: DISABLED. The analytical 3rd derivative
+      of sigmoid indicators (d³ψ/dx³) involves 1/σ³ terms causing catastrophic
+      cancellation. Standard autograd on composed output is numerically stable.
+    - Analytical indicator derivatives: DISABLED. The compute_analytical_indicator_derivatives
+      function was specific to the legacy sigmoid window. With the new compact smoothstep
+      windows, all derivatives are computed via autograd on the composed forward output.
+      The function is preserved for reference but will not be called.
 """
 
 import torch
@@ -116,7 +116,14 @@ def compute_analytical_indicator_derivatives(
     need_hxxx: bool = True,
 ) -> dict:
     """
+    [LEGACY - NOT USED WITH SMOOTHSTEP WINDOWS]
+    
     Compute normalized indicator derivatives ANALYTICALLY for all components.
+    
+    This function was designed for the legacy sigmoid window where analytical
+    derivatives could be computed. With the new compact smoothstep windows,
+    all derivatives are computed via autograd on the composed forward output.
+    This function is preserved for reference but will not be called.
     
     Extended from Burgers 1D to include the third spatial derivative needed by KdV.
     
@@ -354,12 +361,17 @@ def compute_derivatives_decomposed(
             total_d2h_dx2, all_inputs, create_graph=True, retain_graph=True)
 
     # ====================================================================
-    # Indicator derivatives: analytical or autograd fallback
+    # Indicator derivatives: autograd only (analytical path is LEGACY)
     # ====================================================================
-    use_analytical = (indicator_data is not None
-                      and indicator_data.get('all_sigma') is not None)
+    # LEGACY: The analytical path checked for 'all_sigma' which was specific to
+    # sigmoid windows. With smoothstep windows, this key doesn't exist (renamed
+    # to all_delta with different semantics), so use_analytical is always False.
+    # All indicator derivatives are now computed via autograd on composed output.
+    use_analytical = False  # LEGACY PATH DISABLED
+    # Original check was: (indicator_data is not None and indicator_data.get('all_sigma') is not None)
 
     if use_analytical:
+        # LEGACY: This branch is never taken with smoothstep windows
         inputs_orig = torch.cat([x, t], dim=1)  # (N, D)
         active_indices = indicator_data['active_expert_indices']
         psi_derivs = compute_analytical_indicator_derivatives(
@@ -514,11 +526,11 @@ def build_loss(**cfg) -> Callable:
 
         _t = getattr(model, '_timer', None)
 
-        # KdV requires h_xxx (third spatial derivative). The decomposed analytical
-        # indicator path suffers from catastrophic cancellation (1/sigma^3 overflow
-        # in d3psi/dx3 followed by partition-of-unity subtraction). Standard autograd
-        # on the composed output avoids this by chaining through bounded operations.
-        use_decomposed = False
+        # LEGACY PATH DISABLED: use_decomposed = False
+        # The decomposed derivative path is disabled for all PDEs with smoothstep windows.
+        # For KdV specifically, the analytical 3rd derivative (1/σ³) caused catastrophic
+        # cancellation. Standard autograd on composed output is numerically stable.
+        use_decomposed = False  # Config key 'use_decomposed_derivatives' is ignored
 
         if for_tree_spawning:
             residual_per_sample = torch.zeros(N, device=device)

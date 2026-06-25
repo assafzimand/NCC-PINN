@@ -105,6 +105,10 @@ class AToE(nn.Module):
         )
         problem = config['problem']
         problem_config = config[problem]
+        
+        # Window configuration: smoothstep (compact) or sigmoid (legacy)
+        self.window_type = problem_config.get('window_type', 'smoothstep')
+        self.window_smoothness_order = problem_config.get('window_smoothness_order', 2)
         self.input_dim = base_architecture[0]
         self.output_dim = problem_config['output_dim']
         if self.atoe_threshold_capacity is not None:
@@ -368,7 +372,9 @@ class AToE(nn.Module):
             regions=self.regions,
             device=device,
             mode=self.blending_mode,
-            sigma_fraction=self.sigma_fraction
+            sigma_fraction=self.sigma_fraction,
+            window_type=self.window_type,
+            window_smoothness_order=self.window_smoothness_order
         )
 
     def sync_batched_models(self) -> None:
