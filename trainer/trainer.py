@@ -1007,11 +1007,19 @@ def _train_segment(
     total_steps_estimate = max(1, epoch_budget) * batches_per_epoch
 
     full_batch_opt1 = optimizer_1_name in ('lbfgs', 'ssbroyden')
+    # Default-device context for this segment. Full-batch optimizers (LBFGS/
+    # SSBroyden) need it on CUDA so their state tensors are allocated on the GPU;
+    # mini-batch optimizers (Adam/SOAP) need it reset to None so the DataLoader's
+    # sampler generator (CPU) matches torch.randperm during iteration. A previous
+    # segment may have left the default on CUDA (e.g. after an optimizer switch),
+    # so we always re-establish it here at the segment boundary.
     if full_batch_opt1:
+        torch.set_default_device(device)
         optimizer, current_optimizer_name = _create_optimizer_by_name(
             optimizer_1_name, model, seg_cfg)
         lr_scheduler = None
     else:
+        torch.set_default_device(None)
         optimizer, current_optimizer_name = _create_primary_optimizer(model, seg_cfg)
         lr_scheduler = _create_lr_scheduler(optimizer, seg_cfg, total_steps_estimate)
 
