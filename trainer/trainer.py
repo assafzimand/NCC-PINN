@@ -1934,6 +1934,7 @@ def _set_trainable(model: nn.Module, which: str) -> int:
       * ``'all'``      — every parameter trainable (root w/o experts, joint, fine-tune).
       * ``'base'``     — only the base/root network (staged root segment).
       * ``'level:L'``  — only experts whose ``RegionDescriptor.depth == L``.
+      * ``'leaves'``   — all leaf experts trainable, base frozen (AToE-Leaves Phase 3).
 
     Frozen params still participate in the forward composition (AToE additive
     background, ANT routing); only the optimizer (which filters on
@@ -1952,6 +1953,11 @@ def _set_trainable(model: nn.Module, which: str) -> int:
                     p.requires_grad = True
             else:
                 for p in model.parameters():
+                    p.requires_grad = True
+        elif which == 'leaves':
+            experts = getattr(model, 'experts', [])
+            for expert in experts:
+                for p in expert.parameters():
                     p.requires_grad = True
         elif which.startswith('level:'):
             target_depth = int(which.split(':', 1)[1])
@@ -2374,8 +2380,8 @@ def train_orchestrator(ctx: TrainingContext) -> None:
             print("[Orchestrator] Zero experts spawned — finishing after root.")
             ctx.total_epochs = ctx.epoch
             return
-        print("[3-Phase] Transitioning to Phase 3: joint training of all params")
-        _set_trainable(model, 'all')
+        print(f"[Phase 3] Training {total} leaf experts (base retired from composition)")
+        _set_trainable(model, 'leaves')
         _train_segment(ctx, 'phase3', cfg['epochs'], cfg)
         ctx.total_epochs = ctx.epoch
         return
@@ -2534,9 +2540,12 @@ def _finalize_training(ctx: TrainingContext) -> Path:
     # Plot training curves
     print(f"\nGenerating training plots...")
     training_plots_dir = run_dir / "training_plots"
-    # Pass optimizer switch epoch if there was a switch
-    switch_epoch_to_plot = switch_epoch if (optimizer_2_name is not None and switch_epoch <= epochs) else None
-    plot_training_curves(metrics, training_plots_dir, optimizer_switch_epoch=switch_epoch_to_plot)
+    # Extract all optimizer switch epochs and segment start epochs from metrics
+    optimizer_switch_epochs = [e['epoch'] for e in metrics.get('optimizer_events', [])]
+    segment_start_epochs = [s['start_epoch'] for s in metrics.get('segment_events', [])]
+    plot_training_curves(metrics, training_plots_dir,
+                         optimizer_switch_epochs=optimizer_switch_epochs,
+                         segment_start_epochs=segment_start_epochs)
 
     # Plot final predictions
     model.eval()

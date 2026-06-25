@@ -30,7 +30,8 @@ def _safe_log_scale(ax, values_list):
 def plot_training_curves(
     metrics: Dict[str, List[float]], 
     save_dir: Path,
-    optimizer_switch_epoch: int = None
+    optimizer_switch_epochs: List[int] = None,
+    segment_start_epochs: List[int] = None
 ) -> None:
     """
     Plot training and evaluation curves.
@@ -40,14 +41,19 @@ def plot_training_curves(
                 - 'train_loss_epochs', 'train_loss' (all epochs)
                 - 'epochs', 'eval_loss', 'eval_rel_l2' (eval epochs only)
         save_dir: Directory to save plots
-        optimizer_switch_epoch: Epoch where optimizer switched (e.g., Adam to LBFGS).
-                               If provided, a vertical line is drawn at this epoch.
+        optimizer_switch_epochs: List of epochs where optimizer switched.
+                                Green dashed vertical lines drawn at each.
+        segment_start_epochs: List of epochs where new training segments started.
+                             Blue dotted vertical lines drawn at each.
     """
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     train_loss_epochs = metrics['train_loss_epochs']
     eval_epochs = metrics['epochs']
+
+    optimizer_switch_epochs = optimizer_switch_epochs or []
+    segment_start_epochs = segment_start_epochs or []
 
     # Create figure with 2 subplots
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -59,10 +65,19 @@ def plot_training_curves(
     ax.plot(eval_epochs, metrics['eval_loss'], 'r-', label='Eval Loss',
             linewidth=2, alpha=0.8)
     
-    # Add optimizer switch marker
-    if optimizer_switch_epoch is not None:
-        ax.axvline(x=optimizer_switch_epoch, color='green', linestyle='--', 
-                   linewidth=2, alpha=0.7, label='Optimizer Switch (Adam->LBFGS)')
+    # Add optimizer switch markers (green dashed)
+    for i, epoch in enumerate(optimizer_switch_epochs):
+        label = 'Optimizer Switch' if i == 0 else None
+        ax.axvline(x=epoch, color='green', linestyle='--', 
+                   linewidth=1.5, alpha=0.7, label=label)
+    
+    # Add segment boundary markers (blue dotted), skip epoch 1 (start of first segment)
+    for i, epoch in enumerate(segment_start_epochs):
+        if epoch <= 1:
+            continue
+        label = 'Segment Start' if i == 0 or segment_start_epochs[0] <= 1 else None
+        ax.axvline(x=epoch, color='blue', linestyle=':', 
+                   linewidth=1.5, alpha=0.6, label=label)
     
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Loss', fontsize=12)
@@ -77,10 +92,19 @@ def plot_training_curves(
     ax.plot(eval_epochs, metrics['eval_rel_l2'], 'r-', label='Eval Rel. L2',
             linewidth=2, alpha=0.8)
     
-    # Add optimizer switch marker
-    if optimizer_switch_epoch is not None:
-        ax.axvline(x=optimizer_switch_epoch, color='green', linestyle='--', 
-                   linewidth=2, alpha=0.7, label='Optimizer Switch (Adam->LBFGS)')
+    # Add optimizer switch markers (green dashed)
+    for i, epoch in enumerate(optimizer_switch_epochs):
+        label = 'Optimizer Switch' if i == 0 else None
+        ax.axvline(x=epoch, color='green', linestyle='--', 
+                   linewidth=1.5, alpha=0.7, label=label)
+    
+    # Add segment boundary markers (blue dotted), skip epoch 1
+    for i, epoch in enumerate(segment_start_epochs):
+        if epoch <= 1:
+            continue
+        label = 'Segment Start' if i == 0 or segment_start_epochs[0] <= 1 else None
+        ax.axvline(x=epoch, color='blue', linestyle=':', 
+                   linewidth=1.5, alpha=0.6, label=label)
     
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Relative L2 Error', fontsize=12)
