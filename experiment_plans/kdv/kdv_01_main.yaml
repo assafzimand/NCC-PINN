@@ -278,6 +278,23 @@ base_config:
       lr_decay_steps: 500
       lr_warmup_steps: 0
 
+    # ── Staged per-level (AToE / ANT) ──
+    new_expert_lr_decay: 1.0
+    min_epochs_per_level: 1
+    max_epochs_per_level: 10000
+
+    # ── Final joint fine-tune (AToE / ANT) ──
+    fine_tune:
+      epochs: 10000
+      optimizer_1: soap
+      optimizer_2: null
+      soap_betas: [0.95, 0.95]
+      lr: 0.001
+      lr_schedule: exponential
+      lr_decay_rate: 0.98
+      lr_decay_steps: 500
+      lr_warmup_steps: 0
+
 
 experiments:
   # ════════════════════════════════════════════════════════════════════════════
