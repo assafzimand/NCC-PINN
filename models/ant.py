@@ -840,7 +840,10 @@ class ANT(nn.Module):
         logger.info(f"  depths: {self.depths}")
         
         with torch.no_grad():
-            leaf_expert_indices, leaf_regions = self._gather_leaves()
+            # get_leaf_info returns [(region, expert_idx), ...]
+            leaf_info = self.get_leaf_info()
+            leaf_regions = [r for r, _ in leaf_info]
+            leaf_expert_indices = [idx for _, idx in leaf_info]
             num_leaves = len(leaf_expert_indices)
             
             logger.info(f"\n  Gathered {num_leaves} leaves: expert_indices={leaf_expert_indices}")

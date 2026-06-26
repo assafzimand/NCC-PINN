@@ -1156,7 +1156,7 @@ class AToE(nn.Module):
         """
         logger.info(f"\n[DEBUG] AToE Composition State:")
         logger.info(f"  Blending mode: {self.blending_mode}")
-        logger.info(f"  Indicator type: {self.indicator_type}")
+        logger.info(f"  Window type: {self.window_type}")
         logger.info(f"  Num experts: {len(self.experts)}")
         logger.info(f"  Base weight: {self.base_weight}")
         

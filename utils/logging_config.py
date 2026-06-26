@@ -28,14 +28,14 @@ _file_handler: Optional[logging.FileHandler] = None
 def setup_logging(
     run_dir: Optional[Path] = None,
     level: int = logging.INFO,
-    log_filename: str = "training.log"
+    log_filename: str = "training_logs.log"
 ) -> logging.Logger:
     """Configure logging to write to both console and file.
     
     Args:
         run_dir: Directory to save the log file. If None, logs only to console.
         level: Logging level (default: INFO)
-        log_filename: Name of the log file (default: training.log)
+        log_filename: Name of the log file (default: training_logs.log)
     
     Returns:
         Configured logger instance
@@ -110,7 +110,7 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
     return logging.getLogger(f'pinn.{name}')
 
 
-def update_log_file(run_dir: Path, log_filename: str = "training.log") -> None:
+def update_log_file(run_dir: Path, log_filename: str = "training_logs.log") -> None:
     """Update the log file path for a new run directory.
     
     Called when starting a new experiment run to redirect logs to the new run_dir.

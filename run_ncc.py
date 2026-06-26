@@ -252,7 +252,7 @@ def main():
     
     # Now set up file logging to the run directory
     update_log_file(run_dir)
-    logger.info(f"Logging initialized. Log file: {run_dir / 'training.log'}")
+    logger.info(f"Logging initialized. Log file: {run_dir / 'training_logs.log'}")
 
     # Save config to run directory
     import yaml
