@@ -94,17 +94,9 @@ wavelet tree is constructed, and it is subsequently reused as the base expert
 in the final adaptive composition. A geometric wavelet tree is then
 constructed from this converged approximation and compressed using an $M$-term
 approximation, retaining the $M$ largest geometric wavelet coefficients.
-The tree closure strategy depends on the variant:
-\begin{itemize}
-    \item \textbf{AToE (Additive Tree of Experts):} only ancestors of the selected
-    nodes are retained; siblings are dropped. Unselected regions are carried by
-    the additive root contribution (see Section~\ref{sec:global_composition}).
-    \item \textbf{AToE-Leaves and ANT:} all ancestors of the selected nodes,
-    together with their siblings, are retained to form a complete binary tree.
-    This ensures a clean structure: in the leaves-only formulation, every spatial
-    point is covered by exactly one leaf expert; in ANT, it avoids having a single
-    hidden layer act as both a routing layer and an output layer.
-\end{itemize}
+To preserve a valid hierarchical structure, the ancestors of the selected
+nodes are always retained; depending on the variant, siblings may also be
+included (see Section~\ref{sec:variants}).
 When time-window training is employed, the global budget $M$ is distributed across the windows according to a prescribed allocation strategy (e.g., uniform, linear, or quadratic). An independent $M_i$-term tree is then constructed within each window, with $\sum_i M_i = M$.
 \end{itemize}
 
@@ -182,9 +174,8 @@ approximation rates established in the previous section.
 
 \vspace{0.5em}
 
-\subsection{Global Composition of Local Experts}
-
-\label{sec:global_composition}
+\subsection{Soft Indicator Functions}
+\label{sec:soft_indicators}
 
 Let $\Omega \subset \mathbb{R}^d$ denote the computational domain, and let
 $\{\Omega_i\}_{i=0}^{k}$ be the set of regions obtained from the hierarchical
@@ -198,8 +189,11 @@ Each region $\Omega_i$ is associated with a neural network expert $u_i(x,t)$.
 To smoothly blend the contributions of different experts while ensuring
 compatibility with the PDE's differential order, we define compactly-supported
 window functions with configurable smoothness. Let $N$ denote the smoothness
-order, chosen such that $N \geq$ the spatial order of the PDE (e.g., $N \geq 2$
-for second-order PDEs like Burgers or Allen--Cahn, $N \geq 3$ for KdV).
+order, chosen such that $N$ is at least the highest order of any partial
+derivative appearing in the PDE (e.g., $N \geq 2$ for Burgers or Allen--Cahn,
+$N \geq 3$ for KdV, $N \geq 4$ for KS). Since the domain decomposition
+operates over all dimensions including time, no dimension receives special
+treatment and the window must be sufficiently smooth for all derivatives.
 
 We first define the smoothstep polynomial $S_N : [0,1] \to [0,1]$, which
 satisfies $S_N(0) = 0$, $S_N(1) = 1$, and $S_N^{(k)}(0) = S_N^{(k)}(1) = 0$
@@ -234,6 +228,7 @@ smooth $C^N$ ramps in the collars $[a_{i,j} - \delta_{i,j}, a_{i,j}]$ and
 $[b_{i,j}, b_{i,j} + \delta_{i,j}]$, and \emph{exactly zero} outside
 $[a_{i,j} - \delta_{i,j}, b_{i,j} + \delta_{i,j}]$.
 
+\subsubsection{Region Indicator.}
 The region indicator function is the tensor product over all dimensions:
 \begin{equation}
 \Psi_{\Omega_i}(X) = \prod_{j=1}^{d} \omega_{i,j}(x_j)
@@ -243,62 +238,59 @@ The region indicator function is the tensor product over all dimensions:
 The expert associated with the root node (corresponding to the entire domain)
 has a constant indicator $\Psi_{\Omega_0}(X) = 1$ everywhere.
 
-\subsubsection{Normalization Strategies.}
-The normalization of the indicator functions depends on the chosen global
-composition strategy and varies across the three variants:
+\begin{figure}[H]
+\centering
 
-\begin{itemize}
-    \item \textbf{AToE (Additive):} Per-level background normalization. For each
-    level $\ell$ in the tree, the weights are normalized against a constant
-    background of 1:
-    \begin{equation}
-    w_i(X) = \frac{\Psi_{\Omega_i}(X)}{1 + \sum_{k:\,\text{level}(k)=\ell(i)} \Psi_{\Omega_k}(X)}
-    \label{eq:normalization_atoe}
-    \end{equation}
-    The constant 1 in the denominator serves as a ``background slot'': it keeps
-    a lone child regional ($w = \Psi/(1+\Psi) < 1$) and avoids division by zero.
-    
-    \item \textbf{AToE-Leaves:} Normalization over all leaf nodes:
-    \begin{equation}
-    \tilde{\Psi}_{\Omega_i}(X) = \frac{\Psi_{\Omega_i}(X)}{\sum_{j \in \mathcal{L}} \Psi_{\Omega_j}(X)}
-    \label{eq:normalization_leaves}
-    \end{equation}
-    where $\mathcal{L}$ denotes the complete set of leaf nodes.
-    
-    \item \textbf{ANT (Adaptive Neural Tree):} Leaf-frontier normalization. At
-    each training stage $\ell$, normalization is computed over the current leaf
-    frontier $\mathcal{F}_\ell$ (nodes that are leaves at that stage):
-    \begin{equation}
-    \tilde{\Psi}_{\Omega_i}(X) = \frac{\Psi_{\Omega_i}(X)}{\sum_{j \in \mathcal{F}_\ell} \Psi_{\Omega_j}(X)}
-    \label{eq:normalization_ant}
-    \end{equation}
-    The frontier is re-evaluated as levels are added: parent nodes retire from
-    the blend when their children are spawned.
-\end{itemize}
+\begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]
+    {images/section3_method/window_1d_slice.png}
+    \caption{One-dimensional slices of the compact smoothstep window for
+    several regions, showing the flat-top response and smooth collar
+    transitions.}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]
+    {images/section3_method/window_2d_heatmaps.png}
+    \caption{Two-dimensional indicator heatmaps $\Psi_{\Omega_i}(X)$ for
+    representative regions, illustrating the compact support and smooth
+    blending collars.}
+\end{subfigure}
 
-\noindent In all cases, the normalized indicators satisfy the partition of unity
-property $\sum_i \tilde{\Psi}_{\Omega_i}(X) = 1$ (or sum to at most 1 for AToE's
-additive formulation per level).
+\caption{
+Example of compact smoothstep window functions ($C^2$, collar fraction
+$\alpha = 0.2$) for a representative domain decomposition. The windows are
+exactly 1 inside each region, smoothly transition to 0 in the collar zone,
+and have compact support (exactly 0 outside the collar).
+}
+\label{fig:window_demo}
+\end{figure}
 
-\subsubsection{Global Solution Formulations.}
-Using the normalized indicators defined above, the global solution $u_\theta(x,t)$
-is constructed from the local experts in three different variants:
+\vspace{0.5em}
+
+\subsection{Adaptive PINN Variants}
+\label{sec:variants}
+
+We consider three variants that share the same tree construction and soft
+indicator functions, but differ in how local experts are composed into a global
+solution. The composition formula is the central design choice from which the
+other variant-specific decisions — tree closure, normalization, initialization,
+and expert input — follow.
 
 \begin{itemize}
     \item \textbf{Adaptive Tree of Experts (AToE).}
-    In this formulation, the root/base expert contributes with coefficient
-    exactly 1, and all other experts add weighted residual corrections:
+    The root/base expert contributes with coefficient exactly 1, and all other
+    experts add weighted residual corrections:
     \begin{equation}
     u_\theta(x,t) = u_0(x,t) + \sum_{\ell=1}^{L} \sum_{i:\,\text{level}(i)=\ell}
     w_i(x,t)\, u_i(x,t)
     \label{eq:global_atoe}
     \end{equation}
-    where $w_i$ is defined in Equation~\eqref{eq:normalization_atoe}. This
-    additive structure enables coarse-to-fine refinement: the base captures
-    the global solution structure, while experts at finer levels add localized
-    corrections. Experts are initialized to contribute $u_i \equiv 0$ at spawn
-    time, ensuring continuity of the composition.
-    
+    where the per-level weights use a background normalization:
+    $w_i(X) = \Psi_{\Omega_i}(X) \big/ \bigl(1 + \sum_{k:\,\text{level}(k)=\ell(i)} \Psi_{\Omega_k}(X)\bigr)$.
+
     \item \textbf{AToE-Leaves.}
     Only the experts associated with leaf regions participate in the global
     solution:
@@ -308,40 +300,34 @@ is constructed from the local experts in three different variants:
     \tilde{\Psi}_{\Omega_j}(x,t)\, u_j(x,t)
     \label{eq:global_atoe_leaves}
     \end{equation}
-    The base/root is excluded from the composition once leaf experts are spawned.
-    
+    where $\tilde{\Psi}_{\Omega_j} = \Psi_{\Omega_j} \big/ \sum_{k \in \mathcal{L}} \Psi_{\Omega_k}$
+    and $\mathcal{L}$ is the complete set of leaf nodes.
+
     \item \textbf{Adaptive Neural Tree (ANT).}
-    In the ANT formulation, information is propagated through the hierarchy by
-    passing the activation of the last hidden layer from each parent expert to
-    its children. Let $A_i(x,t)$ denote the activation of the last hidden layer
-    of expert $u_i$, and let $\mathrm{parent}(i)$ denote the parent of node $i$.
-    The output of expert $u_i$ is defined by
+    Information is propagated through the hierarchy by passing the activation
+    of the last hidden layer from each parent expert to its children. Let
+    $A_i(x,t)$ denote the activation of the last hidden layer of expert $u_i$,
+    and let $\mathrm{parent}(i)$ denote the parent of node $i$. Each expert
+    produces both a prediction and an activation for its children:
     \begin{equation}
     u_i\!\left(A_{\mathrm{parent}(i)}(x,t)\right)
     =
     \left(
-    u_i^{*}(x,t),
+    u_i^{*}(x,t),\;
     A_i(x,t)
-    \right),
+    \right)
     \label{eq:ant_activation}
     \end{equation}
-    where $u_i^{*}(x,t)$ denotes the prediction of the expert in the output space of the problem. The global solution
-    is then given by
+    The global solution is:
     \begin{equation}
     u_\theta(x,t) =
     \sum_{j \in \mathcal{F}_\ell}
     \tilde{\Psi}_{\Omega_j}(x,t)\, u_j^{*}(x,t)
     \label{eq:global_ant}
     \end{equation}
-    where $\mathcal{F}_\ell$ is the current leaf frontier at training stage $\ell$.
+    where $\mathcal{F}_\ell$ is the current leaf frontier at training stage
+    $\ell$, and $\tilde{\Psi}_{\Omega_j} = \Psi_{\Omega_j} \big/ \sum_{k \in \mathcal{F}_\ell} \Psi_{\Omega_k}$.
 \end{itemize}
-
-\noindent All three variants produce a globally defined solution from the
-same adaptive decomposition and support the allocation of computational
-resources according to local complexity. The differences between them lie in
-the interaction between experts and the resulting trade-offs between model
-capacity, parameter efficiency, information sharing, training stability, and
-computational complexity.
 
 \begin{figure}[H]
 \centering
@@ -351,6 +337,127 @@ computational complexity.
     clip]{images/section3_method/atoe_variants}
 \caption{Visualization of the AToE, AToE-Leaves, and ANT formulations.}
 \label{fig:atoe_variants}
+\end{figure}
+
+\noindent All three variants produce a globally defined solution from the
+same adaptive decomposition and support the allocation of computational
+resources according to local complexity. The differences between them lie in
+the interaction between experts and the resulting trade-offs between model
+capacity, parameter efficiency, information sharing, training stability, and
+computational complexity. The following subsections detail the design choices
+that each composition formula entails.
+
+\subsubsection{AToE — Additive Tree of Experts.}
+
+\paragraph{Tree closure.}
+Only \emph{ancestors} of the selected nodes are retained; siblings are dropped.
+Unselected regions receive no expert — they are carried by the additive root
+contribution, which is always present with coefficient 1.
+
+\paragraph{Normalization.}
+Expert weights at each level $\ell$ are normalized against a constant background
+of 1:
+\begin{equation}
+w_i(X) = \frac{\Psi_{\Omega_i}(X)}{1 + \sum_{k:\,\text{level}(k)=\ell(i)} \Psi_{\Omega_k}(X)}
+\label{eq:normalization_atoe}
+\end{equation}
+The constant 1 in the denominator serves as a ``background slot'': it keeps
+a lone child regional ($w = \Psi/(1+\Psi) < 1$) and avoids division by zero.
+
+\paragraph{Initialization.}
+Parent hidden-layer weights are copied to each child expert, and the output
+layer is \emph{zeroed}. This ensures that the expert contributes $u_i \equiv 0$
+at spawn time, so the composition is continuous across the spawn boundary.
+
+\paragraph{Expert input.}
+Each expert receives the raw coordinates $(x, t)$ as input.
+
+\subsubsection{AToE-Leaves.}
+
+\paragraph{Tree closure.}
+All ancestors of the selected nodes, together with their siblings, are retained
+to form a complete binary tree. This guarantees that every point in the domain
+is covered by exactly one leaf expert.
+
+\paragraph{Normalization.}
+Normalization over all leaf nodes:
+\begin{equation}
+\tilde{\Psi}_{\Omega_i}(X) = \frac{\Psi_{\Omega_i}(X)}{\sum_{j \in \mathcal{L}} \Psi_{\Omega_j}(X)}
+\label{eq:normalization_leaves}
+\end{equation}
+where $\mathcal{L}$ denotes the complete set of leaf nodes. The base/root is
+excluded from the composition once leaf experts are spawned.
+
+\paragraph{Initialization.}
+Parent hidden-layer weights \emph{and} the output layer are copied to each
+child expert. Since the base retires from the blend upon spawning, children
+must start from the parent's full solution to preserve continuity.
+
+\paragraph{Expert input.}
+Each expert receives the raw coordinates $(x, t)$ as input.
+
+\subsubsection{ANT — Adaptive Neural Tree.}
+
+\paragraph{Tree closure.}
+All ancestors of the selected nodes, together with their siblings, are retained
+to form a complete binary tree. This avoids having a single hidden layer act
+as both a routing layer and an output layer.
+
+\paragraph{Normalization.}
+Leaf-frontier normalization: at each training stage $\ell$, normalization is
+computed over the current leaf frontier $\mathcal{F}_\ell$:
+\begin{equation}
+\tilde{\Psi}_{\Omega_i}(X) = \frac{\Psi_{\Omega_i}(X)}{\sum_{j \in \mathcal{F}_\ell} \Psi_{\Omega_j}(X)}
+\label{eq:normalization_ant}
+\end{equation}
+The frontier is re-evaluated as levels are added: parent nodes retire from
+the blend when their children are spawned, but still route activations to
+children during the forward pass.
+
+\paragraph{Initialization.}
+The output layer is \emph{copied} from the parent. Because routing input
+dimensions may differ from the parent's architecture, hidden-layer copying
+aligns layers from the output end so that the layers closest to the output
+match even when expert depth differs.
+
+\paragraph{Expert input.}
+Each expert receives its \emph{parent's last-hidden-layer activation}
+$A_{\mathrm{parent}(i)}$ as input, not the raw coordinates. Frozen ancestors
+are still evaluated during forward to supply activations to active descendants.
+
+\vspace{0.5em}
+
+\begin{figure}[H]
+\centering
+
+\begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]
+    {images/section3_method/soft_weights_atoe.png}
+    \caption{AToE: per-level background normalization. The base model
+    weight $\Psi_0$ is constant across the domain. Expert weights at each
+    level are normalized against a background of 1, allowing partial
+    coverage.}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]
+    {images/section3_method/soft_weights_leaves.png}
+    \caption{AToE-Leaves: leaf-only normalization. All leaf experts form
+    a partition of unity over the domain; the base model is excluded from
+    the blend.}
+\end{subfigure}
+
+\caption{
+Normalized blending weights for the same tree decomposition under two
+normalization strategies. Dashed rectangles indicate expert region bounds.
+In AToE (left), the base model retains a uniform contribution while experts
+add localized corrections. In AToE-Leaves (right), only leaf experts
+participate in the composition, each covering its region with smooth
+transitions in the collar zones.
+}
+\label{fig:normalization_weights}
 \end{figure}
 
 \subsection{Staged Training Flow}

@@ -605,6 +605,55 @@ class AToELeaves(nn.Module):
             raise ValueError("Could not infer architecture from state dict")
         return architecture
 
+    def debug_composition(self, sample_inputs: torch.Tensor) -> None:
+        """Print detailed composition state with a sample input for debugging.
+        
+        Args:
+            sample_inputs: (N, n_dims) sample coordinates for composition verification
+        """
+        print(f"\n[DEBUG] AToELeaves Composition State:")
+        print(f"  Num experts: {len(self.experts)}")
+        print(f"  Leaf indices: {sorted(self.leaf_indices)}")
+        print(f"  Base in leaves: {-1 in self.leaf_indices}")
+        
+        if -1 in self.leaf_indices:
+            print(f"  Mode: Base-only (no expert spawns yet)")
+            return
+        
+        with torch.no_grad():
+            leaf_list = sorted(self.leaf_indices)
+            _, psi_experts = self.batched_indicators(sample_inputs)
+            psi_leaves = psi_experts[:, leaf_list]
+            
+            print(f"\n  Sample psi values for {len(leaf_list)} leaves (N={sample_inputs.shape[0]} points):")
+            for i, leaf_idx in enumerate(leaf_list):
+                psi_i = psi_leaves[:, i]
+                region = self.regions[leaf_idx] if leaf_idx < len(self.regions) else None
+                bounds = f"{region.bounds_lower}->{region.bounds_upper}" if region else "?"
+                active_pct = (psi_i > 0.01).float().mean().item() * 100
+                print(f"    psi_leaf[{leaf_idx}] ({bounds}): "
+                      f"min={psi_i.min():.4f}, max={psi_i.max():.4f}, "
+                      f"mean={psi_i.mean():.4f}, active%={active_pct:.1f}%")
+            
+            # Check normalization (this is the potential bug!)
+            psi_sum = psi_leaves.sum(dim=1)
+            zero_sum_points = (psi_sum < 1e-6).sum().item()
+            
+            print(f"\n  Normalization check:")
+            print(f"    psi_sum: min={psi_sum.min():.6f}, max={psi_sum.max():.6f}, mean={psi_sum.mean():.4f}")
+            print(f"    Normalized weights sum: always 1.0 (by definition)")
+            
+            if zero_sum_points > 0:
+                print(f"\n  *** CRITICAL WARNING ***: {zero_sum_points} points have psi_sum < 1e-6!")
+                print(f"      This causes division by zero in normalization: psi / psi_sum")
+                print(f"      Result: NaN/Inf in model output -> rel-L2 explosion!")
+                # Show coordinates of problematic points
+                bad_mask = psi_sum < 1e-6
+                bad_coords = sample_inputs[bad_mask][:5]  # First 5
+                print(f"      Sample bad coordinates: {bad_coords.tolist()}")
+        
+        print()
+
     def __repr__(self) -> str:
         base_str = " -> ".join(map(str, self.base_architecture))
         expert_archs = [

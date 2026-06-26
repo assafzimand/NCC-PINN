@@ -208,6 +208,74 @@ def _create_optimizer_by_name(name: str, model: nn.Module, cfg: Dict) -> Tuple[t
         return _create_adam_optimizer(model, cfg), 'Adam'
 
 
+def _debug_print_model_state(model: nn.Module, segment_name: str, 
+                             eval_data: Dict = None) -> None:
+    """Print comprehensive model state at segment start for debugging."""
+    print(f"\n[DEBUG] Model state at start of segment '{segment_name}':")
+    print(f"  Model type: {type(model).__name__}")
+    
+    # Basic model info
+    base = getattr(model, 'base_model', None)
+    experts = getattr(model, 'experts', [])
+    regions = getattr(model, 'regions', [])
+    
+    print(f"  Has base_model: {base is not None}")
+    print(f"  Num experts: {len(experts)}")
+    print(f"  Num regions: {len(regions)}")
+    
+    # Parameter counts
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"  Total params: {total_params:,}, Trainable: {trainable_params:,}")
+    
+    # Base model state
+    if base is not None:
+        base_params = sum(p.numel() for p in base.parameters())
+        base_trainable = sum(p.numel() for p in base.parameters() if p.requires_grad)
+        base_grad_status = "TRAINABLE" if base_trainable > 0 else "FROZEN"
+        print(f"  Base: {base_params:,} params, {base_grad_status}")
+    
+    # Expert states
+    for idx, expert in enumerate(experts):
+        exp_params = sum(p.numel() for p in expert.parameters())
+        exp_trainable = sum(p.numel() for p in expert.parameters() if p.requires_grad)
+        exp_grad_status = "TRAINABLE" if exp_trainable > 0 else "FROZEN"
+        region = regions[idx] if idx < len(regions) else None
+        depth = region.depth if region else "?"
+        parent = region.parent_idx if region else "?"
+        print(f"  Expert[{idx}]: {exp_params:,} params, {exp_grad_status}, depth={depth}, parent={parent}")
+        if region:
+            print(f"    Region: {region.bounds_lower} -> {region.bounds_upper}")
+    
+    # AToE-specific: leaf indices
+    if hasattr(model, 'leaf_indices'):
+        print(f"  Leaf indices: {sorted(model.leaf_indices)}")
+    
+    # ANT-specific: base_is_leaf
+    if hasattr(model, 'base_is_leaf'):
+        print(f"  base_is_leaf: {model.base_is_leaf}")
+    if hasattr(model, 'parent_indices'):
+        print(f"  parent_indices: {model.parent_indices}")
+    
+    # Composition mode
+    if hasattr(model, 'composition_mode'):
+        print(f"  Composition mode: {model.composition_mode}")
+    if hasattr(model, 'indicator_type'):
+        print(f"  Indicator type: {model.indicator_type}")
+    if hasattr(model, 'base_weight'):
+        print(f"  Base weight: {model.base_weight}")
+    
+    # Call model-specific debug_composition if available and has experts
+    if hasattr(model, 'debug_composition') and len(experts) > 0 and eval_data is not None:
+        try:
+            sample_inputs = torch.cat([eval_data['x'][:100], eval_data['t'][:100]], dim=1)
+            model.debug_composition(sample_inputs)
+        except Exception as e:
+            print(f"  [DEBUG] debug_composition failed: {e}")
+    
+    print()  # Blank line for readability
+
+
 def _create_primary_optimizer(model: nn.Module, cfg: Dict) -> Tuple[torch.optim.Optimizer, str]:
     """Create the primary (first-order) optimizer based on config.
 
@@ -1039,6 +1107,10 @@ def _train_segment(
           f"{segment_start_epoch + 1}..{total_epochs} (budget {epoch_budget}) | "
           f"optimizer={current_optimizer_name}{_switch_str} | lr={seg_cfg['lr']} | "
           f"trainable_params={_n_train_params}")
+    
+    # ── DEBUG: Print comprehensive model state at segment start ──
+    _debug_print_model_state(model, segment_name, ctx.eval_data)
+    
     metrics.setdefault('segment_events', []).append({
         'segment': segment_name,
         'start_epoch': segment_start_epoch + 1,
@@ -1378,13 +1450,14 @@ def _train_segment(
             
             except RuntimeError as e:
                 if "out of memory" in str(e).lower():
-                    # GPU OOM - fallback to Adam with persistent warning
+                    # GPU OOM - stop training and trigger finalize for training curves
+                    opt_name = current_optimizer_name.upper()
                     error_msg = (
                         f"\n{'='*60}\n"
                         f"MEMORY ERROR at epoch {epoch}\n"
-                        f"LBFGS ran out of GPU memory. Falling back to Adam.\n"
+                        f"{opt_name} ran out of GPU memory. Stopping training.\n"
                         f"Consider: reducing batch_size, dataset size, or\n"
-                        f"setting optimizer_switch_at=1.0 to disable LBFGS.\n"
+                        f"using a different optimizer.\n"
                         f"{'='*60}\n"
                     )
                     print(error_msg)
@@ -1397,24 +1470,14 @@ def _train_segment(
                         f.write(error_msg)
                         f.write(f"Error details: {str(e)}\n\n")
                     
-                    # Clear GPU cache and fallback
+                    # Clear GPU cache
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                     
-                    optimizer, current_optimizer_name = _create_primary_optimizer(model, seg_cfg)
-                    lr_scheduler = _create_lr_scheduler(optimizer, seg_cfg, total_steps_estimate)
-                    
-                    # Continue with Adam on first batch
-                    optimizer.zero_grad()
-                    batch = next(iter(train_loader))
-                    loss = loss_fn(model, batch)
-                    loss.backward()
-                    if grad_clip_norm is not None:
-                        torch.nn.utils.clip_grad_norm_(
-                            [p for p in model.parameters() if p.requires_grad], grad_clip_norm)
-                    optimizer.step()
-                    train_loss = loss.item()
-                    n_train_batches = 1
+                    # Signal OOM stop - will trigger finalize for training curves
+                    ctx.oom_stopped = True
+                    _stop_reason = 'oom'
+                    break
                 else:
                     raise  # Re-raise other errors
 
@@ -1881,6 +1944,12 @@ def _train_segment(
         _save_segment_pred_plot(ctx, segment_name)
     _final_tl = train_loss if train_loss is not None else float('nan')
     _final_el = eval_loss if eval_loss is not None else float('nan')
+    _oom_stopped = getattr(ctx, 'oom_stopped', False)
+    
+    # Save segment-end checkpoint
+    _save_segment_checkpoint(ctx, segment_name, epoch, optimizer, current_optimizer_name,
+                             train_loss, eval_loss, metrics, cfg)
+    
     print(f"[Segment:{segment_name}] done | ran {epoch - segment_start_epoch} "
           f"epochs (stop={_stop_reason}) | "
           f"train_loss={_final_tl:.6f} eval_loss={_final_el:.6f}")
@@ -1891,12 +1960,35 @@ def _train_segment(
         epochs_run=epoch - segment_start_epoch,
         final_train_loss=_final_tl,
         final_eval_loss=_final_el,
+        oom_stopped=_oom_stopped,
     )
 
 
 # ======================================================================
 # Staged-spawning helpers (orchestrator level; called between segments)
 # ======================================================================
+
+def _save_segment_checkpoint(ctx: TrainingContext, segment_name: str, epoch: int,
+                             optimizer, optimizer_name: str, train_loss: float,
+                             eval_loss: float, metrics: Dict, cfg: Dict) -> None:
+    """Save checkpoint at the end of a training segment.
+    
+    Creates a checkpoint file named `checkpoint_after_<segment>.pt` in the 
+    checkpoint directory. This captures the model state at each stage boundary
+    (root, level_1, level_2, ..., fine_tune, phase3) for debugging and recovery.
+    """
+    checkpoint_dir = ctx.checkpoint_dir
+    if checkpoint_dir is None:
+        return
+    
+    try:
+        checkpoint_path = checkpoint_dir / f"checkpoint_after_{segment_name}.pt"
+        _save_checkpoint(checkpoint_path, ctx.model, optimizer, optimizer_name, epoch,
+                        train_loss, eval_loss, cfg, metrics)
+        print(f"  [Segment:{segment_name}] saved checkpoint_after_{segment_name}.pt")
+    except Exception as e:
+        print(f"  [Segment:{segment_name}] checkpoint save failed: {e}")
+
 
 def _save_segment_pred_plot(ctx: TrainingContext, segment_name: str) -> None:
     """Save ``pred_after_<segment>.png`` (1D problems with ground truth).
@@ -1927,7 +2019,7 @@ def _save_segment_pred_plot(ctx: TrainingContext, segment_name: str) -> None:
         print(f"  [Segment:{segment_name}] prediction plot failed: {_e}")
 
 
-def _set_trainable(model: nn.Module, which: str) -> int:
+def _set_trainable(model: nn.Module, which: str, verbose: bool = True) -> int:
     """Set ``requires_grad`` across the model for a training segment.
 
     ``which``:
@@ -1940,9 +2032,12 @@ def _set_trainable(model: nn.Module, which: str) -> int:
     background, ANT routing); only the optimizer (which filters on
     ``requires_grad``) skips them. Returns the count of trainable param tensors.
     """
+    trainable_details = []
+    
     if which == 'all':
         for p in model.parameters():
             p.requires_grad = True
+        trainable_details.append("ALL params trainable")
     else:
         for p in model.parameters():
             p.requires_grad = False
@@ -1951,26 +2046,44 @@ def _set_trainable(model: nn.Module, which: str) -> int:
             if base is not None:
                 for p in base.parameters():
                     p.requires_grad = True
+                trainable_details.append("base_model: TRAINABLE")
             else:
                 for p in model.parameters():
                     p.requires_grad = True
+                trainable_details.append("no base_model attr; all params: TRAINABLE")
         elif which == 'leaves':
             experts = getattr(model, 'experts', [])
-            for expert in experts:
+            trainable_details.append("base_model: FROZEN")
+            for idx, expert in enumerate(experts):
                 for p in expert.parameters():
                     p.requires_grad = True
+                trainable_details.append(f"  expert[{idx}]: TRAINABLE")
         elif which.startswith('level:'):
             target_depth = int(which.split(':', 1)[1])
             regions = getattr(model, 'regions', [])
             experts = getattr(model, 'experts', [])
+            trainable_details.append(f"base_model: FROZEN (target level={target_depth})")
             for idx, expert in enumerate(experts):
                 depth = regions[idx].depth if idx < len(regions) else None
                 if depth == target_depth:
                     for p in expert.parameters():
                         p.requires_grad = True
+                    trainable_details.append(f"  expert[{idx}] depth={depth}: TRAINABLE")
+                else:
+                    trainable_details.append(f"  expert[{idx}] depth={depth}: FROZEN")
         else:
             raise ValueError(f"_set_trainable: unknown which={which!r}")
-    return sum(1 for p in model.parameters() if p.requires_grad)
+    
+    n_trainable = sum(1 for p in model.parameters() if p.requires_grad)
+    n_total = sum(1 for _ in model.parameters())
+    
+    if verbose:
+        print(f"\n[DEBUG] _set_trainable(which='{which}'):")
+        print(f"  Total params: {n_total}, Trainable: {n_trainable}")
+        for detail in trainable_details:
+            print(f"  {detail}")
+    
+    return n_trainable
 
 
 def _build_tree_once(ctx: TrainingContext, retain_siblings: bool) -> Dict:
@@ -2169,8 +2282,19 @@ def _spawn_nodes(ctx: TrainingContext, level_nodes, copy_output: bool,
             })
 
     # Init newly spawned experts (after spawn so copy-init parents already exist).
+    print(f"\n[DEBUG] _spawn_nodes: Initializing {len(new_expert_indices)} new experts")
+    print(f"  copy_output={copy_output}, init_mode='{init_mode}'")
+    print(f"  is_copy_spawn={is_copy_spawn}, is_atoe_plain={is_atoe_plain}, atoe_zero_init={atoe_zero_init}")
+    
     for expert_idx in new_expert_indices:
         new_exp = model.experts[expert_idx]
+        region = model.regions[expert_idx] if hasattr(model, 'regions') and expert_idx < len(model.regions) else None
+        
+        # Print region info
+        if region:
+            print(f"\n  [Expert {expert_idx}] Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
+            print(f"    depth={region.depth}, parent_idx={region.parent_idx}, spawn_epoch={region.spawn_epoch}")
+        
         if init_mode == 'parent_weights':
             if hasattr(model, 'regions') and expert_idx < len(model.regions):
                 par_idx = model.regions[expert_idx].parent_idx
@@ -2184,10 +2308,18 @@ def _spawn_nodes(ctx: TrainingContext, level_nodes, copy_output: bool,
             par_label = 'base' if par_idx == -1 else f'expert {par_idx}'
             apply_parent_copy_init(new_exp, parent_model, cfg,
                                    copy_output=copy_output)
-            print(f"  [ParentInit] Expert {expert_idx}: from {par_label}")
+            print(f"    [ParentInit] Expert {expert_idx}: copied from {par_label}, copy_output={copy_output}")
         else:
             apply_expert_init(new_exp, cfg)
+            print(f"    [Init] Expert {expert_idx}: glorot/zero init (mode='{init_mode}')")
         apply_spectral_norm(new_exp, cfg)
+        
+        # Print output layer state after init
+        from trainer.init import _get_output_layer
+        out_layer = _get_output_layer(new_exp)
+        out_weight_norm = out_layer.weight.data.norm().item()
+        out_bias_val = out_layer.bias.data.mean().item() if out_layer.bias is not None else None
+        print(f"    After init: output_weight_norm={out_weight_norm:.6f}, output_bias_mean={out_bias_val}")
 
     return len(new_expert_indices), new_expert_indices
 
@@ -2329,7 +2461,7 @@ def train_orchestrator(ctx: TrainingContext) -> None:
     # ── Non-adaptive: single segment over all params ──
     if not ctx.is_adaptive:
         _set_trainable(model, 'all')
-        _train_segment(ctx, 'main', ctx.epochs, cfg)
+        res = _train_segment(ctx, 'main', ctx.epochs, cfg)
         ctx.total_epochs = ctx.epoch
         return
 
@@ -2345,7 +2477,7 @@ def train_orchestrator(ctx: TrainingContext) -> None:
         print(f"[Orchestrator] [3-Phase] Phase 1: training root/base for "
               f"{root_budget} epochs")
         res = _train_segment(ctx, 'root', root_budget, root_cfg)
-        if res.nan_detected:
+        if res.nan_detected or res.oom_stopped:
             return
 
     # ── Tree build (once) + level selection ──
@@ -2380,7 +2512,7 @@ def train_orchestrator(ctx: TrainingContext) -> None:
             return
         print(f"[Phase 3] Training {total} leaf experts (base retired from composition)")
         _set_trainable(model, 'leaves')
-        _train_segment(ctx, 'phase3', cfg['epochs'], cfg)
+        res = _train_segment(ctx, 'phase3', cfg['epochs'], cfg)
         ctx.total_epochs = ctx.epoch
         return
 
@@ -2408,7 +2540,7 @@ def train_orchestrator(ctx: TrainingContext) -> None:
                              lr_override=lr_level,
                              min_epochs_override=min_per_level)
         _plot_after_spawn(ctx, f"level_{level_depth}")
-        if res.nan_detected:
+        if res.nan_detected or res.oom_stopped:
             return
         print(f"[Freeze] Level {level_depth} training complete.")
 
@@ -2424,7 +2556,7 @@ def train_orchestrator(ctx: TrainingContext) -> None:
     ft_cfg = dict(cfg)
     ft_cfg.update(fine_tune_cfg)
     ft_min = fine_tune_cfg.get('min_epochs', ctx.min_epochs)
-    _train_segment(ctx, 'fine_tune', fine_tune_cfg['epochs'], ft_cfg,
+    res = _train_segment(ctx, 'fine_tune', fine_tune_cfg['epochs'], ft_cfg,
                    min_epochs_override=ft_min)
     ctx.total_epochs = ctx.epoch
 

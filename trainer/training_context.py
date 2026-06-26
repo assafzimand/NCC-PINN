@@ -23,7 +23,7 @@ class SegmentResult:
     """Outcome of a single :func:`trainer.trainer._train_segment` call.
 
     ``stop_reason`` is one of: ``'budget'`` (ran the full epoch budget),
-    ``'early_stop'`` (patience plateau), ``'nan'`` (divergence).
+    ``'early_stop'`` (patience plateau), ``'nan'`` (divergence), ``'oom'`` (GPU OOM).
     """
     nan_detected: bool = False
     stopped_early: bool = False
@@ -31,6 +31,7 @@ class SegmentResult:
     epochs_run: int = 0
     final_train_loss: float = float('inf')
     final_eval_loss: float = float('inf')
+    oom_stopped: bool = False
 
 
 @dataclass
@@ -139,6 +140,7 @@ class TrainingContext:
     adaptive_sampling_enabled: bool = False
     epoch: int = 0
     _nan_detected: bool = False
+    oom_stopped: bool = False
 
     # ── Closure handles (created in the loop, consumed by finalize) ──────────
     _emergency_metrics_save: Any = None

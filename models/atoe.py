@@ -1145,6 +1145,57 @@ class AToE(nn.Module):
         self.sync_batched_indicators()
         self.sync_batched_models()
 
+    def debug_composition(self, sample_inputs: torch.Tensor) -> None:
+        """Print detailed composition state with a sample input for debugging.
+        
+        Args:
+            sample_inputs: (N, n_dims) sample coordinates for composition verification
+        """
+        print(f"\n[DEBUG] AToE Composition State:")
+        print(f"  Blending mode: {self.blending_mode}")
+        print(f"  Indicator type: {self.indicator_type}")
+        print(f"  Num experts: {len(self.experts)}")
+        print(f"  Base weight: {self.base_weight}")
+        
+        with torch.no_grad():
+            # Get indicators
+            psi_base, psi_experts = self.batched_indicators(sample_inputs)
+            
+            print(f"\n  Sample psi values (N={sample_inputs.shape[0]} points):")
+            print(f"    psi_base: min={psi_base.min():.4f}, max={psi_base.max():.4f}, mean={psi_base.mean():.4f}")
+            
+            if psi_experts.shape[1] > 0:
+                for i in range(psi_experts.shape[1]):
+                    psi_i = psi_experts[:, i]
+                    depth = self._expert_depths[i].item() if hasattr(self, '_expert_depths') else '?'
+                    region = self.regions[i] if i < len(self.regions) else None
+                    bounds = f"{region.bounds_lower}->{region.bounds_upper}" if region else "?"
+                    active_pct = (psi_i > 0.01).float().mean().item() * 100
+                    print(f"    psi_expert[{i}] (depth={depth}, {bounds}): "
+                          f"min={psi_i.min():.4f}, max={psi_i.max():.4f}, "
+                          f"mean={psi_i.mean():.4f}, active%={active_pct:.1f}%")
+            
+            # Verify normalization for additive mode
+            if self.blending_mode == 'soft' and self.composition_mode == 'additive':
+                print(f"\n  Additive composition check:")
+                for depth in range(1, getattr(self, '_max_depth', 1) + 1):
+                    if hasattr(self, '_expert_depths'):
+                        depth_mask = (self._expert_depths == depth)
+                        if depth_mask.any():
+                            psi_at_level = psi_experts[:, depth_mask]
+                            Z_level = 1.0 + psi_at_level.sum(dim=1)
+                            w_sum = psi_at_level.sum(dim=1) / Z_level
+                            print(f"    Level {depth}: Z=1+sum(psi)={Z_level.mean():.4f}, "
+                                  f"w_sum={w_sum.mean():.4f} (should be <1)")
+            
+            # Check for potential issues
+            total_psi = psi_base.sum(dim=1) + psi_experts.sum(dim=1)
+            zero_psi_points = (total_psi < 1e-6).sum().item()
+            if zero_psi_points > 0:
+                print(f"\n  WARNING: {zero_psi_points} points have near-zero total psi!")
+        
+        print()
+
     def __repr__(self) -> str:
         """String representation."""
         base_str = " -> ".join(map(str, self.base_architecture))
