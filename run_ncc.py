@@ -20,6 +20,7 @@ from utils.config_validation import (
     validate_problem_config,
     merge_problem_features_to_toplevel,
 )
+from utils.logging_config import setup_logging, get_logger, update_log_file, close_logging
 from models.fc_model import FCNet
 from models.network_factory import create_network
 from ncc.ncc_runner import run_ncc
@@ -58,7 +59,8 @@ def run_multi_eval(checkpoints_dict, config, run_dir):
         config: Configuration dict
         run_dir: Directory to save results
     """
-    print(f"\nRunning NCC analysis on {len(checkpoints_dict)} checkpoints...")
+    logger = get_logger(__name__)
+    logger.info(f"Running NCC analysis on {len(checkpoints_dict)} checkpoints...")
     
     # Storage for aggregated results
     ncc_data = {}
@@ -68,21 +70,21 @@ def run_multi_eval(checkpoints_dict, config, run_dir):
     
     # Process each checkpoint
     for model_idx, (model_name, checkpoint_path) in enumerate(checkpoints_dict.items(), 1):
-        print(f"\n[{model_idx}/{len(checkpoints_dict)}] Processing {model_name}...")
-        print(f"  Checkpoint: {checkpoint_path}")
+        logger.info(f"[{model_idx}/{len(checkpoints_dict)}] Processing {model_name}...")
+        logger.info(f"  Checkpoint: {checkpoint_path}")
         
         checkpoint_path = fix_long_path(Path(checkpoint_path))
         if not checkpoint_path.exists():
-            print(f"  ERROR: Checkpoint not found, skipping...")
+            logger.error(f"  ERROR: Checkpoint not found, skipping...")
             continue
         
         # Load checkpoint
         try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
         except Exception:
-            print("  Warning: Standard load failed, trying legacy mode...")
+            logger.warning("  Warning: Standard load failed, trying legacy mode...")
             checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-            print("  Legacy checkpoint loaded")
+            logger.info("  Legacy checkpoint loaded")
         
         # Extract architecture and activation from checkpoint config if available
         if 'config' in checkpoint:
@@ -90,16 +92,16 @@ def run_multi_eval(checkpoints_dict, config, run_dir):
             architecture = checkpoint_config.get('base_architecture',
                             checkpoint_config.get('architecture', config['base_architecture']))
             activation = checkpoint_config.get('activation', config['activation'])
-            print(f"  Loaded architecture from checkpoint: {architecture}")
+            logger.info(f"  Loaded architecture from checkpoint: {architecture}")
         elif 'architecture' in checkpoint:
             architecture = checkpoint['architecture']
             activation = checkpoint.get('activation', config['activation'])
-            print(f"  Loaded architecture from checkpoint: {architecture}")
+            logger.info(f"  Loaded architecture from checkpoint: {architecture}")
         else:
             # Fallback: use from config (might not match)
             architecture = config['base_architecture']
             activation = config['activation']
-            print(f"  Warning: Architecture not in checkpoint, using config: {architecture}")
+            logger.warning(f"  Warning: Architecture not in checkpoint, using config: {architecture}")
         
         # Build model
         model_config = config.copy()
@@ -133,14 +135,14 @@ def run_multi_eval(checkpoints_dict, config, run_dir):
         # Load weights
         try:
             model.load_state_dict(remapped_state_dict)
-            print("  Model weights loaded")
+            logger.info("  Model weights loaded")
         except RuntimeError:
-            print("  Warning: Remapped keys didn't match, trying original...")
+            logger.warning("  Warning: Remapped keys didn't match, trying original...")
             model.load_state_dict(state_dict)
-            print("  Model weights loaded")
+            logger.info("  Model weights loaded")
         
         # Run NCC analysis (without saving plots, just get metrics)
-        print(f"  Running NCC analysis...")
+        logger.info(f"  Running NCC analysis...")
         ncc_metrics = run_ncc(
             model=model,
             eval_data_path=str(ncc_data_path),
@@ -155,12 +157,12 @@ def run_multi_eval(checkpoints_dict, config, run_dir):
             'final': ncc_metrics
         }
         
-        print(f"  Complete - Accuracy: {ncc_metrics['layer_accuracies']}")
+        logger.info(f"  Complete - Accuracy: {ncc_metrics['layer_accuracies']}")
     
     # Generate comparison plots
-    print(f"\n{'='*60}")
-    print("Generating comparison plots...")
-    print(f"{'='*60}")
+    logger.info("=" * 60)
+    logger.info("Generating comparison plots...")
+    logger.info("=" * 60)
     
     from utils.comparison_plots import generate_ncc_comparison_plots_only
     generate_ncc_comparison_plots_only(run_dir, ncc_data)
@@ -170,28 +172,32 @@ def run_multi_eval(checkpoints_dict, config, run_dir):
     summary_path = run_dir / "multi_eval_summary.yaml"
     with open(summary_path, 'w') as f:
         yaml.dump(ncc_data, f, default_flow_style=False)
-    print(f"\nSummary saved to {summary_path}")
+    logger.info(f"Summary saved to {summary_path}")
     
     # Final summary
-    print("\n" + "=" * 60)
-    print("Multi-Evaluation Complete!")
-    print("=" * 60)
-    print(f"Output directory: {run_dir}")
-    print(f"  - ncc_classification_comparison.png")
-    print(f"  - ncc_compactness_comparison.png")
-    print(f"  - multi_eval_summary.yaml")
-    print("\nModels evaluated:")
+    logger.info("=" * 60)
+    logger.info("Multi-Evaluation Complete!")
+    logger.info("=" * 60)
+    logger.info(f"Output directory: {run_dir}")
+    logger.info(f"  - ncc_classification_comparison.png")
+    logger.info(f"  - ncc_compactness_comparison.png")
+    logger.info(f"  - multi_eval_summary.yaml")
+    logger.info("Models evaluated:")
     for model_name in ncc_data.keys():
         metrics = ncc_data[model_name]['final']
-        print(f"  {model_name}:")
-        print(f"    Layers: {metrics['layers_analyzed']}")
+        logger.info(f"  {model_name}:")
+        logger.info(f"    Layers: {metrics['layers_analyzed']}")
         for layer, acc in metrics['layer_accuracies'].items():
-            print(f"      {layer}: {acc:.4f}")
-    print("=" * 60)
+            logger.info(f"      {layer}: {acc:.4f}")
+    logger.info("=" * 60)
 
 
 def main():
     """Orchestrate NCC analysis workflow."""
+    # Initialize logging (console only until run_dir is created)
+    setup_logging(run_dir=None)
+    logger = get_logger(__name__)
+    
     print("=" * 60)
     print("NCC Analysis Orchestrator")
     print("=" * 60)
@@ -243,6 +249,10 @@ def main():
         _run_dir_record.parent.mkdir(parents=True, exist_ok=True)
         _run_dir_record.write_text(str(run_dir.resolve()))
     print(f"  Run directory: {run_dir}")
+    
+    # Now set up file logging to the run directory
+    update_log_file(run_dir)
+    logger.info(f"Logging initialized. Log file: {run_dir / 'training.log'}")
 
     # Save config to run directory
     import yaml
@@ -251,14 +261,14 @@ def main():
     config_path = run_dir / "config_used.yaml"
     with open(config_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False)
-    print(f"  Config saved to {config_path}")
+    logger.info(f"  Config saved to {config_path}")
 
     # Determine checkpoint path
     checkpoint_path = None
 
     if is_multi_eval:
         # Multi-eval mode - evaluate multiple checkpoints and compare
-        print("\n3. Multi-evaluation mode - comparing multiple checkpoints")
+        logger.info("3. Multi-evaluation mode - comparing multiple checkpoints")
         
         if not eval_only:
             raise ValueError(
@@ -267,43 +277,44 @@ def main():
             )
         
         # Check NCC dataset
-        print("\n4. Checking NCC dataset...")
+        logger.info("4. Checking NCC dataset...")
         dataset_dir = Path("datasets") / problem
         ncc_data_path = dataset_dir / "ncc_data.pt"
 
         if not ncc_data_path.exists():
-            print("  NCC data not found. Generating...")
+            logger.info("  NCC data not found. Generating...")
             from utils.dataset_gen import generate_and_save_datasets
             generate_and_save_datasets(config)
         else:
-            print(f"  NCC data found: {ncc_data_path}")
+            logger.info(f"  NCC data found: {ncc_data_path}")
         
         # Run multi-eval
         run_multi_eval(resume_from, config, run_dir)
         
         # Exit early - multi-eval handles everything
+        close_logging()
         return
     
     elif not eval_only:
         # Training mode - train first, then run NCC on best checkpoint
-        print("\n3. Training mode - will train then run NCC analysis")
+        logger.info("3. Training mode - will train then run NCC analysis")
 
         # Check datasets
-        print("\n4. Checking datasets...")
+        logger.info("4. Checking datasets...")
         dataset_dir = Path("datasets") / problem
         train_data_path = dataset_dir / "training_data.pt"
         eval_data_path = dataset_dir / "eval_data.pt"
         ncc_data_path = dataset_dir / "ncc_data.pt"
 
         if not train_data_path.exists() or not eval_data_path.exists() or not ncc_data_path.exists():
-            print("  Datasets not found. Generating...")
+            logger.info("  Datasets not found. Generating...")
             from utils.dataset_gen import generate_and_save_datasets
             generate_and_save_datasets(config)
         else:
-            print(f"  Datasets found:")
-            print(f"    Train: {train_data_path}")
-            print(f"    Eval: {eval_data_path}")
-            print(f"    NCC: {ncc_data_path}")
+            logger.info(f"  Datasets found:")
+            logger.info(f"    Train: {train_data_path}")
+            logger.info(f"    Eval: {eval_data_path}")
+            logger.info(f"    NCC: {ncc_data_path}")
 
         # Check if adaptive PINN is enabled
         adaptive_cfg = config.get('adaptive_pinn', {})
@@ -313,7 +324,7 @@ def main():
         precision = config.get('precision', 'float32')
         if precision == 'float64':
             torch.set_default_dtype(torch.float64)
-            print(f"\n  [Precision] Using float64 (double precision)")
+            logger.info(f"  [Precision] Using float64 (double precision)")
         else:
             torch.set_default_dtype(torch.float32)
         
@@ -323,10 +334,10 @@ def main():
         
         if use_time_marching:
             # Time marching mode - train separate models for each window
-            print("\n5. Time marching mode enabled")
-            print(f"  Windows: {tm_cfg.get('num_windows', 5)}")
-            print(f"  M distribution: {tm_cfg.get('m_distribution', 'quadratic')}")
-            print(f"  Freeze previous: {tm_cfg.get('freeze_previous_windows', True)}")
+            logger.info("5. Time marching mode enabled")
+            logger.info(f"  Windows: {tm_cfg.get('num_windows', 5)}")
+            logger.info(f"  M distribution: {tm_cfg.get('m_distribution', 'quadratic')}")
+            logger.info(f"  Freeze previous: {tm_cfg.get('freeze_previous_windows', True)}")
             
             if not is_adaptive:
                 raise ValueError(
@@ -362,14 +373,14 @@ def main():
                 device=device,
             )
             
-            print(f"\n  Time marching training complete")
-            print(f"  Combined model: {model.num_windows} windows, {model.total_experts} total experts")
-            print(f"  Last checkpoint: {checkpoint_path}")
+            logger.info(f"  Time marching training complete")
+            logger.info(f"  Combined model: {model.num_windows} windows, {model.total_experts} total experts")
+            logger.info(f"  Last checkpoint: {checkpoint_path}")
         
         else:
             # Standard training mode (no time marching)
             # Build model
-            print("\n5. Building model...")
+            logger.info("5. Building model...")
             
             if is_adaptive:
                 model_type = config.get('model', 'AToE')
@@ -382,12 +393,12 @@ def main():
                 else:
                     from models.atoe import AToE
                     model = AToE(architecture, activation, config, adaptive_cfg)
-                print(f"  {type(model).__name__} created: {len(model.get_layer_names())} base layers")
+                logger.info(f"  {type(model).__name__} created: {len(model.get_layer_names())} base layers")
             else:
                 expert_type = adaptive_cfg.get('expert_type', 'mlp')
                 model = create_network(architecture, activation, config,
                                        is_base=True, expert_type=expert_type)
-                print(f"  Model created: {len(model.get_layer_names())} layers")
+                logger.info(f"  Model created: {len(model.get_layer_names())} layers")
 
             # Convert model to double precision if configured
             if precision == 'float64':
@@ -395,7 +406,7 @@ def main():
 
             # Load checkpoint if resume_from is specified
             if resume_from is not None:
-                print(f"\n  Loading checkpoint from: {resume_from}")
+                logger.info(f"  Loading checkpoint from: {resume_from}")
                 resume_checkpoint_path = fix_long_path(Path(resume_from))
 
                 if not resume_checkpoint_path.exists():
@@ -406,11 +417,11 @@ def main():
                     checkpoint = torch.load(resume_checkpoint_path,
                                             map_location='cpu')
                 except Exception:
-                    print("  Warning: Standard load failed, trying legacy mode...")
+                    logger.warning("  Warning: Standard load failed, trying legacy mode...")
                     checkpoint = torch.load(resume_checkpoint_path,
                                             map_location='cpu',
                                             weights_only=False)
-                    print("  Legacy checkpoint loaded")
+                    logger.info("  Legacy checkpoint loaded")
 
                 # Extract state dict
                 if 'model_state_dict' in checkpoint:
@@ -424,7 +435,7 @@ def main():
                 if is_adaptive and checkpoint.get('is_adaptive', False):
                     # Load adaptive state including experts and regions
                     model.load_state_dict_extended(checkpoint['adaptive_state'])
-                    print(f"  Adaptive model weights loaded ({model.num_experts} experts)")
+                    logger.info(f"  Adaptive model weights loaded ({model.num_experts} experts)")
                 else:
                     # Remap keys for legacy checkpoints
                     remapped_state_dict = {}
@@ -443,20 +454,20 @@ def main():
                     # Load weights
                     try:
                         model.load_state_dict(remapped_state_dict)
-                        print("  Model weights loaded - continuing from checkpoint")
+                        logger.info("  Model weights loaded - continuing from checkpoint")
                     except RuntimeError:
-                        print("  Warning: Remapped keys didn't match, trying original...")
+                        logger.warning("  Warning: Remapped keys didn't match, trying original...")
                         model.load_state_dict(state_dict)
-                    print("  Model weights loaded - continuing from checkpoint")
+                    logger.info("  Model weights loaded - continuing from checkpoint")
 
             # Build loss
-            print("\n6. Building loss function...")
+            logger.info("6. Building loss function...")
             loss_module = importlib.import_module(f"losses.{problem}_loss")
             loss_fn = loss_module.build_loss(**config)
-            print(f"  Loss function built for {problem}")
+            logger.info(f"  Loss function built for {problem}")
 
             # Train
-            print("\n7. Training...")
+            logger.info("7. Training...")
             checkpoint_path = train(
                 model=model,
                 loss_fn=loss_fn,
@@ -466,12 +477,12 @@ def main():
                 run_dir=run_dir
             )
 
-            print(f"\n  Training complete")
-            print(f"  Best checkpoint: {checkpoint_path}")
+            logger.info(f"  Training complete")
+            logger.info(f"  Best checkpoint: {checkpoint_path}")
 
     else:
         # Eval-only mode - require resume_from
-        print("\n3. Evaluation-only mode - NCC analysis only")
+        logger.info("3. Evaluation-only mode - NCC analysis only")
 
         if resume_from is None:
             raise ValueError(
@@ -485,19 +496,19 @@ def main():
                 f"Checkpoint not found: {resume_from}"
             )
 
-        print(f"  Using checkpoint: {checkpoint_path}")
+        logger.info(f"  Using checkpoint: {checkpoint_path}")
 
         # Check NCC dataset
-        print("\n4. Checking NCC dataset...")
+        logger.info("4. Checking NCC dataset...")
         dataset_dir = Path("datasets") / problem
         ncc_data_path = dataset_dir / "ncc_data.pt"
 
         if not ncc_data_path.exists():
-            print("  NCC data not found. Generating...")
+            logger.info("  NCC data not found. Generating...")
             from utils.dataset_gen import generate_and_save_datasets
             generate_and_save_datasets(config)
         else:
-            print(f"  NCC data found: {ncc_data_path}")
+            logger.info(f"  NCC data found: {ncc_data_path}")
 
     # Run NCC analysis
         adaptive_cfg = config.get('adaptive_pinn', {})
@@ -506,21 +517,21 @@ def main():
             inner_metrics_disabled = not adaptive_cfg.get('inner_metrics_calculation', True)
 
         if inner_metrics_disabled:
-            print("\n[Skipping NCC analysis: inner_metrics_calculation is False]")
+            logger.info("[Skipping NCC analysis: inner_metrics_calculation is False]")
         else:
-            print(f"\n{'8' if not eval_only else '5'}. Running NCC analysis...")
+            logger.info(f"{'8' if not eval_only else '5'}. Running NCC analysis...")
 
             # Load checkpoint
-            print(f"  Loading checkpoint: {checkpoint_path}")
+            logger.info(f"  Loading checkpoint: {checkpoint_path}")
             try:
                 # Try loading with default settings (weights_only=True in PyTorch 2.6+)
                 checkpoint = torch.load(checkpoint_path, map_location='cpu')
             except Exception:
                 # Fallback for legacy checkpoints with custom classes
-                print("  Warning: Standard load failed, trying legacy mode...")
+                logger.warning("  Warning: Standard load failed, trying legacy mode...")
                 checkpoint = torch.load(checkpoint_path, map_location='cpu',
                                         weights_only=False)
-                print("  Legacy checkpoint loaded")
+                logger.info("  Legacy checkpoint loaded")
 
             # Build model - check for adaptive PINN
             is_adaptive = adaptive_cfg.get('enabled', False) or checkpoint.get('is_adaptive', False)
@@ -544,7 +555,7 @@ def main():
             if is_adaptive and checkpoint.get('is_adaptive', False):
                 # Load adaptive state including experts and regions
                 model.load_state_dict_extended(checkpoint['adaptive_state'])
-                print(f"  Adaptive model weights loaded ({model.num_experts} experts)")
+                logger.info(f"  Adaptive model weights loaded ({model.num_experts} experts)")
             else:
                 if 'model_state_dict' in checkpoint:
                     state_dict = checkpoint['model_state_dict']
@@ -569,11 +580,11 @@ def main():
 
                 try:
                     model.load_state_dict(remapped_state_dict)
-                    print("  Model weights loaded")
+                    logger.info("  Model weights loaded")
                 except RuntimeError:
-                    print("  Warning: Remapped keys didn't match, trying original...")
+                    logger.warning("  Warning: Remapped keys didn't match, trying original...")
                     model.load_state_dict(state_dict)
-                    print("  Model weights loaded")
+                    logger.info("  Model weights loaded")
 
             # Get NCC data path
             ncc_data_path = Path("datasets") / problem / "ncc_data.pt"
@@ -599,15 +610,15 @@ def main():
                         metrics['ncc_history'].append((final_epoch, ncc_metrics))
                         history = [(epoch, mets) for epoch, mets in metrics['ncc_history']]
                         plot_ncc_history_shaded(history, run_dir / "ncc_plots")
-                        print(f"\n  Shaded NCC plots generated from {len(history)} epochs")
+                        logger.info(f"  Shaded NCC plots generated from {len(history)} epochs")
 
             # In eval-only mode, also run problem-specific evaluation visualization
             if eval_only:
-                print("\nGenerating problem-specific evaluation visualizations...")
+                logger.info("Generating problem-specific evaluation visualizations...")
 
                 eval_data_path = Path("datasets") / problem / "eval_data.pt"
                 if not eval_data_path.exists():
-                    print("  Eval data not found. Generating...")
+                    logger.info("  Eval data not found. Generating...")
                     from utils.dataset_gen import generate_and_save_datasets
                     generate_and_save_datasets(config)
 
@@ -617,36 +628,41 @@ def main():
                     visualize_evaluation = viz_module[1]
                     visualize_evaluation(model, str(eval_data_path), run_dir, config)
                 except ValueError:
-                    print(f"  (No custom evaluation visualization for {problem})")
+                    logger.info(f"  (No custom evaluation visualization for {problem})")
                 except Exception as e:
-                    print(f"  Warning: Could not generate evaluation visualization: {e}")
+                    logger.warning(f"  Warning: Could not generate evaluation visualization: {e}")
 
-            print("\n" + "=" * 60)
-            print("Complete!")
-            print("=" * 60)
-            print(f"Output directory: {run_dir}")
-            print(f"  - config_used.yaml")
+            logger.info("=" * 60)
+            logger.info("Complete!")
+            logger.info("=" * 60)
+            logger.info(f"Output directory: {run_dir}")
+            logger.info(f"  - config_used.yaml")
             if not eval_only:
-                print(f"  - metrics.json (training)")
-                print(f"  - training_plots/")
-                print(f"  - summary.txt")
-            print(f"  - ncc_plots/ (5 plots)")
-            print(f"  - ncc_metrics.json")
-            print("\nNCC Summary:")
-            print(f"  Classes: {ncc_metrics['num_classes']}")
-            print(f"  Layers analyzed: {ncc_metrics['layers_analyzed']}")
-            print(f"  Layer accuracies:")
+                logger.info(f"  - metrics.json (training)")
+                logger.info(f"  - training_plots/")
+                logger.info(f"  - summary.txt")
+            logger.info(f"  - ncc_plots/ (5 plots)")
+            logger.info(f"  - ncc_metrics.json")
+            logger.info("NCC Summary:")
+            logger.info(f"  Classes: {ncc_metrics['num_classes']}")
+            logger.info(f"  Layers analyzed: {ncc_metrics['layers_analyzed']}")
+            logger.info(f"  Layer accuracies:")
             for layer, acc in ncc_metrics['layer_accuracies'].items():
-                print(f"    {layer}: {acc:.4f}")
-            print("=" * 60)
+                logger.info(f"    {layer}: {acc:.4f}")
+            logger.info("=" * 60)
+    
+    # Clean up logging
+    close_logging()
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(f"\nERROR: {e}")
+        logger = get_logger(__name__)
+        logger.error(f"ERROR: {e}")
         import traceback
         traceback.print_exc()
+        close_logging()
         sys.exit(1)
 
