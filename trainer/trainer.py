@@ -277,6 +277,38 @@ def _debug_print_model_state(model: nn.Module, segment_name: str,
         except Exception as e:
             logger.info(f"  [DEBUG] debug_composition failed: {e}")
     
+    # ── Per-expert output magnitude (shows contribution magnitudes) ──
+    if eval_data is not None and hasattr(model, 'forward_decomposed'):
+        try:
+            with torch.no_grad():
+                sample_inputs = torch.cat([eval_data['x'][:200], eval_data['t'][:200]], dim=1)
+                decomp = model.forward_decomposed(sample_inputs)
+                
+                # Log base output magnitude
+                if 'base' in decomp:
+                    base_out = decomp['base']
+                    logger.info(f"\n[DEBUG] Output magnitudes (N=200 sample points):")
+                    logger.info(f"  Base: norm={base_out.norm().item():.4f}, "
+                              f"mean={base_out.mean().item():.6f}, "
+                              f"std={base_out.std().item():.6f}")
+                
+                # Log each expert's output magnitude
+                for i in range(len(experts)):
+                    key = f'expert_{i}'
+                    if key in decomp:
+                        exp_out = decomp[key]
+                        logger.info(f"  Expert[{i}]: norm={exp_out.norm().item():.4f}, "
+                                  f"mean={exp_out.mean().item():.6f}, "
+                                  f"std={exp_out.std().item():.6f}")
+                
+                # Log composed output
+                composed_out = model(sample_inputs)
+                logger.info(f"  Composed: norm={composed_out.norm().item():.4f}, "
+                          f"mean={composed_out.mean().item():.6f}, "
+                          f"std={composed_out.std().item():.6f}")
+        except Exception as e:
+            logger.info(f"  [DEBUG] Output magnitude computation failed: {e}")
+    
     logger.info("")  # Blank line for readability
 
 
@@ -672,6 +704,25 @@ def _setup_training(
         'optimizer_snapshots': [],  # Optimizer/scheduler state at spawn, freeze, unfreeze, resample
         'loss_components_history': [],  # Per-component losses at eval epochs
         'exception_events': [],    # Caught Python exceptions with traceback
+        # Term-wise loss components for plotting (populated during evaluation)
+        'loss_components': {
+            'epochs': [],      # Epochs where components were recorded
+            'residual': [],    # PDE residual loss
+            'ic': [],          # Initial condition loss
+            'bc': [],          # Boundary condition loss
+        },
+        # Gradient norm history
+        'gradient_norms': {
+            'epochs': [],
+            'total_grad_norm': [],  # Overall gradient norm
+            'base_grad_norm': [],   # Base model gradient norm
+            'experts_grad_norm': [], # Experts gradient norm (sum)
+        },
+        # Learning rate history
+        'lr_history': {
+            'epochs': [],
+            'lr': [],
+        },
     }
 
     best_eval_loss = float('inf')
@@ -1247,6 +1298,40 @@ def _train_segment(
                 timer.start('train.backward')
                 loss.backward()
                 timer.stop('train.backward')
+                
+                # ── Track gradient norms (first batch only, at eval epochs) ──
+                if n_train_batches == 0 and (epoch % eval_every == 0 or epoch == 1):
+                    _total_gn = 0.0
+                    _base_gn = 0.0
+                    _exp_gn = 0.0
+                    
+                    # Base model gradient norm
+                    if hasattr(model, 'base_model'):
+                        for p in model.base_model.parameters():
+                            if p.grad is not None:
+                                _base_gn += p.grad.data.norm().item() ** 2
+                        _base_gn = _base_gn ** 0.5
+                    
+                    # Experts gradient norm
+                    if hasattr(model, 'experts') and model.experts:
+                        for exp in model.experts:
+                            for p in exp.parameters():
+                                if p.grad is not None:
+                                    _exp_gn += p.grad.data.norm().item() ** 2
+                        _exp_gn = _exp_gn ** 0.5
+                    
+                    # Total gradient norm
+                    for p in model.parameters():
+                        if p.grad is not None:
+                            _total_gn += p.grad.data.norm().item() ** 2
+                    _total_gn = _total_gn ** 0.5
+                    
+                    # Store for this epoch (will be logged in should_evaluate block)
+                    ctx._epoch_grad_norms = {
+                        'total': _total_gn,
+                        'base': _base_gn,
+                        'experts': _exp_gn
+                    }
 
                 # DIAGNOSTIC: Gradient flow analysis (gated by debug_prints, every 100 epochs)
                 if cfg.get('debug_prints', False) and n_train_batches == 0 and epoch % 100 == 0:
@@ -1651,6 +1736,31 @@ def _train_segment(
             metrics['eval_loss'].append(eval_loss)
             metrics['eval_rel_l2'].append(eval_rel_l2)
             metrics['eval_inf_norm'].append(eval_inf_norm)
+            
+            # ── Compute and log term-wise loss components ──
+            try:
+                _comp_batch = next(iter(eval_loader))
+                _loss_comps = loss_fn(model, _comp_batch, return_components=True, update_causal_state=False)
+                _comp_dict = {k: float(v.item()) if isinstance(v, torch.Tensor) else float(v) 
+                              for k, v in _loss_comps.items()}
+                
+                # Store in metrics for plotting
+                metrics['loss_components']['epochs'].append(epoch)
+                for term in ['residual', 'ic', 'bc']:
+                    val = _comp_dict.get(term, 0.0)
+                    metrics['loss_components'][term].append(val)
+                
+                # Log components at evaluation epochs
+                _comp_str = ', '.join(f'{k}={v:.6f}' for k, v in _comp_dict.items())
+                logger.info(f"  [LossTerms] {_comp_str}")
+                
+                # Store in history with full details
+                metrics['loss_components_history'].append({
+                    'epoch': epoch,
+                    **_comp_dict
+                })
+            except Exception as _comp_err:
+                logger.info(f"  [LossTerms] Failed to compute: {_comp_err}")
 
         # End epoch timing (handles printing based on print_every)
         timer.end_epoch()
@@ -1692,6 +1802,28 @@ def _train_segment(
                     'weights': {k: float(v) for k, v in w.items()},
                     'grad_norms': {k: float(g.get(k, 0)) for k in w},
                 })
+            
+            # ── Log gradient norms (computed during backward pass) ──
+            _gn = getattr(ctx, '_epoch_grad_norms', None)
+            if _gn is not None:
+                logger.info(f"  [GradNorm] total={_gn['total']:.4e}, base={_gn['base']:.4e}, experts={_gn['experts']:.4e}")
+                metrics['gradient_norms']['epochs'].append(epoch)
+                metrics['gradient_norms']['total_grad_norm'].append(_gn['total'])
+                metrics['gradient_norms']['base_grad_norm'].append(_gn['base'])
+                metrics['gradient_norms']['experts_grad_norm'].append(_gn['experts'])
+            
+            # ── Log current learning rate ──
+            _current_lr = seg_cfg['lr']  # Default from config
+            if lr_scheduler is not None:
+                try:
+                    _current_lr = lr_scheduler.get_last_lr()[0]
+                except:
+                    pass
+            elif hasattr(optimizer, 'param_groups'):
+                _current_lr = optimizer.param_groups[0].get('lr', _current_lr)
+            logger.info(f"  [LR] current={_current_lr:.6e}")
+            metrics['lr_history']['epochs'].append(epoch)
+            metrics['lr_history']['lr'].append(_current_lr)
 
             # DIAGNOSTIC: Full loss-term breakdown (raw → grad → weight → weighted-grad)
             # Shows exactly what the optimizer sees, to diagnose why updates are tiny.
@@ -2410,6 +2542,64 @@ def _plot_after_spawn(ctx: TrainingContext, tag: str) -> None:
         )
 
 
+def _check_output_continuity(ctx: TrainingContext, label: str = "spawn") -> Dict:
+    """Compute model output on sample points for continuity checking.
+    
+    Call before and after spawning to verify output doesn't change unexpectedly.
+    Returns dict with output statistics that can be compared.
+    """
+    model = ctx.model
+    eval_data = ctx.eval_data
+    
+    if eval_data is None:
+        return {}
+    
+    try:
+        with torch.no_grad():
+            sample_inputs = torch.cat([eval_data['x'][:200], eval_data['t'][:200]], dim=1)
+            output = model(sample_inputs)
+            
+            stats = {
+                'label': label,
+                'output_norm': output.norm().item(),
+                'output_mean': output.mean().item(),
+                'output_std': output.std().item(),
+                'output_min': output.min().item(),
+                'output_max': output.max().item(),
+            }
+            return stats
+    except Exception as e:
+        logger.info(f"  [Continuity] Failed to compute {label}: {e}")
+        return {}
+
+
+def _log_continuity_diff(before: Dict, after: Dict) -> None:
+    """Log the difference between before and after spawning outputs."""
+    if not before or not after:
+        return
+    
+    norm_diff = abs(after['output_norm'] - before['output_norm'])
+    mean_diff = abs(after['output_mean'] - before['output_mean'])
+    
+    # Compute relative difference
+    rel_norm_diff = norm_diff / (before['output_norm'] + 1e-10)
+    rel_mean_diff = mean_diff / (abs(before['output_mean']) + 1e-10)
+    
+    logger.info(f"\n[Continuity Check] Before vs After Spawning:")
+    logger.info(f"  Before: norm={before['output_norm']:.6f}, mean={before['output_mean']:.6f}, "
+                f"std={before['output_std']:.6f}")
+    logger.info(f"  After:  norm={after['output_norm']:.6f}, mean={after['output_mean']:.6f}, "
+                f"std={after['output_std']:.6f}")
+    logger.info(f"  Diff:   norm_change={norm_diff:.6f} ({rel_norm_diff*100:.2f}%), "
+                f"mean_change={mean_diff:.6f} ({rel_mean_diff*100:.2f}%)")
+    
+    # Warn if output changed significantly
+    if rel_norm_diff > 0.01:  # More than 1% change
+        logger.info(f"  [WARNING] Output norm changed by {rel_norm_diff*100:.2f}% after spawning!")
+    if rel_mean_diff > 0.01:
+        logger.info(f"  [WARNING] Output mean changed by {rel_mean_diff*100:.2f}% after spawning!")
+
+
 def train_orchestrator(ctx: TrainingContext) -> None:
     """Drive training as a sequence of segments + staged tree spawning.
 
@@ -2502,12 +2692,20 @@ def train_orchestrator(ctx: TrainingContext) -> None:
 
     # ── AToE-Leaves: spawn all leaves at once, then joint Phase 3 ──
     if leaves_only:
+        # Capture output BEFORE spawning for continuity check
+        _before_spawn = _check_output_continuity(ctx, "before_spawn")
+        
         total = 0
         for level in levels:
             spawned, _ = _spawn_nodes(ctx, level, copy_output,
                                       node_to_expert, node_tree_depth)
             total += spawned
         logger.info(f"[FullTree] Spawning complete. {total} leaves spawned.")
+        
+        # Check output AFTER spawning - verify continuity
+        _after_spawn = _check_output_continuity(ctx, "after_spawn")
+        _log_continuity_diff(_before_spawn, _after_spawn)
+        
         _post_spawn_update(ctx)
         _plot_after_spawn(ctx, f"epoch_{ctx.epoch}")
         if total == 0:
@@ -2530,11 +2728,20 @@ def train_orchestrator(ctx: TrainingContext) -> None:
     for level in levels:
         level_depth = node_tree_depth.get(level[0][0].node_id, 1)
         logger.info(f"\n[Staged] Level {level_depth}: spawning {len(level)} node(s)")
+        
+        # Capture output BEFORE spawning for continuity check
+        _before_spawn = _check_output_continuity(ctx, f"before_level_{level_depth}")
+        
         spawned, _ = _spawn_nodes(ctx, level, copy_output,
                                   node_to_expert, node_tree_depth)
         if spawned == 0:
             logger.info(f"[Staged] Level {level_depth}: 0 experts spawned — skipping.")
             continue
+        
+        # Check output AFTER spawning - verify continuity
+        _after_spawn = _check_output_continuity(ctx, f"after_level_{level_depth}")
+        _log_continuity_diff(_before_spawn, _after_spawn)
+        
         _post_spawn_update(ctx)
         _set_trainable(model, f'level:{level_depth}')
         logger.info(f"[Freeze] Frozen base + levels < {level_depth}; training "
