@@ -40,6 +40,7 @@ def plot_training_curves(
         metrics: Dictionary with keys:
                 - 'train_loss_epochs', 'train_loss' (all epochs)
                 - 'epochs', 'eval_loss', 'eval_rel_l2' (eval epochs only)
+                - Optional: 'loss_components' dict with 'epochs', 'residual', 'ic', 'bc' lists
         save_dir: Directory to save plots
         optimizer_switch_epochs: List of epochs where optimizer switched.
                                 Green dashed vertical lines drawn at each.
@@ -54,9 +55,16 @@ def plot_training_curves(
 
     optimizer_switch_epochs = optimizer_switch_epochs or []
     segment_start_epochs = segment_start_epochs or []
+    
+    # Check if we have loss components for term-wise plot
+    loss_comps = metrics.get('loss_components', {})
+    has_components = (loss_comps.get('epochs') and 
+                      len(loss_comps.get('epochs', [])) > 0 and
+                      any(loss_comps.get(k) for k in ['residual', 'ic', 'bc']))
 
-    # Create figure with 2 subplots
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    # Create figure with 2 or 3 subplots depending on whether we have components
+    n_plots = 3 if has_components else 2
+    fig, axes = plt.subplots(1, n_plots, figsize=(7 * n_plots, 5))
 
     # Plot 1: Loss curves
     ax = axes[0]
@@ -117,6 +125,57 @@ def plot_training_curves(
     is_log_l2 = _safe_log_scale(ax, [metrics['eval_rel_l2']])
     scale_str_l2 = "[log]" if is_log_l2 else "[linear]"
     ax.set_title(f'Relative L2 Error {scale_str_l2}', fontsize=14, fontweight='bold')
+
+    # Plot 3: Term-wise loss components (if available)
+    if has_components:
+        ax = axes[2]
+        comp_epochs = loss_comps['epochs']
+        
+        # Color scheme for different loss terms
+        term_colors = {
+            'residual': '#e74c3c',  # red
+            'ic': '#3498db',         # blue
+            'bc': '#2ecc71',         # green
+        }
+        term_labels = {
+            'residual': 'PDE Residual',
+            'ic': 'Initial Condition',
+            'bc': 'Boundary Condition',
+        }
+        
+        values_for_log = []
+        for term in ['residual', 'ic', 'bc']:
+            if loss_comps.get(term) and len(loss_comps[term]) > 0:
+                values = loss_comps[term]
+                ax.plot(comp_epochs, values, '-', 
+                       color=term_colors.get(term, 'gray'),
+                       label=term_labels.get(term, term),
+                       linewidth=1.5, alpha=0.8)
+                values_for_log.append(values)
+        
+        # Add optimizer switch markers
+        for i, epoch in enumerate(optimizer_switch_epochs):
+            label = 'Optimizer Switch' if i == 0 else None
+            ax.axvline(x=epoch, color='green', linestyle='--', 
+                       linewidth=1.5, alpha=0.7, label=label)
+        
+        # Add segment boundary markers
+        _seg_labeled = False
+        for epoch in segment_start_epochs:
+            if epoch <= 1:
+                continue
+            ax.axvline(x=epoch, color='blue', linestyle=':',
+                       linewidth=1.5, alpha=0.6,
+                       label='New Level Start' if not _seg_labeled else None)
+            _seg_labeled = True
+        
+        ax.set_xlabel('Epoch', fontsize=12)
+        ax.set_ylabel('Loss Component', fontsize=12)
+        ax.legend(fontsize=10)
+        ax.grid(True, alpha=0.3)
+        is_log_comp = _safe_log_scale(ax, values_for_log) if values_for_log else False
+        scale_str_comp = "[log]" if is_log_comp else "[linear]"
+        ax.set_title(f'Loss Components {scale_str_comp}', fontsize=14, fontweight='bold')
 
     plt.tight_layout()
 
