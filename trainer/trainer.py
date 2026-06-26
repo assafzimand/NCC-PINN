@@ -10,6 +10,10 @@ import math
 import time
 import numpy as np
 
+from utils.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 from trainer.plotting import plot_training_curves, plot_final_comparison
 from trainer.utils import compute_infinity_norm_error
 from trainer.timing import EpochTimer
@@ -67,7 +71,7 @@ def _override_ic_for_time_marching(
     # Get IC mask and points
     ic_mask = train_data['mask']['IC']
     if ic_mask.sum() == 0:
-        print(f"  [IC Override] Window {window_idx}: No IC points found in dataset, skipping")
+        logger.info(f"  [IC Override] Window {window_idx}: No IC points found in dataset, skipping")
         return train_data
     
     x_ic = train_data['x'][ic_mask]
@@ -77,9 +81,9 @@ def _override_ic_for_time_marching(
     t_query = torch.full_like(train_data['t'][ic_mask], t_start)
     
     # Diagnostic: print input stats
-    print(f"  [IC Override] Window {window_idx}: Overriding {ic_mask.sum().item()} IC points at t={t_start:.4f}")
-    print(f"    x_ic: shape={x_ic.shape}, min={x_ic.min().item():.4f}, max={x_ic.max().item():.4f}, mean={x_ic.mean().item():.4f}")
-    print(f"    h_gt (original): min={h_gt_original.min().item():.4f}, max={h_gt_original.max().item():.4f}, mean={h_gt_original.mean().item():.4f}")
+    logger.info(f"  [IC Override] Window {window_idx}: Overriding {ic_mask.sum().item()} IC points at t={t_start:.4f}")
+    logger.info(f"    x_ic: shape={x_ic.shape}, min={x_ic.min().item():.4f}, max={x_ic.max().item():.4f}, mean={x_ic.mean().item():.4f}")
+    logger.info(f"    h_gt (original): min={h_gt_original.min().item():.4f}, max={h_gt_original.max().item():.4f}, mean={h_gt_original.mean().item():.4f}")
     
     # Query previous model for IC values
     prev_model.eval()
@@ -90,14 +94,14 @@ def _override_ic_for_time_marching(
     # Diagnostic: print prediction stats
     has_nan = torch.isnan(h_pred).any().item()
     has_inf = torch.isinf(h_pred).any().item()
-    print(f"    h_pred: min={h_pred.min().item():.4f}, max={h_pred.max().item():.4f}, mean={h_pred.mean().item():.4f}")
-    print(f"    h_pred contains NaN: {has_nan}, Inf: {has_inf}")
+    logger.info(f"    h_pred: min={h_pred.min().item():.4f}, max={h_pred.max().item():.4f}, mean={h_pred.mean().item():.4f}")
+    logger.info(f"    h_pred contains NaN: {has_nan}, Inf: {has_inf}")
     
     if has_nan or has_inf:
-        print(f"    [WARNING] Previous model produced invalid values! This will cause NaN divergence.")
+        logger.info(f"    [WARNING] Previous model produced invalid values! This will cause NaN divergence.")
         num_nan = torch.isnan(h_pred).sum().item()
         num_inf = torch.isinf(h_pred).sum().item()
-        print(f"    Number of NaN: {num_nan}, Number of Inf: {num_inf}")
+        logger.info(f"    Number of NaN: {num_nan}, Number of Inf: {num_inf}")
     
     # Override h_gt AND t for IC points
     train_data['h_gt'][ic_mask] = h_pred.to(train_data['h_gt'].device)
@@ -189,8 +193,8 @@ def _create_ssbroyden_optimizer(model: nn.Module, cfg: Dict) -> torch.optim.Opti
             method='ssbroyden',
         )
     except ImportError:
-        print("  [Warning] scimba not installed — SSBroyden unavailable, falling back to LBFGS.")
-        print("            Install with: pip install scimba")
+        logger.info("  [Warning] scimba not installed — SSBroyden unavailable, falling back to LBFGS.")
+        logger.info("            Install with: pip install scimba")
         return _create_lbfgs_optimizer(model, cfg)
 
 
@@ -211,29 +215,29 @@ def _create_optimizer_by_name(name: str, model: nn.Module, cfg: Dict) -> Tuple[t
 def _debug_print_model_state(model: nn.Module, segment_name: str, 
                              eval_data: Dict = None) -> None:
     """Print comprehensive model state at segment start for debugging."""
-    print(f"\n[DEBUG] Model state at start of segment '{segment_name}':")
-    print(f"  Model type: {type(model).__name__}")
+    logger.info(f"\n[DEBUG] Model state at start of segment '{segment_name}':")
+    logger.info(f"  Model type: {type(model).__name__}")
     
     # Basic model info
     base = getattr(model, 'base_model', None)
     experts = getattr(model, 'experts', [])
     regions = getattr(model, 'regions', [])
     
-    print(f"  Has base_model: {base is not None}")
-    print(f"  Num experts: {len(experts)}")
-    print(f"  Num regions: {len(regions)}")
+    logger.info(f"  Has base_model: {base is not None}")
+    logger.info(f"  Num experts: {len(experts)}")
+    logger.info(f"  Num regions: {len(regions)}")
     
     # Parameter counts
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"  Total params: {total_params:,}, Trainable: {trainable_params:,}")
+    logger.info(f"  Total params: {total_params:,}, Trainable: {trainable_params:,}")
     
     # Base model state
     if base is not None:
         base_params = sum(p.numel() for p in base.parameters())
         base_trainable = sum(p.numel() for p in base.parameters() if p.requires_grad)
         base_grad_status = "TRAINABLE" if base_trainable > 0 else "FROZEN"
-        print(f"  Base: {base_params:,} params, {base_grad_status}")
+        logger.info(f"  Base: {base_params:,} params, {base_grad_status}")
     
     # Expert states
     for idx, expert in enumerate(experts):
@@ -243,27 +247,27 @@ def _debug_print_model_state(model: nn.Module, segment_name: str,
         region = regions[idx] if idx < len(regions) else None
         depth = region.depth if region else "?"
         parent = region.parent_idx if region else "?"
-        print(f"  Expert[{idx}]: {exp_params:,} params, {exp_grad_status}, depth={depth}, parent={parent}")
+        logger.info(f"  Expert[{idx}]: {exp_params:,} params, {exp_grad_status}, depth={depth}, parent={parent}")
         if region:
-            print(f"    Region: {region.bounds_lower} -> {region.bounds_upper}")
+            logger.info(f"    Region: {region.bounds_lower} -> {region.bounds_upper}")
     
     # AToE-specific: leaf indices
     if hasattr(model, 'leaf_indices'):
-        print(f"  Leaf indices: {sorted(model.leaf_indices)}")
+        logger.info(f"  Leaf indices: {sorted(model.leaf_indices)}")
     
     # ANT-specific: base_is_leaf
     if hasattr(model, 'base_is_leaf'):
-        print(f"  base_is_leaf: {model.base_is_leaf}")
+        logger.info(f"  base_is_leaf: {model.base_is_leaf}")
     if hasattr(model, 'parent_indices'):
-        print(f"  parent_indices: {model.parent_indices}")
+        logger.info(f"  parent_indices: {model.parent_indices}")
     
     # Composition mode
     if hasattr(model, 'composition_mode'):
-        print(f"  Composition mode: {model.composition_mode}")
+        logger.info(f"  Composition mode: {model.composition_mode}")
     if hasattr(model, 'indicator_type'):
-        print(f"  Indicator type: {model.indicator_type}")
+        logger.info(f"  Indicator type: {model.indicator_type}")
     if hasattr(model, 'base_weight'):
-        print(f"  Base weight: {model.base_weight}")
+        logger.info(f"  Base weight: {model.base_weight}")
     
     # Call model-specific debug_composition if available and has experts
     if hasattr(model, 'debug_composition') and len(experts) > 0 and eval_data is not None:
@@ -271,9 +275,9 @@ def _debug_print_model_state(model: nn.Module, segment_name: str,
             sample_inputs = torch.cat([eval_data['x'][:100], eval_data['t'][:100]], dim=1)
             model.debug_composition(sample_inputs)
         except Exception as e:
-            print(f"  [DEBUG] debug_composition failed: {e}")
+            logger.info(f"  [DEBUG] debug_composition failed: {e}")
     
-    print()  # Blank line for readability
+    logger.info()  # Blank line for readability
 
 
 def _create_primary_optimizer(model: nn.Module, cfg: Dict) -> Tuple[torch.optim.Optimizer, str]:
@@ -394,9 +398,9 @@ def _setup_training(
     Behavior-preserving extraction of the original setup block (no logic changes).
     Returns a :class:`TrainingContext` carrying all state into the loop + finalize.
     """
-    print("\n" + "=" * 60)
-    print("Starting Training")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("Starting Training")
+    logger.info("=" * 60)
 
     # Validate per-problem config (all features must be explicitly specified)
     validate_problem_config(cfg)
@@ -414,15 +418,15 @@ def _setup_training(
     # Setup device
     device = torch.device('cuda' if cfg['cuda'] and
                           torch.cuda.is_available() else 'cpu')
-    print(f"Device: {device}")
+    logger.info(f"Device: {device}")
     
     # GPU optimization and monitoring
     if device.type == 'cuda':
-        print(f"GPU: {torch.cuda.get_device_name(0)}")
-        print(f"GPU Memory Available: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-        print(f"Initial GPU Memory Allocated: {torch.cuda.memory_allocated()/1e9:.3f} GB")
+        logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
+        logger.info(f"GPU Memory Available: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+        logger.info(f"Initial GPU Memory Allocated: {torch.cuda.memory_allocated()/1e9:.3f} GB")
         torch.backends.cudnn.benchmark = True
-        print("CUDNN benchmark enabled for GPU optimization")
+        logger.info("CUDNN benchmark enabled for GPU optimization")
 
     # Set seed for reproducibility
     torch.manual_seed(cfg['seed'])
@@ -434,16 +438,16 @@ def _setup_training(
 
     # DIAGNOSTIC: Verify model is on correct device (configurable)
     if cfg['adaptive_pinn']['enable_gradient_diagnostics']:
-        print(f"\n{'='*40} GPU DIAGNOSTIC {'='*40}")
-        print(f"Target device: {device}")
+        logger.info(f"\n{'='*40} GPU DIAGNOSTIC {'='*40}")
+        logger.info(f"Target device: {device}")
         if hasattr(model, 'base_model'):
-            print(f"Base model device: {next(model.base_model.parameters()).device}")
+            logger.info(f"Base model device: {next(model.base_model.parameters()).device}")
         else:
-            print(f"Model device: {next(model.parameters()).device}")
-        print(f"{'='*80}\n")
+            logger.info(f"Model device: {next(model.parameters()).device}")
+        logger.info(f"{'='*80}\n")
 
     # Load datasets
-    print(f"\nLoading datasets...")
+    logger.info(f"\nLoading datasets...")
     train_data = torch.load(train_data_path)
     eval_data = torch.load(eval_data_path)
 
@@ -479,9 +483,9 @@ def _setup_training(
         n_train_original = train_data['x'].shape[0]
         n_train_filtered = train_mask.sum().item()
         
-        print(f"  [Time Marching] Filtering train data for window {window_idx}: "
+        logger.info(f"  [Time Marching] Filtering train data for window {window_idx}: "
               f"t in [{t_start:.4f}, {t_end:.4f}]")
-        print(f"  [Time Marching] Train data: {n_train_original} → {n_train_filtered} points")
+        logger.info(f"  [Time Marching] Train data: {n_train_original} → {n_train_filtered} points")
         
         # Apply mask to train_data
         filtered_train_data = {}
@@ -507,9 +511,9 @@ def _setup_training(
         n_eval_original = eval_data['x'].shape[0]
         n_eval_filtered = eval_mask.sum().item()
         
-        print(f"  [Time Marching] Filtering eval data for window {window_idx}: "
+        logger.info(f"  [Time Marching] Filtering eval data for window {window_idx}: "
               f"t in [{t_start:.4f}, {t_end:.4f}]")
-        print(f"  [Time Marching] Eval data: {n_eval_original} → {n_eval_filtered} points")
+        logger.info(f"  [Time Marching] Eval data: {n_eval_original} → {n_eval_filtered} points")
         
         # Apply mask to eval_data
         filtered_eval_data = {}
@@ -525,10 +529,10 @@ def _setup_training(
                 filtered_eval_data[key] = value
         eval_data = filtered_eval_data
 
-    print(f"  Train size: {train_data['x'].shape[0]}")
-    print(f"  Eval size: {eval_data['x'].shape[0]}")
-    print(f"  Train data device: {train_data['x'].device}")
-    print(f"  Eval data device: {eval_data['x'].device}")
+    logger.info(f"  Train size: {train_data['x'].shape[0]}")
+    logger.info(f"  Eval size: {eval_data['x'].shape[0]}")
+    logger.info(f"  Train data device: {train_data['x'].device}")
+    logger.info(f"  Eval data device: {eval_data['x'].device}")
 
     # Reset default device context to CPU before creating DataLoaders.
     # This fixes a PyTorch issue where CUDA inference (e.g., prev_model forward pass
@@ -580,9 +584,9 @@ def _setup_training(
         current_phase = 1
         use_three_phase = True
         _pretrained_force_spawn = True
-        print(f"\n  [3-Phase] Phase 1 skipped: base loaded from "
+        logger.info(f"\n  [3-Phase] Phase 1 skipped: base loaded from "
               f"{pretrained_base_checkpoint}")
-        print(f"  [3-Phase] Phase 3 will run for {phase3_epochs} epochs after spawning")
+        logger.info(f"  [3-Phase] Phase 3 will run for {phase3_epochs} epochs after spawning")
     else:
         # Phase 1 trains the base for initial_train.epochs.
         if initial_train_cfg is None:
@@ -598,10 +602,10 @@ def _setup_training(
         epochs = phase1_epochs
         current_phase = 1
         use_three_phase = True
-        print(f"\n  [3-Phase] Phase 1: initial training for {phase1_epochs} epochs")
-        print(f"  [3-Phase] Phase 3 will run for {phase3_epochs} epochs after spawning")
+        logger.info(f"\n  [3-Phase] Phase 1: initial training for {phase1_epochs} epochs")
+        logger.info(f"  [3-Phase] Phase 3 will run for {phase3_epochs} epochs after spawning")
         if reinit_base_after_spawn:
-            print(f"  [3-Phase] Base model will be reinitialized after spawning")
+            logger.info(f"  [3-Phase] Base model will be reinitialized after spawning")
 
     # Determine optimizer strategy (new config: optimizer_1/optimizer_2/optimizer_switch_epoch)
     optimizer_1_name = active_cfg['optimizer_1'].lower()
@@ -627,20 +631,20 @@ def _setup_training(
     if full_batch_opt1:
         optimizer, current_optimizer_name = _create_optimizer_by_name(optimizer_1_name, model, active_cfg)
         lr_scheduler = None
-        print(f"Using {current_optimizer_name} optimizer (full-batch) for all epochs")
+        logger.info(f"Using {current_optimizer_name} optimizer (full-batch) for all epochs")
     else:
         optimizer, current_optimizer_name = _create_primary_optimizer(model, active_cfg)
         lr_scheduler = _create_lr_scheduler(optimizer, active_cfg, total_steps_estimate)
         if optimizer_2_name is not None:
-            print(f"Using {current_optimizer_name} until epoch {switch_epoch}, "
+            logger.info(f"Using {current_optimizer_name} until epoch {switch_epoch}, "
                   f"then {optimizer_2_name.upper()} (full-batch)")
-            print(f"  Patience early-stopping active from epoch {patience_start_epoch}")
+            logger.info(f"  Patience early-stopping active from epoch {patience_start_epoch}")
         else:
-            print(f"Using {current_optimizer_name} optimizer (mini-batch) for all epochs")
+            logger.info(f"Using {current_optimizer_name} optimizer (mini-batch) for all epochs")
         if lr_scheduler is not None:
             sched_name = active_cfg['lr_schedule']
             warmup = active_cfg['lr_warmup_steps']
-            print(f"  LR schedule: {sched_name} (warmup={warmup} steps, ~{total_steps_estimate} total steps)")
+            logger.info(f"  LR schedule: {sched_name} (warmup={warmup} steps, ~{total_steps_estimate} total steps)")
 
     step_count = 0  # global optimizer step counter for LR scheduler
 
@@ -747,17 +751,17 @@ def _setup_training(
         tree_max_depth = adaptive_cfg['tree_max_depth']
         tree_min_samples_leaf = adaptive_cfg['tree_min_samples_leaf']
 
-        print(f"\nAdaptive PINN enabled (spawning_method={spawning_method}):")
-        print(f"  Max experts: {max_experts}")
-        print(f"  Spawn every: {spawn_every} epochs")
-        print(f"  Tree max depth: {tree_max_depth}")
-        print(f"  Tree min samples leaf: {tree_min_samples_leaf}")
-        print(f"  M experts num: {adaptive_cfg['M_experts_num']}")
-        print(f"  Wavelet threshold: {wavelet_threshold}")
-        print(f"  Blending mode: {adaptive_cfg['blending_mode']}")
-        print(f"  Model type: {type(model).__name__}")
+        logger.info(f"\nAdaptive PINN enabled (spawning_method={spawning_method}):")
+        logger.info(f"  Max experts: {max_experts}")
+        logger.info(f"  Spawn every: {spawn_every} epochs")
+        logger.info(f"  Tree max depth: {tree_max_depth}")
+        logger.info(f"  Tree min samples leaf: {tree_min_samples_leaf}")
+        logger.info(f"  M experts num: {adaptive_cfg['M_experts_num']}")
+        logger.info(f"  Wavelet threshold: {wavelet_threshold}")
+        logger.info(f"  Blending mode: {adaptive_cfg['blending_mode']}")
+        logger.info(f"  Model type: {type(model).__name__}")
         enable_timing_cfg = adaptive_cfg['enable_timing']
-        print(f"  Timing profiling: {'enabled' if enable_timing_cfg else 'disabled'}")
+        logger.info(f"  Timing profiling: {'enabled' if enable_timing_cfg else 'disabled'}")
 
         from adaptive.region_detector import RegionDetector
         from adaptive.visualization import prepare_ground_truth_grid
@@ -781,7 +785,7 @@ def _setup_training(
 
     # Training loop
     total_epochs = epochs  # may extend when transitioning to Phase 3
-    print(f"\nTraining for {total_epochs} epochs...")
+    logger.info(f"\nTraining for {total_epochs} epochs...")
     start_time = time.time()
     
     # Epoch timer for fine-grained performance profiling
@@ -811,9 +815,9 @@ def _setup_training(
     _last_spawn_epoch = 0           # epoch of last successful spawn
     
     # Consolidated feature summary
-    print("\n" + "=" * 60)
-    print("FEATURE SUMMARY")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("FEATURE SUMMARY")
+    logger.info("=" * 60)
     
     # Fourier Features (read from per-problem config)
     ff_cfg = problem_cfg['fourier_features']
@@ -824,32 +828,32 @@ def _setup_training(
         _base_for_ff = model.base_model if hasattr(model, 'base_model') else model
         _ff_out = _base_for_ff.ff_emb.output_dim if (hasattr(_base_for_ff, 'ff_emb') and _base_for_ff.ff_emb is not None) else 2 * ff_dim
         _periodic = ff_cfg['periodic']
-        print(f"  Fourier Features: enabled (dim={ff_dim}, scale={ff_scale}, output_dim={_ff_out}, periodic={_periodic})")
+        logger.info(f"  Fourier Features: enabled (dim={ff_dim}, scale={ff_scale}, output_dim={_ff_out}, periodic={_periodic})")
     else:
-        print(f"  Fourier Features: disabled")
+        logger.info(f"  Fourier Features: disabled")
     
     # RWF (read from per-problem config)
     rwf_enabled = problem_cfg['rwf']
     if rwf_enabled:
-        print(f"  RWF: enabled")
+        logger.info(f"  RWF: enabled")
     else:
-        print(f"  RWF: disabled")
+        logger.info(f"  RWF: disabled")
     
     # Causal Training
     _cs_init = getattr(loss_fn, 'causal_state', None)
     if _cs_init is not None:
-        print(f"  Causal Training: enabled (schedule={_cs_init['schedule']}, chunks={_cs_init['num_chunks']}, threshold={_cs_init['threshold']})")
+        logger.info(f"  Causal Training: enabled (schedule={_cs_init['schedule']}, chunks={_cs_init['num_chunks']}, threshold={_cs_init['threshold']})")
     else:
-        print(f"  Causal Training: disabled")
+        logger.info(f"  Causal Training: disabled")
     
     # LRA
     if lra_enabled:
         init_w = lra_weights.weights
         init_w_str = ', '.join(f'{k}={v:.1f}' for k, v in init_w.items())
-        print(f"  LRA: enabled (scheme={lra_weights.scheme}, alpha={lra_weights.alpha}, update_every={lra_weights.update_every}, "
+        logger.info(f"  LRA: enabled (scheme={lra_weights.scheme}, alpha={lra_weights.alpha}, update_every={lra_weights.update_every}, "
               f"init_weights={{{init_w_str}}})")
     else:
-        print(f"  LRA: disabled")
+        logger.info(f"  LRA: disabled")
     
     # Resampling & Adaptive Sampling (read from per-problem config)
     adaptive_sampling_cfg = problem_cfg['adaptive_sampling']
@@ -857,35 +861,35 @@ def _setup_training(
     if resample_every > 0:
         if adaptive_sampling_enabled:
             as_ratio = adaptive_sampling_cfg['adaptive_ratio']
-            print(f"  Resampling: every {resample_every} epochs (adaptive: enabled, ratio={as_ratio})")
+            logger.info(f"  Resampling: every {resample_every} epochs (adaptive: enabled, ratio={as_ratio})")
         else:
-            print(f"  Resampling: every {resample_every} epochs (adaptive: disabled)")
+            logger.info(f"  Resampling: every {resample_every} epochs (adaptive: disabled)")
     else:
-        print(f"  Resampling: disabled")
+        logger.info(f"  Resampling: disabled")
     
     # Optimizer schedule
     opt1_name = cfg['optimizer_1']
     opt2_name = cfg.get('optimizer_2', 'null')
     if opt2_name and opt2_name != 'null':
         switch_epoch = cfg['optimizer_switch_epoch']
-        print(f"  Optimizer: {opt1_name} → {opt2_name} at epoch {switch_epoch}")
+        logger.info(f"  Optimizer: {opt1_name} → {opt2_name} at epoch {switch_epoch}")
     else:
-        print(f"  Optimizer: {opt1_name}")
+        logger.info(f"  Optimizer: {opt1_name}")
     
     # Early stopping
     if patience_epochs > 0:
-        print(f"  Early stopping: enabled (patience={patience_epochs}, min_epochs={min_epochs})")
+        logger.info(f"  Early stopping: enabled (patience={patience_epochs}, min_epochs={min_epochs})")
     else:
-        print(f"  Early stopping: disabled")
+        logger.info(f"  Early stopping: disabled")
     
-    print("=" * 60 + "\n")
+    logger.info("=" * 60 + "\n")
 
     # Smart initialization (Glorot hidden + zero/LS output) — base model only
     from trainer.init import apply_hidden_init, apply_output_init, apply_spectral_norm
     _init_target = model.base_model if is_adaptive else model
     _init_cfg = cfg.get('init', {})
     if _init_cfg.get('hidden', 'default') != 'default' or _init_cfg.get('output', 'default') != 'default' or _init_cfg.get('spectral_norm', False):
-        print("[Init] Applying smart initialization to base model...")
+        logger.info("[Init] Applying smart initialization to base model...")
         # parent_weights is expert-only; use glorot for base model unless architecture is
         # resnet (glorot zeros fc2 in ResBlocks → spectral_norm wraps it → sigma=0 → NaN)
         _base_init_cfg = cfg
@@ -895,7 +899,7 @@ def _setup_training(
         apply_hidden_init(_init_target, _base_init_cfg)
         apply_output_init(_init_target, train_data, cfg, device)
         apply_spectral_norm(_init_target, cfg)
-        print()
+        logger.info()
 
     # ── Build the context that carries all state into the loop + finalize ──
     return TrainingContext(
@@ -1103,7 +1107,7 @@ def _train_segment(
     _n_train_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     _switch_str = (f" -> {optimizer_2_name.upper()}@{switch_epoch}"
                    if optimizer_2_name is not None else "")
-    print(f"\n[Segment:{segment_name}] start | epochs "
+    logger.info(f"\n[Segment:{segment_name}] start | epochs "
           f"{segment_start_epoch + 1}..{total_epochs} (budget {epoch_budget}) | "
           f"optimizer={current_optimizer_name}{_switch_str} | lr={seg_cfg['lr']} | "
           f"trainable_params={_n_train_params}")
@@ -1154,7 +1158,7 @@ def _train_segment(
             # Log when adaptive sampling first activates
             if will_cache_for_resample and not hasattr(model, '_adaptive_sampling_activated'):
                 model._adaptive_sampling_activated = True
-                print(f"  [Adaptive Sampling] Activated at epoch {epoch} (causal training reached final stage)")
+                logger.info(f"  [Adaptive Sampling] Activated at epoch {epoch} (causal training reached final stage)")
 
         # Resample training data periodically (in-memory, no disk I/O)
         # Skip resampling during L-BFGS/SSBroyden (they need stable loss landscape)
@@ -1217,7 +1221,7 @@ def _train_segment(
             # Log when resampling is skipped due to optimizer
             if not hasattr(model, '_resample_skip_logged'):
                 model._resample_skip_logged = True
-                print(f"  [Resample] Skipping resampling during {current_optimizer_name} (loss landscape stability required)")
+                logger.info(f"  [Resample] Skipping resampling during {current_optimizer_name} (loss landscape stability required)")
             # Save skip event to metrics
             metrics['resample_events'].append({
                 'epoch': epoch,
@@ -1257,7 +1261,7 @@ def _train_segment(
                             _alpha_vals.append(param.item())
                     if _alpha_grads:
                         _ag_str = ', '.join(f'{g:.2e}' for _, g, _ in _alpha_grads)
-                        print(f"  [GradDiag] alpha grads: [{_ag_str}]")
+                        logger.info(f"  [GradDiag] alpha grads: [{_ag_str}]")
                     
                     # Per-layer gradient norms (top 5 smallest non-zero)
                     _layer_grads = []
@@ -1272,19 +1276,19 @@ def _train_segment(
                         _largest = _layer_grads[-3:]
                         _sm_str = ', '.join(f'{n.split(".")[-1]}={g:.2e}' for n, g, _ in _smallest)
                         _lg_str = ', '.join(f'{n.split(".")[-1]}={g:.2e}' for n, g, _ in _largest)
-                        print(f"  [GradDiag] smallest grads: [{_sm_str}]")
-                        print(f"  [GradDiag] largest grads: [{_lg_str}]")
+                        logger.info(f"  [GradDiag] smallest grads: [{_sm_str}]")
+                        logger.info(f"  [GradDiag] largest grads: [{_lg_str}]")
                         
                         # Gradient/weight ratio (indicates update magnitude)
                         _ratios = [(n, g/w if w > 0 else 0) for n, g, w in _layer_grads]
                         _ratios.sort(key=lambda x: x[1])
                         _ratio_str = ', '.join(f'{n.split(".")[-1]}={r:.2e}' for n, r in _ratios[:3])
-                        print(f"  [GradDiag] grad/weight ratios (smallest): [{_ratio_str}]")
+                        logger.info(f"  [GradDiag] grad/weight ratios (smallest): [{_ratio_str}]")
 
                 # DIAGNOSTIC: Check gradients immediately after backward (early epochs only, configurable)
                 enable_grad_diag = adaptive_cfg.get('enable_gradient_diagnostics', False) if is_adaptive else False
                 if enable_grad_diag and n_train_batches == 0 and hasattr(model, 'num_experts') and model.num_experts > 0 and epoch <= 10:
-                    print(f"\n[DIAG Epoch {epoch}] Checking gradients after backward pass:")
+                    logger.info(f"\n[DIAG Epoch {epoch}] Checking gradients after backward pass:")
                     for i, expert in enumerate(model.experts):
                         layer_names = expert.get_layer_names()
                         if layer_names:
@@ -1292,7 +1296,7 @@ def _train_segment(
                             final_layer = expert.network[layer_names[-1]]
                             first_grad = first_layer.weight.grad
                             final_grad = final_layer.weight.grad
-                            print(f"  Expert {i}: first_layer.grad={'None' if first_grad is None else f'norm={first_grad.norm().item():.6f}'}, "
+                            logger.info(f"  Expert {i}: first_layer.grad={'None' if first_grad is None else f'norm={first_grad.norm().item():.6f}'}, "
                                   f"final_layer.grad={'None' if final_grad is None else f'norm={final_grad.norm().item():.6f}'}")
 
                 # Split clip: experts at expert_grad_clip_norm (tighter), base at grad_clip_norm.
@@ -1335,13 +1339,13 @@ def _train_segment(
                     # Report alpha updates specifically
                     if _alpha_updates:
                         _au_str = ', '.join(f'{d:.2e}' for _, d, _ in _alpha_updates)
-                        print(f"  [UpdateDiag] alpha update magnitudes: [{_au_str}]")
+                        logger.info(f"  [UpdateDiag] alpha update magnitudes: [{_au_str}]")
                     
                     # Overall update stats
                     if _update_norms:
                         _total_update = sum(d for _, d, _ in _update_norms)
                         _total_weight = sum(w for _, _, w in _update_norms)
-                        print(f"  [UpdateDiag] total update norm: {_total_update:.4e}, "
+                        logger.info(f"  [UpdateDiag] total update norm: {_total_update:.4e}, "
                               f"total weight norm: {_total_weight:.2f}, "
                               f"ratio: {_total_update/_total_weight:.2e}")
 
@@ -1460,7 +1464,7 @@ def _train_segment(
                         f"using a different optimizer.\n"
                         f"{'='*60}\n"
                     )
-                    print(error_msg)
+                    logger.info(error_msg)
                     
                     # Save warning to persistent file
                     warning_log = run_dir / "optimizer_fallback_warning.txt"
@@ -1485,9 +1489,9 @@ def _train_segment(
         
         # Check for optimizer switch (optimizer_1 → optimizer_2)
         if epoch == switch_epoch and optimizer_2_name is not None:
-            print(f"\n{'='*60}")
-            print(f"OPTIMIZER SWITCH: {current_optimizer_name} -> {optimizer_2_name.upper()} at epoch {epoch}")
-            print(f"{'='*60}\n")
+            logger.info(f"\n{'='*60}")
+            logger.info(f"OPTIMIZER SWITCH: {current_optimizer_name} -> {optimizer_2_name.upper()} at epoch {epoch}")
+            logger.info(f"{'='*60}\n")
             # Restore default device to CUDA before creating SSBroyden/LBFGS optimizer.
             # This ensures optimizer state tensors (e.g., Hessian approximation) are created
             # on the correct device, not CPU (which can happen if default was reset earlier
@@ -1513,19 +1517,19 @@ def _train_segment(
 
         # NaN early-stop: save everything and break so the next experiment can run
         if math.isnan(train_loss) or math.isinf(train_loss):
-            print(f"\n{'!'*60}")
-            print(f"  [NaN] Training diverged at epoch {epoch} — saving diagnostics and stopping.")
+            logger.info(f"\n{'!'*60}")
+            logger.info(f"  [NaN] Training diverged at epoch {epoch} — saving diagnostics and stopping.")
 
             # Diagnose which loss component went NaN
             try:
                 with torch.no_grad():
                     _diag_batch = next(iter(train_loader))
                     _comps = loss_fn(model, _diag_batch, return_components=True)
-                    print(f"  [NaN] Loss components: " +
+                    logger.info(f"  [NaN] Loss components: " +
                           ", ".join(f"{k}={v.item():.6g}" for k, v in _comps.items()))
                     metrics['nan_components'] = {k: float(v.item()) for k, v in _comps.items()}
             except Exception as _e:
-                print(f"  [NaN] Could not compute loss components: {_e}")
+                logger.info(f"  [NaN] Could not compute loss components: {_e}")
 
             metrics['nan_divergence'] = {'epoch': epoch, 'train_loss': train_loss}
             metrics['training_time_seconds'] = time.time() - start_time
@@ -1534,14 +1538,14 @@ def _train_segment(
             _nan_metrics_path = run_dir / "metrics.json"
             with open(_nan_metrics_path, 'w') as _f:
                 json.dump(metrics, _f, indent=2, cls=_NumpySafeEncoder)
-            print(f"  [NaN] Metrics saved to {_nan_metrics_path}")
+            logger.info(f"  [NaN] Metrics saved to {_nan_metrics_path}")
 
             # Save a NaN-state checkpoint for post-mortem inspection
             _nan_ckpt_path = checkpoint_dir / f"nan_checkpoint_epoch_{epoch}.pt"
             _save_checkpoint(_nan_ckpt_path, model, optimizer, current_optimizer_name,
                              epoch, train_loss, eval_loss, cfg, metrics)
-            print(f"  [NaN] Checkpoint saved to {_nan_ckpt_path}")
-            print(f"{'!'*60}\n")
+            logger.info(f"  [NaN] Checkpoint saved to {_nan_ckpt_path}")
+            logger.info(f"{'!'*60}\n")
             _nan_detected = True
             break
 
@@ -1552,9 +1556,9 @@ def _train_segment(
                 lra_weights.update(model, loss_fn, batch_for_lra)
                 if epoch % print_every == 0:
                     w_str = ', '.join(f'{k}={v:.4f}' for k, v in lra_weights.weights.items())
-                    print(f"  [LRA] weights: {w_str}")
+                    logger.info(f"  [LRA] weights: {w_str}")
             except Exception as e:
-                print(f"  [LRA] Weight update failed at epoch {epoch}: {e}")
+                logger.info(f"  [LRA] Weight update failed at epoch {epoch}: {e}")
 
         # Causal weighting: check if epsilon should advance
         causal_state = getattr(loss_fn, 'causal_state', None)
@@ -1567,7 +1571,7 @@ def _train_segment(
                         causal_epoch_min_weight if causal_epoch_min_weight is not None else 1.0,
                         _leaf_cs.get('min_weight', 1.0))
                     if advance_causal_schedule(_leaf_cs):
-                        print(f"  [PerLeafCausal] Expert {_expert_idx}: epsilon advanced to "
+                        logger.info(f"  [PerLeafCausal] Expert {_expert_idx}: epsilon advanced to "
                               f"{_leaf_cs['tol']:.2f} "
                               f"(stage {_leaf_cs['schedule_idx']+1}/{len(_leaf_cs['schedule'])})")
                     _leaf_cs['min_weight'] = 1.0
@@ -1577,7 +1581,7 @@ def _train_segment(
                     causal_epoch_min_weight = causal_state['min_weight']
                 if advance_causal_schedule(causal_state):
                     cs = loss_fn.causal_state
-                    print(f"  [Causal] epsilon advanced to "
+                    logger.info(f"  [Causal] epsilon advanced to "
                           f"{cs['tol']:.2f} "
                           f"(stage {cs['schedule_idx']+1}/{len(cs['schedule'])}, "
                           f"prev_min_w={causal_epoch_min_weight:.6f})")
@@ -1588,7 +1592,7 @@ def _train_segment(
                 causal_epoch_min_weight = causal_state['min_weight']
             if advance_causal_schedule(causal_state):
                 cs = loss_fn.causal_state
-                print(f"  [Causal] epsilon advanced to "
+                logger.info(f"  [Causal] epsilon advanced to "
                       f"{cs['tol']:.2f} "
                       f"(stage {cs['schedule_idx']+1}/"
                       f"{len(cs['schedule'])}, "
@@ -1655,7 +1659,7 @@ def _train_segment(
         if should_evaluate:
             elapsed = time.time() - start_time
             batch_mode = "mini" if current_optimizer_name in ('Adam', 'SOAP') else "full"
-            print(f"Epoch [{epoch}/{total_epochs}] ({elapsed:.1f}s) [{current_optimizer_name}/{batch_mode}] | "
+            logger.info(f"Epoch [{epoch}/{total_epochs}] ({elapsed:.1f}s) [{current_optimizer_name}/{batch_mode}] | "
                   f"Train Loss: {train_loss:.6f} | "
                   f"Eval Loss: {eval_loss:.6f} | "
                   f"Eval Rel-L2: {eval_rel_l2:.6f} | "
@@ -1665,7 +1669,7 @@ def _train_segment(
             if causal_state is not None and causal_epoch_min_weight is not None:
                 cs = causal_state
                 stage_str = f"{cs['schedule_idx']+1}/{len(cs['schedule'])}"
-                print(f"  [Causal] tol={cs['tol']:.2f}, stage={stage_str}, min_weight={causal_epoch_min_weight:.6f}")
+                logger.info(f"  [Causal] tol={cs['tol']:.2f}, stage={stage_str}, min_weight={causal_epoch_min_weight:.6f}")
                 metrics['causal_history'].append({
                     'epoch': epoch,
                     'tol': float(cs['tol']),
@@ -1681,7 +1685,7 @@ def _train_segment(
                 g = lra_weights.last_grad_norms
                 w_str = ', '.join(f'{k}={v:.4f}' for k, v in w.items())
                 g_str = ', '.join(f'{k}={g.get(k, 0):.6f}' for k in w)
-                print(f"  [LRA] weights: {w_str} | grads: {g_str}")
+                logger.info(f"  [LRA] weights: {w_str} | grads: {g_str}")
                 # Save to metrics
                 metrics['lra_history'].append({
                     'epoch': epoch,
@@ -1719,19 +1723,19 @@ def _train_segment(
                     if _weighted_grad_flats:
                         _total_wg = torch.stack(_weighted_grad_flats, dim=0).sum(dim=0).norm().item()
                     _keys = list(_raw_comps.keys())
-                    print("  [LossDiag] raw terms:      " +
+                    logger.info("  [LossDiag] raw terms:      " +
                           ', '.join(f'{k}={_raw_vals[k]:.4e}' for k in _keys))
-                    print("  [LossDiag] raw grad norms: " +
+                    logger.info("  [LossDiag] raw grad norms: " +
                           ', '.join(f'{k}={_raw_gn[k]:.4e}' for k in _keys))
-                    print("  [LossDiag] LRA weights:    " +
+                    logger.info("  [LossDiag] LRA weights:    " +
                           ', '.join(f'{k}={_w.get(k, 1.0):.4f}' for k in _keys))
-                    print("  [LossDiag] weighted terms: " +
+                    logger.info("  [LossDiag] weighted terms: " +
                           ', '.join(f'{k}={_w.get(k, 1.0) * _raw_vals[k]:.4e}' for k in _keys))
-                    print("  [LossDiag] weighted grads: " +
+                    logger.info("  [LossDiag] weighted grads: " +
                           ', '.join(f'{k}={_wtd_gn[k]:.4e}' for k in _keys) +
                           f"  (||sum||={_total_wg:.4e})")
                 except Exception as _e:
-                    print(f"  [LossDiag] failed: {_e}")
+                    logger.info(f"  [LossDiag] failed: {_e}")
 
             # DIAGNOSTIC: PirateNet alphas, causal chunks, LR
             if cfg.get('debug_prints', False):
@@ -1746,7 +1750,7 @@ def _train_segment(
                         if _ds['block_w_norms'] else []
                     )
                     _wn0_str = '/'.join(f'{w:.3f}' for w in _wn0)
-                    print(
+                    logger.info(
                         f"  [PirateNet] alphas=[{_alphas_str}] | "
                         f"W-norms(block0)=[{_wn0_str}]"
                     )
@@ -1762,9 +1766,9 @@ def _train_segment(
                     )
                     _t_str = ', '.join(
                         f'{t:.3f}' for t in _cs['last_chunk_tmax'])
-                    print(f"  [CausalChunks] w=[{_w_str}]")
-                    print(f"  [CausalChunks] L=[{_cl_str}]")
-                    print(f"  [CausalChunks] tmax=[{_t_str}]")
+                    logger.info(f"  [CausalChunks] w=[{_w_str}]")
+                    logger.info(f"  [CausalChunks] L=[{_cl_str}]")
+                    logger.info(f"  [CausalChunks] tmax=[{_t_str}]")
 
                 # LR schedule sanity check (extended)
                 _cur_lr = optimizer.param_groups[0]['lr']
@@ -1785,7 +1789,7 @@ def _train_segment(
                     _phase = f"decay (n={_num_decays})"
                 
                 _lr_match = "✓" if abs(_cur_lr - _expected_lr) / _expected_lr < 0.01 else "✗"
-                print(
+                logger.info(
                     f"  [LR] lr={_cur_lr:.2e} (expected={_expected_lr:.2e} {_lr_match}) | "
                     f"step={step_count} | phase={_phase}"
                 )
@@ -1804,7 +1808,7 @@ def _train_segment(
                 with torch.no_grad():
                     components = loss_fn(model, sample_batch, return_components=True)
                     comps_str = ', '.join(f'{k}={v:.6f}' for k, v in components.items())
-                    print(f"  [Loss] components: {comps_str} (unweighted)")
+                    logger.info(f"  [Loss] components: {comps_str} (unweighted)")
                     metrics['loss_components_history'].append({
                         'epoch': epoch,
                         'residual': float(components['residual'].item()),
@@ -1824,17 +1828,17 @@ def _train_segment(
                 expert_norms = latest_diag['expert_norms']
                 expert_grads = latest_diag['expert_grad_norms']
 
-                print(f"  [DIAG] Base norm: {base_norm:.6f} | Expert contrib: {total_expert:.6f} | Ratio: {total_expert/base_norm if base_norm > 0 else 0:.4f}")
-                print(f"  [DIAG] Expert norms: {[f'{x:.4f}' for x in expert_norms[:5]]}" + ("..." if len(expert_norms) > 5 else ""))
+                logger.info(f"  [DIAG] Base norm: {base_norm:.6f} | Expert contrib: {total_expert:.6f} | Ratio: {total_expert/base_norm if base_norm > 0 else 0:.4f}")
+                logger.info(f"  [DIAG] Expert norms: {[f'{x:.4f}' for x in expert_norms[:5]]}" + ("..." if len(expert_norms) > 5 else ""))
                 if expert_grads:
-                    print(f"  [DIAG] Expert grad norms: {[f'{x:.6f}' for x in expert_grads[:5]]}" + ("..." if len(expert_grads) > 5 else ""))
+                    logger.info(f"  [DIAG] Expert grad norms: {[f'{x:.6f}' for x in expert_grads[:5]]}" + ("..." if len(expert_grads) > 5 else ""))
 
         # Save checkpoint periodically (only when we have eval metrics)
         if epoch % save_every == 0 and eval_loss is not None:
             checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch}.pt"
             _save_checkpoint(checkpoint_path, model, optimizer, current_optimizer_name, epoch,
                            train_loss, eval_loss, cfg, metrics)
-            print(f"  Checkpoint saved: {checkpoint_path}")
+            logger.info(f"  Checkpoint saved: {checkpoint_path}")
 
         # Save best model (only when we have eval metrics)
         if eval_loss is not None and eval_loss < best_eval_loss:
@@ -1864,7 +1868,7 @@ def _train_segment(
                                    and epoch < switch_epoch)
                 if _in_optimizer_1 and switch_epoch < total_epochs:
                     # Fast-forward to the switch; preserves optimizer_2's budget.
-                    print(f"\n  [Patience] optimizer_1 plateau "
+                    logger.info(f"\n  [Patience] optimizer_1 plateau "
                           f">{patience_rel_delta:.1%} for "
                           f"{epochs_without_improvement} epochs at epoch {epoch}; "
                           f"fast-forwarding to switch epoch {switch_epoch}.")
@@ -1879,7 +1883,7 @@ def _train_segment(
                     best_train_loss = float('inf')
                     continue
                 else:
-                    print(f"\n  [EarlyStop] No train loss improvement "
+                    logger.info(f"\n  [EarlyStop] No train loss improvement "
                           f">{patience_rel_delta:.1%} for "
                           f"{epochs_without_improvement} epochs "
                           f"(best={best_train_loss:.6f}). "
@@ -1895,7 +1899,7 @@ def _train_segment(
             should_run_inner_metrics = False
             
         if should_run_inner_metrics:
-            print(f"\n  Running inner metrics at epoch {epoch} (NCC/Probes/Derivatives/Frequency)...")
+            logger.info(f"\n  Running inner metrics at epoch {epoch} (NCC/Probes/Derivatives/Frequency)...")
             ncc_metrics = _run_intermediate_ncc(model, cfg, run_dir, epoch)
             probe_metrics = _run_intermediate_probes(model, cfg, run_dir, epoch)
             deriv_metrics = _run_intermediate_derivatives(model, cfg, run_dir, epoch)
@@ -1950,7 +1954,7 @@ def _train_segment(
     _save_segment_checkpoint(ctx, segment_name, epoch, optimizer, current_optimizer_name,
                              train_loss, eval_loss, metrics, cfg)
     
-    print(f"[Segment:{segment_name}] done | ran {epoch - segment_start_epoch} "
+    logger.info(f"[Segment:{segment_name}] done | ran {epoch - segment_start_epoch} "
           f"epochs (stop={_stop_reason}) | "
           f"train_loss={_final_tl:.6f} eval_loss={_final_el:.6f}")
     return SegmentResult(
@@ -1985,9 +1989,9 @@ def _save_segment_checkpoint(ctx: TrainingContext, segment_name: str, epoch: int
         checkpoint_path = checkpoint_dir / f"checkpoint_after_{segment_name}.pt"
         _save_checkpoint(checkpoint_path, ctx.model, optimizer, optimizer_name, epoch,
                         train_loss, eval_loss, cfg, metrics)
-        print(f"  [Segment:{segment_name}] saved checkpoint_after_{segment_name}.pt")
+        logger.info(f"  [Segment:{segment_name}] saved checkpoint_after_{segment_name}.pt")
     except Exception as e:
-        print(f"  [Segment:{segment_name}] checkpoint save failed: {e}")
+        logger.info(f"  [Segment:{segment_name}] checkpoint save failed: {e}")
 
 
 def _save_segment_pred_plot(ctx: TrainingContext, segment_name: str) -> None:
@@ -2014,9 +2018,9 @@ def _save_segment_pred_plot(ctx: TrainingContext, segment_name: str) -> None:
             epoch=ctx.epoch,
             cfg=ctx.cfg,
         )
-        print(f"  [Segment:{segment_name}] saved pred_after_{segment_name}.png")
+        logger.info(f"  [Segment:{segment_name}] saved pred_after_{segment_name}.png")
     except Exception as _e:
-        print(f"  [Segment:{segment_name}] prediction plot failed: {_e}")
+        logger.info(f"  [Segment:{segment_name}] prediction plot failed: {_e}")
 
 
 def _set_trainable(model: nn.Module, which: str, verbose: bool = True) -> int:
@@ -2078,10 +2082,10 @@ def _set_trainable(model: nn.Module, which: str, verbose: bool = True) -> int:
     n_total = sum(1 for _ in model.parameters())
     
     if verbose:
-        print(f"\n[DEBUG] _set_trainable(which='{which}'):")
-        print(f"  Total params: {n_total}, Trainable: {n_trainable}")
+        logger.info(f"\n[DEBUG] _set_trainable(which='{which}'):")
+        logger.info(f"  Total params: {n_total}, Trainable: {n_trainable}")
         for detail in trainable_details:
-            print(f"  {detail}")
+            logger.info(f"  {detail}")
     
     return n_trainable
 
@@ -2112,9 +2116,9 @@ def _build_tree_once(ctx: TrainingContext, retain_siblings: bool) -> Dict:
 
     closure_desc = ("ancestors-only (AToE)" if not retain_siblings
                     else "ancestors+siblings")
-    print(f"\n[Tree] Computing M-term tree (retain_siblings={retain_siblings}) — "
+    logger.info(f"\n[Tree] Computing M-term tree (retain_siblings={retain_siblings}) — "
           f"closure: {closure_desc}")
-    print(f"  [M-term Tree] Fitting full tree (max_depth={region_detector.max_depth}, "
+    logger.info(f"  [M-term Tree] Fitting full tree (max_depth={region_detector.max_depth}, "
           f"min_samples_leaf={region_detector.min_samples_leaf}), selecting top M={M}...")
     accepted_nodes, prune_depth_stats = region_detector.fit_full_tree_and_prune(
         X=X_eval, y=y_eval, M=M,
@@ -2138,7 +2142,7 @@ def _build_tree_once(ctx: TrainingContext, retain_siblings: bool) -> Dict:
                 node_tree_depth[child] = node_tree_depth[nid] + 1
                 _bfs.append(child)
 
-    print(f"  [Tree] Accepted {len(accepted_nodes)} node(s) of "
+    logger.info(f"  [Tree] Accepted {len(accepted_nodes)} node(s) of "
           f"{int(tree.node_count)} tree nodes.")
     return {
         'accepted_nodes': accepted_nodes,
@@ -2174,7 +2178,7 @@ def _select_levels(ctx: TrainingContext, build_result: Dict, leaves_only: bool):
     for node, parent_id in nodes_to_spawn:
         by_depth[node_tree_depth.get(node.node_id, 1)].append((node, parent_id))
     levels = [by_depth[d] for d in sorted(by_depth)]
-    print(f"  [Tree] {len(nodes_to_spawn)} node(s) to spawn across "
+    logger.info(f"  [Tree] {len(nodes_to_spawn)} node(s) to spawn across "
           f"{len(levels)} level(s): {[len(lv) for lv in levels]}")
     return levels, nodes_to_spawn
 
@@ -2282,9 +2286,9 @@ def _spawn_nodes(ctx: TrainingContext, level_nodes, copy_output: bool,
             })
 
     # Init newly spawned experts (after spawn so copy-init parents already exist).
-    print(f"\n[DEBUG] _spawn_nodes: Initializing {len(new_expert_indices)} new experts")
-    print(f"  copy_output={copy_output}, init_mode='{init_mode}'")
-    print(f"  is_copy_spawn={is_copy_spawn}, is_atoe_plain={is_atoe_plain}, atoe_zero_init={atoe_zero_init}")
+    logger.info(f"\n[DEBUG] _spawn_nodes: Initializing {len(new_expert_indices)} new experts")
+    logger.info(f"  copy_output={copy_output}, init_mode='{init_mode}'")
+    logger.info(f"  is_copy_spawn={is_copy_spawn}, is_atoe_plain={is_atoe_plain}, atoe_zero_init={atoe_zero_init}")
     
     for expert_idx in new_expert_indices:
         new_exp = model.experts[expert_idx]
@@ -2292,8 +2296,8 @@ def _spawn_nodes(ctx: TrainingContext, level_nodes, copy_output: bool,
         
         # Print region info
         if region:
-            print(f"\n  [Expert {expert_idx}] Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
-            print(f"    depth={region.depth}, parent_idx={region.parent_idx}, spawn_epoch={region.spawn_epoch}")
+            logger.info(f"\n  [Expert {expert_idx}] Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
+            logger.info(f"    depth={region.depth}, parent_idx={region.parent_idx}, spawn_epoch={region.spawn_epoch}")
         
         if init_mode == 'parent_weights':
             if hasattr(model, 'regions') and expert_idx < len(model.regions):
@@ -2308,10 +2312,10 @@ def _spawn_nodes(ctx: TrainingContext, level_nodes, copy_output: bool,
             par_label = 'base' if par_idx == -1 else f'expert {par_idx}'
             apply_parent_copy_init(new_exp, parent_model, cfg,
                                    copy_output=copy_output)
-            print(f"    [ParentInit] Expert {expert_idx}: copied from {par_label}, copy_output={copy_output}")
+            logger.info(f"    [ParentInit] Expert {expert_idx}: copied from {par_label}, copy_output={copy_output}")
         else:
             apply_expert_init(new_exp, cfg)
-            print(f"    [Init] Expert {expert_idx}: glorot/zero init (mode='{init_mode}')")
+            logger.info(f"    [Init] Expert {expert_idx}: glorot/zero init (mode='{init_mode}')")
         apply_spectral_norm(new_exp, cfg)
         
         # Print output layer state after init
@@ -2319,7 +2323,7 @@ def _spawn_nodes(ctx: TrainingContext, level_nodes, copy_output: bool,
         out_layer = _get_output_layer(new_exp)
         out_weight_norm = out_layer.weight.data.norm().item()
         out_bias_val = out_layer.bias.data.mean().item() if out_layer.bias is not None else None
-        print(f"    After init: output_weight_norm={out_weight_norm:.6f}, output_bias_mean={out_bias_val}")
+        logger.info(f"    After init: output_weight_norm={out_weight_norm:.6f}, output_bias_mean={out_bias_val}")
 
     return len(new_expert_indices), new_expert_indices
 
@@ -2345,7 +2349,7 @@ def _post_spawn_update(ctx: TrainingContext) -> None:
                                       else create_causal_state(problem_cfg))
         loss_fn._leaf_state['causal_states'] = new_states
         loss_fn._leaf_state['leaf_info'] = new_leaf_info
-        print(f"  [PerLeafCausal] Updated leaf states: "
+        logger.info(f"  [PerLeafCausal] Updated leaf states: "
               f"{list(new_states.keys())} ({len(new_states)} leaves)")
 
     if ctx._per_leaf_sampling and hasattr(model, 'get_leaf_info'):
@@ -2365,7 +2369,7 @@ def _post_spawn_update(ctx: TrainingContext) -> None:
         ctx.train_data = td
         ctx.train_loader = _create_dataloader(td, cfg['batch_size'], shuffle=True)
         n = len(leaf_info) if leaf_info else 0
-        print(f"  [PostSpawnResample] Rebuilt dataset for {n} leaves")
+        logger.info(f"  [PostSpawnResample] Rebuilt dataset for {n} leaves")
 
 
 def _plot_after_spawn(ctx: TrainingContext, tag: str) -> None:
@@ -2438,9 +2442,9 @@ def train_orchestrator(ctx: TrainingContext) -> None:
         try:
             with open(_p, 'w') as _f:
                 json.dump(ctx.metrics, _f, indent=2, cls=_NumpySafeEncoder)
-            print(f"\n[Emergency] Metrics saved to {_p}")
+            logger.info(f"\n[Emergency] Metrics saved to {_p}")
         except Exception as _se:
-            print(f"\n[Emergency] Could not save metrics: {_se}")
+            logger.info(f"\n[Emergency] Could not save metrics: {_se}")
 
     _emergency_metrics_save.done = False
     _atexit.register(_emergency_metrics_save)
@@ -2456,7 +2460,7 @@ def train_orchestrator(ctx: TrainingContext) -> None:
         variant = 'AToE'
     else:
         variant = 'base'
-    print(f"\n[Orchestrator] variant={variant} | adaptive={ctx.is_adaptive}")
+    logger.info(f"\n[Orchestrator] variant={variant} | adaptive={ctx.is_adaptive}")
 
     # ── Non-adaptive: single segment over all params ──
     if not ctx.is_adaptive:
@@ -2467,14 +2471,14 @@ def train_orchestrator(ctx: TrainingContext) -> None:
 
     # ── Root / base training (Phase 1) ──
     if ctx.pretrained_base_checkpoint is not None:
-        print("[Orchestrator] Root skipped — base loaded from "
+        logger.info("[Orchestrator] Root skipped — base loaded from "
               f"{ctx.pretrained_base_checkpoint}.")
     else:
         _set_trainable(model, 'base')
         root_cfg = dict(cfg)
         root_cfg.update(ctx.initial_train_cfg or {})
         root_budget = ctx.initial_train_cfg['epochs']
-        print(f"[Orchestrator] [3-Phase] Phase 1: training root/base for "
+        logger.info(f"[Orchestrator] [3-Phase] Phase 1: training root/base for "
               f"{root_budget} epochs")
         res = _train_segment(ctx, 'root', root_budget, root_cfg)
         if res.nan_detected or res.oom_stopped:
@@ -2490,7 +2494,7 @@ def train_orchestrator(ctx: TrainingContext) -> None:
     node_tree_depth = build_result['node_tree_depth']
 
     if not nodes_to_spawn:
-        print("[Orchestrator] No nodes accepted — finishing after root.")
+        logger.info("[Orchestrator] No nodes accepted — finishing after root.")
         ctx.total_epochs = ctx.epoch
         return
 
@@ -2503,14 +2507,14 @@ def train_orchestrator(ctx: TrainingContext) -> None:
             spawned, _ = _spawn_nodes(ctx, level, copy_output,
                                       node_to_expert, node_tree_depth)
             total += spawned
-        print(f"[FullTree] Spawning complete. {total} leaves spawned.")
+        logger.info(f"[FullTree] Spawning complete. {total} leaves spawned.")
         _post_spawn_update(ctx)
         _plot_after_spawn(ctx, f"epoch_{ctx.epoch}")
         if total == 0:
-            print("[Orchestrator] Zero experts spawned — finishing after root.")
+            logger.info("[Orchestrator] Zero experts spawned — finishing after root.")
             ctx.total_epochs = ctx.epoch
             return
-        print(f"[Phase 3] Training {total} leaf experts (base retired from composition)")
+        logger.info(f"[Phase 3] Training {total} leaf experts (base retired from composition)")
         _set_trainable(model, 'leaves')
         res = _train_segment(ctx, 'phase3', cfg['epochs'], cfg)
         ctx.total_epochs = ctx.epoch
@@ -2525,15 +2529,15 @@ def train_orchestrator(ctx: TrainingContext) -> None:
 
     for level in levels:
         level_depth = node_tree_depth.get(level[0][0].node_id, 1)
-        print(f"\n[Staged] Level {level_depth}: spawning {len(level)} node(s)")
+        logger.info(f"\n[Staged] Level {level_depth}: spawning {len(level)} node(s)")
         spawned, _ = _spawn_nodes(ctx, level, copy_output,
                                   node_to_expert, node_tree_depth)
         if spawned == 0:
-            print(f"[Staged] Level {level_depth}: 0 experts spawned — skipping.")
+            logger.info(f"[Staged] Level {level_depth}: 0 experts spawned — skipping.")
             continue
         _post_spawn_update(ctx)
         _set_trainable(model, f'level:{level_depth}')
-        print(f"[Freeze] Frozen base + levels < {level_depth}; training "
+        logger.info(f"[Freeze] Frozen base + levels < {level_depth}; training "
               f"{spawned} expert(s) at level {level_depth}")
         lr_level = base_lr * (decay ** level_depth)
         res = _train_segment(ctx, f'level_{level_depth}', max_per_level, cfg,
@@ -2542,16 +2546,16 @@ def train_orchestrator(ctx: TrainingContext) -> None:
         _plot_after_spawn(ctx, f"level_{level_depth}")
         if res.nan_detected or res.oom_stopped:
             return
-        print(f"[Freeze] Level {level_depth} training complete.")
+        logger.info(f"[Freeze] Level {level_depth} training complete.")
 
     # ── Final joint fine-tune (AToE / ANT) ──
     fine_tune_cfg = adaptive_cfg.get('fine_tune', None)
     if not fine_tune_cfg:
-        print("[FinalTune] No adaptive_pinn.fine_tune block — skipping final "
+        logger.info("[FinalTune] No adaptive_pinn.fine_tune block — skipping final "
               "joint fine-tune.")
         ctx.total_epochs = ctx.epoch
         return
-    print("[FinalTune] Unfreezing ALL params for final joint fine-tune.")
+    logger.info("[FinalTune] Unfreezing ALL params for final joint fine-tune.")
     _set_trainable(model, 'all')
     ft_cfg = dict(cfg)
     ft_cfg.update(fine_tune_cfg)
@@ -2617,14 +2621,14 @@ def _finalize_training(ctx: TrainingContext) -> Path:
     _atexit.unregister(_emergency_metrics_save)
 
     if _nan_detected:
-        print("[NaN] Generating partial training curves before exit...")
+        logger.info("[NaN] Generating partial training curves before exit...")
         try:
             training_plots_dir = run_dir / "training_plots"
             switch_epoch_to_plot = switch_epoch if (optimizer_2_name is not None and switch_epoch <= epochs) else None
             plot_training_curves(metrics, training_plots_dir, optimizer_switch_epoch=switch_epoch_to_plot)
         except Exception as _plot_err:
-            print(f"  [NaN] Could not generate training curves: {_plot_err}")
-        print("[NaN] Skipping remaining post-training cleanup — moving to next experiment.")
+            logger.info(f"  [NaN] Could not generate training curves: {_plot_err}")
+        logger.info("[NaN] Skipping remaining post-training cleanup — moving to next experiment.")
         return
 
     # Save final model
@@ -2632,10 +2636,10 @@ def _finalize_training(ctx: TrainingContext) -> Path:
     _save_checkpoint(final_checkpoint_path, model, optimizer, current_optimizer_name, total_epochs,
                     train_loss, eval_loss, cfg, metrics)
 
-    print(f"\nTraining completed in {time.time() - start_time:.1f}s")
-    print(f"  Best eval loss: {best_eval_loss:.6f}")
-    print(f"  Best checkpoint: {best_checkpoint_path}")
-    print(f"  Final checkpoint: {final_checkpoint_path}")
+    logger.info(f"\nTraining completed in {time.time() - start_time:.1f}s")
+    logger.info(f"  Best eval loss: {best_eval_loss:.6f}")
+    logger.info(f"  Best checkpoint: {best_checkpoint_path}")
+    logger.info(f"  Final checkpoint: {final_checkpoint_path}")
     
     # Save timing data and print summary
     timer.save(run_dir / "timing.json")
@@ -2665,10 +2669,10 @@ def _finalize_training(ctx: TrainingContext) -> Path:
 
         df = pd.DataFrame(diag_rows)
         df.to_csv(diag_csv_path, index=False)
-        print(f"  Expert diagnostics saved: {diag_csv_path}")
+        logger.info(f"  Expert diagnostics saved: {diag_csv_path}")
 
     # Plot training curves
-    print(f"\nGenerating training plots...")
+    logger.info(f"\nGenerating training plots...")
     training_plots_dir = run_dir / "training_plots"
     # Extract all optimizer switch epochs and segment start epochs from metrics
     optimizer_switch_epochs = [e['epoch'] for e in metrics.get('optimizer_events', [])]
@@ -2696,11 +2700,11 @@ def _finalize_training(ctx: TrainingContext) -> Path:
     skip_final_inner_metrics = is_adaptive and not adaptive_inner_metrics
     
     if skip_final_inner_metrics:
-        print("\n  [Skipping final inner metrics (probes/derivatives/frequency) — inner_metrics_calculation=false]")
+        logger.info("\n  [Skipping final inner metrics (probes/derivatives/frequency) — inner_metrics_calculation=false]")
     else:
-        print("\n" + "=" * 60)
-        print("Running Final Probe, Derivative, and Frequency Analysis")
-        print("=" * 60)
+        logger.info("\n" + "=" * 60)
+        logger.info("Running Final Probe, Derivative, and Frequency Analysis")
+        logger.info("=" * 60)
     
     from probes.probe_runner import run_probes
     from derivatives_tracker.derivatives_runner import run_derivatives_tracker
@@ -2711,7 +2715,7 @@ def _finalize_training(ctx: TrainingContext) -> Path:
     
     if not skip_final_inner_metrics:
         # Final probes (saves to main probe_plots/ directory)
-        print("\nRunning final probe analysis...")
+        logger.info("\nRunning final probe analysis...")
         final_probe_metrics = run_probes(
             model=model,
             train_data_path=str(train_data_path),
@@ -2721,7 +2725,7 @@ def _finalize_training(ctx: TrainingContext) -> Path:
         )
         
         # Final derivatives (saves to main derivatives_plots/ directory)
-        print("\nRunning final derivatives analysis...")
+        logger.info("\nRunning final derivatives analysis...")
         final_deriv_metrics = run_derivatives_tracker(
             model=model,
             train_data_path=str(train_data_path),
@@ -2731,7 +2735,7 @@ def _finalize_training(ctx: TrainingContext) -> Path:
         )
         
         # Final frequency (saves to main frequency_plots/ directory)
-        print("\nRunning final frequency analysis...")
+        logger.info("\nRunning final frequency analysis...")
         final_freq_metrics = run_frequency_tracker(
             model=model,
             train_data_path=str(train_data_path),
@@ -2764,10 +2768,10 @@ def _finalize_training(ctx: TrainingContext) -> Path:
 
     # Final adaptive PINN outputs
     if is_adaptive and hasattr(model, 'num_experts') and model.num_experts > 0:
-        print("\n" + "=" * 60)
-        print("Adaptive PINN Final Summary")
-        print("=" * 60)
-        print(f"  Total experts spawned: {model.num_experts}")
+        logger.info("\n" + "=" * 60)
+        logger.info("Adaptive PINN Final Summary")
+        logger.info("=" * 60)
+        logger.info(f"  Total experts spawned: {model.num_experts}")
         
         problem_type = '2d' if len(domain_bounds['lower']) == 2 else '3d'
         is_leaves_model = isinstance(model, (AToELeaves, ANT))
@@ -2868,7 +2872,7 @@ def _finalize_training(ctx: TrainingContext) -> Path:
     metrics_path = run_dir / "metrics.json"
     with open(metrics_path, 'w') as f:
         json.dump(metrics, f, indent=2, cls=_NumpySafeEncoder)
-    print(f"  Metrics saved to {metrics_path}")
+    logger.info(f"  Metrics saved to {metrics_path}")
 
     # Save summary
     summary_path = run_dir / "summary.txt"
@@ -2889,7 +2893,7 @@ def _finalize_training(ctx: TrainingContext) -> Path:
         f.write(f"Best eval loss: {best_eval_loss:.6f}\n\n")
         f.write(f"Best checkpoint: {best_checkpoint_path}\n")
         f.write(f"Final checkpoint: {final_checkpoint_path}\n")
-    print(f"  Summary saved to {summary_path}")
+    logger.info(f"  Summary saved to {summary_path}")
 
     # Save config used
     from utils.io import get_git_info
@@ -2898,20 +2902,20 @@ def _finalize_training(ctx: TrainingContext) -> Path:
     import yaml
     with open(config_path, 'w') as f:
         yaml.dump(cfg, f, default_flow_style=False)
-    print(f"  Config saved to {config_path}")
+    logger.info(f"  Config saved to {config_path}")
     
     # Problem-specific final evaluation visualization
-    print("\nGenerating problem-specific evaluation visualizations...")
+    logger.info("\nGenerating problem-specific evaluation visualizations...")
     try:
         from utils.problem_specific import get_visualization_module
         viz_module = get_visualization_module(cfg['problem'])
         visualize_evaluation = viz_module[1]  # Second element is visualize_evaluation
         visualize_evaluation(model, eval_data_path, run_dir, cfg)
     except ValueError as e:
-        print(f"  (No custom evaluation visualization for {cfg['problem']})")
-        print(f"  ValueError details: {e}")
+        logger.info(f"  (No custom evaluation visualization for {cfg['problem']})")
+        logger.info(f"  ValueError details: {e}")
     except Exception as e:
-        print(f"  Warning: Could not generate evaluation visualization: {type(e).__name__}: {e}")
+        logger.info(f"  Warning: Could not generate evaluation visualization: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
 
@@ -3098,7 +3102,7 @@ def _load_pretrained_base(model: nn.Module, ckpt_path: str, cfg: Dict) -> None:
         saved_arch = adaptive_state.get('base_architecture')
         saved_activation = adaptive_state.get('activation')
         saved_expert_type = (adaptive_state.get('adaptive_config') or {}).get('expert_type')
-        print(f"  [PretrainedBase] Source is an adaptive/MoE checkpoint; "
+        logger.info(f"  [PretrainedBase] Source is an adaptive/MoE checkpoint; "
               f"loading its base only (ignoring {adaptive_state.get('num_experts', '?')} experts).")
     elif isinstance(ckpt, dict) and 'model_state_dict' in ckpt:
         base_sd = ckpt['model_state_dict']
@@ -3113,7 +3117,7 @@ def _load_pretrained_base(model: nn.Module, ckpt_path: str, cfg: Dict) -> None:
 
     if not saved_arch:
         saved_arch = _infer_base_arch_from_state_dict(base_sd)
-        print(f"  [PretrainedBase] Checkpoint has no stored base_architecture; "
+        logger.info(f"  [PretrainedBase] Checkpoint has no stored base_architecture; "
               f"inferred {saved_arch} from weights.")
 
     # Adopt the checkpoint's base architecture if it differs from the run's.
@@ -3123,7 +3127,7 @@ def _load_pretrained_base(model: nn.Module, ckpt_path: str, cfg: Dict) -> None:
         device, dtype = _old.device, _old.dtype
         activation = saved_activation or getattr(model, 'activation', cfg.get('activation'))
         expert_type = saved_expert_type or cfg['adaptive_pinn'].get('expert_type', 'mlp')
-        print(f"  [PretrainedBase] Adopting checkpoint base architecture: "
+        logger.info(f"  [PretrainedBase] Adopting checkpoint base architecture: "
               f"{model.base_architecture} -> {list(saved_arch)}")
         model.base_model = create_network(
             list(saved_arch), activation, cfg, is_base=True, expert_type=expert_type
@@ -3133,12 +3137,12 @@ def _load_pretrained_base(model: nn.Module, ckpt_path: str, cfg: Dict) -> None:
             # Drives the architecture of experts spawned later (incl. parent_weights copy).
             model.config_base_architecture = list(saved_arch)
         cfg['base_architecture'] = list(saved_arch)
-        print(f"  [PretrainedBase] Updated config base_architecture to {list(saved_arch)} "
+        logger.info(f"  [PretrainedBase] Updated config base_architecture to {list(saved_arch)} "
               f"so spawned experts match the loaded base.")
 
     model.base_model.load_state_dict(base_sd)
     n_params = sum(q.numel() for q in model.base_model.parameters())
-    print(f"  [PretrainedBase] Loaded base weights from {ckpt_path} ({n_params} params)")
+    logger.info(f"  [PretrainedBase] Loaded base weights from {ckpt_path} ({n_params} params)")
     # Re-sync AToE's batched container so the forward pass sees the loaded base.
     if hasattr(model, 'batched_models'):
         model.batched_models.sync_from_models(model.base_model, model.experts)

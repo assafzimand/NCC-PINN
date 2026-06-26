@@ -14,6 +14,9 @@ from typing import List, Optional, Dict, Tuple
 from dataclasses import dataclass
 
 from adaptive.indicators import RegionDescriptor
+from utils.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -285,7 +288,7 @@ class RegionDetector:
             node_info.smoothness_alpha = alpha
             node_info.smoothness_r2 = r2
 
-            print(
+            logger.info(
                 f"    [Smoothness] Node {node_id}: "
                 f"alpha={node_info.smoothness_alpha:.4f}, "
                 f"r2={node_info.smoothness_r2:.4f}, "
@@ -501,7 +504,7 @@ class RegionDetector:
 
         if not all_nodes:
             if verbose:
-                print("  [M-term Tree] No nodes in tree")
+                logger.info("  [M-term Tree] No nodes in tree")
             return [], {}
 
         node_lookup = {node.node_id: node for node in all_nodes}
@@ -563,9 +566,9 @@ class RegionDetector:
 
         if verbose:
             if M_actual < M:
-                print(f"  [M-term Tree] Requested M={M}, but only {M_actual} nodes with valid metrics")
+                logger.info(f"  [M-term Tree] Requested M={M}, but only {M_actual} nodes with valid metrics")
             else:
-                print(f"  [M-term Tree] Selected top M={M_actual} nodes by {variable_for_node_accept}")
+                logger.info(f"  [M-term Tree] Selected top M={M_actual} nodes by {variable_for_node_accept}")
 
         # Build closure: add ancestors (always) and siblings (conditional)
         accepted = set(top_M_nodes)
@@ -606,7 +609,7 @@ class RegionDetector:
         
         closure_type = "ancestors+siblings" if retain_siblings else "ancestors-only"
         if verbose:
-            print(f"  [M-term Tree] Closure: {closure_type} -> {len(accepted)} nodes")
+            logger.info(f"  [M-term Tree] Closure: {closure_type} -> {len(accepted)} nodes")
 
         # Compute statistics by depth
         depth_stats = {}
@@ -627,15 +630,15 @@ class RegionDetector:
                     }
         
         if verbose:
-            print(f"\n  [M-term Tree] Tree has {tree.node_count} nodes, "
+            logger.info(f"\n  [M-term Tree] Tree has {tree.node_count} nodes, "
                   f"max depth {max_depth_seen}")
-            print(f"  [M-term Tree] Top M={M_actual} selected, "
+            logger.info(f"  [M-term Tree] Top M={M_actual} selected, "
                   f"final accepted (with closure): {len(accepted)} nodes")
-            print(f"  [M-term Tree] Added {len(accepted) - M_actual} nodes for valid binary tree structure")
-            print(f"  [M-term Tree] Per-depth selection stats:")
+            logger.info(f"  [M-term Tree] Added {len(accepted) - M_actual} nodes for valid binary tree structure")
+            logger.info(f"  [M-term Tree] Per-depth selection stats:")
             for d in sorted(depth_stats.keys()):
                 s = depth_stats[d]
-                print(
+                logger.info(
                     f"    Depth {d:2d}: "
                     f"{s['n_nodes']:3d} nodes | "
                     f"{s['n_from_top_M']:2d} from top-M | "
@@ -660,7 +663,7 @@ class RegionDetector:
                     metric_str = (f"{metric_val:.4f}"
                                  if metric_val is not None else "None")
                     from_top_m = " [TOP-M]" if nid in top_M_nodes else ""
-                    print(f"    [M-term Tree] Node {nid} ({is_leaf_str}): "
+                    logger.info(f"    [M-term Tree] Node {nid} ({is_leaf_str}): "
                           f"ACCEPT (parent={anc_str}, "
                           f"{variable_for_node_accept}={metric_str}, "
                           f"samples={node.n_samples}){from_top_m}")
@@ -675,7 +678,7 @@ class RegionDetector:
                 bfs.append((r, next_ancestor))
 
         if verbose:
-            print(f"  [M-term Tree] Result: {len(result)} accepted nodes")
+            logger.info(f"  [M-term Tree] Result: {len(result)} accepted nodes")
 
         return result, depth_stats
 

@@ -18,6 +18,9 @@ from adaptive.indicators import (
     RegionDescriptor,
     BatchedIndicators,
 )
+from utils.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class ANT(nn.Module):
@@ -261,21 +264,21 @@ class ANT(nn.Module):
             if parent_idx == -1
             else f"E{parent_idx + 1}"
         )
-        print(
+        logger.info(
             f"  Spawned Expert {expert_idx + 1} "
             f"(depth={depth}, parent={parent_info}):"
         )
-        print(f"    Architecture: {architecture}")
-        print(
+        logger.info(f"    Architecture: {architecture}")
+        logger.info(
             f"    Region bounds: "
             f"{region.bounds_lower} -> "
             f"{region.bounds_upper}"
         )
-        print(
+        logger.info(
             f"    Wavelet norm: "
             f"{region.wavelet_norm_squared:.6f}"
         )
-        print(f"    Spawn epoch: {region.spawn_epoch}")
+        logger.info(f"    Spawn epoch: {region.spawn_epoch}")
 
         return expert_idx
 
@@ -505,7 +508,7 @@ class ANT(nn.Module):
             if hasattr(module, 'reset_parameters'):
                 module.reset_parameters()
         n_params = sum(p.numel() for p in self.base_model.parameters())
-        print(f"  [Reinit] Base model reinitialized ({n_params} params)")
+        logger.info(f"  [Reinit] Base model reinitialized ({n_params} params)")
 
     def get_domain_bounds(
         self,
@@ -726,7 +729,7 @@ class ANT(nn.Module):
             )
 
         if saved_base_arch != self.base_architecture:
-            print(
+            logger.info(
                 f"  Recreating base model: "
                 f"{self.base_architecture} -> "
                 f"{saved_base_arch}"
@@ -829,21 +832,21 @@ class ANT(nn.Module):
         Args:
             sample_inputs: (N, n_dims) sample coordinates for composition verification
         """
-        print(f"\n[DEBUG] ANT Composition State:")
-        print(f"  Num experts: {len(self.experts)}")
-        print(f"  base_is_leaf: {self.base_is_leaf}")
-        print(f"  leaf_status: {self.leaf_status}")
-        print(f"  parent_indices: {self.parent_indices}")
-        print(f"  depths: {self.depths}")
+        logger.info(f"\n[DEBUG] ANT Composition State:")
+        logger.info(f"  Num experts: {len(self.experts)}")
+        logger.info(f"  base_is_leaf: {self.base_is_leaf}")
+        logger.info(f"  leaf_status: {self.leaf_status}")
+        logger.info(f"  parent_indices: {self.parent_indices}")
+        logger.info(f"  depths: {self.depths}")
         
         with torch.no_grad():
             leaf_expert_indices, leaf_regions = self._gather_leaves()
             num_leaves = len(leaf_expert_indices)
             
-            print(f"\n  Gathered {num_leaves} leaves: expert_indices={leaf_expert_indices}")
+            logger.info(f"\n  Gathered {num_leaves} leaves: expert_indices={leaf_expert_indices}")
             
             if num_leaves == 1 and leaf_expert_indices[0] == -1:
-                print(f"  Mode: Base-only (no expert spawns yet)")
+                logger.info(f"  Mode: Base-only (no expert spawns yet)")
                 return
             
             # Compute psi for leaves
@@ -851,7 +854,7 @@ class ANT(nn.Module):
                 sample_inputs, leaf_expert_indices, leaf_regions
             )
             
-            print(f"\n  Sample psi values for {num_leaves} leaves (N={sample_inputs.shape[0]} points):")
+            logger.info(f"\n  Sample psi values for {num_leaves} leaves (N={sample_inputs.shape[0]} points):")
             for i, (exp_idx, region) in enumerate(zip(leaf_expert_indices, leaf_regions)):
                 psi_i = psi_normalized[:, i] if i < psi_normalized.shape[1] else None
                 if psi_i is not None:
@@ -860,19 +863,19 @@ class ANT(nn.Module):
                     else:
                         bounds = f"{region.bounds_lower}->{region.bounds_upper}"
                     active_pct = (psi_i > 0.01).float().mean().item() * 100
-                    print(f"    psi_leaf[exp={exp_idx}] ({bounds}): "
+                    logger.info(f"    psi_leaf[exp={exp_idx}] ({bounds}): "
                           f"min={psi_i.min():.4f}, max={psi_i.max():.4f}, "
                           f"mean={psi_i.mean():.4f}, active%={active_pct:.1f}%")
             
             # Check for normalization issues
-            print(f"\n  Normalization check:")
+            logger.info(f"\n  Normalization check:")
             psi_sum = psi_normalized.sum(dim=1)
-            print(f"    psi_normalized.sum: min={psi_sum.min():.6f}, max={psi_sum.max():.6f}")
+            logger.info(f"    psi_normalized.sum: min={psi_sum.min():.6f}, max={psi_sum.max():.6f}")
             
             # Check for NaN
             nan_count = torch.isnan(psi_normalized).sum().item()
             if nan_count > 0:
-                print(f"\n  *** CRITICAL WARNING ***: {nan_count} NaN values in psi_normalized!")
+                logger.info(f"\n  *** CRITICAL WARNING ***: {nan_count} NaN values in psi_normalized!")
             
             # Check raw psi sum before normalization
             if self.regions:
@@ -881,9 +884,9 @@ class ANT(nn.Module):
                     if region is not None:
                         region_idx = self.regions.index(region)
                         raw_psi = psi_experts[:, region_idx]
-                        print(f"    raw_psi[exp={exp_idx}]: sum={raw_psi.sum():.4f}")
+                        logger.info(f"    raw_psi[exp={exp_idx}]: sum={raw_psi.sum():.4f}")
         
-        print()
+        logger.info()
 
     def __repr__(self) -> str:
         base_str = " -> ".join(

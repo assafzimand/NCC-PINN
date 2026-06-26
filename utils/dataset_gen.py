@@ -9,6 +9,9 @@ from utils.dataset_plotting import (
     plot_dataset,
     plot_dataset_statistics
 )
+from utils.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 def calculate_dataset_sizes(config: Dict) -> Dict[str, int]:
@@ -57,23 +60,23 @@ def calculate_dataset_sizes(config: Dict) -> Dict[str, int]:
     }
     
     # Print calculated values
-    print(f"\n{'='*60}")
-    print(f"Dataset Size Calculation for {problem}")
-    print(f"{'='*60}")
-    print(f"  Dimensionality (d): {d} ({spatial_dim} spatial + 1 time)")
-    print(f"  Domain Volume (V): {V:.4f}")
-    print(f"  Target Ratio (S^(1/d) / V^(1/d)): {ratio}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Dataset Size Calculation for {problem}")
+    logger.info(f"{'='*60}")
+    logger.info(f"  Dimensionality (d): {d} ({spatial_dim} spatial + 1 time)")
+    logger.info(f"  Domain Volume (V): {V:.4f}")
+    logger.info(f"  Target Ratio (S^(1/d) / V^(1/d)): {ratio}")
     calculated_ratio = (sizes['n_residual_train'] ** (1/d)) / (V ** (1/d))
-    print(f"  Calculated Ratio: {calculated_ratio:.2f}")
-    print(f"\n  Dataset Sizes:")
-    print(f"    n_residual_train: {sizes['n_residual_train']:,}")
-    print(f"    n_initial_train:  {sizes['n_initial_train']:,}")
-    print(f"    n_boundary_train: {sizes['n_boundary_train']:,}")
-    print(f"    n_residual_eval:  {sizes['n_residual_eval']:,}")
-    print(f"    n_initial_eval:   {sizes['n_initial_eval']:,}")
-    print(f"    n_boundary_eval:  {sizes['n_boundary_eval']:,}")
-    print(f"    n_samples_ncc:    {sizes['n_samples_ncc']:,}")
-    print(f"{'='*60}\n")
+    logger.info(f"  Calculated Ratio: {calculated_ratio:.2f}")
+    logger.info(f"\n  Dataset Sizes:")
+    logger.info(f"    n_residual_train: {sizes['n_residual_train']:,}")
+    logger.info(f"    n_initial_train:  {sizes['n_initial_train']:,}")
+    logger.info(f"    n_boundary_train: {sizes['n_boundary_train']:,}")
+    logger.info(f"    n_residual_eval:  {sizes['n_residual_eval']:,}")
+    logger.info(f"    n_initial_eval:   {sizes['n_initial_eval']:,}")
+    logger.info(f"    n_boundary_eval:  {sizes['n_boundary_eval']:,}")
+    logger.info(f"    n_samples_ncc:    {sizes['n_samples_ncc']:,}")
+    logger.info(f"{'='*60}\n")
     
     return sizes
 
@@ -105,7 +108,7 @@ def generate_and_save_datasets(config: Dict) -> None:
 
     # Generate training data if missing
     if not train_path.exists():
-        print(f"Generating training data for {problem}...")
+        logger.info(f"Generating training data for {problem}...")
         train_data = solver_module.generate_dataset(
             n_residual=sizes['n_residual_train'],
             n_ic=sizes['n_initial_train'],
@@ -114,7 +117,7 @@ def generate_and_save_datasets(config: Dict) -> None:
             config=config
         )
         torch.save(train_data, train_path)
-        print(f"  Saved to {train_path}")
+        logger.info(f"  Saved to {train_path}")
 
         # Create visualizations
         plot_path = dataset_dir / "training_data_visualization.png"
@@ -133,11 +136,11 @@ def generate_and_save_datasets(config: Dict) -> None:
         except ValueError:
             pass  # No custom visualization for this problem
     else:
-        print(f"Training data already exists: {train_path}")
+        logger.info(f"Training data already exists: {train_path}")
 
     # Generate evaluation data if missing
     if not eval_path.exists():
-        print(f"Generating evaluation data for {problem}...")
+        logger.info(f"Generating evaluation data for {problem}...")
         eval_data = solver_module.generate_dataset(
             n_residual=sizes['n_residual_eval'],
             n_ic=sizes['n_initial_eval'],
@@ -146,7 +149,7 @@ def generate_and_save_datasets(config: Dict) -> None:
             config=config
         )
         torch.save(eval_data, eval_path)
-        print(f"  Saved to {eval_path}")
+        logger.info(f"  Saved to {eval_path}")
 
         # Create visualizations
         plot_path = dataset_dir / "eval_data_visualization.png"
@@ -165,16 +168,16 @@ def generate_and_save_datasets(config: Dict) -> None:
         except ValueError:
             pass  # No custom visualization for this problem
     else:
-        print(f"Evaluation data already exists: {eval_path}")
+        logger.info(f"Evaluation data already exists: {eval_path}")
 
     # Generate NCC data if missing (stratified)
     ncc_path = dataset_dir / "ncc_data.pt"
     if not ncc_path.exists():
-        print(f"Generating stratified NCC data for {problem}...")
+        logger.info(f"Generating stratified NCC data for {problem}...")
         
         # Generate large dataset for stratification (10x target size)
         n_large = sizes['n_samples_ncc'] * 10
-        print(f"  Generating large dataset ({n_large} samples) for stratification...")
+        logger.info(f"  Generating large dataset ({n_large} samples) for stratification...")
         large_data = solver_module.generate_dataset(
             n_residual=n_large,
             n_ic=0,  # NCC only needs residual points
@@ -187,7 +190,7 @@ def generate_and_save_datasets(config: Dict) -> None:
         output_dim = large_data['h_gt'].shape[1]
         
         # Apply uniform sampling
-        print(f"  Applying uniform sampling (target: {sizes['n_samples_ncc']} samples)...")
+        logger.info(f"  Applying uniform sampling (target: {sizes['n_samples_ncc']} samples)...")
         from utils.stratified_sampling import stratify_by_bins
         ncc_data = stratify_by_bins(
             large_data, 
@@ -198,8 +201,8 @@ def generate_and_save_datasets(config: Dict) -> None:
         )
         
         torch.save(ncc_data, ncc_path)
-        print(f"  Saved {len(ncc_data['x'])} samples to {ncc_path}")
-        print(f"  All {config['bins']**output_dim} classes should be represented")
+        logger.info(f"  Saved {len(ncc_data['x'])} samples to {ncc_path}")
+        logger.info(f"  All {config['bins']**output_dim} classes should be represented")
         
         # Create visualizations
         plot_path = dataset_dir / "ncc_data_visualization.png"
@@ -217,20 +220,20 @@ def generate_and_save_datasets(config: Dict) -> None:
         except ValueError:
             pass  # No custom NCC visualization for this problem
     else:
-        print(f"NCC data already exists: {ncc_path}")
+        logger.info(f"NCC data already exists: {ncc_path}")
 
     # Generate frequency grid if missing
     freq_grid_path = dataset_dir / "frequency_grid.pt"
     if not freq_grid_path.exists():
-        print(f"Generating frequency grid for {problem}...")
+        logger.info(f"Generating frequency grid for {problem}...")
         from frequency_tracker.frequency_core import generate_frequency_grid
         
         x_grid, grid_shape, n_dims = generate_frequency_grid(config)
         N_grid = x_grid.shape[0]
-        print(f"  Grid shape: {grid_shape} ({N_grid:,} total points)")
+        logger.info(f"  Grid shape: {grid_shape} ({N_grid:,} total points)")
         
         # Compute h_gt on grid using solver
-        print(f"  Computing ground truth on grid...")
+        logger.info(f"  Computing ground truth on grid...")
         h_gt_grid = solver_module.evaluate_on_grid(x_grid, config)
         
         freq_data = {
@@ -240,9 +243,9 @@ def generate_and_save_datasets(config: Dict) -> None:
             'n_dims': n_dims            # int
         }
         torch.save(freq_data, freq_grid_path)
-        print(f"  Saved to {freq_grid_path}")
+        logger.info(f"  Saved to {freq_grid_path}")
     else:
-        print(f"Frequency grid already exists: {freq_grid_path}")
+        logger.info(f"Frequency grid already exists: {freq_grid_path}")
 
 
 def _analytic_ic(problem: str, x: torch.Tensor, pc: Dict) -> torch.Tensor:
@@ -424,7 +427,7 @@ def _sample_adaptive_residual_points(
     r_min = residuals.min().item()
     r_max = residuals.max().item()
     r_mean = residuals.mean().item()
-    print(f"  [Resample] Adaptive: residual_pdf min={r_min:.6f}, max={r_max:.6f}, mean={r_mean:.6f} (from cached PDE residuals)")
+    logger.info(f"  [Resample] Adaptive: residual_pdf min={r_min:.6f}, max={r_max:.6f}, mean={r_mean:.6f} (from cached PDE residuals)")
     
     # Save diagnostic heatmap (only for 1D spatial problems)
     if run_dir is not None and epoch is not None and spatial_dim == 1:
@@ -621,7 +624,7 @@ def _save_adaptive_sampling_heatmap(
         plt.close(fig)
         
     except Exception as e:
-        print(f"  [Warning] Failed to save adaptive sampling heatmap: {e}")
+        logger.info(f"  [Warning] Failed to save adaptive sampling heatmap: {e}")
 
 
 def regenerate_training_data(
@@ -716,7 +719,7 @@ def regenerate_training_data(
                 t_parts.append(t_leaf)
             x_adap = torch.cat(x_parts, dim=0)[:n_adaptive]
             t_adap = torch.cat(t_parts, dim=0)[:n_adaptive]
-            print(f"  [Resample] Per-leaf adaptive: {n_leaves} leaves × ~{n_per_leaf_base} pts = {len(x_adap)} adaptive")
+            logger.info(f"  [Resample] Per-leaf adaptive: {n_leaves} leaves × ~{n_per_leaf_base} pts = {len(x_adap)} adaptive")
             if run_dir is not None and epoch is not None and spatial_dim == 1:
                 _all_x = torch.cat([r[0] for r in cached_residuals], dim=0)
                 _all_t = torch.cat([r[1] for r in cached_residuals], dim=0)
@@ -736,7 +739,7 @@ def regenerate_training_data(
         x[idx:idx + n_adaptive] = x_adap
         t[idx:idx + n_adaptive] = t_adap
         idx += n_adaptive
-        print(f"  [Resample] n_residual={n_res} (uniform={n_uniform} + adaptive={n_adaptive})")
+        logger.info(f"  [Resample] n_residual={n_res} (uniform={n_uniform} + adaptive={n_adaptive})")
     else:
         # All uniform (default behavior, also used when no cached residuals)
         for d in range(spatial_dim):

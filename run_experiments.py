@@ -19,6 +19,10 @@ try:
 except Exception:
     pass
 
+from utils.logging_config import setup_logging, get_logger, update_log_file
+
+logger = get_logger(__name__)
+
 
 def load_experiment_plan(plan_path="experiments_plan.yaml"):
     """Load experiment plan from YAML file."""
@@ -52,10 +56,10 @@ def _deep_merge(base, override):
 
 def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
     """Run one experiment."""
-    print(f"\n{'='*70}")
-    print(f"Running Experiment: {exp_name}")
-    print(f"Architecture: {exp_config['base_architecture']}")
-    print(f"{'='*70}\n")
+    logger.info(f"{'='*70}")
+    logger.info(f"Running Experiment: {exp_name}")
+    logger.info(f"Architecture: {exp_config['base_architecture']}")
+    logger.info(f"{'='*70}")
     
     # Deep-merge so nested dicts (adaptive_pinn, etc.) are merged, not replaced
     config = _deep_merge(base_config, exp_config)
@@ -81,7 +85,7 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
         result = subprocess.run([sys.executable, 'run_ncc.py'])
 
         if result.returncode != 0:
-            print(f"\nWARNING: {exp_name} exited with code {result.returncode} — attempting to save partial output anyway.")
+            logger.warning(f"{exp_name} exited with code {result.returncode} — attempting to save partial output anyway.")
 
         # Find the checkpoint inside the run's output dir
         outputs_root = Path("outputs")
@@ -101,7 +105,7 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
                         break
         
         if best_checkpoint is None:
-            print(f"\nWARNING: No checkpoint found for {exp_name}, skipping inner metrics")
+            logger.warning(f"No checkpoint found for {exp_name}, skipping inner metrics")
             best_checkpoint = Path("nonexistent")
         
         # Check if we should skip inner metrics analysis for adaptive PINN
@@ -115,15 +119,15 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
         num_analysis_steps = 1  # NCC always runs
         
         if skip_inner_metrics:
-            print(f"\n{'='*70}")
-            print(f"Skipping Probes/Derivatives/Frequency for: {exp_name}")
-            print(f"(adaptive_pinn.inner_metrics_calculation is False)")
-            print(f"{'='*70}\n")
+            logger.info(f"{'='*70}")
+            logger.info(f"Skipping Probes/Derivatives/Frequency for: {exp_name}")
+            logger.info(f"(adaptive_pinn.inner_metrics_calculation is False)")
+            logger.info(f"{'='*70}")
         else:
             # Step 2: Run probes analysis in eval-only mode on the trained checkpoint
-            print(f"\n{'='*70}")
-            print(f"Running Probe Analysis for: {exp_name} (eval-only mode)")
-            print(f"{'='*70}\n")
+            logger.info(f"{'='*70}")
+            logger.info(f"Running Probe Analysis for: {exp_name} (eval-only mode)")
+            logger.info(f"{'='*70}")
             
             # Update config to eval_only mode with resume_from
             eval_config = config.copy()
@@ -136,13 +140,13 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             result_probes = subprocess.run([sys.executable, 'run_probes.py'])
             
             if result_probes.returncode != 0:
-                print(f"\nWARNING in {exp_name} Probes: Process exited with code {result_probes.returncode}")
+                logger.warning(f"{exp_name} Probes: Process exited with code {result_probes.returncode}")
             num_analysis_steps += 1
             
             # Step 3: Run derivatives tracker analysis in eval-only mode on the trained checkpoint
-            print(f"\n{'='*70}")
-            print(f"Running Derivatives Tracker for: {exp_name} (eval-only mode)")
-            print(f"{'='*70}\n")
+            logger.info(f"{'='*70}")
+            logger.info(f"Running Derivatives Tracker for: {exp_name} (eval-only mode)")
+            logger.info(f"{'='*70}")
             
             with open('config/config.yaml', 'w') as f:
                 yaml.dump(eval_config, f, default_flow_style=False)
@@ -150,13 +154,13 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             result_derivatives = subprocess.run([sys.executable, 'run_derivatives_tracker.py'])
             
             if result_derivatives.returncode != 0:
-                print(f"\nWARNING in {exp_name} Derivatives: Process exited with code {result_derivatives.returncode}")
+                logger.warning(f"{exp_name} Derivatives: Process exited with code {result_derivatives.returncode}")
             num_analysis_steps += 1
             
             # Step 4: Run frequency tracker analysis in eval-only mode on the trained checkpoint
-            print(f"\n{'='*70}")
-            print(f"Running Frequency Tracker for: {exp_name} (eval-only mode)")
-            print(f"{'='*70}\n")
+            logger.info(f"{'='*70}")
+            logger.info(f"Running Frequency Tracker for: {exp_name} (eval-only mode)")
+            logger.info(f"{'='*70}")
             
             with open('config/config.yaml', 'w') as f:
                 yaml.dump(eval_config, f, default_flow_style=False)
@@ -164,7 +168,7 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             result_frequency = subprocess.run([sys.executable, 'run_frequency_tracker.py'])
             
             if result_frequency.returncode != 0:
-                print(f"\nWARNING in {exp_name} Frequency: Process exited with code {result_frequency.returncode}")
+                logger.warning(f"{exp_name} Frequency: Process exited with code {result_frequency.returncode}")
             num_analysis_steps += 1
         
         # Move outputs to experiment directory
@@ -178,33 +182,33 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             _run_dir_record = outputs_root / ".last_run_dir.txt"
             if _run_dir_record.exists():
                 _recorded = Path(_run_dir_record.read_text().strip())
-                print(f"  [Move] Recorded run_dir: {_recorded}")
+                logger.info(f"  [Move] Recorded run_dir: {_recorded}")
                 if _recorded.exists():
                     ncc_dir = _recorded
                 else:
-                    print(f"  [Move] WARNING: recorded run_dir missing on disk: {_recorded}")
+                    logger.warning(f"  [Move] recorded run_dir missing on disk: {_recorded}")
 
             # Fallback: mtime search
             if ncc_dir is None:
-                print(f"  [Move] Falling back to mtime search for {arch_folder_name}")
+                logger.info(f"  [Move] Falling back to mtime search for {arch_folder_name}")
                 arch_dir = outputs_root / arch_folder_name
-                print(f"  [Move] arch_dir exists={arch_dir.exists()}")
+                logger.info(f"  [Move] arch_dir exists={arch_dir.exists()}")
                 if arch_dir.exists():
                     ts_dirs = sorted(
                         [d for d in arch_dir.glob("*/") if d.is_dir()],
                         key=lambda x: x.stat().st_mtime
                     )
-                    print(f"  [Move] Found {len(ts_dirs)} dirs: {[d.name for d in ts_dirs]}")
+                    logger.info(f"  [Move] Found {len(ts_dirs)} dirs: {[d.name for d in ts_dirs]}")
                     if ts_dirs:
                         ncc_dir = ts_dirs[-1]
 
             if ncc_dir is None:
-                print(f"  [Move] ERROR: could not find output dir for {exp_name}")
+                logger.error(f"  [Move] could not find output dir for {exp_name}")
                 return None
 
             exp_output_dir.mkdir(parents=True, exist_ok=True)
             dest_dir = exp_output_dir / ncc_dir.name
-            print(f"  [Move] Moving {ncc_dir} -> {dest_dir}")
+            logger.info(f"  [Move] Moving {ncc_dir} -> {dest_dir}")
             if dest_dir.exists():
                 shutil.rmtree(dest_dir)
             shutil.move(str(ncc_dir), str(dest_dir))
@@ -214,14 +218,14 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
             # All four analysis steps ran — need 4 most-recent dirs from arch_dir
             arch_dir = outputs_root / arch_folder_name
             if not arch_dir.exists():
-                print(f"  [Move] ERROR: arch_dir not found: {arch_dir}")
+                logger.error(f"  [Move] arch_dir not found: {arch_dir}")
                 return None
             timestamp_dirs = sorted(
                 [d for d in arch_dir.glob("*/") if d.is_dir()],
                 key=lambda x: x.stat().st_mtime
             )
             if len(timestamp_dirs) < num_analysis_steps:
-                print(f"  [Move] ERROR: expected {num_analysis_steps} dirs, found {len(timestamp_dirs)}")
+                logger.error(f"  [Move] expected {num_analysis_steps} dirs, found {len(timestamp_dirs)}")
                 return None
 
             exp_output_dir.mkdir(parents=True, exist_ok=True)
@@ -281,9 +285,9 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
 
 def generate_comparison_report(parent_dir, results):
     """Generate comparison plots and tables."""
-    print(f"\n{'='*70}")
-    print("Generating Comparison Report")
-    print(f"{'='*70}\n")
+    logger.info(f"{'='*70}")
+    logger.info("Generating Comparison Report")
+    logger.info(f"{'='*70}")
     
     # Collect training metrics
     metrics_data = []
@@ -396,13 +400,13 @@ def generate_comparison_report(parent_dir, results):
         ncc_data[exp_name] = ncc_epochs
     
     if not metrics_data:
-        print("  No valid results to compare.")
+        logger.info("  No valid results to compare.")
         return
     
     # Create comparison table
     df = pd.DataFrame(metrics_data)
     df.to_csv(parent_dir / "comparison_summary.csv", index=False)
-    print(f"  Comparison table saved to comparison_summary.csv")
+    logger.info(f"  Comparison table saved to comparison_summary.csv")
     
     # Generate the three plots
     _generate_training_results_plot(parent_dir, df)
@@ -431,7 +435,7 @@ def generate_comparison_report(parent_dir, results):
     
     # Generate expert regions comparison if adaptive PINN data available
     if expert_regions_data:
-        print(f"  Generating expert regions comparison ({len(expert_regions_data)} experiments)...")
+        logger.info(f"  Generating expert regions comparison ({len(expert_regions_data)} experiments)...")
         from adaptive.visualization import (
             plot_expert_regions_comparison, prepare_ground_truth_grid
         )
@@ -475,7 +479,7 @@ def generate_comparison_report(parent_dir, results):
                                 eval_data, domain_bounds
                             )
                         except Exception as e:
-                            print(f"  Warning: Could not load ground truth: {e}")
+                            logger.warning(f"  Could not load ground truth: {e}")
                 
                 plot_expert_regions_comparison(
                     experiment_regions=expert_regions_data,
@@ -487,7 +491,7 @@ def generate_comparison_report(parent_dir, results):
                     grid_t=gt_t
                 )
     
-    print(f"\nComparison report saved to {parent_dir}")
+    logger.info(f"Comparison report saved to {parent_dir}")
 
 
 def _generate_training_results_plot(parent_dir, df):
@@ -575,20 +579,26 @@ def _generate_training_results_plot(parent_dir, df):
     
     plt.savefig(parent_dir / "training_and_results_comparison.png", dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"  Training and results comparison saved to training_and_results_comparison.png")
+    logger.info(f"  Training and results comparison saved to training_and_results_comparison.png")
 
 
 
 
 def main():
     """Main experiment runner."""
-    print("="*70)
-    print("NCC-PINN: Automated Experiments")
-    print("="*70)
+    # Set up logging (console only initially)
+    setup_logging(run_dir=None)
+    
+    logger.info("="*70)
+    logger.info("NCC-PINN: Automated Experiments")
+    logger.info("="*70)
     
     # Load experiment plan
     plan = load_experiment_plan()
     parent_dir = create_experiment_dir(plan)
+    
+    # Set up logging to write to the experiment directory
+    update_log_file(parent_dir, log_filename="experiment_runner.log")
     
     # Save experiment plan with git info
     from utils.io import get_git_info
@@ -596,14 +606,14 @@ def main():
     with open(parent_dir / "experiments_plan.yaml", 'w') as f:
         yaml.dump(plan, f, default_flow_style=False)
     
-    print(f"\nExperiment Directory: {parent_dir}")
-    print(f"Total Experiments: {len(plan['experiments'])}\n")
+    logger.info(f"Experiment Directory: {parent_dir}")
+    logger.info(f"Total Experiments: {len(plan['experiments'])}")
     
     results = {}
     
     # Run each experiment
     for i, exp in enumerate(plan['experiments'], 1):
-        print(f"\n[{i}/{len(plan['experiments'])}]")
+        logger.info(f"[{i}/{len(plan['experiments'])}]")
         try:
             result = run_single_experiment(
                 exp,
@@ -612,7 +622,7 @@ def main():
                 parent_dir
             )
         except Exception as _exp_err:
-            print(f"\n[ERROR] Experiment {exp['name']} raised an exception: {_exp_err}")
+            logger.error(f"Experiment {exp['name']} raised an exception: {_exp_err}")
             import traceback
             traceback.print_exc()
             result = None
@@ -622,12 +632,15 @@ def main():
     from regenerate_comparison_plots import generate_comparison_for_batch
     generate_comparison_for_batch(parent_dir)
     
-    print(f"\n{'='*70}")
-    print("All Experiments Complete!")
-    print(f"{'='*70}")
-    print(f"Results saved to: {parent_dir}")
+    logger.info(f"{'='*70}")
+    logger.info("All Experiments Complete!")
+    logger.info(f"{'='*70}")
+    logger.info(f"Results saved to: {parent_dir}")
+    
+    # Close logging
+    from utils.logging_config import close_logging
+    close_logging()
 
 
 if __name__ == "__main__":
     main()
-

@@ -26,6 +26,10 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from collections import defaultdict
 
+from utils.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class EpochTimer:
     """
@@ -135,7 +139,7 @@ class EpochTimer:
             parts.append(f"{key}={info['total_s']:.4f}s({info['count']}x)")
         
         detail = " | ".join(parts) if parts else "no sub-steps recorded"
-        print(f"  [TIMING] Epoch {epoch} (K={n_exp}): {total:.4f}s | {detail}")
+        logger.info(f"  [TIMING] Epoch {epoch} (K={n_exp}): {total:.4f}s | {detail}")
     
     def save(self, path: Path) -> None:
         """
@@ -195,7 +199,7 @@ class EpochTimer:
         with open(path, 'w') as f:
             json.dump(output, f, indent=2)
         
-        print(f"  Timing data saved to {path} ({len(self._epochs)} epochs)")
+        logger.info(f"  Timing data saved to {path} ({len(self._epochs)} epochs)")
     
     def print_summary(self) -> None:
         """Print a compact summary table grouped by num_experts."""
@@ -208,14 +212,14 @@ class EpochTimer:
             k = rec.get('num_experts', 0)
             by_k[k].append(rec)
         
-        print(f"\n{'='*70}")
-        print("TIMING SUMMARY (by num_experts)")
-        print(f"{'='*70}")
+        logger.info(f"\n{'='*70}")
+        logger.info("TIMING SUMMARY (by num_experts)")
+        logger.info(f"{'='*70}")
         
         for k in sorted(by_k.keys()):
             recs = by_k[k]
             totals = [r['total_s'] for r in recs]
-            print(f"\n  K={k} ({len(recs)} epochs): "
+            logger.info(f"\n  K={k} ({len(recs)} epochs): "
                   f"mean={statistics.mean(totals):.4f}s  "
                   f"median={statistics.median(totals):.4f}s  "
                   f"min={min(totals):.4f}s  max={max(totals):.4f}s")
@@ -228,7 +232,7 @@ class EpochTimer:
             for sk in sorted(step_keys):
                 vals = [r['steps'][sk]['total_s'] for r in recs if sk in r['steps']]
                 if vals:
-                    print(f"    {sk:40s}: mean={statistics.mean(vals):.4f}s  "
+                    logger.info(f"    {sk:40s}: mean={statistics.mean(vals):.4f}s  "
                           f"median={statistics.median(vals):.4f}s")
         
-        print(f"{'='*70}\n")
+        logger.info(f"{'='*70}\n")
