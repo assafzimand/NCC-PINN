@@ -655,7 +655,7 @@ class AToELeaves(nn.Module):
                 bad_coords = sample_inputs[bad_mask][:5]  # First 5
                 logger.info(f"      Sample bad coordinates: {bad_coords.tolist()}")
         
-        logger.info()
+        logger.info("")
 
     def __repr__(self) -> str:
         base_str = " -> ".join(map(str, self.base_architecture))

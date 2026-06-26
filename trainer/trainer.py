@@ -277,7 +277,7 @@ def _debug_print_model_state(model: nn.Module, segment_name: str,
         except Exception as e:
             logger.info(f"  [DEBUG] debug_composition failed: {e}")
     
-    logger.info()  # Blank line for readability
+    logger.info("")  # Blank line for readability
 
 
 def _create_primary_optimizer(model: nn.Module, cfg: Dict) -> Tuple[torch.optim.Optimizer, str]:
@@ -899,7 +899,7 @@ def _setup_training(
         apply_hidden_init(_init_target, _base_init_cfg)
         apply_output_init(_init_target, train_data, cfg, device)
         apply_spectral_norm(_init_target, cfg)
-        logger.info()
+        logger.info("")
 
     # ── Build the context that carries all state into the loop + finalize ──
     return TrainingContext(
