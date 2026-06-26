@@ -14,6 +14,10 @@ import torch
 import torch.nn as nn
 from typing import Dict
 
+from utils.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 def _get_output_layer(model: nn.Module) -> nn.Linear:
     """Return the final output nn.Linear for any supported architecture."""
@@ -64,11 +68,11 @@ def apply_hidden_init(model: nn.Module, cfg: dict) -> None:
                 nn.init.zeros_(module.fc2.weight)
                 n_resblocks += 1
         if n_resblocks:
-            print(f"  [Init] ResNet: zeroed fc2 in {n_resblocks} residual blocks (identity start)")
+            logger.info(f"  [Init] ResNet: zeroed fc2 in {n_resblocks} residual blocks (identity start)")
     except ImportError:
         pass
 
-    print(f"  [Init] Glorot uniform (gain={gain:.4f}) applied to {n_hidden} hidden layers")
+    logger.info(f"  [Init] Glorot uniform (gain={gain:.4f}) applied to {n_hidden} hidden layers")
 
 
 def apply_output_init(
@@ -100,7 +104,7 @@ def apply_output_init(
                 nn.init.zeros_(out_layer.weight)
             if out_layer.bias is not None:
                 nn.init.zeros_(out_layer.bias)
-        print("  [Init] Output layer: zero-initialized")
+        logger.info("  [Init] Output layer: zero-initialized")
 
     elif output_mode == 'ls':
         use_bias = init_cfg['ls_use_bias']
@@ -146,7 +150,7 @@ def apply_output_init(
 
         model.train()
         output_dim = out_layer.weight.shape[0]
-        print(
+        logger.info(
             f"  [Init] Output layer: LS-init from {n_ic} IC points "
             f"(hidden_dim={hidden_dim}, output_dim={output_dim}, use_bias={use_bias})"
         )
@@ -243,10 +247,10 @@ def apply_parent_copy_init(
 
     # Log what actually happened.
     if output_copied:
-        print(f"  [Init] Copied {n_hidden_copied} hidden layers from parent; output copied")
+        logger.info(f"  [Init] Copied {n_hidden_copied} hidden layers from parent; output copied")
     else:
         out_status = 'tiny-random' if use_spectral else 'zeroed'
-        print(f"  [Init] Copied {n_hidden_copied} hidden layers from parent; output {out_status}")
+        logger.info(f"  [Init] Copied {n_hidden_copied} hidden layers from parent; output {out_status}")
 
 
 def apply_spectral_norm(model: nn.Module, cfg: dict) -> None:
@@ -275,4 +279,4 @@ def apply_spectral_norm(model: nn.Module, cfg: dict) -> None:
             nn.utils.parametrizations.spectral_norm(module)
             n_wrapped += 1
 
-    print(f"  [Init] Spectral norm applied to {n_wrapped} layers (hidden + output)")
+    logger.info(f"  [Init] Spectral norm applied to {n_wrapped} layers (hidden + output)")

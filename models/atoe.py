@@ -27,6 +27,9 @@ from adaptive.indicators import (
     RegionDescriptor,
     BatchedIndicators
 )
+from utils.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class BatchedModels:
@@ -397,9 +400,9 @@ class AToE(nn.Module):
         # Log composition mode on first sync with experts
         if len(self.regions) > 0 and not getattr(self, '_logged_composition_mode', False):
             if self.composition_mode == 'additive':
-                print(f"  [AToE] Composition: additive per-level (base=1, per-level Z_ℓ = 1 + Σ_ℓ Ψ)")
+                logger.info(f"  [AToE] Composition: additive per-level (base=1, per-level Z_ℓ = 1 + Σ_ℓ Ψ)")
             else:
-                print(f"  [AToE] Composition: partition of unity (global Z = Σ Ψ)")
+                logger.info(f"  [AToE] Composition: partition of unity (global Z = Σ Ψ)")
             self._logged_composition_mode = True
 
     def sync_batched_models(self) -> None:
@@ -420,7 +423,7 @@ class AToE(nn.Module):
             if hasattr(module, 'reset_parameters'):
                 module.reset_parameters()
         n_params = sum(p.numel() for p in self.base_model.parameters())
-        print(f"  [Reinit] Base model reinitialized ({n_params} params)")
+        logger.info(f"  [Reinit] Base model reinitialized ({n_params} params)")
         self.batched_models.sync_from_models(self.base_model, self.experts)
 
     def spawn_expert(self, region: RegionDescriptor,
@@ -468,11 +471,11 @@ class AToE(nn.Module):
         self.leaf_indices.discard(region.parent_idx)
 
         parent_info = "Base Model" if region.parent_idx == -1 else f"E{region.parent_idx + 1}"
-        print(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
-        print(f"    Architecture: {architecture}")
-        print(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
-        print(f"    Wavelet norm: {region.wavelet_norm_squared:.6f}")
-        print(f"    Spawn epoch: {region.spawn_epoch}")
+        logger.info(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
+        logger.info(f"    Architecture: {architecture}")
+        logger.info(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
+        logger.info(f"    Wavelet norm: {region.wavelet_norm_squared:.6f}")
+        logger.info(f"    Spawn epoch: {region.spawn_epoch}")
 
         self.sync_batched_indicators()
         self.sync_batched_models()
@@ -1103,7 +1106,7 @@ class AToE(nn.Module):
         saved_expert_type = saved_adaptive.get('expert_type', 'mlp')
 
         if saved_base_arch != self.base_architecture:
-            print(f"  Recreating base model: {self.base_architecture} -> {saved_base_arch}")
+            logger.info(f"  Recreating base model: {self.base_architecture} -> {saved_base_arch}")
             device = next(self.base_model.parameters()).device
             self.base_model = create_network(
                 saved_base_arch, saved_activation, self.config,
@@ -1151,18 +1154,18 @@ class AToE(nn.Module):
         Args:
             sample_inputs: (N, n_dims) sample coordinates for composition verification
         """
-        print(f"\n[DEBUG] AToE Composition State:")
-        print(f"  Blending mode: {self.blending_mode}")
-        print(f"  Indicator type: {self.indicator_type}")
-        print(f"  Num experts: {len(self.experts)}")
-        print(f"  Base weight: {self.base_weight}")
+        logger.info(f"\n[DEBUG] AToE Composition State:")
+        logger.info(f"  Blending mode: {self.blending_mode}")
+        logger.info(f"  Indicator type: {self.indicator_type}")
+        logger.info(f"  Num experts: {len(self.experts)}")
+        logger.info(f"  Base weight: {self.base_weight}")
         
         with torch.no_grad():
             # Get indicators
             psi_base, psi_experts = self.batched_indicators(sample_inputs)
             
-            print(f"\n  Sample psi values (N={sample_inputs.shape[0]} points):")
-            print(f"    psi_base: min={psi_base.min():.4f}, max={psi_base.max():.4f}, mean={psi_base.mean():.4f}")
+            logger.info(f"\n  Sample psi values (N={sample_inputs.shape[0]} points):")
+            logger.info(f"    psi_base: min={psi_base.min():.4f}, max={psi_base.max():.4f}, mean={psi_base.mean():.4f}")
             
             if psi_experts.shape[1] > 0:
                 for i in range(psi_experts.shape[1]):
@@ -1171,13 +1174,13 @@ class AToE(nn.Module):
                     region = self.regions[i] if i < len(self.regions) else None
                     bounds = f"{region.bounds_lower}->{region.bounds_upper}" if region else "?"
                     active_pct = (psi_i > 0.01).float().mean().item() * 100
-                    print(f"    psi_expert[{i}] (depth={depth}, {bounds}): "
+                    logger.info(f"    psi_expert[{i}] (depth={depth}, {bounds}): "
                           f"min={psi_i.min():.4f}, max={psi_i.max():.4f}, "
                           f"mean={psi_i.mean():.4f}, active%={active_pct:.1f}%")
             
             # Verify normalization for additive mode
             if self.blending_mode == 'soft' and self.composition_mode == 'additive':
-                print(f"\n  Additive composition check:")
+                logger.info(f"\n  Additive composition check:")
                 for depth in range(1, getattr(self, '_max_depth', 1) + 1):
                     if hasattr(self, '_expert_depths'):
                         depth_mask = (self._expert_depths == depth)
@@ -1185,16 +1188,16 @@ class AToE(nn.Module):
                             psi_at_level = psi_experts[:, depth_mask]
                             Z_level = 1.0 + psi_at_level.sum(dim=1)
                             w_sum = psi_at_level.sum(dim=1) / Z_level
-                            print(f"    Level {depth}: Z=1+sum(psi)={Z_level.mean():.4f}, "
+                            logger.info(f"    Level {depth}: Z=1+sum(psi)={Z_level.mean():.4f}, "
                                   f"w_sum={w_sum.mean():.4f} (should be <1)")
             
             # Check for potential issues
             total_psi = psi_base.sum(dim=1) + psi_experts.sum(dim=1)
             zero_psi_points = (total_psi < 1e-6).sum().item()
             if zero_psi_points > 0:
-                print(f"\n  WARNING: {zero_psi_points} points have near-zero total psi!")
+                logger.info(f"\n  WARNING: {zero_psi_points} points have near-zero total psi!")
         
-        print()
+        logger.info()
 
     def __repr__(self) -> str:
         """String representation."""

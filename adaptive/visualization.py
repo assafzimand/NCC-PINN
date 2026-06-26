@@ -16,6 +16,9 @@ from typing import List, Dict, Optional, Union, Tuple
 import torch
 
 from adaptive.indicators import RegionDescriptor
+from utils.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 def prepare_ground_truth_grid(
@@ -56,7 +59,7 @@ def prepare_ground_truth_grid(
         elif 'u' in eval_data:
             h = _to_numpy(eval_data['u'])
         else:
-            print(f"  Warning: No ground truth key found. Available: {list(eval_data.keys())}")
+            logger.info(f"  Warning: No ground truth key found. Available: {list(eval_data.keys())}")
             return None, None, None
         
         # Only support 2D domains (x, t) for now
@@ -100,7 +103,7 @@ def prepare_ground_truth_grid(
         return ground_truth, grid_x, grid_t
         
     except Exception as e:
-        print(f"  Warning: Could not prepare ground truth grid: {e}")
+        logger.info(f"  Warning: Could not prepare ground truth grid: {e}")
         return None, None, None
 
 
@@ -243,7 +246,7 @@ def _plot_expert_regions_2d(
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"  Expert regions plot saved to {output_path}")
+    logger.info(f"  Expert regions plot saved to {output_path}")
 
 
 def _plot_expert_regions_3d(
@@ -282,7 +285,7 @@ def _plot_expert_regions_3d(
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"  Expert regions 3D plot saved to {output_path}")
+    logger.info(f"  Expert regions 3D plot saved to {output_path}")
 
 
 def _draw_box_3d(ax, lower, upper, color='blue', alpha=0.3, linewidth=1, label=None):
@@ -369,7 +372,7 @@ def plot_expert_regions_comparison(
     
     n_experiments = len(experiment_regions)
     if n_experiments == 0:
-        print("  No experiments with expert regions to compare.")
+        logger.info("  No experiments with expert regions to compare.")
         return
     
     # Calculate grid dimensions
@@ -540,7 +543,7 @@ def plot_expert_regions_comparison(
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         plt.close()
     
-    print(f"  Expert regions comparison saved to {output_path}")
+    logger.info(f"  Expert regions comparison saved to {output_path}")
 
 
 def save_regions_metadata(
@@ -612,7 +615,7 @@ def save_regions_metadata(
         json.dump(data, f, indent=2, cls=_SafeEncoder)
 
     n_rejected = len(rejected_regions) if rejected_regions else 0
-    print(f"  Expert regions metadata saved to {output_path} "
+    logger.info(f"  Expert regions metadata saved to {output_path} "
           f"({len(regions)} spawned, {n_rejected} rejected)")
 
 
@@ -684,12 +687,12 @@ def plot_expert_soft_weights(
     
     # Only support 2D domains (x, t) for now
     if len(domain_bounds['lower']) != 2:
-        print(f"  Warning: Soft weight visualization only supports 2D domains")
+        logger.info(f"  Warning: Soft weight visualization only supports 2D domains")
         return
     
     # Check if model has soft blending
     if not model.blending_mode == 'soft':
-        print(f"  Warning: Base Model does not have soft blending enabled")
+        logger.info(f"  Warning: Base Model does not have soft blending enabled")
         return
     
     # Create evaluation grid
@@ -715,7 +718,7 @@ def plot_expert_soft_weights(
         weights_norm = decomposed.get('weights_normalized', {})
 
         if not weights_norm:
-            print(f"  Warning: No normalized weights available (model may use hard blending)")
+            logger.info(f"  Warning: No normalized weights available (model may use hard blending)")
             return
 
         # Determine which experts to plot
@@ -744,7 +747,7 @@ def plot_expert_soft_weights(
     # Create subplots
     n_plots = len(plot_data)
     if n_plots == 0:
-        print(f"  Warning: No weights to plot")
+        logger.info(f"  Warning: No weights to plot")
         return
 
     n_cols = min(3, n_plots)
@@ -790,4 +793,4 @@ def plot_expert_soft_weights(
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"  Soft blending weights plot saved to {output_path}")
+    logger.info(f"  Soft blending weights plot saved to {output_path}")

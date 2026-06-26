@@ -18,16 +18,21 @@ from utils.dataset_gen import generate_and_save_datasets
 from models.fc_model import FCNet
 from models.network_factory import create_network
 from trainer.trainer import train
+from utils.logging_config import setup_logging, get_logger
 
 
 def main():
     """Orchestrate the complete training workflow."""
-    print("=" * 60)
-    print("NCC-PINN Training Orchestrator")
-    print("=" * 60)
+    # Initial setup logging (console only until run_dir is created)
+    setup_logging(run_dir=None)
+    logger = get_logger(__name__)
+    
+    logger.info("=" * 60)
+    logger.info("NCC-PINN Training Orchestrator")
+    logger.info("=" * 60)
 
     # Load configuration
-    print("\n1. Loading configuration...")
+    logger.info("1. Loading configuration...")
     config = load_config()
     problem = config['problem']
     architecture = config['base_architecture']
@@ -35,40 +40,45 @@ def main():
     eval_only = config['eval_only']
     resume_from = config['resume_from']
 
-    print(f"  Problem: {problem}")
-    print(f"  Architecture: {architecture}")
-    print(f"  Activation: {activation}")
-    print(f"  Eval only: {eval_only}")
-    print(f"  Resume from: {resume_from}")
+    logger.info(f"  Problem: {problem}")
+    logger.info(f"  Architecture: {architecture}")
+    logger.info(f"  Activation: {activation}")
+    logger.info(f"  Eval only: {eval_only}")
+    logger.info(f"  Resume from: {resume_from}")
 
     # Create run directory
-    print("\n2. Creating run directory...")
+    logger.info("2. Creating run directory...")
     run_dir = make_run_dir(problem, architecture, activation)
-    print(f"  Run directory: {run_dir}")
+    logger.info(f"  Run directory: {run_dir}")
+    
+    # Now set up logging to write to the run directory
+    from utils.logging_config import update_log_file
+    update_log_file(run_dir)
+    logger.info(f"  Logging redirected to: {run_dir / 'training.log'}")
 
     # Save config to run directory
     import yaml
     config_path = run_dir / "config_used.yaml"
     with open(config_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False)
-    print(f"  ✓ Config saved to {config_path}")
+    logger.info(f"  Config saved to {config_path}")
 
     # Generate datasets if missing
-    print("\n3. Checking datasets...")
+    logger.info("3. Checking datasets...")
     dataset_dir = Path("datasets") / problem
     train_data_path = dataset_dir / "training_data.pt"
     eval_data_path = dataset_dir / "eval_data.pt"
 
     if not train_data_path.exists() or not eval_data_path.exists():
-        print("  Datasets not found. Generating...")
+        logger.info("  Datasets not found. Generating...")
         generate_and_save_datasets(config)
     else:
-        print(f"  ✓ Datasets found:")
-        print(f"    Train: {train_data_path}")
-        print(f"    Eval: {eval_data_path}")
+        logger.info(f"  Datasets found:")
+        logger.info(f"    Train: {train_data_path}")
+        logger.info(f"    Eval: {eval_data_path}")
 
     # Build model
-    print("\n4. Building model...")
+    logger.info("4. Building model...")
     device = torch.device('cuda' if config['cuda'] and
                           torch.cuda.is_available() else 'cpu')
     
@@ -86,29 +96,29 @@ def main():
         else:
             from models.atoe import AToE
             model = AToE(architecture, activation, config, adaptive_cfg)
-        print(f"  Model type: {type(model).__name__}")
-        print(f"  Base layers: {len(model.get_layer_names())}")
-        print(f"    Max experts: {adaptive_cfg.get('max_experts', 5)}")
-        print(f"    Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
+        logger.info(f"  Model type: {type(model).__name__}")
+        logger.info(f"  Base layers: {len(model.get_layer_names())}")
+        logger.info(f"    Max experts: {adaptive_cfg.get('max_experts', 5)}")
+        logger.info(f"    Blending mode: {adaptive_cfg.get('blending_mode', 'hard')}")
     else:
         expert_type = adaptive_cfg.get('expert_type', 'mlp')
         model = create_network(architecture, activation, config,
                                is_base=True, expert_type=expert_type)
-        print(f"  Model created: {len(model.get_layer_names())} layers")
-    print(f"  Device: {device}")
+        logger.info(f"  Model created: {len(model.get_layer_names())} layers")
+    logger.info(f"  Device: {device}")
 
     # Build loss function
-    print("\n5. Building loss function...")
+    logger.info("5. Building loss function...")
     loss_module = importlib.import_module(f"losses.{problem}_loss")
     loss_fn = loss_module.build_loss(**config)
-    print(f"  ✓ Loss function built for {problem}")
+    logger.info(f"  Loss function built for {problem}")
 
     # Handle resume_from checkpoint
     start_epoch = 0
     optimizer = None
 
     if resume_from is not None:
-        print(f"\n6. Loading checkpoint from: {resume_from}")
+        logger.info(f"6. Loading checkpoint from: {resume_from}")
         checkpoint_path = Path(resume_from)
 
         if not checkpoint_path.exists():
@@ -118,31 +128,31 @@ def main():
 
         if is_adaptive and checkpoint.get('is_adaptive', False):
             model.load_state_dict_extended(checkpoint['adaptive_state'])
-            print(f"  Adaptive model weights loaded ({model.num_experts} experts)")
+            logger.info(f"  Adaptive model weights loaded ({model.num_experts} experts)")
         else:
             model.load_state_dict(checkpoint['model_state_dict'])
-            print(f"  ✓ Model weights loaded")
+            logger.info(f"  Model weights loaded")
 
         # Load optimizer state for fine-tuning
         if not eval_only:
             optimizer_state = checkpoint['optimizer_state_dict']
             start_epoch = checkpoint['epoch']
-            print(f"  ✓ Optimizer state loaded (resuming from epoch {start_epoch})")
+            logger.info(f"  Optimizer state loaded (resuming from epoch {start_epoch})")
         else:
-            print(f"  ✓ Model loaded for evaluation only")
+            logger.info(f"  Model loaded for evaluation only")
 
-        # Print checkpoint info
+        # Log checkpoint info
         if 'train_loss' in checkpoint:
-            print(f"  Checkpoint info:")
-            print(f"    Epoch: {checkpoint['epoch']}")
-            print(f"    Train loss: {checkpoint['train_loss']:.6f}")
-            print(f"    Eval loss: {checkpoint['eval_loss']:.6f}")
+            logger.info(f"  Checkpoint info:")
+            logger.info(f"    Epoch: {checkpoint['epoch']}")
+            logger.info(f"    Train loss: {checkpoint['train_loss']:.6f}")
+            logger.info(f"    Eval loss: {checkpoint['eval_loss']:.6f}")
     else:
-        print("\n6. No checkpoint to resume from")
+        logger.info("6. No checkpoint to resume from")
 
     # Training or evaluation
     if eval_only:
-        print("\n7. Evaluation-only mode")
+        logger.info("7. Evaluation-only mode")
 
         if resume_from is None:
             raise ValueError(
@@ -150,7 +160,7 @@ def main():
             )
 
         # Run evaluation
-        print("  Running evaluation on eval dataset...")
+        logger.info("  Running evaluation on eval dataset...")
         model = model.to(device)
         model.eval()
 
@@ -183,8 +193,8 @@ def main():
                 eval_data_device['h_gt']
             )
 
-        print(f"  ✓ Eval loss: {eval_loss.item():.6f}")
-        print(f"  ✓ Eval relative L2: {eval_rel_l2.item():.6f}")
+        logger.info(f"  Eval loss: {eval_loss.item():.6f}")
+        logger.info(f"  Eval relative L2: {eval_rel_l2.item():.6f}")
 
         # Save metrics
         import json
@@ -197,7 +207,7 @@ def main():
         metrics_path = run_dir / "metrics.json"
         with open(metrics_path, 'w') as f:
             json.dump(metrics, f, indent=2)
-        print(f"  ✓ Metrics saved to {metrics_path}")
+        logger.info(f"  Metrics saved to {metrics_path}")
 
         # Generate evaluation plots
         from trainer.plotting import plot_final_comparison
@@ -211,27 +221,27 @@ def main():
             training_plots_dir
         )
 
-        print(f"  ✓ Evaluation complete")
+        logger.info(f"  Evaluation complete")
 
     else:
-        print("\n7. Training mode")
+        logger.info("7. Training mode")
 
         # Create optimizer
         if optimizer is None:
             optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'])
-            print(f"  ✓ Optimizer created (Adam, lr={config['lr']})")
+            logger.info(f"  Optimizer created (Adam, lr={config['lr']})")
         else:
             # Reconstruct optimizer with loaded state
             optimizer_new = torch.optim.Adam(model.parameters(),
                                            lr=config['lr'])
             optimizer_new.load_state_dict(optimizer_state)
             optimizer = optimizer_new
-            print(f"  ✓ Optimizer resumed")
+            logger.info(f"  Optimizer resumed")
 
         # Adjust epochs if resuming
         if start_epoch > 0:
             remaining_epochs = config['epochs'] - start_epoch
-            print(f"  Continuing for {remaining_epochs} more epochs " +
+            logger.info(f"  Continuing for {remaining_epochs} more epochs " +
                   f"(total: {config['epochs']})")
 
         # Call trainer
@@ -244,29 +254,33 @@ def main():
             run_dir=run_dir
         )
 
-        print(f"\n  ✓ Training complete")
-        print(f"  Best checkpoint: {checkpoint_path}")
+        logger.info(f"  Training complete")
+        logger.info(f"  Best checkpoint: {checkpoint_path}")
 
     # Final summary
-    print("\n" + "=" * 60)
-    print("✓ Run complete!")
-    print("=" * 60)
-    print(f"Output directory: {run_dir}")
-    print(f"  - config_used.yaml")
-    print(f"  - metrics.json")
-    print(f"  - training_plots/")
+    logger.info("=" * 60)
+    logger.info("Run complete!")
+    logger.info("=" * 60)
+    logger.info(f"Output directory: {run_dir}")
+    logger.info(f"  - config_used.yaml")
+    logger.info(f"  - metrics.json")
+    logger.info(f"  - training_plots/")
     if not eval_only:
-        print(f"  - summary.txt")
-        print(f"Best checkpoint saved to: checkpoints/{problem}/")
-    print("=" * 60)
+        logger.info(f"  - summary.txt")
+        logger.info(f"Best checkpoint saved to: checkpoints/{problem}/")
+    logger.info("=" * 60)
+    
+    # Close logging
+    from utils.logging_config import close_logging
+    close_logging()
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        logger = get_logger(__name__)
+        logger.error(f"Error: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
-

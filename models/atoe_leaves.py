@@ -20,6 +20,9 @@ from adaptive.indicators import (
     RegionDescriptor,
     BatchedIndicators
 )
+from utils.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class AToELeaves(nn.Module):
@@ -266,11 +269,11 @@ class AToELeaves(nn.Module):
         self.leaf_indices.discard(region.parent_idx)
 
         parent_info = f"Base Model" if region.parent_idx == -1 else f"E{region.parent_idx + 1}"
-        print(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
-        print(f"    Architecture: {architecture}")
-        print(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
-        print(f"    Wavelet norm: {region.wavelet_norm_squared:.6f}")
-        print(f"    Spawn epoch: {region.spawn_epoch}")
+        logger.info(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
+        logger.info(f"    Architecture: {architecture}")
+        logger.info(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
+        logger.info(f"    Wavelet norm: {region.wavelet_norm_squared:.6f}")
+        logger.info(f"    Spawn epoch: {region.spawn_epoch}")
 
         self.sync_batched_indicators()
 
@@ -282,7 +285,7 @@ class AToELeaves(nn.Module):
             if hasattr(module, 'reset_parameters'):
                 module.reset_parameters()
         n_params = sum(p.numel() for p in self.base_model.parameters())
-        print(f"  [Reinit] Base model reinitialized ({n_params} params)")
+        logger.info(f"  [Reinit] Base model reinitialized ({n_params} params)")
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         threshold = self.adaptive_config.get('expert_activation_threshold', None)
@@ -547,7 +550,7 @@ class AToELeaves(nn.Module):
             saved_base_arch = self._infer_architecture_from_state_dict(state_dict['base_model'])
 
         if saved_base_arch != self.base_architecture:
-            print(f"  Recreating base model: {self.base_architecture} -> {saved_base_arch}")
+            logger.info(f"  Recreating base model: {self.base_architecture} -> {saved_base_arch}")
             device = next(self.base_model.parameters()).device
             self.base_model = create_network(
                 saved_base_arch, saved_activation, self.config,
@@ -611,13 +614,13 @@ class AToELeaves(nn.Module):
         Args:
             sample_inputs: (N, n_dims) sample coordinates for composition verification
         """
-        print(f"\n[DEBUG] AToELeaves Composition State:")
-        print(f"  Num experts: {len(self.experts)}")
-        print(f"  Leaf indices: {sorted(self.leaf_indices)}")
-        print(f"  Base in leaves: {-1 in self.leaf_indices}")
+        logger.info(f"\n[DEBUG] AToELeaves Composition State:")
+        logger.info(f"  Num experts: {len(self.experts)}")
+        logger.info(f"  Leaf indices: {sorted(self.leaf_indices)}")
+        logger.info(f"  Base in leaves: {-1 in self.leaf_indices}")
         
         if -1 in self.leaf_indices:
-            print(f"  Mode: Base-only (no expert spawns yet)")
+            logger.info(f"  Mode: Base-only (no expert spawns yet)")
             return
         
         with torch.no_grad():
@@ -625,13 +628,13 @@ class AToELeaves(nn.Module):
             _, psi_experts = self.batched_indicators(sample_inputs)
             psi_leaves = psi_experts[:, leaf_list]
             
-            print(f"\n  Sample psi values for {len(leaf_list)} leaves (N={sample_inputs.shape[0]} points):")
+            logger.info(f"\n  Sample psi values for {len(leaf_list)} leaves (N={sample_inputs.shape[0]} points):")
             for i, leaf_idx in enumerate(leaf_list):
                 psi_i = psi_leaves[:, i]
                 region = self.regions[leaf_idx] if leaf_idx < len(self.regions) else None
                 bounds = f"{region.bounds_lower}->{region.bounds_upper}" if region else "?"
                 active_pct = (psi_i > 0.01).float().mean().item() * 100
-                print(f"    psi_leaf[{leaf_idx}] ({bounds}): "
+                logger.info(f"    psi_leaf[{leaf_idx}] ({bounds}): "
                       f"min={psi_i.min():.4f}, max={psi_i.max():.4f}, "
                       f"mean={psi_i.mean():.4f}, active%={active_pct:.1f}%")
             
@@ -639,20 +642,20 @@ class AToELeaves(nn.Module):
             psi_sum = psi_leaves.sum(dim=1)
             zero_sum_points = (psi_sum < 1e-6).sum().item()
             
-            print(f"\n  Normalization check:")
-            print(f"    psi_sum: min={psi_sum.min():.6f}, max={psi_sum.max():.6f}, mean={psi_sum.mean():.4f}")
-            print(f"    Normalized weights sum: always 1.0 (by definition)")
+            logger.info(f"\n  Normalization check:")
+            logger.info(f"    psi_sum: min={psi_sum.min():.6f}, max={psi_sum.max():.6f}, mean={psi_sum.mean():.4f}")
+            logger.info(f"    Normalized weights sum: always 1.0 (by definition)")
             
             if zero_sum_points > 0:
-                print(f"\n  *** CRITICAL WARNING ***: {zero_sum_points} points have psi_sum < 1e-6!")
-                print(f"      This causes division by zero in normalization: psi / psi_sum")
-                print(f"      Result: NaN/Inf in model output -> rel-L2 explosion!")
+                logger.info(f"\n  *** CRITICAL WARNING ***: {zero_sum_points} points have psi_sum < 1e-6!")
+                logger.info(f"      This causes division by zero in normalization: psi / psi_sum")
+                logger.info(f"      Result: NaN/Inf in model output -> rel-L2 explosion!")
                 # Show coordinates of problematic points
                 bad_mask = psi_sum < 1e-6
                 bad_coords = sample_inputs[bad_mask][:5]  # First 5
-                print(f"      Sample bad coordinates: {bad_coords.tolist()}")
+                logger.info(f"      Sample bad coordinates: {bad_coords.tolist()}")
         
-        print()
+        logger.info()
 
     def __repr__(self) -> str:
         base_str = " -> ".join(map(str, self.base_architecture))
