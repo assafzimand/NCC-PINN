@@ -233,7 +233,7 @@ base_config:
     variable_for_expert_size: norm
     AToE_threshold_capacity: null
     ANT_threshold_architecture: null
-    ANT_default_hidden_layers: 29      # for M=10
+    ANT_default_hidden_layers: 30      # for M=10
     expert_type: mlp                   # Kiyani-exact (resnet evaluated in 01_training)
     blending_mode: soft
     sigma_fraction: 0.2
@@ -290,7 +290,7 @@ experiments:
   - name: allen_cahn_atoe_m10
     problem: allen_cahn
     model: AToE
-    base_architecture: [2, 37, 37, 37, 1]
+    base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       M_experts_num: 5
 
@@ -298,7 +298,7 @@ experiments:
   - name: allen_cahn_leaves_m10
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 37, 37, 37, 1]
+    base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       M_experts_num: 5
 
@@ -306,7 +306,7 @@ experiments:
   - name: allen_cahn_ant_m10
     problem: allen_cahn
     model: ANT
-    base_architecture: [2, 37, 37, 37, 1]
+    base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       M_experts_num: 5
-      ANT_default_hidden_layers: 29
+      ANT_default_hidden_layers: 30

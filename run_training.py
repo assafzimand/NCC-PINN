@@ -54,7 +54,7 @@ def main():
     # Now set up logging to write to the run directory
     from utils.logging_config import update_log_file
     update_log_file(run_dir)
-    logger.info(f"  Logging redirected to: {run_dir / 'training.log'}")
+    logger.info(f"  Logging redirected to: {run_dir / 'training_logs.log'}")
 
     # Save config to run directory
     import yaml
