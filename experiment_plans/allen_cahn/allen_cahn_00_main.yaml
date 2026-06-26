@@ -60,7 +60,7 @@ base_config:
   n_freq_grid: 128
   eval_every: 100                      # Kiyani-exact: 350 eval points over 35k epochs
   print_every: 100
-  save_every: 5000
+  save_every: 999999
   inner_metrics_eval_every: 9999999
   seed: 42
 

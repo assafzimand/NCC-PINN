@@ -21,7 +21,7 @@ All variants use the same compactly-supported flat-top window, replacing the pre
 - `W_{i,j} = b_{i,j} − a_{i,j}` — region width along dim `j`.
 - `α` — collar fraction (config key `sigma_fraction`, default 0.2).
 - `δ_{i,j} = α · W_{i,j}` — collar (transition) half-width along dim `j`.
-- `N` — window smoothness order (config key `window_smoothness_order`). Rule: `N ≥` PDE spatial order.
+- `N` — window smoothness order (config key `window_smoothness_order`). Rule: `N ≥` highest derivative order in the PDE (across all dimensions, including time).
 
 ### 0.2 Smoothstep Polynomial `S_N` (C^N)
 

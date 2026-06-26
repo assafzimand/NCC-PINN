@@ -60,7 +60,7 @@ base_config:
   n_freq_grid: 128
   eval_every: 100                    # Evaluate every N epochs
   print_every: 100                   # Print progress every N epochs
-  save_every: 5000                   # Save checkpoint every N epochs
+  save_every: 999999                   # Save checkpoint every N epochs
   inner_metrics_eval_every: 1000     # Run NCC/probes/derivatives analysis every N epochs
   seed: 42
 
