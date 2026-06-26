@@ -886,7 +886,7 @@ class ANT(nn.Module):
                         raw_psi = psi_experts[:, region_idx]
                         logger.info(f"    raw_psi[exp={exp_idx}]: sum={raw_psi.sum():.4f}")
         
-        logger.info()
+        logger.info("")
 
     def __repr__(self) -> str:
         base_str = " -> ".join(

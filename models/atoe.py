@@ -1197,7 +1197,7 @@ class AToE(nn.Module):
             if zero_psi_points > 0:
                 logger.info(f"\n  WARNING: {zero_psi_points} points have near-zero total psi!")
         
-        logger.info()
+        logger.info("")
 
     def __repr__(self) -> str:
         """String representation."""
