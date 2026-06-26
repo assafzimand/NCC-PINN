@@ -752,12 +752,30 @@ class AToE(nn.Module):
         if _t: _t.stop('fwd.sparse_eval')
 
         if _t: _t.start('fwd.blend')
-        psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
-        psi_base_norm = psi_base / psi_sum  # (N, 1)
-        psi_experts_norm = psi_experts / psi_sum  # (N, K)
+        
+        # Handle composition mode
+        if self.composition_mode == 'additive':
+            # Additive: base contributes at weight 1, experts get per-level normalization
+            psi_experts_norm = torch.zeros_like(psi_experts)  # (N, K)
+            
+            for depth in range(1, self._max_depth + 1):
+                depth_mask = (self._expert_depths == depth)  # (K,)
+                if not depth_mask.any():
+                    continue
+                psi_at_level = psi_experts[:, depth_mask]  # (N, num_at_depth)
+                Z_level = 1.0 + psi_at_level.sum(dim=1, keepdim=True)  # (N, 1)
+                psi_experts_norm[:, depth_mask] = psi_at_level / Z_level
+            
+            weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts_sparse  # (N, K, out_dim)
+            u_total = u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+        else:
+            # Legacy PoU: global normalization
+            psi_sum = psi_base + psi_experts.sum(dim=1, keepdim=True)  # (N, 1)
+            psi_base_norm = psi_base / psi_sum  # (N, 1)
+            psi_experts_norm = psi_experts / psi_sum  # (N, K)
 
-        weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts_sparse  # (N, K, out_dim)
-        u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
+            weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts_sparse  # (N, K, out_dim)
+            u_total = psi_base_norm * u_base + weighted_experts.sum(dim=1)  # (N, out_dim)
 
         if _t: _t.stop('fwd.blend')
 
