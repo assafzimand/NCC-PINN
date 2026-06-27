@@ -2923,7 +2923,9 @@ def _run_split_segment(
         return x  # already numpy
     
     try:
-        plot_path = ctx.run_dir / f'expert_curves_after_{segment_name}.png'
+        training_plots_dir = ctx.run_dir / 'training_plots'
+        training_plots_dir.mkdir(exist_ok=True)
+        plot_path = training_plots_dir / f'expert_curves_after_{segment_name}.png'
         plot_per_expert_curves(
             peh,
             list(regions_list),
@@ -2935,7 +2937,7 @@ def _run_split_segment(
             segment_name=segment_name,
         )
         logger.info(
-            f"[SplitPlot] Saved {plot_path.name}"
+            f"[SplitPlot] Saved training_plots/{plot_path.name}"
         )
     except Exception as e:
         logger.warning(
