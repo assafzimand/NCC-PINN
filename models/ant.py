@@ -379,6 +379,30 @@ class ANT(nn.Module):
                 node_outputs[node_idx] = u_i
                 node_activations[node_idx] = A_i
 
+    def forward_single_expert(self, expert_idx: int, inputs: torch.Tensor) -> torch.Tensor:
+        """Forward pass for a single expert, routed through frozen ancestors. No PoU.
+
+        Returns the raw expert output u_j for use in per-expert split loss.
+        Ancestors must already be frozen (requires_grad=False) by the caller.
+        """
+        u_base, A_base = self.base_model(inputs, return_activation=True)
+
+        if expert_idx == -1:
+            return u_base
+
+        node_outputs = {-1: u_base}
+        node_activations = {-1: A_base}
+
+        path = self._build_path(expert_idx)
+        for node_idx in path:
+            pidx = self.parent_indices[node_idx]
+            A_parent = node_activations[pidx]
+            u_i, A_i = self.experts[node_idx](A_parent, return_activation=True)
+            node_outputs[node_idx] = u_i
+            node_activations[node_idx] = A_i
+
+        return node_outputs[expert_idx]
+
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         if len(self.experts) == 0:
             return self.base_model(inputs)

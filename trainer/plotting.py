@@ -187,6 +187,145 @@ def plot_training_curves(
     print(f"  Training curves saved to {save_path}")
 
 
+def plot_per_expert_curves(
+    per_expert_history: dict,
+    regions: list,
+    save_path,
+    domain_bounds: dict = None,
+    gt_grid=None,
+    grid_x=None,
+    grid_t=None,
+    segment_name: str = '',
+) -> None:
+    """Per-expert term-wise loss + region-on-GT panel.
+
+    Args:
+        per_expert_history: ``{expert_idx: {term: [values]}}``
+        regions: model.regions (list of RegionDescriptor)
+        save_path: output file path
+        domain_bounds: ``{'lower': [...], 'upper': [...]}``
+        gt_grid: optional ground-truth 2-D array
+        grid_x, grid_t: 1-D coordinate arrays for gt_grid
+        segment_name: label for the figure title
+    """
+    import matplotlib.patches as patches
+
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    expert_ids = sorted(per_expert_history.keys())
+    n_experts = len(expert_ids)
+    if n_experts == 0:
+        return
+
+    fig, axes = plt.subplots(
+        2, n_experts,
+        figsize=(5 * n_experts, 8),
+        squeeze=False,
+    )
+
+    term_colors = {
+        'residual': '#e74c3c',
+        'ic': '#3498db',
+        'interface_ic': '#9b59b6',
+        'interface_bc': '#f39c12',
+        'bc': '#2ecc71',
+        'total': '#2c3e50',
+    }
+
+    for col, eidx in enumerate(expert_ids):
+        eh = per_expert_history[eidx]
+
+        # ── Top: term-wise loss curves ──
+        ax = axes[0, col]
+        vals_for_log = []
+        for term, values in eh.items():
+            if not values:
+                continue
+            ax.plot(
+                values,
+                color=term_colors.get(term, 'gray'),
+                label=term,
+                linewidth=1.2,
+                alpha=0.85,
+            )
+            vals_for_log.append(values)
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Loss')
+        ax.legend(fontsize=7, loc='upper right')
+        ax.grid(True, alpha=0.3)
+        _safe_log_scale(ax, vals_for_log)
+        ax.set_title(f'Expert {eidx}', fontsize=11)
+
+        # ── Bottom: region on GT heatmap ──
+        ax2 = axes[1, col]
+        if (gt_grid is not None
+                and grid_x is not None
+                and grid_t is not None):
+            if gt_grid.ndim == 3:
+                gt_disp = np.linalg.norm(gt_grid, axis=2)
+            else:
+                gt_disp = gt_grid
+            T, X = np.meshgrid(grid_t, grid_x)
+            ax2.pcolormesh(
+                X, T, gt_disp,
+                shading='auto', cmap='viridis',
+                alpha=0.7, zorder=0,
+            )
+
+        if eidx < len(regions):
+            r = regions[eidx]
+            bl, bu = r.bounds_lower, r.bounds_upper
+            rect = patches.Rectangle(
+                (bl[0], bl[-1]),
+                bu[0] - bl[0],
+                bu[-1] - bl[-1],
+                linewidth=2.5,
+                edgecolor='red',
+                facecolor='none',
+                zorder=10,
+            )
+            ax2.add_patch(rect)
+
+        # Draw all regions faintly
+        for ri, r in enumerate(regions):
+            if ri == eidx:
+                continue
+            bl, bu = r.bounds_lower, r.bounds_upper
+            rect_f = patches.Rectangle(
+                (bl[0], bl[-1]),
+                bu[0] - bl[0],
+                bu[-1] - bl[-1],
+                linewidth=0.8,
+                edgecolor='black',
+                facecolor='none',
+                alpha=0.3,
+                zorder=9,
+            )
+            ax2.add_patch(rect_f)
+
+        if domain_bounds:
+            lo = domain_bounds['lower']
+            hi = domain_bounds['upper']
+            pad = 0.05
+            xr = hi[0] - lo[0]
+            tr = hi[-1] - lo[-1]
+            ax2.set_xlim(lo[0] - pad * xr, hi[0] + pad * xr)
+            ax2.set_ylim(lo[-1] - pad * tr, hi[-1] + pad * tr)
+
+        ax2.set_xlabel('x')
+        ax2.set_ylabel('t')
+        ax2.set_title(f'Region (expert {eidx})', fontsize=10)
+
+    fig.suptitle(
+        f'Per-Expert Curves — {segment_name}',
+        fontsize=13, fontweight='bold',
+    )
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
 def plot_final_comparison(
     h_pred: np.ndarray,
     h_gt: np.ndarray,

@@ -8,13 +8,17 @@ from typing import Dict, Callable, Tuple
 import json
 import math
 import time
+import copy
 import numpy as np
 
 from utils.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-from trainer.plotting import plot_training_curves, plot_final_comparison
+from trainer.plotting import (
+    plot_training_curves, plot_final_comparison,
+    plot_per_expert_curves,
+)
 from trainer.utils import compute_infinity_norm_error
 from trainer.timing import EpochTimer
 from trainer.training_context import TrainingContext, SegmentResult
@@ -34,6 +38,8 @@ from utils.config_validation import (
 from losses.causal_weighting import advance_causal_schedule, create_causal_state
 from losses.lra import LRAWeights
 import losses.ks_loss as _ks_loss_module
+from losses.split_loss import build_split_loss
+from adaptive.subdomain_data import build_subdomain_data, KIND_NAMES
 
 
 def _override_ic_for_time_marching(
@@ -1214,60 +1220,72 @@ def _train_segment(
         # Resample training data periodically (in-memory, no disk I/O)
         # Skip resampling during L-BFGS/SSBroyden (they need stable loss landscape)
         allow_resample_optimizer = current_optimizer_name not in ('LBFGS', 'SSBroyden')
+        _split_ctx = getattr(ctx, '_split_context', None)
         if resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0 and allow_resample_optimizer:
             resample_seed = base_seed + epoch
-            cached_residuals = getattr(model, '_residual_cache', [])
-            model._residual_cache_enabled = False
-            _leaf_info_for_sampling = None
-            if _per_leaf_sampling and is_adaptive and hasattr(model, 'get_leaf_info'):
-                # Filter out base model entry (region=None); only pass real expert leaf regions.
-                # Before first spawn, get_leaf_info() returns [(None, -1)] — passing that to
-                # regenerate_training_data would crash when accessing region.bounds_lower.
-                _raw_leaf_info = model.get_leaf_info()
-                _leaf_info_for_sampling = [(r, idx) for r, idx in _raw_leaf_info if r is not None] or None
-            _leaf_causal_states_for_plot = (
-                loss_fn._leaf_state.get('causal_states', {})
-                if _per_leaf_causal and hasattr(loss_fn, '_leaf_state') else None
-            )
-            # Save residual heatmap when adaptive sampling is off (adaptive path saves
-            # it internally). Gated by plot_samples_every so the plot can be rarer
-            # than the resample step.
-            if (not adaptive_sampling_enabled and cached_residuals
-                    and _problem_spatial_dim == 1
-                    and (epoch - 1) % plot_samples_every == 0):
-                all_x = torch.cat([r[0] for r in cached_residuals], dim=0)
-                all_t = torch.cat([r[1] for r in cached_residuals], dim=0)
-                all_r2 = torch.cat([r[2] for r in cached_residuals], dim=0)
-                _save_adaptive_sampling_heatmap(
-                    all_x, all_t, all_r2,
-                    None, None,
-                    run_dir, epoch, cfg,
+            if _split_ctx is not None:
+                logger.info(f"  [Resample-Split] Rebuilding subdomain data at epoch {epoch}")
+                # Fix 5: Use frozen snapshot for stable interface targets
+                train_data = build_subdomain_data(
+                    _split_ctx['model_snapshot'], _split_ctx['new_expert_indices'],
+                    _split_ctx['regions'], cfg, device, seed=resample_seed,
+                )
+                ctx.train_data = train_data
+                torch.set_default_device(None)
+                train_loader = _create_split_dataloader(
+                    train_data, cfg['batch_size'], shuffle=True)
+                ctx.train_loader = train_loader
+                metrics['resample_events'].append({
+                    'epoch': epoch, 'action': 'split_resampled',
+                    'optimizer': current_optimizer_name,
+                })
+            else:
+                cached_residuals = getattr(model, '_residual_cache', [])
+                model._residual_cache_enabled = False
+                _leaf_info_for_sampling = None
+                if _per_leaf_sampling and is_adaptive and hasattr(model, 'get_leaf_info'):
+                    _raw_leaf_info = model.get_leaf_info()
+                    _leaf_info_for_sampling = [(r, idx) for r, idx in _raw_leaf_info if r is not None] or None
+                _leaf_causal_states_for_plot = (
+                    loss_fn._leaf_state.get('causal_states', {})
+                    if _per_leaf_causal and hasattr(loss_fn, '_leaf_state') else None
+                )
+                if (not adaptive_sampling_enabled and cached_residuals
+                        and _problem_spatial_dim == 1
+                        and (epoch - 1) % plot_samples_every == 0):
+                    all_x = torch.cat([r[0] for r in cached_residuals], dim=0)
+                    all_t = torch.cat([r[1] for r in cached_residuals], dim=0)
+                    all_r2 = torch.cat([r[2] for r in cached_residuals], dim=0)
+                    _save_adaptive_sampling_heatmap(
+                        all_x, all_t, all_r2,
+                        None, None,
+                        run_dir, epoch, cfg,
+                        causal_state=causal_state,
+                        leaf_info=_leaf_info_for_sampling,
+                        leaf_causal_states=_leaf_causal_states_for_plot,
+                    )
+                train_data = resample_residual_inplace(
+                    train_data, cfg, device,
+                    resample_seed=resample_seed,
+                    cached_residuals=cached_residuals,
+                    run_dir=run_dir,
+                    epoch=epoch,
                     causal_state=causal_state,
                     leaf_info=_leaf_info_for_sampling,
                     leaf_causal_states=_leaf_causal_states_for_plot,
                 )
-            train_data = resample_residual_inplace(
-                train_data, cfg, device,
-                resample_seed=resample_seed,
-                cached_residuals=cached_residuals,
-                run_dir=run_dir,
-                epoch=epoch,
-                causal_state=causal_state,
-                leaf_info=_leaf_info_for_sampling,
-                leaf_causal_states=_leaf_causal_states_for_plot,
-            )
-            torch.set_default_device(None)  # Reset device context after CUDA inference
-            train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
-            metrics['resample_events'].append({
-                'epoch': epoch,
-                'action': 'resampled',
-                'optimizer': current_optimizer_name
-            })
-            metrics['optimizer_snapshots'].append({
-                'epoch': epoch,
-                'event': 'resample',
-                **_get_optimizer_snapshot(optimizer, lr_scheduler, step_count),
-            })
+                torch.set_default_device(None)
+                train_loader = _create_dataloader(train_data, cfg['batch_size'], shuffle=True)
+                metrics['resample_events'].append({
+                    'epoch': epoch,
+                    'action': 'resampled',
+                    'optimizer': current_optimizer_name
+                })
+                metrics['optimizer_snapshots'].append({
+                    'epoch': epoch,
+                    'event': 'resample',
+                    **_get_optimizer_snapshot(optimizer, lr_scheduler, step_count),
+                })
         elif resample_every > 0 and epoch > 1 and (epoch - 1) % resample_every == 0 and not allow_resample_optimizer:
             # Log when resampling is skipped due to optimizer
             if not hasattr(model, '_resample_skip_logged'):
@@ -1761,6 +1779,20 @@ def _train_segment(
                 })
             except Exception as _comp_err:
                 logger.info(f"  [LossTerms] Failed to compute: {_comp_err}")
+
+            # Per-expert split-loss breakdown
+            _split_ctx = getattr(ctx, '_split_context', None)
+            if _split_ctx is not None and hasattr(loss_fn, '_per_expert_history'):
+                _peh = loss_fn._per_expert_history
+                for _eidx in sorted(_peh.keys()):
+                    _eh = _peh[_eidx]
+                    _last = {k: v[-1] for k, v in _eh.items() if v}
+                    _s = ', '.join(
+                        f'{k}={v:.6f}' for k, v in _last.items()
+                    )
+                    logger.info(
+                        f"  [SplitTerms] expert={_eidx} {_s}"
+                    )
 
         # End epoch timing (handles printing based on print_every)
         timer.end_epoch()
@@ -2691,8 +2723,8 @@ def train_orchestrator(ctx: TrainingContext) -> None:
     node_to_expert: Dict = {}
 
     # ── AToE-Leaves: spawn all leaves at once, then joint Phase 3 ──
+    split_enabled = ctx.adaptive_cfg.get('split_icbc', {}).get('enabled', False)
     if leaves_only:
-        # Capture output BEFORE spawning for continuity check
         _before_spawn = _check_output_continuity(ctx, "before_spawn")
         
         total = 0
@@ -2702,7 +2734,6 @@ def train_orchestrator(ctx: TrainingContext) -> None:
             total += spawned
         logger.info(f"[FullTree] Spawning complete. {total} leaves spawned.")
         
-        # Check output AFTER spawning - verify continuity
         _after_spawn = _check_output_continuity(ctx, "after_spawn")
         _log_continuity_diff(_before_spawn, _after_spawn)
         
@@ -2714,7 +2745,11 @@ def train_orchestrator(ctx: TrainingContext) -> None:
             return
         logger.info(f"[Phase 3] Training {total} leaf experts (base retired from composition)")
         _set_trainable(model, 'leaves')
-        res = _train_segment(ctx, 'phase3', cfg['epochs'], cfg)
+
+        if split_enabled:
+            _run_split_segment(ctx, 'phase3', cfg['epochs'], cfg, variant='AToE-Leaves')
+        else:
+            res = _train_segment(ctx, 'phase3', cfg['epochs'], cfg)
         ctx.total_epochs = ctx.epoch
         return
 
@@ -2729,7 +2764,6 @@ def train_orchestrator(ctx: TrainingContext) -> None:
         level_depth = node_tree_depth.get(level[0][0].node_id, 1)
         logger.info(f"\n[Staged] Level {level_depth}: spawning {len(level)} node(s)")
         
-        # Capture output BEFORE spawning for continuity check
         _before_spawn = _check_output_continuity(ctx, f"before_level_{level_depth}")
         
         spawned, _ = _spawn_nodes(ctx, level, copy_output,
@@ -2738,7 +2772,6 @@ def train_orchestrator(ctx: TrainingContext) -> None:
             logger.info(f"[Staged] Level {level_depth}: 0 experts spawned — skipping.")
             continue
         
-        # Check output AFTER spawning - verify continuity
         _after_spawn = _check_output_continuity(ctx, f"after_level_{level_depth}")
         _log_continuity_diff(_before_spawn, _after_spawn)
         
@@ -2747,9 +2780,15 @@ def train_orchestrator(ctx: TrainingContext) -> None:
         logger.info(f"[Freeze] Frozen base + levels < {level_depth}; training "
               f"{spawned} expert(s) at level {level_depth}")
         lr_level = base_lr * (decay ** level_depth)
-        res = _train_segment(ctx, f'level_{level_depth}', max_per_level, cfg,
-                             lr_override=lr_level,
-                             min_epochs_override=min_per_level)
+
+        if split_enabled and variant == 'ANT':
+            res = _run_split_segment(ctx, f'level_{level_depth}', max_per_level, cfg,
+                                     variant='ANT', lr_override=lr_level,
+                                     min_epochs_override=min_per_level)
+        else:
+            res = _train_segment(ctx, f'level_{level_depth}', max_per_level, cfg,
+                                 lr_override=lr_level,
+                                 min_epochs_override=min_per_level)
         _plot_after_spawn(ctx, f"level_{level_depth}")
         if res.nan_detected or res.oom_stopped:
             return
@@ -2770,6 +2809,169 @@ def train_orchestrator(ctx: TrainingContext) -> None:
     res = _train_segment(ctx, 'fine_tune', fine_tune_cfg['epochs'], ft_cfg,
                    min_epochs_override=ft_min)
     ctx.total_epochs = ctx.epoch
+
+
+def _run_split_segment(
+    ctx: TrainingContext,
+    segment_name: str,
+    epoch_budget: int,
+    segment_cfg: Dict,
+    *,
+    variant: str,
+    lr_override=None,
+    min_epochs_override=None,
+) -> SegmentResult:
+    """Swap to split-loss data/loss, run _train_segment, then restore originals.
+
+    Returns:
+        SegmentResult from the inner _train_segment call.
+    """
+    model = ctx.model
+    cfg = ctx.cfg
+
+    # Fix 5: Snapshot model BEFORE training for stable interface targets
+    # This frozen snapshot is used to mint targets for interface points
+    model_snapshot = copy.deepcopy(model)
+    model_snapshot.eval()
+    for p in model_snapshot.parameters():
+        p.requires_grad = False
+    logger.info(f"[SplitLoss] Created frozen model snapshot for interface targets")
+
+    # Identify the NEW experts being trained in this segment
+    if variant == 'AToE-Leaves':
+        leaf_info = model.get_leaf_info()
+        new_expert_indices = [idx for _, idx in leaf_info if idx >= 0]
+    elif variant == 'ANT':
+        new_expert_indices = _get_new_ant_experts(model, segment_name)
+    else:
+        new_expert_indices = []
+
+    regions_list = model.regions
+
+    logger.info(f"[SplitLoss] Building subdomain data for {len(new_expert_indices)} "
+                f"new expert(s): {new_expert_indices}")
+
+    # Use snapshot for interface target minting (Fix 5)
+    split_data = build_subdomain_data(
+        model_snapshot, new_expert_indices, regions_list, cfg,
+        ctx.device, seed=ctx.epoch,
+    )
+
+    _log_subdomain_summary(new_expert_indices, regions_list, split_data)
+
+    # Freeze/trainable confirmation
+    trainable = [n for n, p in model.named_parameters()
+                 if p.requires_grad]
+    frozen = [n for n, p in model.named_parameters()
+              if not p.requires_grad]
+    logger.info(
+        f"[SplitLoss] NO-PoU mode: each expert trained "
+        f"on its local output only"
+    )
+    logger.info(
+        f"[SplitLoss] trainable params: {len(trainable)}, "
+        f"frozen params: {len(frozen)}"
+    )
+
+    # Stash original context state
+    orig_loss_fn = ctx.loss_fn
+    orig_train_data = ctx.train_data
+    orig_train_loader = ctx.train_loader
+
+    # Build split loss with original loss as fallback for eval (Fix 1)
+    split_loss = build_split_loss(
+        model, cfg, variant=variant, orig_loss_fn=orig_loss_fn
+    )
+
+    # Swap to split data/loss
+    ctx.loss_fn = split_loss
+    ctx.train_data = split_data
+    ctx.train_loader = _create_split_dataloader(
+        split_data, segment_cfg.get('batch_size', cfg['batch_size']), shuffle=True,
+    )
+    ctx._split_context = {
+        'model': model,
+        'model_snapshot': model_snapshot,  # Fix 5: for resample
+        'new_expert_indices': new_expert_indices,
+        'regions': regions_list,
+        'variant': variant,
+    }
+
+    res = _train_segment(ctx, segment_name, epoch_budget, segment_cfg,
+                         lr_override=lr_override,
+                         min_epochs_override=min_epochs_override)
+
+    # Save per-expert loss history into metrics
+    peh = getattr(split_loss, '_per_expert_history', {})
+    if peh:
+        if 'split_expert_losses' not in ctx.metrics:
+            ctx.metrics['split_expert_losses'] = {}
+        ctx.metrics['split_expert_losses'][segment_name] = peh
+
+    # Per-expert training curves + region panel
+    try:
+        plot_path = ctx.run_dir / f'expert_curves_after_{segment_name}.png'
+        plot_per_expert_curves(
+            peh,
+            list(regions_list),
+            plot_path,
+            domain_bounds=ctx.domain_bounds,
+            gt_grid=(ctx.gt_grid.cpu().numpy()
+                     if ctx.gt_grid is not None else None),
+            grid_x=(ctx.gt_x.cpu().numpy()
+                    if ctx.gt_x is not None else None),
+            grid_t=(ctx.gt_t.cpu().numpy()
+                    if ctx.gt_t is not None else None),
+            segment_name=segment_name,
+        )
+        logger.info(
+            f"[SplitPlot] Saved {plot_path.name}"
+        )
+    except Exception as e:
+        logger.warning(
+            f"[SplitPlot] Failed: {e}"
+        )
+
+    # Restore original context
+    ctx.loss_fn = orig_loss_fn
+    ctx.train_data = orig_train_data
+    ctx.train_loader = orig_train_loader
+    ctx._split_context = None
+
+    return res
+
+
+def _get_new_ant_experts(model, segment_name: str) -> list:
+    """Extract the expert indices for the current ANT level from the segment name."""
+    if not segment_name.startswith('level_'):
+        return []
+    try:
+        depth = int(segment_name.split('_')[1])
+    except (IndexError, ValueError):
+        return []
+    return [i for i, r in enumerate(model.regions) if r.depth == depth]
+
+
+def _log_subdomain_summary(new_expert_indices, regions, split_data):
+    """Log per-expert point summaries for the subdomain dataset."""
+    expert_ids = split_data['expert_id']
+    kinds = split_data['kind']
+    for eidx in new_expert_indices:
+        emask = (expert_ids == eidx)
+        n_total = emask.sum().item()
+        region = regions[eidx]
+        counts = {}
+        for k_val, k_name in KIND_NAMES.items():
+            counts[k_name] = ((kinds[emask] == k_val).sum().item() if n_total > 0 else 0)
+        logger.info(
+            f"[SplitData] expert={eidx} depth={region.depth} parent={region.parent_idx} "
+            f"bounds=[{region.bounds_lower}..{region.bounds_upper}] "
+            f"total={n_total} {counts}"
+        )
+        if counts.get('residual', 0) == 0:
+            logger.warning(f"[SplitData] expert={eidx} has 0 residual points!")
+        if counts.get('ic_true', 0) + counts.get('interface', 0) == 0:
+            logger.warning(f"[SplitData] expert={eidx} has 0 IC/interface points!")
 
 
 def _finalize_training(ctx: TrainingContext) -> Path:
@@ -3153,6 +3355,33 @@ def _cast_data_to_dtype(batch: Dict, dtype: torch.dtype) -> Dict:
         'mask': batch['mask']  # masks are boolean, don't cast
     }
     return result
+
+
+def _create_split_dataloader(
+    data: Dict,
+    batch_size: int,
+    shuffle: bool,
+) -> DataLoader:
+    """Create DataLoader for split-loss subdomain data (expert_id + kind + bc_face_id schema)."""
+    dataset = TensorDataset(
+        data['x'], data['t'], data['h_gt'],
+        data['expert_id'], data['kind'], data['bc_face_id'],
+    )
+
+    def collate_fn(batch_list):
+        return {
+            'x': torch.stack([b[0] for b in batch_list]),
+            't': torch.stack([b[1] for b in batch_list]),
+            'h_gt': torch.stack([b[2] for b in batch_list]),
+            'expert_id': torch.stack([b[3] for b in batch_list]),
+            'kind': torch.stack([b[4] for b in batch_list]),
+            'bc_face_id': torch.stack([b[5] for b in batch_list]),
+        }
+
+    return DataLoader(
+        dataset, batch_size=batch_size, shuffle=shuffle,
+        collate_fn=collate_fn, pin_memory=False, num_workers=0,
+    )
 
 
 def _create_dataloader(

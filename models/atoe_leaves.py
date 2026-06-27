@@ -106,6 +106,16 @@ class AToELeaves(nn.Module):
                 result.append((self.regions[i], i))
         return result
 
+    def forward_single_expert(self, expert_idx: int, inputs: torch.Tensor) -> torch.Tensor:
+        """Forward pass for a single leaf expert. No PoU.
+
+        Returns the raw expert output u_j for use in per-expert split loss.
+        AToE-Leaves experts take raw (x,t) coordinates directly.
+        """
+        if expert_idx == -1:
+            return self.base_model(inputs)
+        return self.experts[expert_idx](inputs)
+
     def get_regions_at_depth(self, depth: int, before_epoch: int = None) -> List[RegionDescriptor]:
         result = []
         for r in self.regions:

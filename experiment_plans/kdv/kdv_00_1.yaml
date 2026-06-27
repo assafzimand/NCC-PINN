@@ -212,7 +212,7 @@ base_config:
       enabled: false
       mean: 1.0
       std: 0.1
-    fourier_features: {enabled: true, dim: 10, scale: 1.0, periodic: true}
+    fourier_features: {enabled: true, dim: 10, scale: 1.0, periodic: false}
     init: {hidden: parent_weights, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
     adaptive_sampling: {enabled: true, adaptive_ratio: 0.5, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
@@ -260,6 +260,7 @@ base_config:
     spawn_retries_before_stop: false
     spawn_retry_after: 10
     reinitialize_base_after_spawn: false  # override to true in reinit experiments
+    split_icbc: { enabled: false }
 
     # ── Phase 1: 10k epochs, SOAP [0.95,0.95] (working correctly) ──────────
     initial_train:
@@ -280,7 +281,7 @@ base_config:
 
     # ── Final joint fine-tune (AToE / ANT) ──
     fine_tune:
-      epochs: 10000
+      epochs: 0
       optimizer_1: soap
       optimizer_2: null
       soap_betas: [0.95, 0.95]
@@ -384,3 +385,4 @@ experiments:
         output: default
     adaptive_pinn:
       reinitialize_base_after_spawn: true
+

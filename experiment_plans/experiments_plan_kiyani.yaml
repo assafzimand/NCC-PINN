@@ -503,7 +503,7 @@ base_config:
       enabled: true
       dim: 10                        # Kiyani: M=10 Fourier modes (input dim = 1 + 2*10 = 21)
       scale: 1.0
-      periodic: true
+      periodic: false
     init:
       hidden: parent_weights
       output: default                # Kiyani: no LS init
@@ -593,6 +593,7 @@ base_config:
     # For other methods, initial_train is ignored.
     # If initial_train is absent, single-phase behavior is preserved (backwards compatible).
     reinitialize_base_after_spawn: false        # If true, reinitialize base model weights after expert creation (before Phase 3)
+    split_icbc: { enabled: false }
     initial_train:
       epochs: 31000                            # Kiyani Burgers: 1000 Adam + 30000 SSBroyden
       optimizer_1: adam
@@ -609,7 +610,7 @@ base_config:
 
     # ── Final joint fine-tune (AToE / ANT) ──
     fine_tune:
-      epochs: 15000
+      epochs: 0
       optimizer_1: adam
       optimizer_2: ssbroyden
       optimizer_switch_epoch: 7500
@@ -646,7 +647,7 @@ experiments:
 
       # ── Final joint fine-tune (AToE / ANT) ──
       fine_tune:
-        epochs: 15000
+        epochs: 0
         optimizer_1: adam
         optimizer_2: lbfgs
         optimizer_switch_epoch: 13500
