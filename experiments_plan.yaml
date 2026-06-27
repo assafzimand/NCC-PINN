@@ -272,7 +272,7 @@ base_config:
     # ── Staged per-level (AToE / ANT) ──
     new_expert_lr_decay: 0.1           # MoE papers use same LR for all subnets
     min_epochs_per_level: 1
-    max_epochs_per_level: 35000        # ceiling; patience terminates earlier
+    max_epochs_per_level: 6        # ceiling; patience terminates earlier
 
     # ── Final joint fine-tune (AToE / ANT) ──
     fine_tune:
