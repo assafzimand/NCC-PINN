@@ -944,10 +944,13 @@ def _setup_training(
     logger.info("=" * 60 + "\n")
 
     # Smart initialization (Glorot hidden + zero/LS output) — base model only
+    # Skip when a pretrained base was loaded (init would destroy the trained weights).
     from trainer.init import apply_hidden_init, apply_output_init, apply_spectral_norm
     _init_target = model.base_model if is_adaptive else model
     _init_cfg = cfg.get('init', {})
-    if _init_cfg.get('hidden', 'default') != 'default' or _init_cfg.get('output', 'default') != 'default' or _init_cfg.get('spectral_norm', False):
+    if pretrained_base_checkpoint is not None:
+        logger.info("[Init] Skipped — base loaded from pretrained checkpoint.")
+    elif _init_cfg.get('hidden', 'default') != 'default' or _init_cfg.get('output', 'default') != 'default' or _init_cfg.get('spectral_norm', False):
         logger.info("[Init] Applying smart initialization to base model...")
         # parent_weights is expert-only; use glorot for base model unless architecture is
         # resnet (glorot zeros fc2 in ResBlocks → spectral_norm wraps it → sigma=0 → NaN)
