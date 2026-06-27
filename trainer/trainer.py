@@ -2911,6 +2911,14 @@ def _run_split_segment(
         ctx.metrics['split_expert_losses'][segment_name] = peh
 
     # Per-expert training curves + region panel
+    def _to_numpy(x):
+        """Convert to numpy, handling both Tensors and arrays."""
+        if x is None:
+            return None
+        if isinstance(x, torch.Tensor):
+            return x.cpu().numpy()
+        return x  # already numpy
+    
     try:
         plot_path = ctx.run_dir / f'expert_curves_after_{segment_name}.png'
         plot_per_expert_curves(
@@ -2918,12 +2926,9 @@ def _run_split_segment(
             list(regions_list),
             plot_path,
             domain_bounds=ctx.domain_bounds,
-            gt_grid=(ctx.gt_grid.cpu().numpy()
-                     if ctx.gt_grid is not None else None),
-            grid_x=(ctx.gt_x.cpu().numpy()
-                    if ctx.gt_x is not None else None),
-            grid_t=(ctx.gt_t.cpu().numpy()
-                    if ctx.gt_t is not None else None),
+            gt_grid=_to_numpy(ctx.gt_grid),
+            grid_x=_to_numpy(ctx.gt_x),
+            grid_t=_to_numpy(ctx.gt_t),
             segment_name=segment_name,
         )
         logger.info(
