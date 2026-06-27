@@ -13,5 +13,5 @@ __pycache__/
 *.pyo
 *.pyd
 *.pt
-*.png
+!roots_checkpoints/*.pt*.png
 .Python
