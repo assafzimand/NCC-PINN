@@ -117,8 +117,10 @@ def _override_ic_for_time_marching(
 
 
 class _NumpySafeEncoder(json.JSONEncoder):
-    """Handles numpy scalars that stdlib json cannot serialize."""
+    """Handles numpy scalars and PyTorch tensors that stdlib json cannot serialize."""
     def default(self, obj):
+        if isinstance(obj, torch.Tensor):
+            return obj.detach().cpu().numpy().tolist()
         if isinstance(obj, (np.bool_,)):
             return bool(obj)
         if isinstance(obj, (np.integer,)):
