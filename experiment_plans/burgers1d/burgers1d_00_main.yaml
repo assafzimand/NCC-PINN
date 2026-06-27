@@ -201,7 +201,7 @@ base_config:
       enabled: false
       mean: 1.0
       std: 0.1
-    fourier_features: {enabled: true, dim: 10, scale: 1.0, periodic: true}
+    fourier_features: {enabled: true, dim: 10, scale: 1.0, periodic: false}
     init: {hidden: parent_weights, output: default, ls_use_bias: false, spectral_norm: false, spectral_norm_init_std: 1.0e-6}
     lra: {enabled: false, update_every: 100, alpha: 0.1, scheme: grad_norm, epsilon: 1.0e-5}
     adaptive_sampling: {enabled: true, adaptive_ratio: 0.5, per_leaf_sampling: false, phi: quadratic, phi_epsilon: 1.0, phi_power: 2.0}
@@ -249,6 +249,7 @@ base_config:
     spawn_retries_before_stop: false
     spawn_retry_after: 10
     reinitialize_base_after_spawn: false
+    split_icbc: { enabled: false }
 
     # ── Phase 1: short base pretrain — adam(1k) → ssbroyden(4k) = 5k ──────────
     initial_train:
@@ -267,7 +268,7 @@ base_config:
 
     # ── Final joint fine-tune (AToE / ANT) ──
     fine_tune:
-      epochs: 5000
+      epochs: 0
       optimizer_1: adam
       optimizer_2: ssbroyden
       optimizer_switch_epoch: 1000
@@ -345,3 +346,4 @@ experiments:
     adaptive_pinn:
       M_experts_num: 30
       ANT_default_hidden_layers: 22
+

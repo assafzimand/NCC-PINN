@@ -142,6 +142,9 @@ class TrainingContext:
     _nan_detected: bool = False
     oom_stopped: bool = False
 
+    # ── Split-loss context (set during _run_split_segment, else None) ──────
+    _split_context: Any = None
+
     # ── Closure handles (created in the loop, consumed by finalize) ──────────
     _emergency_metrics_save: Any = None
     _atexit: Any = None
