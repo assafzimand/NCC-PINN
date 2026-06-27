@@ -22,7 +22,7 @@ base_config:
   precision: float64
 
   # ── Phase 3: full Kiyani schedule — adam(5k) → ssbroyden(30k) = 35k ──────────
-  epochs: 6
+  epochs: 35000
   batch_size: 99999
   patience_epochs: 5000                # ~14% of budget; rides through optimizer transitions
   min_epochs: 1
@@ -30,7 +30,7 @@ base_config:
 
   optimizer_1: adam
   optimizer_2: ssbroyden
-  optimizer_switch_epoch: 2
+  optimizer_switch_epoch: 5000
   lr: 0.005
   soap_betas: [0.95, 0.95]
   soap_precondition_frequency: 10
@@ -221,7 +221,7 @@ base_config:
     boundary_train_ratio: 0.026
     eval_train_ratio: 0.25
     ncc_train_ratio: 0.25
-    resample_every_epochs: 1
+    resample_every_epochs: 100
     plot_samples_every: 1000
     min_points_per_leaf: 50
 
@@ -229,7 +229,7 @@ base_config:
   adaptive_pinn:
     enabled: true
     max_experts: 150
-    spawn_every_epochs: 6          # matches initial_train.epochs (Phase 1)
+    spawn_every_epochs: 35000          # matches initial_train.epochs (Phase 1)
     variable_for_node_accept: norm
     variable_for_expert_size: norm
     AToE_threshold_capacity: null
@@ -259,10 +259,10 @@ base_config:
 
     # ── Phase 1: full Kiyani base pretrain — adam(5k) → ssbroyden(30k) = 35k ──
     initial_train:
-      epochs: 6
+      epochs: 35000
       optimizer_1: adam
       optimizer_2: ssbroyden
-      optimizer_switch_epoch: 2
+      optimizer_switch_epoch: 5000
       lr: 0.005
       lr_schedule: exponential
       lr_decay_rate: 0.98
@@ -272,7 +272,7 @@ base_config:
     # ── Staged per-level (AToE / ANT) ──
     new_expert_lr_decay: 0.1           # MoE papers use same LR for all subnets
     min_epochs_per_level: 1
-    max_epochs_per_level: 6        # ceiling; patience terminates earlier
+    max_epochs_per_level: 35000        # ceiling; patience terminates earlier
 
     # ── Final joint fine-tune (AToE / ANT) ──
     fine_tune:
