@@ -196,6 +196,7 @@ def plot_per_expert_curves(
     grid_x=None,
     grid_t=None,
     segment_name: str = '',
+    split_data: dict = None,
 ) -> None:
     """Per-expert term-wise loss + region-on-GT panel.
 
@@ -207,6 +208,10 @@ def plot_per_expert_curves(
         gt_grid: optional ground-truth 2-D array
         grid_x, grid_t: 1-D coordinate arrays for gt_grid
         segment_name: label for the figure title
+        split_data: optional subdomain dataset dict with keys
+            ``x``, ``t``, ``expert_id``, ``kind``.  When provided, the
+            non-residual points (IC/interface/BC) are overlaid as a scatter
+            on the bottom region panel, colour-coded by kind.
     """
     import matplotlib.patches as patches
 
@@ -217,6 +222,44 @@ def plot_per_expert_curves(
     n_experts = len(expert_ids)
     if n_experts == 0:
         return
+
+    # Pre-process split_data into per-expert numpy arrays keyed by kind
+    # KIND codes match adaptive/subdomain_data.py
+    _KIND_IC_TRUE    = 1
+    _KIND_IFACE_IC   = 2
+    _KIND_IFACE_BC   = 3
+    _KIND_BC_TRUE    = 4
+    _icbc_kinds = {
+        _KIND_IC_TRUE:  ('IC true',      '#3498db', 'o',  18),
+        _KIND_IFACE_IC: ('Interface IC', '#9b59b6', 's',  18),
+        _KIND_IFACE_BC: ('Interface BC', '#f39c12', '^',  18),
+        _KIND_BC_TRUE:  ('BC true',      '#2ecc71', 'D',  18),
+    }
+    _sd_by_expert: dict = {}   # {eidx: {kind_code: (x_arr, t_arr)}}
+    if split_data is not None:
+        try:
+            import torch
+            sd_x   = split_data['x']
+            sd_t   = split_data['t']
+            sd_eid = split_data['expert_id']
+            sd_k   = split_data['kind']
+            if isinstance(sd_x, torch.Tensor):
+                sd_x   = sd_x.cpu().numpy()
+                sd_t   = sd_t.cpu().numpy()
+                sd_eid = sd_eid.cpu().numpy()
+                sd_k   = sd_k.cpu().numpy()
+            for eidx in expert_ids:
+                emask = (sd_eid == eidx)
+                _sd_by_expert[eidx] = {}
+                for kcode in _icbc_kinds:
+                    kmask = emask & (sd_k == kcode)
+                    if kmask.any():
+                        _sd_by_expert[eidx][kcode] = (
+                            sd_x[kmask, 0],
+                            sd_t[kmask, 0],
+                        )
+        except Exception:
+            _sd_by_expert = {}
 
     fig, axes = plt.subplots(
         2, n_experts,
@@ -312,6 +355,20 @@ def plot_per_expert_curves(
             tr = hi[-1] - lo[-1]
             ax2.set_xlim(lo[0] - pad * xr, hi[0] + pad * xr)
             ax2.set_ylim(lo[-1] - pad * tr, hi[-1] + pad * tr)
+
+        # Scatter IC/BC interface samples for this expert
+        if eidx in _sd_by_expert:
+            for kcode, (label, color, marker, ms) in _icbc_kinds.items():
+                if kcode in _sd_by_expert[eidx]:
+                    xs, ts = _sd_by_expert[eidx][kcode]
+                    ax2.scatter(
+                        xs, ts,
+                        s=ms, c=color, marker=marker,
+                        label=label, zorder=20, alpha=0.8,
+                        linewidths=0,
+                    )
+            ax2.legend(fontsize=6, loc='upper right',
+                       markerscale=1.2, framealpha=0.7)
 
         ax2.set_xlabel('x')
         ax2.set_ylabel('t')

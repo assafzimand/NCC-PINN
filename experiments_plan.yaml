@@ -22,7 +22,7 @@ base_config:
   precision: float64
 
   # ── Phase 3: full Kiyani schedule — adam(5k) → ssbroyden(30k) = 35k ──────────
-  epochs: 35000
+  epochs: 6
   batch_size: 99999
   patience_epochs: 5000                # ~14% of budget; rides through optimizer transitions
   min_epochs: 1
@@ -229,7 +229,7 @@ base_config:
   adaptive_pinn:
     enabled: true
     max_experts: 150
-    spawn_every_epochs: 35000          # matches initial_train.epochs (Phase 1)
+    spawn_every_epochs: 6          # matches initial_train.epochs (Phase 1)
     variable_for_node_accept: norm
     variable_for_expert_size: norm
     AToE_threshold_capacity: null
@@ -259,7 +259,7 @@ base_config:
 
     # ── Phase 1: full Kiyani base pretrain — adam(5k) → ssbroyden(30k) = 35k ──
     initial_train:
-      epochs: 35000
+      epochs: 6
       optimizer_1: adam
       optimizer_2: ssbroyden
       optimizer_switch_epoch: 5000
@@ -270,9 +270,9 @@ base_config:
       lr_warmup_steps: 0
 
     # ── Staged per-level (AToE / ANT) ──
-    new_expert_lr_decay: 0.1           # MoE papers use same LR for all subnets
+    new_expert_lr_decay: 1.0
     min_epochs_per_level: 1
-    max_epochs_per_level: 35000        # ceiling; patience terminates earlier
+    max_epochs_per_level: 6        # ceiling; patience terminates earlier
 
     # ── Final joint fine-tune (AToE / ANT) ──
     fine_tune:
@@ -289,12 +289,12 @@ base_config:
 
 experiments:
   # ── AToE ──────────────────────────────────────────────────────────────────
-  - name: allen_cahn_atoe_m5
-    problem: allen_cahn
-    model: AToE
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      M_experts_num: 5
+  # - name: allen_cahn_atoe_m5
+  #   problem: allen_cahn
+  #   model: AToE
+  #   base_architecture: [2, 30, 30, 30, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 5
 
   # ── AToELeaves ────────────────────────────────────────────────────────────
   - name: allen_cahn_leaves_m5
@@ -305,10 +305,10 @@ experiments:
       M_experts_num: 5
 
   # ── ANT ───────────────────────────────────────────────────────────────────
-  - name: allen_cahn_ant_m5
-    problem: allen_cahn
-    model: ANT
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      M_experts_num: 5
-      ANT_default_hidden_layers: 30
+  # - name: allen_cahn_ant_m5
+  #   problem: allen_cahn
+  #   model: ANT
+  #   base_architecture: [2, 30, 30, 30, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 5
+  #     ANT_default_hidden_layers: 30
