@@ -79,7 +79,7 @@ def build_subdomain_data(
     output_dim = pc['output_dim']
 
     sampling = cfg.get('sampling', {})
-    n_res_total = sampling.get('n_residual_train', 2048)
+    n_res_total = sampling.get('n_residual_train', 4096)
     ic_ratio = sampling.get('initial_train_ratio', 0.026)
     bc_ratio = sampling.get('boundary_train_ratio', 0.026)
     n_ic_per_face = max(1, int(round(n_res_total * ic_ratio)))
