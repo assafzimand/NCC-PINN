@@ -2935,6 +2935,7 @@ def _run_split_segment(
             grid_x=_to_numpy(ctx.gt_x),
             grid_t=_to_numpy(ctx.gt_t),
             segment_name=segment_name,
+            split_data=split_data,
         )
         logger.info(
             f"[SplitPlot] Saved training_plots/{plot_path.name}"

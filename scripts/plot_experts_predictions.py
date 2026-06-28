@@ -285,7 +285,8 @@ def _plot_triplet_2d(x, t, h_pred, h_gt, pred_label,
 
 def _plot_experts_1d(x, t, decomp, n_experts, regions,
                      title, save_path):
-    n_panels = 3 + 1 + n_experts
+    has_base = 'base' in decomp
+    n_panels = 3 + (1 if has_base else 0) + n_experts
     n_cols = 4
     n_rows = max(math.ceil(n_panels / n_cols), 1)
 
@@ -297,11 +298,9 @@ def _plot_experts_1d(x, t, decomp, n_experts, regions,
 
     gt_mag = _to_magnitude(decomp['gt'])
     composed_mag = _to_magnitude(decomp['composed'])
-    base_mag = _to_magnitude(decomp['base'])
 
     x_lin, t_lin, Z_gt = _grid_1d(x, t, gt_mag)
     _, _, Z_comp = _grid_1d(x, t, composed_mag)
-    _, _, Z_base = _grid_1d(x, t, base_mag)
     Z_err = np.abs(Z_comp - Z_gt)
 
     vmin = np.nanmin(Z_gt)
@@ -322,12 +321,17 @@ def _plot_experts_1d(x, t, decomp, n_experts, regions,
     axes[2].set_title('|Error|', fontsize=10)
     plt.colorbar(im, ax=axes[2], fraction=0.046)
 
-    im = axes[3].pcolormesh(x_lin, t_lin, Z_base.T, **kw)
-    axes[3].set_title('Base (backbone only)', fontsize=10)
-    plt.colorbar(im, ax=axes[3], fraction=0.046)
+    panel_idx = 3
+    if has_base:
+        base_mag = _to_magnitude(decomp['base'])
+        _, _, Z_base = _grid_1d(x, t, base_mag)
+        im = axes[panel_idx].pcolormesh(x_lin, t_lin, Z_base.T, **kw)
+        axes[panel_idx].set_title('Base (backbone only)', fontsize=10)
+        plt.colorbar(im, ax=axes[panel_idx], fraction=0.046)
+        panel_idx += 1
 
     for i in range(n_experts):
-        ax = axes[4 + i]
+        ax = axes[panel_idx + i]
         key = f'expert_{i}'
         raw = decomp[key]
         mask = decomp['masks'].get(key)
@@ -373,7 +377,8 @@ def _plot_experts_1d(x, t, decomp, n_experts, regions,
 
 def _plot_experts_2d(x, t, decomp, n_experts, regions,
                      title, save_path):
-    n_panels = 3 + 1 + n_experts
+    has_base = 'base' in decomp
+    n_panels = 3 + (1 if has_base else 0) + n_experts
     n_cols = 4
     n_rows = max(math.ceil(n_panels / n_cols), 1)
 
@@ -385,7 +390,6 @@ def _plot_experts_2d(x, t, decomp, n_experts, regions,
 
     gt_mag = _to_magnitude(decomp['gt'])
     comp_mag = _to_magnitude(decomp['composed'])
-    base_mag = _to_magnitude(decomp['base'])
     err = np.abs(comp_mag - gt_mag)
 
     vmin, vmax = gt_mag.min(), gt_mag.max()
@@ -397,11 +401,16 @@ def _plot_experts_2d(x, t, decomp, n_experts, regions,
     axes[1].set_title('Composed (full model)', fontsize=10)
     axes[2].scatter(x[:, 0], x[:, 1], c=err, s=2, cmap='hot')
     axes[2].set_title('|Error|', fontsize=10)
-    axes[3].scatter(x[:, 0], x[:, 1], c=base_mag, **skw)
-    axes[3].set_title('Base (backbone only)', fontsize=10)
+
+    panel_idx = 3
+    if has_base:
+        base_mag = _to_magnitude(decomp['base'])
+        axes[panel_idx].scatter(x[:, 0], x[:, 1], c=base_mag, **skw)
+        axes[panel_idx].set_title('Base (backbone only)', fontsize=10)
+        panel_idx += 1
 
     for i in range(n_experts):
-        ax = axes[4 + i]
+        ax = axes[panel_idx + i]
         key = f'expert_{i}'
         raw = decomp[key]
         mask = decomp['masks'].get(key)
@@ -503,13 +512,16 @@ def process_run(label, ts_dir):
                 decomp[k] = v.cpu().numpy()
         decomp['gt'] = h_gt_np
 
-        h_base = decomp['base']
-
-        # Base-only prediction vs GT
-        base_path = ts_dir / "base_pred_vs_gt.png"
-        plot_fn(x_arg, t_arg, h_base, h_gt_np,
-                'Base (backbone only)', tag, base_path)
-        print(f"    Saved {base_path.name}")
+        # Base-only prediction vs GT (only if base exists in decomposition)
+        if 'base' in decomp:
+            h_base = decomp['base']
+            base_path = ts_dir / "base_pred_vs_gt.png"
+            plot_fn(x_arg, t_arg, h_base, h_gt_np,
+                    'Base (backbone only)', tag, base_path)
+            print(f"    Saved {base_path.name}")
+        else:
+            base_path = None
+            print(f"    Skipped base plot (base not in composition for this model)")
 
         # Expert grid
         n_exp = model.num_experts
