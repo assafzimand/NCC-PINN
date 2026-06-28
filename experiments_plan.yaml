@@ -1,25 +1,25 @@
 # Allen-Cahn Primary PAFA Experiments (full Kiyani recipe)
-# Goal: 3 variants (AToE, AToELeaves, ANT) × M=5 only = 3 runs.
+# Goal: 3 variants (AToE, AToELeaves, ANT) × M=10 only = 3 runs.
 # Purpose: validate new staged training flow with proven Kiyani recipe.
 #
 # Training recipe = Kiyani reproduction (arXiv:2501.16371). Our verified-good vanilla PINN
 # run reached 9.8e-5 rel-L2 with [2,30,30,30,1]:
-#   adam(5k) → ssbroyden(30k), lr=0.005, lr_schedule exponential (0.98/1000), float64.
-# Now applied to PAFA 3-phase: Phase 1 (35k) base pretrain → spawn M → Phase 3 (35k) joint.
+#   adam(5k) → lbfgs(30k), lr=0.005, lr_schedule exponential (0.98/1000), float32.
+# Now applied to PAFA 3-phase: Phase 1 (35k) base pretrain → spawn M=10 → Phase 3 (35k) joint.
 #
 # Clean config: NO extra features (rwf off, fourier off, adaptive_sampling off, causal off).
 # Those are evaluated in allen_cahn_01_training.yaml.
 #
-# Architecture sizing (param-balanced, 3 hidden layers):
-#   M=5: [2,30,30,30,1]
+# Architecture sizing (param-balanced, 7 hidden layers):
+#   M=10: [2,30,30,30,30,30,30,1]
 
-experiment_name: "allen_cahn_additive_split_m10_resnet_batch2048_float64"
+experiment_name: "allen_cahn_additive_split_m10_resnet_batch4096_float32"
 
 base_config:
   problem: allen_cahn
   model: AToE                          # overridden per experiment
   activation: tanh
-  precision: float64
+  precision: float32
 
   # ── Phase 3: full Kiyani schedule — adam(5k) → ssbroyden(30k) = 35k ──────────
   epochs: 35000
@@ -29,7 +29,7 @@ base_config:
   patience_rel_delta: 0.01            # min relative train-loss improvement to reset patience
 
   optimizer_1: adam
-  optimizer_2: ssbroyden
+  optimizer_2: lbfgs
   optimizer_switch_epoch: 5000
   lr: 0.005
   soap_betas: [0.95, 0.95]
@@ -263,7 +263,7 @@ base_config:
     initial_train:
       epochs: 35000
       optimizer_1: adam
-      optimizer_2: ssbroyden
+      optimizer_2: lbfgs
       optimizer_switch_epoch: 5000
       lr: 0.005
       lr_schedule: exponential
@@ -311,7 +311,7 @@ experiments:
   #     split_icbc: { enabled: false }
 
   # Combination 2: additive=true, split_icbc=false (additive soft PoU)
-  - name: allen_cahn_leaves_m5_add_nosplit
+  - name: allen_cahn_leaves_m10_add_nosplit
     problem: allen_cahn
     model: AToELeaves
     base_architecture: [2, 30, 30, 30, 30, 30, 30, 1]
@@ -322,7 +322,7 @@ experiments:
       split_icbc: { enabled: false }
 
   # Combination 3: additive=false, split_icbc=true (non-additive hard split)
-  - name: allen_cahn_leaves_m5_nonadd_split
+  - name: allen_cahn_leaves_m10_nonadd_split
     problem: allen_cahn
     model: AToELeaves
     base_architecture: [2, 30, 30, 30, 30, 30, 30, 1]
