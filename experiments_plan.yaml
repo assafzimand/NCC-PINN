@@ -230,7 +230,7 @@ base_config:
   adaptive_pinn:
     enabled: true
     max_experts: 150
-    spawn_every_epochs: 6          # matches initial_train.epochs (Phase 1)
+    spawn_every_epochs: 35000          # matches initial_train.epochs (Phase 1)
     variable_for_node_accept: norm
     variable_for_expert_size: norm
     AToE_threshold_capacity: null
@@ -249,7 +249,7 @@ base_config:
     expert_activation_threshold: 0
     relevant_samples_to_activate_expert: 0
     spawning_method: M_term_tree_by_norm
-    M_experts_num: 5                  # overridden per experiment
+    M_experts_num: 20                  # overridden per experiment
     spawn_require_plateau: false
     spawn_plateau_epochs: 50
     spawn_plateau_delta: 0.05
