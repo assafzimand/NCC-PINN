@@ -13,7 +13,7 @@
 # Architecture sizing (param-balanced, 3 hidden layers):
 #   M=5: [2,30,30,30,1]
 
-experiment_name: "allen_cahn_additive_split_m10_resnet_batch2048_float32"
+experiment_name: "allen_cahn_additive_split_m10_resnet_batch2048_float64"
 
 base_config:
   problem: allen_cahn
@@ -68,7 +68,7 @@ base_config:
   # ALLEN_CAHN — clean Kiyani config (no extra features)
   # ══════════════════════════════════════════════════════════════════════════
   allen_cahn:
-    pretrained_base_checkpoint: null   # path to a base checkpoint to skip Phase-1 training; null = train Phase 1
+    pretrained_base_checkpoint: "roots_checkpoints/allen_cahn_root.pt"   # path to a base checkpoint to skip Phase-1 training; null = train Phase 1
     spatial_dim: 1
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
@@ -237,7 +237,7 @@ base_config:
     AToE_threshold_capacity: null
     ANT_threshold_architecture: null
     ANT_default_hidden_layers: 30      # for M=10
-    expert_type: resnet                   # Kiyani-exact (resnet evaluated in 01_training)
+    expert_type: mlp                   # Kiyani-exact (resnet evaluated in 01_training)
     blending_mode: soft
     sigma_fraction: 0.2
     base_weight: 1.0
@@ -314,7 +314,7 @@ experiments:
   - name: allen_cahn_leaves_m5_add_nosplit
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       M_experts_num: 10
       additive: true
@@ -325,7 +325,7 @@ experiments:
   - name: allen_cahn_leaves_m5_nonadd_split
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       M_experts_num: 10
       additive: false
