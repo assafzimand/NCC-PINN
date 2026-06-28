@@ -13,7 +13,7 @@
 # Architecture sizing (param-balanced, 3 hidden layers):
 #   M=5: [2,30,30,30,1]
 
-experiment_name: "allen_cahn_additive/split_icbc_runs"
+experiment_name: "allen_cahn_additive_split_m20"
 
 base_config:
   problem: allen_cahn
@@ -24,7 +24,7 @@ base_config:
   # ── Phase 3: full Kiyani schedule — adam(5k) → ssbroyden(30k) = 35k ──────────
   epochs: 35000
   batch_size: 99999
-  patience_epochs: 1000                # ~14% of budget; rides through optimizer transitions
+  patience_epochs: 8000                # ~14% of budget; rides through optimizer transitions
   min_epochs: 1
   patience_rel_delta: 0.01            # min relative train-loss improvement to reset patience
 
@@ -298,16 +298,16 @@ experiments:
   #     M_experts_num: 5
 
   # ── AToELeaves: 4 combinations (additive x split_icbc) ────────────────────
-  # Combination 1: additive=false, split_icbc=false (baseline, soft PoU)
-  - name: allen_cahn_leaves_m5_nonadd_nosplit
-    problem: allen_cahn
-    model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      M_experts_num: 5
-      additive: false
-      blending_mode: soft
-      split_icbc: { enabled: false }
+  # # Combination 1: additive=false, split_icbc=false (baseline, soft PoU)
+  # - name: allen_cahn_leaves_m5_nonadd_nosplit
+  #   problem: allen_cahn
+  #   model: AToELeaves
+  #   base_architecture: [2, 30, 30, 30, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 5
+  #     additive: false
+  #     blending_mode: soft
+  #     split_icbc: { enabled: false }
 
   # Combination 2: additive=true, split_icbc=false (additive soft PoU)
   - name: allen_cahn_leaves_m5_add_nosplit
@@ -315,7 +315,7 @@ experiments:
     model: AToELeaves
     base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
-      M_experts_num: 5
+      M_experts_num: 20
       additive: true
       blending_mode: soft
       split_icbc: { enabled: false }
@@ -326,21 +326,21 @@ experiments:
     model: AToELeaves
     base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
-      M_experts_num: 5
+      M_experts_num: 20
       additive: false
       blending_mode: hard
       split_icbc: { enabled: true }
 
-  # Combination 4: additive=true, split_icbc=true (additive hard split)
-  - name: allen_cahn_leaves_m5_add_split
-    problem: allen_cahn
-    model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      M_experts_num: 5
-      additive: true
-      blending_mode: hard
-      split_icbc: { enabled: true }
+  # # Combination 4: additive=true, split_icbc=true (additive hard split)
+  # - name: allen_cahn_leaves_m5_add_split
+  #   problem: allen_cahn
+  #   model: AToELeaves
+  #   base_architecture: [2, 30, 30, 30, 1]
+  #   adaptive_pinn:
+  #     M_experts_num: 20
+  #     additive: true
+  #     blending_mode: hard
+  #     split_icbc: { enabled: true }
 
   # ── ANT ───────────────────────────────────────────────────────────────────
   # - name: allen_cahn_ant_m5

@@ -9,6 +9,13 @@ Produces per batch:
   - composed_predictions_summary.png
   - base_predictions_summary.png
 
+Checkpoint priority: final_model.pt (last epoch) → best_model.pt (lowest eval loss)
+
+Ground truth source (1D spatial):
+  - Uses solver interpolator (high accuracy, full spectral solution)
+  - Falls back to eval_data.pt if solver unavailable
+  - Evaluates on 200×200 dense grid (matches in-run plots)
+
 Usage:
     python plot_predictions.py <experiment_batch_dir>
 """
@@ -144,6 +151,7 @@ def _find_checkpoint(ts_dir, cfg):
         if spawn_ckpt.exists():
             return spawn_ckpt
 
+    # Priority: final_model.pt first (last epoch), then best_model.pt (lowest eval loss)
     for name in ['final_model.pt', 'best_model.pt']:
         candidate = ckpt_dir / name
         if candidate.exists():
@@ -174,6 +182,33 @@ def _to_magnitude(h):
     if h.shape[1] == 2:
         return np.sqrt(h[:, 0] ** 2 + h[:, 1] ** 2)
     return h[:, 0]
+
+
+def _get_gt_from_solver(cfg, x_flat, t_flat, output_dim):
+    """Get ground truth from solver interpolator (high accuracy).
+    
+    Returns list of (N,) arrays, one per output dimension.
+    Mimics the in-run plot approach for accurate GT.
+    """
+    import importlib
+    
+    problem = cfg['problem']
+    try:
+        solver_mod = importlib.import_module(f"solvers.{problem}_solver")
+        interp = solver_mod._get_interpolator(cfg)
+        gt_raw = interp(x_flat, t_flat)
+        
+        # Handle multi-dimensional output (e.g., Schrödinger: complex -> [real, imag])
+        if output_dim == 1:
+            return [np.asarray(gt_raw, dtype=np.float64)]
+        else:
+            gt_c = np.asarray(gt_raw, dtype=np.complex128)
+            channels = [gt_c.real, gt_c.imag]
+            return channels[:output_dim]
+    except Exception as e:
+        print(f"  Warning: Could not load solver interpolator: {e}")
+        print(f"  Falling back to eval_data.pt (less accurate)")
+        return None
 
 
 def _grid_1d(x, t, values, n_x=200, n_t=200):
@@ -443,6 +478,7 @@ def process_run(label, ts_dir):
         cfg = yaml.safe_load(f)
 
     problem = cfg['problem']
+    problem_cfg = cfg[problem]
     is_adaptive = cfg.get(
         'adaptive_pinn', {}).get('enabled', False)
 
@@ -451,28 +487,69 @@ def process_run(label, ts_dir):
         print(f"  [{label}] No checkpoint found, skipping")
         return None, None
 
-    eval_path = Path('datasets') / problem / 'eval_data.pt'
-    if not eval_path.exists():
-        print(f"  [{label}] No eval data, skipping")
-        return None, None
-
     ckpt_name = ckpt_path.name
     print(f"  [{label}] Loading {ckpt_name}...")
     model = _build_model(cfg)
     epoch = _load_checkpoint(model, ckpt_path, is_adaptive)
     model.eval()
 
-    eval_data = torch.load(
-        eval_path, map_location='cpu', weights_only=False)
-    x_np = eval_data['x'].numpy()
-    t_np = eval_data['t'].numpy()
-    h_gt_np = eval_data['h_gt'].numpy()
-    spatial_dim = x_np.shape[1]
-
-    with torch.no_grad():
-        inputs = torch.cat(
-            [eval_data['x'], eval_data['t']], dim=1)
-        h_composed = model(inputs).numpy()
+    # Get domain bounds and create dense evaluation grid (mimics in-run plots)
+    spatial_dim = problem_cfg.get('spatial_dim', 1)
+    output_dim = problem_cfg.get('output_dim', 1)
+    
+    if spatial_dim == 1:
+        x_min, x_max = problem_cfg['spatial_domain'][0]
+        t_min, t_max = problem_cfg['temporal_domain']
+        
+        # Dense grid (200x200 like in-run plots)
+        resolution = 200
+        x_grid = np.linspace(x_min, x_max, resolution)
+        t_grid = np.linspace(t_min, t_max, resolution)
+        X, T = np.meshgrid(x_grid, t_grid, indexing='ij')
+        x_flat = X.ravel()
+        t_flat = T.ravel()
+        
+        # Get ground truth from solver interpolator (high accuracy)
+        gt_channels = _get_gt_from_solver(cfg, x_flat, t_flat, output_dim)
+        
+        # Fallback to eval_data if solver interpolator unavailable
+        if gt_channels is None:
+            eval_path = Path('datasets') / problem / 'eval_data.pt'
+            if not eval_path.exists():
+                print(f"  [{label}] No eval data and no solver, skipping")
+                return None, None
+            eval_data = torch.load(eval_path, map_location='cpu', weights_only=False)
+            x_np = eval_data['x'].numpy()
+            t_np = eval_data['t'].numpy()
+            h_gt_np = eval_data['h_gt'].numpy()
+        else:
+            # Convert solver GT to numpy array
+            h_gt_np = np.column_stack(gt_channels) if output_dim > 1 else gt_channels[0].reshape(-1, 1)
+            x_np = x_flat.reshape(-1, 1)
+            t_np = t_flat.reshape(-1, 1)
+        
+        # Evaluate model on dense grid
+        device = next(model.parameters()).device
+        model_dtype = next(model.parameters()).dtype
+        x_tensor = torch.from_numpy(x_np.astype(np.float32)).to(device=device, dtype=model_dtype)
+        t_tensor = torch.from_numpy(t_np.astype(np.float32)).to(device=device, dtype=model_dtype)
+        inputs = torch.cat([x_tensor, t_tensor], dim=1)
+        
+        with torch.no_grad():
+            h_composed = model(inputs).cpu().numpy()
+    else:
+        # 2D spatial: fall back to eval_data approach
+        eval_path = Path('datasets') / problem / 'eval_data.pt'
+        if not eval_path.exists():
+            print(f"  [{label}] No eval data (2D not supported with solver yet), skipping")
+            return None, None
+        eval_data = torch.load(eval_path, map_location='cpu', weights_only=False)
+        x_np = eval_data['x'].numpy()
+        t_np = eval_data['t'].numpy()
+        h_gt_np = eval_data['h_gt'].numpy()
+        with torch.no_grad():
+            inputs = torch.cat([eval_data['x'], eval_data['t']], dim=1)
+            h_composed = model(inputs).numpy()
 
     tag = f"{problem}  ({ckpt_name} @ epoch {epoch})"
     plot_fn = (_plot_triplet_1d if spatial_dim == 1
