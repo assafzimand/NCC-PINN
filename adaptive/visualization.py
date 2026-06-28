@@ -654,7 +654,7 @@ def load_regions_metadata(
 
 
 def plot_expert_soft_weights(
-    model,  # adaptive model (AToE/AToELeaves/ANT) with soft blending
+    model,  # adaptive model (AToE/AToELeaves/ANT) with soft or hard blending
     domain_bounds: Dict[str, List[float]],
     output_path: Union[str, Path],
     resolution: int = 100,
@@ -665,14 +665,17 @@ def plot_expert_soft_weights(
     leaf_indices: Optional[set] = None
 ) -> None:
     """
-    Plot heatmaps of soft blending weights (partition of unity) for each expert.
+    Plot heatmaps of blending weights (partition of unity) for each expert.
 
+    Supports both soft (smooth PoU) and hard (step functions) blending modes.
     Uses a red colormap where:
     - Darker red = higher weight (more influence)
     - Lighter/white = lower weight (less influence)
 
+    For hard blending, weights are normalized hard masks (mean on shared faces).
+
     Args:
-        model: adaptive model (AToE/AToELeaves/ANT) with soft blending enabled
+        model: adaptive model (AToE/AToELeaves/ANT) with soft or hard blending
         domain_bounds: {'lower': [x_min, t_min], 'upper': [x_max, t_max]}
         output_path: Path to save the plot
         resolution: Grid resolution for each dimension
@@ -687,13 +690,11 @@ def plot_expert_soft_weights(
     
     # Only support 2D domains (x, t) for now
     if len(domain_bounds['lower']) != 2:
-        logger.info(f"  Warning: Soft weight visualization only supports 2D domains")
+        logger.info("  Warning: Weight visualization only supports 2D domains")
         return
     
-    # Check if model has soft blending
-    if not model.blending_mode == 'soft':
-        logger.info(f"  Warning: Base Model does not have soft blending enabled")
-        return
+    # Get blending mode (soft or hard)
+    blending_mode = getattr(model, 'blending_mode', 'soft')
     
     # Create evaluation grid
     x_min, t_min = domain_bounds['lower']
@@ -718,7 +719,7 @@ def plot_expert_soft_weights(
         weights_norm = decomposed.get('weights_normalized', {})
 
         if not weights_norm:
-            logger.info(f"  Warning: No normalized weights available (model may use hard blending)")
+            logger.info("  Warning: No normalized weights available")
             return
 
         # Determine which experts to plot
@@ -733,7 +734,9 @@ def plot_expert_soft_weights(
 
         if show_base and 'base' in weights_norm:
             psi_base_grid = weights_norm['base'].cpu().numpy().reshape(X.shape)
-            plot_data.append(('Base Model Weight (\u03c8\u0303\u2080)', psi_base_grid, None))
+            # Label indicates additive mode if base weight is present
+            base_label = 'Root Model (additive)'
+            plot_data.append((base_label, psi_base_grid, None))
 
         for i in expert_ids_to_plot:
             key = f'expert_{i}'
@@ -747,7 +750,7 @@ def plot_expert_soft_weights(
     # Create subplots
     n_plots = len(plot_data)
     if n_plots == 0:
-        logger.info(f"  Warning: No weights to plot")
+        logger.info("  Warning: No weights to plot")
         return
 
     n_cols = min(3, n_plots)
@@ -786,11 +789,13 @@ def plot_expert_soft_weights(
     for j in range(n_plots, len(axes)):
         axes[j].set_visible(False)
     
-    # Overall title
-    title = f'{title_prefix}Soft Blending Weights (Partition of Unity)' if title_prefix else 'Soft Blending Weights (Partition of Unity)'
+    # Overall title - indicate soft vs hard blending mode
+    mode_str = 'Hard' if blending_mode == 'hard' else 'Soft'
+    pou_str = 'Step Functions (mean on faces)' if blending_mode == 'hard' else 'Partition of Unity'
+    title = f'{title_prefix}{mode_str} Blending Weights ({pou_str})' if title_prefix else f'{mode_str} Blending Weights ({pou_str})'
     fig.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
-    logger.info(f"  Soft blending weights plot saved to {output_path}")
+    logger.info(f"  {mode_str} blending weights plot saved to {output_path}")

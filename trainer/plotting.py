@@ -136,15 +136,17 @@ def plot_training_curves(
             'residual': '#e74c3c',  # red
             'ic': '#3498db',         # blue
             'bc': '#2ecc71',         # green
+            'continuity': '#e67e22', # orange
         }
         term_labels = {
             'residual': 'PDE Residual',
             'ic': 'Initial Condition',
             'bc': 'Boundary Condition',
+            'continuity': 'Continuity',
         }
         
         values_for_log = []
-        for term in ['residual', 'ic', 'bc']:
+        for term in ['residual', 'ic', 'bc', 'continuity']:
             if loss_comps.get(term) and len(loss_comps[term]) > 0:
                 values = loss_comps[term]
                 ax.plot(comp_epochs, values, '-', 
@@ -273,6 +275,7 @@ def plot_per_expert_curves(
         'interface_ic': '#9b59b6',
         'interface_bc': '#f39c12',
         'bc': '#2ecc71',
+        'continuity': '#e67e22',  # orange for continuity term
         'total': '#2c3e50',
     }
 

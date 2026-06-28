@@ -1222,6 +1222,21 @@ def _train_segment(
                 model._adaptive_sampling_activated = True
                 logger.info(f"  [Adaptive Sampling] Activated at epoch {epoch} (causal training reached final stage)")
 
+        # Enable residual caching in split_loss_fn for diagnostic heatmap plots.
+        # (The model-level cache is not populated in the split path; the loss fn
+        # owns the cache instead.)
+        _split_loss_fn = loss_fn if hasattr(loss_fn, '_residual_cache') else None
+        _will_cache_split = (
+            _split_loss_fn is not None
+            and plot_samples_every > 0
+            and epoch > 0 and epoch % plot_samples_every == 0
+            and _problem_spatial_dim == 1
+        )
+        if _split_loss_fn is not None:
+            _split_loss_fn._cache_residuals = _will_cache_split
+            if _will_cache_split:
+                _split_loss_fn._residual_cache.clear()
+
         # Resample training data periodically (in-memory, no disk I/O)
         # Skip resampling during L-BFGS/SSBroyden (they need stable loss landscape)
         allow_resample_optimizer = current_optimizer_name not in ('LBFGS', 'SSBroyden')
@@ -1231,9 +1246,11 @@ def _train_segment(
             if _split_ctx is not None:
                 logger.info(f"  [Resample-Split] Rebuilding subdomain data at epoch {epoch}")
                 # Fix 5: Use frozen snapshot for stable interface targets
+                _split_additive = _split_ctx.get('additive', False)
                 train_data = build_subdomain_data(
                     _split_ctx['model_snapshot'], _split_ctx['new_expert_indices'],
                     _split_ctx['regions'], cfg, device, seed=resample_seed,
+                    additive=_split_additive,
                 )
                 ctx.train_data = train_data
                 torch.set_default_device(None)
@@ -1244,6 +1261,28 @@ def _train_segment(
                     'epoch': epoch, 'action': 'split_resampled',
                     'optimizer': current_optimizer_name,
                 })
+                # Diagnostic residual heatmap: drain the per-expert residual cache
+                # collected this epoch (union of all experts' local residual points).
+                if (_split_loss_fn is not None
+                        and _split_loss_fn._residual_cache
+                        and _problem_spatial_dim == 1
+                        and (epoch - 1) % plot_samples_every == 0):
+                    _rc = _split_loss_fn._residual_cache
+                    all_x = torch.cat([r[0] for r in _rc], dim=0)
+                    all_t = torch.cat([r[1] for r in _rc], dim=0)
+                    all_r2 = torch.cat([r[2] for r in _rc], dim=0)
+                    _leaf_info_split = None
+                    if is_adaptive and hasattr(model, 'get_leaf_info'):
+                        _raw = model.get_leaf_info()
+                        _leaf_info_split = [(r, idx) for r, idx in _raw if r is not None] or None
+                    _save_adaptive_sampling_heatmap(
+                        all_x, all_t, all_r2,
+                        None, None,
+                        run_dir, epoch, cfg,
+                        causal_state=None,
+                        leaf_info=_leaf_info_split,
+                    )
+                    _split_loss_fn._residual_cache.clear()
             else:
                 cached_residuals = getattr(model, '_residual_cache', [])
                 model._residual_cache_enabled = False
@@ -2853,16 +2892,19 @@ def _run_split_segment(
 
     regions_list = model.regions
 
+    # Get additive flag from adaptive config
+    additive = ctx.adaptive_cfg.get('additive', False)
+    
     logger.info(f"[SplitLoss] Building subdomain data for {len(new_expert_indices)} "
-                f"new expert(s): {new_expert_indices}")
+                f"new expert(s): {new_expert_indices} (additive={additive})")
 
     # Use snapshot for interface target minting (Fix 5)
     split_data = build_subdomain_data(
         model_snapshot, new_expert_indices, regions_list, cfg,
-        ctx.device, seed=ctx.epoch,
+        ctx.device, seed=ctx.epoch, additive=additive,
     )
 
-    _log_subdomain_summary(new_expert_indices, regions_list, split_data)
+    _log_subdomain_summary(new_expert_indices, regions_list, split_data, additive=additive)
 
     # Freeze/trainable confirmation
     trainable = [n for n, p in model.named_parameters()
@@ -2885,7 +2927,8 @@ def _run_split_segment(
 
     # Build split loss with original loss as fallback for eval (Fix 1)
     split_loss = build_split_loss(
-        model, cfg, variant=variant, orig_loss_fn=orig_loss_fn
+        model, cfg, variant=variant, orig_loss_fn=orig_loss_fn,
+        additive=additive,
     )
 
     # Swap to split data/loss
@@ -2900,6 +2943,7 @@ def _run_split_segment(
         'new_expert_indices': new_expert_indices,
         'regions': regions_list,
         'variant': variant,
+        'additive': additive,
     }
 
     res = _train_segment(ctx, segment_name, epoch_budget, segment_cfg,
@@ -2965,10 +3009,16 @@ def _get_new_ant_experts(model, segment_name: str) -> list:
     return [i for i, r in enumerate(model.regions) if r.depth == depth]
 
 
-def _log_subdomain_summary(new_expert_indices, regions, split_data):
+def _log_subdomain_summary(new_expert_indices, regions, split_data, additive: bool = False):
     """Log per-expert point summaries for the subdomain dataset."""
     expert_ids = split_data['expert_id']
     kinds = split_data['kind']
+    cont_neighbors = split_data.get('cont_neighbor', None)
+    
+    # Log additive mode and blending
+    if additive:
+        logger.info("[SplitData] additive=True: interface/ic/bc targets are 0 (leaves as corrections)")
+    
     for eidx in new_expert_indices:
         emask = (expert_ids == eidx)
         n_total = emask.sum().item()
@@ -2983,8 +3033,26 @@ def _log_subdomain_summary(new_expert_indices, regions, split_data):
         )
         if counts.get('residual', 0) == 0:
             logger.warning(f"[SplitData] expert={eidx} has 0 residual points!")
-        if counts.get('ic_true', 0) + counts.get('interface', 0) == 0:
+        if counts.get('ic_true', 0) + counts.get('interface_ic', 0) == 0:
             logger.warning(f"[SplitData] expert={eidx} has 0 IC/interface points!")
+    
+    # Log continuity pair summary
+    if cont_neighbors is not None:
+        from adaptive.subdomain_data import KIND_CONTINUITY
+        cont_mask = (kinds == KIND_CONTINUITY)
+        n_cont_total = cont_mask.sum().item()
+        if n_cont_total > 0:
+            # Count unique pairs
+            unique_pairs = set()
+            for i in range(len(cont_neighbors)):
+                if kinds[i] == KIND_CONTINUITY:
+                    a = expert_ids[i].item()
+                    b = cont_neighbors[i].item()
+                    unique_pairs.add((min(a, b), max(a, b)))
+            logger.info(
+                f"[SplitData] Continuity: {n_cont_total} points across "
+                f"{len(unique_pairs)} neighbor pairs"
+            )
 
 
 def _finalize_training(ctx: TrainingContext) -> Path:
@@ -3375,10 +3443,11 @@ def _create_split_dataloader(
     batch_size: int,
     shuffle: bool,
 ) -> DataLoader:
-    """Create DataLoader for split-loss subdomain data (expert_id + kind + bc_face_id schema)."""
+    """Create DataLoader for split-loss subdomain data (expert_id + kind + bc_face_id + continuity schema)."""
     dataset = TensorDataset(
         data['x'], data['t'], data['h_gt'],
         data['expert_id'], data['kind'], data['bc_face_id'],
+        data['cont_neighbor'], data['cont_dim'],
     )
 
     def collate_fn(batch_list):
@@ -3389,6 +3458,8 @@ def _create_split_dataloader(
             'expert_id': torch.stack([b[3] for b in batch_list]),
             'kind': torch.stack([b[4] for b in batch_list]),
             'bc_face_id': torch.stack([b[5] for b in batch_list]),
+            'cont_neighbor': torch.stack([b[6] for b in batch_list]),
+            'cont_dim': torch.stack([b[7] for b in batch_list]),
         }
 
     return DataLoader(

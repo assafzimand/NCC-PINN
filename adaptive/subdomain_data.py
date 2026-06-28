@@ -25,6 +25,7 @@ KIND_IC_TRUE = 1
 KIND_INTERFACE = 2      # t-face interface (weighted by w_ic)
 KIND_INTERFACE_BC = 3   # x-face interface (weighted by w_bc)
 KIND_BC_TRUE = 4
+KIND_CONTINUITY = 5     # continuity points on shared interior faces (neighbor-to-neighbor)
 
 KIND_NAMES = {
     KIND_RESIDUAL: 'residual',
@@ -32,7 +33,11 @@ KIND_NAMES = {
     KIND_INTERFACE: 'interface_ic',
     KIND_INTERFACE_BC: 'interface_bc',
     KIND_BC_TRUE: 'bc_true',
+    KIND_CONTINUITY: 'continuity',
 }
+
+# Tolerance for face-neighbor adjacency checks
+ADJACENCY_TOL = 1e-8
 
 
 def build_subdomain_data(
@@ -42,11 +47,12 @@ def build_subdomain_data(
     cfg: Dict,
     device: torch.device,
     seed: int = 0,
+    additive: bool = False,
 ) -> Dict[str, torch.Tensor]:
     """Build per-expert dataset for split-loss training.
 
     Returns dict with keys ``x``, ``t``, ``h_gt``,
-    ``expert_id``, ``kind``, ``bc_face_id``.
+    ``expert_id``, ``kind``, ``bc_face_id``, ``cont_neighbor``, ``cont_dim``.
     
     ``bc_face_id`` encodes which spatial boundary face
     for periodic pairing: ``dim * 2 + side`` where
@@ -55,6 +61,11 @@ def build_subdomain_data(
     For periodic BC, left (side=0) and right (side=1) points
     on the same dimension share identical t-values to enable
     cross-expert pairing.
+    
+    When ``additive=True``:
+      - Interface targets, ic_true targets, and bc_true targets are set to 0
+        (leaves must output 0 on their bounds as they are corrections to the root)
+      - Continuity points are still generated for neighbor-to-neighbor agreement
     """
     torch.manual_seed(seed)
 
@@ -68,7 +79,7 @@ def build_subdomain_data(
     output_dim = pc['output_dim']
 
     sampling = cfg.get('sampling', {})
-    n_res_total = sampling.get('n_residual_train', 8192)
+    n_res_total = sampling.get('n_residual_train', 4096)
     ic_ratio = sampling.get('initial_train_ratio', 0.026)
     bc_ratio = sampling.get('boundary_train_ratio', 0.026)
     n_ic_per_face = max(1, int(round(n_res_total * ic_ratio)))
@@ -135,41 +146,59 @@ def build_subdomain_data(
             eidx, region, spatial_dim, spatial_domain,
             t_min_global, n_ic_per_face, output_dim,
             problem, pc, device, xs, ts, gs, eids, ks,
-            bc_fids,
+            bc_fids, additive=additive,
         )
         _add_bc_faces_periodic(
             eidx, region, spatial_dim, spatial_domain,
             n_bc_per_face, output_dim, device,
             xs, ts, gs, eids, ks, bc_fids,
-            bc_t_global,
+            bc_t_global, additive=additive,
         )
 
-    # ── Mint interface targets from frozen composed model ──
+    # ── Continuity faces: neighbor-to-neighbor on shared interior faces ──
+    cont_xs, cont_ts, cont_gs, cont_eids, cont_ks = [], [], [], [], []
+    cont_neighbors, cont_dims = [], []
+    _add_continuity_faces(
+        new_expert_indices, regions, spatial_dim, spatial_domain,
+        temporal_domain, n_bc_per_face, output_dim, device,
+        cont_xs, cont_ts, cont_gs, cont_eids, cont_ks,
+        cont_neighbors, cont_dims,
+    )
+
+    # ── Concatenate main data ──
     x_cat = torch.cat(xs, dim=0)
     t_cat = torch.cat(ts, dim=0)
     h_gt_cat = torch.cat(gs, dim=0)
     eid_cat = torch.cat(eids, dim=0)
     kind_cat = torch.cat(ks, dim=0)
     bc_fid_cat = torch.cat(bc_fids, dim=0)
+    
+    # Initialize cont_neighbor and cont_dim for main data (all -1)
+    n_main = x_cat.shape[0]
+    cont_neighbor_main = torch.full((n_main,), -1, dtype=torch.long, device=device)
+    cont_dim_main = torch.full((n_main,), -1, dtype=torch.long, device=device)
 
-    # Mint interface targets from frozen composed model
-    # t-face interfaces (KIND_INTERFACE, weighted by w_ic)
-    iface_mask = (kind_cat == KIND_INTERFACE)
-    if iface_mask.sum() > 0:
-        with torch.no_grad():
-            xt_if = torch.cat(
-                [x_cat[iface_mask], t_cat[iface_mask]], dim=1
-            )
-            h_gt_cat[iface_mask] = model(xt_if)
+    # ── Mint interface targets from frozen composed model (skip if additive) ──
+    if not additive:
+        # t-face interfaces (KIND_INTERFACE, weighted by w_ic)
+        iface_mask = (kind_cat == KIND_INTERFACE)
+        if iface_mask.sum() > 0:
+            with torch.no_grad():
+                xt_if = torch.cat(
+                    [x_cat[iface_mask], t_cat[iface_mask]], dim=1
+                )
+                h_gt_cat[iface_mask] = model(xt_if)
 
-    # x-face interfaces (KIND_INTERFACE_BC, weighted by w_bc)
-    iface_bc_mask = (kind_cat == KIND_INTERFACE_BC)
-    if iface_bc_mask.sum() > 0:
-        with torch.no_grad():
-            xt_if_bc = torch.cat(
-                [x_cat[iface_bc_mask], t_cat[iface_bc_mask]], dim=1
-            )
-            h_gt_cat[iface_bc_mask] = model(xt_if_bc)
+        # x-face interfaces (KIND_INTERFACE_BC, weighted by w_bc)
+        iface_bc_mask = (kind_cat == KIND_INTERFACE_BC)
+        if iface_bc_mask.sum() > 0:
+            with torch.no_grad():
+                xt_if_bc = torch.cat(
+                    [x_cat[iface_bc_mask], t_cat[iface_bc_mask]], dim=1
+                )
+                h_gt_cat[iface_bc_mask] = model(xt_if_bc)
+    else:
+        logger.info("[SplitData] additive=True: interface/ic/bc targets are 0")
 
     # Log BC statistics for periodic pairing
     bc_true_mask = (kind_cat == KIND_BC_TRUE)
@@ -181,6 +210,35 @@ def build_subdomain_data(
             f"unique face_ids: {unique_fids}"
         )
 
+    # ── Concatenate continuity data (if any) ──
+    if cont_xs:
+        cont_x_cat = torch.cat(cont_xs, dim=0)
+        cont_t_cat = torch.cat(cont_ts, dim=0)
+        cont_g_cat = torch.cat(cont_gs, dim=0)
+        cont_eid_cat = torch.cat(cont_eids, dim=0)
+        cont_kind_cat = torch.cat(cont_ks, dim=0)
+        cont_neighbor_cat = torch.cat(cont_neighbors, dim=0)
+        cont_dim_cat = torch.cat(cont_dims, dim=0)
+        
+        # BC face id is -1 for continuity points
+        cont_bc_fid_cat = torch.full(
+            (cont_x_cat.shape[0],), -1, dtype=torch.long, device=device
+        )
+        
+        # Merge main + continuity
+        x_cat = torch.cat([x_cat, cont_x_cat], dim=0)
+        t_cat = torch.cat([t_cat, cont_t_cat], dim=0)
+        h_gt_cat = torch.cat([h_gt_cat, cont_g_cat], dim=0)
+        eid_cat = torch.cat([eid_cat, cont_eid_cat], dim=0)
+        kind_cat = torch.cat([kind_cat, cont_kind_cat], dim=0)
+        bc_fid_cat = torch.cat([bc_fid_cat, cont_bc_fid_cat], dim=0)
+        cont_neighbor_main = torch.cat([cont_neighbor_main, cont_neighbor_cat], dim=0)
+        cont_dim_main = torch.cat([cont_dim_main, cont_dim_cat], dim=0)
+        
+        logger.info(
+            f"[SplitData] continuity points: {cont_x_cat.shape[0]}"
+        )
+
     return {
         'x': x_cat,
         't': t_cat,
@@ -188,6 +246,8 @@ def build_subdomain_data(
         'expert_id': eid_cat,
         'kind': kind_cat,
         'bc_face_id': bc_fid_cat,
+        'cont_neighbor': cont_neighbor_main,
+        'cont_dim': cont_dim_main,
     }
 
 
@@ -208,6 +268,12 @@ def _empty(spatial_dim, output_dim, device):
         'bc_face_id': torch.zeros(
             0, dtype=torch.long, device=device
         ),
+        'cont_neighbor': torch.zeros(
+            0, dtype=torch.long, device=device
+        ),
+        'cont_dim': torch.zeros(
+            0, dtype=torch.long, device=device
+        ),
     }
 
 
@@ -220,8 +286,12 @@ def _add_ic_face(
     eidx, region, spatial_dim, spatial_domain,
     t_min_global, n_pts, output_dim, problem, pc,
     device, xs, ts, gs, eids, ks, bc_fids,
+    additive: bool = False,
 ):
-    """Add IC face points (t = region lower-t boundary)."""
+    """Add IC face points (t = region lower-t boundary).
+    
+    When additive=True, ic_true target is set to 0 (leaf should output 0 on boundary).
+    """
     bl, bu = region.bounds_lower, region.bounds_upper
     t_face = bl[spatial_dim]
     is_true = abs(t_face - t_min_global) < 1e-8
@@ -234,9 +304,14 @@ def _add_ic_face(
     t_ic = torch.full((n_pts, 1), t_face, device=device)
 
     if is_true:
-        h_gt = _analytic_ic(problem, x_ic, pc)
+        if additive:
+            # In additive mode, leaves should output 0 on true boundaries
+            h_gt = torch.zeros(n_pts, output_dim, device=device)
+        else:
+            h_gt = _analytic_ic(problem, x_ic, pc)
         kind_val = KIND_IC_TRUE
     else:
+        # Interface target: 0 if additive (model mints later if not additive)
         h_gt = torch.zeros(n_pts, output_dim, device=device)
         kind_val = KIND_INTERFACE
 
@@ -259,6 +334,7 @@ def _add_bc_faces_periodic(
     n_pts, output_dim, device,
     xs, ts, gs, eids, ks, bc_fids,
     bc_t_global,
+    additive: bool = False,
 ):
     """Add BC face points with periodic pairing support.
     
@@ -269,6 +345,8 @@ def _add_bc_faces_periodic(
     
     For interior x-face interfaces (non-global boundaries):
     - Uses KIND_INTERFACE_BC (weighted by w_bc)
+    
+    When additive=True, all targets are set to 0.
     """
     bl, bu = region.bounds_lower, region.bounds_upper
     t_lo = bl[spatial_dim]
@@ -335,3 +413,149 @@ def _add_bc_faces_periodic(
                 (n_actual,), face_id,
                 dtype=torch.long, device=device
             ))
+
+
+def _are_face_neighbors(region_a, region_b, n_dims, tol=ADJACENCY_TOL):
+    """Check if two regions are face-neighbors along some dimension.
+    
+    Two regions are face-neighbors along dimension d if:
+    1. They touch in d: A.upper[d] ~= B.lower[d] or B.upper[d] ~= A.lower[d]
+    2. They overlap in all other dimensions
+    
+    Returns (is_neighbor, face_dim, face_val, overlap_lo, overlap_hi) where:
+    - is_neighbor: bool
+    - face_dim: the dimension along which they touch (-1 if not neighbors)
+    - face_val: the coordinate value of the shared face
+    - overlap_lo: list of lower bounds for the overlap region (other dims)
+    - overlap_hi: list of upper bounds for the overlap region (other dims)
+    """
+    a_lo, a_hi = region_a.bounds_lower, region_a.bounds_upper
+    b_lo, b_hi = region_b.bounds_lower, region_b.bounds_upper
+    
+    for d in range(n_dims):
+        # Check if A's upper face touches B's lower face
+        if abs(a_hi[d] - b_lo[d]) < tol:
+            face_val = a_hi[d]
+        # Check if B's upper face touches A's lower face
+        elif abs(b_hi[d] - a_lo[d]) < tol:
+            face_val = b_hi[d]
+        else:
+            continue
+        
+        # Check overlap in all other dimensions
+        overlap_lo = []
+        overlap_hi = []
+        has_overlap = True
+        
+        for d2 in range(n_dims):
+            if d2 == d:
+                continue
+            # Compute overlap interval
+            lo = max(a_lo[d2], b_lo[d2])
+            hi = min(a_hi[d2], b_hi[d2])
+            if hi <= lo + tol:  # No positive overlap
+                has_overlap = False
+                break
+            overlap_lo.append(lo)
+            overlap_hi.append(hi)
+        
+        if has_overlap:
+            return True, d, face_val, overlap_lo, overlap_hi
+    
+    return False, -1, 0.0, [], []
+
+
+def _add_continuity_faces(
+    new_expert_indices: List[int],
+    regions,
+    spatial_dim: int,
+    spatial_domain,
+    temporal_domain,
+    n_pts_per_face: int,
+    output_dim: int,
+    device: torch.device,
+    xs: list, ts: list, gs: list,
+    eids: list, ks: list,
+    cont_neighbors: list, cont_dims: list,
+):
+    """Add continuity points on shared interior faces between leaf neighbors.
+    
+    For each pair of face-neighbor leaves (a, b), sample points on their shared
+    interior face. Points are tagged with:
+    - expert_id = a
+    - cont_neighbor = b
+    - cont_dim = face-normal dimension
+    - kind = KIND_CONTINUITY
+    
+    Both experts a and b are evaluated at the SAME coordinates in the loss,
+    so no left/right pairing is needed.
+    
+    We only add points where A.upper[d] touches B.lower[d] (not the reverse),
+    to avoid duplicating pairs. The loss function handles both directions.
+    """
+    n_dims = spatial_dim + 1  # spatial dims + time
+    t_min_global, t_max_global = temporal_domain
+    
+    # Get global spatial bounds for checking interior faces
+    global_lo = [spatial_domain[d][0] for d in range(spatial_dim)] + [t_min_global]
+    global_hi = [spatial_domain[d][1] for d in range(spatial_dim)] + [t_max_global]
+    
+    n_pairs = 0
+    
+    # Check all pairs of new experts
+    for i, eidx_a in enumerate(new_expert_indices):
+        region_a = regions[eidx_a]
+        
+        for eidx_b in new_expert_indices[i+1:]:
+            region_b = regions[eidx_b]
+            
+            is_neighbor, face_dim, face_val, overlap_lo, overlap_hi = \
+                _are_face_neighbors(region_a, region_b, n_dims)
+            
+            if not is_neighbor:
+                continue
+            
+            # Skip if the shared face is on the global boundary (not interior)
+            if abs(face_val - global_lo[face_dim]) < ADJACENCY_TOL or \
+               abs(face_val - global_hi[face_dim]) < ADJACENCY_TOL:
+                continue
+            
+            # Sample points on the shared face
+            n_pts = n_pts_per_face
+            
+            # Build coordinates: face_dim is fixed at face_val
+            # Other dims are sampled from overlap region
+            x_cont = torch.zeros(n_pts, spatial_dim, device=device)
+            t_cont = torch.zeros(n_pts, 1, device=device)
+            
+            overlap_idx = 0
+            for d in range(n_dims):
+                if d == face_dim:
+                    # Fixed face coordinate
+                    if d < spatial_dim:
+                        x_cont[:, d] = face_val
+                    else:
+                        t_cont[:, 0] = face_val
+                else:
+                    # Sample from overlap region
+                    lo, hi = overlap_lo[overlap_idx], overlap_hi[overlap_idx]
+                    vals = torch.rand(n_pts, device=device) * (hi - lo) + lo
+                    if d < spatial_dim:
+                        x_cont[:, d] = vals
+                    else:
+                        t_cont[:, 0] = vals
+                    overlap_idx += 1
+            
+            # Add points with expert_id = a, cont_neighbor = b
+            xs.append(x_cont)
+            ts.append(t_cont)
+            gs.append(torch.zeros(n_pts, output_dim, device=device))
+            eids.append(torch.full((n_pts,), eidx_a, dtype=torch.long, device=device))
+            ks.append(torch.full((n_pts,), KIND_CONTINUITY, dtype=torch.long, device=device))
+            cont_neighbors.append(torch.full((n_pts,), eidx_b, dtype=torch.long, device=device))
+            cont_dims.append(torch.full((n_pts,), face_dim, dtype=torch.long, device=device))
+            
+            n_pairs += 1
+    
+    if n_pairs > 0:
+        logger.info(f"[SplitData] Found {n_pairs} face-neighbor pairs for continuity")

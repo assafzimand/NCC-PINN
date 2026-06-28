@@ -94,6 +94,12 @@ def validate_adaptive_staged_config(cfg: Dict[str, Any]) -> None:
         training uses the effective top-level config).
       * Removed keys (``freeze_mode``, ``freeze_epochs_after_spawn``) raise.
 
+    New AToE-Leaves options (optional):
+      * ``adaptive_pinn.additive`` (bool, default false): when true, the frozen
+        root is added to the leaf composition (u = root + combine(leaves)).
+      * ``loss_weights.continuity`` (float, default 1.0): weight for the
+        neighbor-continuity loss term in split_icbc training.
+
     Raises:
         ValueError: on a missing required key or a present removed key.
     """
@@ -102,6 +108,7 @@ def validate_adaptive_staged_config(cfg: Dict[str, Any]) -> None:
         return
 
     errors = []
+    warnings = []
 
     for k in REMOVED_ADAPTIVE_KEYS:
         if k in adaptive_cfg:
@@ -113,6 +120,13 @@ def validate_adaptive_staged_config(cfg: Dict[str, Any]) -> None:
     problem = cfg.get('problem')
     problem_cfg = cfg.get(problem, {}) if problem else {}
     pretrained = problem_cfg.get('pretrained_base_checkpoint', None)
+
+    # Warn if additive=true with non-AToELeaves model (out of scope for now)
+    additive = adaptive_cfg.get('additive', False)
+    if additive and model_type != 'AToELeaves':
+        warnings.append(
+            f"adaptive_pinn.additive=true is only implemented for AToELeaves, "
+            f"but model={model_type}. The flag will be ignored.")
 
     # Root segment config (skipped only when a pretrained base is loaded).
     if pretrained is None:
@@ -150,6 +164,12 @@ def validate_adaptive_staged_config(cfg: Dict[str, Any]) -> None:
             + "\n  - ".join(errors)
             + "\n\nSee docs/training_flow_spec.md sections 1.1 and 6."
         )
+
+    # Print warnings (non-fatal)
+    if warnings:
+        import sys
+        for w in warnings:
+            print(f"[ConfigWarning] {w}", file=sys.stderr)
 
 
 def get_problem_feature(

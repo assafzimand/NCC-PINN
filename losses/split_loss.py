@@ -5,13 +5,19 @@ Each expert is trained on its OWN output (no PoU), with:
   - Dirichlet matching to frozen composed model on interior
     faces (interface)
   - True IC/BC on faces coinciding with global domain bounds
+  - Neighbor-to-neighbor continuity on shared interior faces
 
 For Allen-Cahn with periodic BC, global boundary points are
 paired across experts (left/right at same t), penalizing both
 value and spatial derivative mismatches.
 
+When additive=True:
+  - Residual is computed on root + u_j (root frozen but differentiable)
+  - Interface/IC/BC targets are 0 (leaves are corrections)
+  - Continuity still enforces agreement between neighbors
+
 Total loss = SUM over experts of:
-    w_res*L_res + w_ic*L_ic + w_bc*L_bc
+    w_res*L_res + w_ic*L_ic + w_bc*L_bc + w_cont*L_cont
 where interface faces inherit the IC or BC weight by face type.
 """
 
@@ -20,6 +26,7 @@ import importlib
 from typing import Dict, Callable
 from adaptive.subdomain_data import (
     KIND_RESIDUAL, KIND_IC_TRUE, KIND_INTERFACE, KIND_INTERFACE_BC, KIND_BC_TRUE,
+    KIND_CONTINUITY,
 )
 from utils.logging_config import get_logger
 
@@ -32,6 +39,7 @@ def build_split_loss(
     *,
     variant: str,
     orig_loss_fn: Callable = None,
+    additive: bool = False,
 ) -> Callable:
     """Build a split loss for per-expert subdomain training.
 
@@ -41,6 +49,10 @@ def build_split_loss(
     If ``orig_loss_fn`` is provided, batches missing split-specific
     keys (expert_id, kind) will fall back to the original loss
     (used for eval batches).
+    
+    When additive=True:
+    - Residual is computed on root + u_j (root frozen but differentiable)
+    - Interface/IC/BC targets are 0 (handled by subdomain data builder)
     """
     problem = cfg['problem']
     pc = cfg[problem]
@@ -48,14 +60,22 @@ def build_split_loss(
     w_res = loss_weights['residual']
     w_ic = loss_weights['ic']
     w_bc = loss_weights['bc']
+    w_cont = loss_weights.get('continuity', 1.0)
 
     # Allen-Cahn uses periodic BC pairing, so skip Dirichlet-to-zero
     is_allen_cahn = (problem == 'allen_cahn')
 
     pde_res_fn, deriv_fn = _import_pde_helpers(problem)
     pde_params = _get_pde_params(problem, pc)
+    
+    if additive:
+        logger.info("[SplitLoss] additive=True: residual on root+u_j, targets=0")
 
     per_expert_history: Dict[int, Dict[str, list]] = {}
+    # Per-epoch residual cache: list of (x, t, r²) tuples (detached CPU tensors).
+    # Populated when split_loss_fn._cache_residuals is True; drained by the trainer
+    # to produce diagnostic heatmap plots (same as the non-split residual-cache path).
+    residual_cache: list = []
 
     def split_loss_fn(
         model, batch, return_components=False, **kw
@@ -80,6 +100,8 @@ def build_split_loss(
         expert_ids = batch['expert_id']
         kinds = batch['kind']
         bc_face_ids = batch.get('bc_face_id', None)
+        cont_neighbors = batch.get('cont_neighbor', None)
+        cont_dims = batch.get('cont_dim', None)
         device = x.device
 
         unique_experts = expert_ids.unique().tolist()
@@ -95,6 +117,11 @@ def build_split_loss(
                 pde_res_fn, deriv_fn, pde_params,
                 w_res, w_ic, w_bc, is_allen_cahn,
                 variant, device,
+                additive=additive,
+                residual_cache=(
+                    residual_cache
+                    if split_loss_fn._cache_residuals else None
+                ),
             )
             total_loss = total_loss + comps['total']
             _record(per_expert_history, eidx, comps)
@@ -106,6 +133,7 @@ def build_split_loss(
             bc_loss_contrib = _compute_periodic_bc_loss(
                 model, x, t, expert_ids, kinds,
                 bc_face_ids, deriv_fn, device,
+                additive=additive,
             )
             if bc_loss_contrib.item() > 0:
                 logger.debug(
@@ -114,11 +142,30 @@ def build_split_loss(
                 )
             total_loss = total_loss + w_bc * bc_loss_contrib
 
+        # ── Continuity loss: neighbor-to-neighbor on shared interior faces ──
+        if cont_neighbors is not None and cont_dims is not None:
+            cont_loss, cont_per_expert = _compute_continuity_loss(
+                model, x, t, expert_ids, kinds,
+                cont_neighbors, cont_dims, deriv_fn,
+                pde_params, device, problem,
+            )
+            if cont_loss.item() > 0:
+                logger.debug(
+                    f"[SplitLoss] Continuity contrib: "
+                    f"{cont_loss.item():.6e}"
+                )
+            total_loss = total_loss + w_cont * cont_loss
+            # Record continuity per expert
+            for eidx, cont_val in cont_per_expert.items():
+                _record_continuity(per_expert_history, eidx, cont_val)
+
         if return_components:
             return all_comps
         return total_loss
 
     split_loss_fn._per_expert_history = per_expert_history
+    split_loss_fn._residual_cache = residual_cache
+    split_loss_fn._cache_residuals = False  # trainer sets True when a plot is due
     split_loss_fn._variant = variant
     return split_loss_fn
 
@@ -127,8 +174,15 @@ def _compute_expert_loss(
     model, expert_idx, x, t, h_gt, kinds,
     pde_res_fn, deriv_fn, pde_params,
     w_res, w_ic, w_bc, is_allen_cahn, variant, device,
+    additive: bool = False,
+    residual_cache=None,
 ):
-    """Per-expert local loss (no PoU)."""
+    """Per-expert local loss (no PoU).
+    
+    When additive=True:
+    - Residual is computed on u_field = root + u_j (root frozen but differentiable)
+    - Interface/IC/BC targets are already 0 (handled by subdomain data builder)
+    """
     z = torch.tensor(0.0, device=device)
     comps = {
         'residual': z.clone(),
@@ -145,10 +199,26 @@ def _compute_expert_loss(
         tf = t[rmask].clone().detach().requires_grad_(True)
         xt = torch.cat([xf, tf], dim=1)
         u_j = model.forward_single_expert(expert_idx, xt)
-        hf = u_j[:, 0]
+        
+        if additive:
+            # In additive mode, compute residual on root + u_j
+            # Root is frozen but differentiable wrt inputs
+            u_root = model.base_model(xt)
+            u_field = u_root + u_j
+        else:
+            u_field = u_j
+        
+        hf = u_field[:, 0]
         ht, hx, hxx = deriv_fn(hf, xf, tf)
         res = pde_res_fn(hf, ht, hx, hxx, **pde_params)
         comps['residual'] = torch.mean(res ** 2)
+        if residual_cache is not None:
+            r2 = (res ** 2).detach().cpu()
+            residual_cache.append((
+                xf.detach().cpu(),
+                tf.detach().cpu(),
+                r2,
+            ))
 
     # ── IC true (real t=0) ──
     ic_mask = (kinds == KIND_IC_TRUE)
@@ -213,6 +283,7 @@ def _compute_expert_loss(
 
 def _compute_periodic_bc_loss(
     model, x, t, expert_ids, kinds, bc_face_ids, deriv_fn, device,
+    additive: bool = False,
 ):
     """Compute periodic BC loss for Allen-Cahn (cross-expert pairing).
     
@@ -224,6 +295,9 @@ def _compute_periodic_bc_loss(
     
     Vectorized by grouping points by (expert_left, expert_right) pairs
     to minimize forward passes and autograd calls.
+    
+    Note: In additive mode, we still compare local u_j values (not root+u_j)
+    since the root already satisfies periodic BC and leaves should output 0.
     """
     bc_mask = (kinds == KIND_BC_TRUE)
     if bc_mask.sum() == 0:
@@ -340,14 +414,167 @@ def _record(history, expert_idx, comps):
         history[expert_idx] = {
             k: [] for k in [
                 'residual', 'ic', 'interface_ic',
-                'interface_bc', 'bc', 'total',
+                'interface_bc', 'bc', 'total', 'continuity',
             ]
         }
     for k in history[expert_idx]:
-        val = comps[k]
-        history[expert_idx][k].append(
-            val.item() if torch.is_tensor(val) else val
-        )
+        if k in comps:
+            val = comps[k]
+            history[expert_idx][k].append(
+                val.item() if torch.is_tensor(val) else val
+            )
+
+
+def _record_continuity(history, expert_idx, cont_val):
+    """Record continuity loss for an expert (separate from main _record)."""
+    if expert_idx not in history:
+        history[expert_idx] = {
+            k: [] for k in [
+                'residual', 'ic', 'interface_ic',
+                'interface_bc', 'bc', 'total', 'continuity',
+            ]
+        }
+    # Append to continuity; if list is shorter, pad with 0
+    cont_list = history[expert_idx]['continuity']
+    while len(cont_list) < len(history[expert_idx]['total']) - 1:
+        cont_list.append(0.0)
+    cont_list.append(cont_val if not torch.is_tensor(cont_val) else cont_val.item())
+
+
+def _compute_continuity_loss(
+    model, x, t, expert_ids, kinds, cont_neighbors, cont_dims,
+    deriv_fn, pde_params, device, problem,
+):
+    """Compute continuity loss on shared interior faces between neighbors.
+    
+    For each pair (a, b) of face-neighbor experts, enforces agreement of:
+    - Value: u_a = u_b
+    - First derivative: ∂u_a/∂d = ∂u_b/∂d (where d is face-normal dim)
+    - Second derivative: ∂²u_a/∂d² = ∂²u_b/∂d² (for PDE order >= 2)
+    
+    The root cancels in the difference since both experts are evaluated at
+    the same coordinates, so this is identical for additive/non-additive.
+    
+    Returns:
+        cont_loss: total continuity loss (scalar)
+        cont_per_expert: dict mapping expert_idx -> continuity loss contribution
+    """
+    cont_mask = (kinds == KIND_CONTINUITY)
+    if cont_mask.sum() == 0:
+        return torch.tensor(0.0, device=device), {}
+    
+    x_cont = x[cont_mask]
+    t_cont = t[cont_mask]
+    eid_cont = expert_ids[cont_mask]
+    neighbor_cont = cont_neighbors[cont_mask]
+    dim_cont = cont_dims[cont_mask]
+    
+    # PDE order determines how many derivatives to match
+    # Allen-Cahn has second-order spatial derivatives
+    pde_order = 2 if problem in ('allen_cahn', 'burgers1d', 'kdv') else 1
+    if problem == 'ks':
+        pde_order = 4  # KS has 4th order
+    
+    total_loss = torch.tensor(0.0, device=device)
+    cont_per_expert = {}
+    n_pairs = 0
+    
+    # Group by (expert_a, expert_b, face_dim) for batched evaluation
+    # Create composite key: a * 1e8 + b * 1e4 + d
+    pair_keys = eid_cont * 100000000 + neighbor_cont * 10000 + dim_cont
+    unique_keys = pair_keys.unique().tolist()
+    
+    for key in unique_keys:
+        key_mask = (pair_keys == key)
+        eidx_a = int(key // 100000000)
+        eidx_b = int((key % 100000000) // 10000)
+        face_dim = int(key % 10000)
+        
+        # Get points for this pair
+        x_pair = x_cont[key_mask].clone().detach().requires_grad_(True)
+        t_pair = t_cont[key_mask].clone().detach().requires_grad_(True)
+        xt_pair = torch.cat([x_pair, t_pair], dim=1)
+        
+        n_pts = x_pair.shape[0]
+        if n_pts == 0:
+            continue
+        
+        # Evaluate both experts at same coordinates
+        u_a = model.forward_single_expert(eidx_a, xt_pair)[:, 0]
+        u_b = model.forward_single_expert(eidx_b, xt_pair)[:, 0]
+        
+        # Value mismatch
+        pair_loss = torch.sum((u_a - u_b) ** 2)
+        
+        # First derivative mismatch (along face-normal dimension)
+        if pde_order >= 1:
+            if face_dim < x_pair.shape[1]:  # spatial dimension
+                # Derivative w.r.t. x (spatial)
+                du_a_dx = torch.autograd.grad(
+                    u_a, x_pair,
+                    grad_outputs=torch.ones_like(u_a),
+                    create_graph=True, retain_graph=True,
+                )[0][:, face_dim]
+                du_b_dx = torch.autograd.grad(
+                    u_b, x_pair,
+                    grad_outputs=torch.ones_like(u_b),
+                    create_graph=True, retain_graph=True,
+                )[0][:, face_dim]
+            else:
+                # Derivative w.r.t. t (temporal dimension)
+                du_a_dx = torch.autograd.grad(
+                    u_a, t_pair,
+                    grad_outputs=torch.ones_like(u_a),
+                    create_graph=True, retain_graph=True,
+                )[0][:, 0]
+                du_b_dx = torch.autograd.grad(
+                    u_b, t_pair,
+                    grad_outputs=torch.ones_like(u_b),
+                    create_graph=True, retain_graph=True,
+                )[0][:, 0]
+            pair_loss = pair_loss + torch.sum((du_a_dx - du_b_dx) ** 2)
+        
+        # Second derivative mismatch
+        if pde_order >= 2:
+            if face_dim < x_pair.shape[1]:
+                d2u_a_dx2 = torch.autograd.grad(
+                    du_a_dx, x_pair,
+                    grad_outputs=torch.ones_like(du_a_dx),
+                    create_graph=True, retain_graph=True,
+                )[0][:, face_dim]
+                d2u_b_dx2 = torch.autograd.grad(
+                    du_b_dx, x_pair,
+                    grad_outputs=torch.ones_like(du_b_dx),
+                    create_graph=True, retain_graph=True,
+                )[0][:, face_dim]
+            else:
+                d2u_a_dx2 = torch.autograd.grad(
+                    du_a_dx, t_pair,
+                    grad_outputs=torch.ones_like(du_a_dx),
+                    create_graph=True, retain_graph=True,
+                )[0][:, 0]
+                d2u_b_dx2 = torch.autograd.grad(
+                    du_b_dx, t_pair,
+                    grad_outputs=torch.ones_like(du_b_dx),
+                    create_graph=True, retain_graph=True,
+                )[0][:, 0]
+            pair_loss = pair_loss + torch.sum((d2u_a_dx2 - d2u_b_dx2) ** 2)
+        
+        total_loss = total_loss + pair_loss
+        n_pairs += n_pts
+        
+        # Track per-expert contribution (split equally between a and b)
+        pair_loss_val = pair_loss.item() / 2 if n_pts > 0 else 0.0
+        cont_per_expert[eidx_a] = cont_per_expert.get(eidx_a, 0.0) + pair_loss_val
+        cont_per_expert[eidx_b] = cont_per_expert.get(eidx_b, 0.0) + pair_loss_val
+    
+    if n_pairs > 0:
+        total_loss = total_loss / n_pairs
+        # Normalize per-expert values
+        for eidx in cont_per_expert:
+            cont_per_expert[eidx] /= n_pairs
+    
+    return total_loss, cont_per_expert
 
 
 def _import_pde_helpers(problem: str):

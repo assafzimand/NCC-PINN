@@ -81,6 +81,7 @@ base_config:
       residual: 1.0
       ic: 1.0
       bc: 1.0
+      continuity: 1.0    # weight for neighbor-continuity loss in split_icbc
     causal_training:
       enabled: false
       num_chunks: 32
@@ -296,13 +297,50 @@ experiments:
   #   adaptive_pinn:
   #     M_experts_num: 5
 
-  # ── AToELeaves ────────────────────────────────────────────────────────────
-  - name: allen_cahn_leaves_m5
+  # ── AToELeaves: 4 combinations (additive x split_icbc) ────────────────────
+  # Combination 1: additive=false, split_icbc=false (baseline, soft PoU)
+  - name: allen_cahn_leaves_m5_nonadd_nosplit
     problem: allen_cahn
     model: AToELeaves
     base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       M_experts_num: 5
+      additive: false
+      blending_mode: soft
+      split_icbc: { enabled: false }
+
+  # Combination 2: additive=true, split_icbc=false (additive soft PoU)
+  - name: allen_cahn_leaves_m5_add_nosplit
+    problem: allen_cahn
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      M_experts_num: 5
+      additive: true
+      blending_mode: soft
+      split_icbc: { enabled: false }
+
+  # Combination 3: additive=false, split_icbc=true (non-additive hard split)
+  - name: allen_cahn_leaves_m5_nonadd_split
+    problem: allen_cahn
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      M_experts_num: 5
+      additive: false
+      blending_mode: hard
+      split_icbc: { enabled: true }
+
+  # Combination 4: additive=true, split_icbc=true (additive hard split)
+  - name: allen_cahn_leaves_m5_add_split
+    problem: allen_cahn
+    model: AToELeaves
+    base_architecture: [2, 30, 30, 30, 1]
+    adaptive_pinn:
+      M_experts_num: 5
+      additive: true
+      blending_mode: hard
+      split_icbc: { enabled: true }
 
   # ── ANT ───────────────────────────────────────────────────────────────────
   # - name: allen_cahn_ant_m5
