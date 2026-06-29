@@ -281,7 +281,7 @@ base_config:
     fine_tune:
       epochs: 0
       optimizer_1: adam                     # gentle warmup (5k epochs)
-      optimizer_2: ssbroyden                # curvature-aware polish (25k epochs)
+      optimizer_2: ssbroyden                # curvature-aware polish (30k epochs)
       optimizer_switch_epoch: 5000
       lr: 0.0001                            # 50x below Phase 1's 0.005
       lr_schedule: exponential
