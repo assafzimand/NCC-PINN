@@ -292,10 +292,30 @@ base_config:
 
 
 experiments:
-  - name: allen_cahn_leaves_m10_add_nosplit
+  - name: base_architecture_70_70_70_70_70_70_1
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 70, 70, 70, 70, 70, 1]
+    adaptive_pinn:
+      M_experts_num: 0
+      additive: false
+      blending_mode: soft
+      split_icbc: { enabled: true }
+
+  - name: base_architecture_60_60_60_60_60_60_1
+    problem: allen_cahn
+    model: AToELeaves
+    base_architecture: [2, 60, 60, 60, 60, 60, 1]
+    adaptive_pinn:
+      M_experts_num: 0
+      additive: false
+      blending_mode: soft
+      split_icbc: { enabled: true }
+
+  - name: base_architecture_50_50_50_50_50_50_1
+    problem: allen_cahn
+    model: AToELeaves
+    base_architecture: [2, 50, 50, 50, 50, 50, 1]
     adaptive_pinn:
       M_experts_num: 0
       additive: false
