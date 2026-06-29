@@ -81,7 +81,7 @@ base_config:
       residual: 1.0
       ic: 1.0
       bc: 1.0
-      continuity: 1.0    # weight for neighbor-continuity loss in split_icbc
+      continuity: 0.0    # weight for neighbor-continuity loss in split_icbc
     causal_training:
       enabled: false
       num_chunks: 32
@@ -288,14 +288,14 @@ base_config:
       lr_decay_rate: 0.98
       lr_decay_steps: 1000
       lr_warmup_steps: 500                  # ramp LR from near-zero
-      l2sp_lambda: 0.01                     # anchor weights to pre-fine-tune values
+      l2sp_lambda: 0.00                     # anchor weights to pre-fine-tune values
 
 
 experiments:
   - name: allen_cahn_leaves_m10_add_nosplit
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 50, 50, 50, 50, 50, 1]
+    base_architecture: [2, 100, 100, 100, 100, 100, 1]
     adaptive_pinn:
       M_experts_num: 0
       additive: false
