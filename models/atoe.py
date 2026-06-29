@@ -156,6 +156,15 @@ class AToE(nn.Module):
         # Cache for additive composition (updated by sync_batched_indicators)
         self._expert_depths: Optional[torch.Tensor] = None
         self._max_depth: int = 0
+        
+        # Additive mode toggle (from adaptive_pinn config)
+        # When True: u = u_0 + Σ PoU_ℓ (all levels contribute, default AToE behavior)
+        # When False: u = PoU_L (only active_max_depth level contributes)
+        self.additive = adaptive_config.get('additive', True)
+        
+        # For non-additive mode: only experts at this depth are active in forward
+        # Set by trainer after each level is trained; None means use all levels
+        self.active_max_depth: Optional[int] = None
 
     @property
     def num_experts(self) -> int:
@@ -503,6 +512,13 @@ class AToE(nn.Module):
         if threshold is not None:
             threshold = float(threshold)
 
+        # Non-additive mode: only use experts at active_max_depth (single level)
+        if not self.additive and self.active_max_depth is not None:
+            if self.blending_mode == 'hard':
+                return self._forward_hard_single_level(inputs, self.active_max_depth)
+            else:
+                return self._forward_soft_additive_single_level(inputs, self.active_max_depth)
+        
         if threshold is not None and len(self.experts) > 0:
             if self.blending_mode == 'hard':
                 return self._forward_hard_sparse(inputs, threshold)
@@ -511,7 +527,7 @@ class AToE(nn.Module):
         else:
             if self.blending_mode == 'hard':
                 return self._forward_hard(inputs)
-            elif self.composition_mode == 'additive':
+            elif self.composition_mode == 'additive' or self.additive:
                 # AToE additive: u = u_0 + Σ w_i · u_i with per-level normalization
                 return self._forward_soft_additive(inputs)
             else:
@@ -594,17 +610,17 @@ class AToE(nn.Module):
 
     def _forward_soft_additive(self, inputs: torch.Tensor) -> torch.Tensor:
         """
-        Additive composition with per-level background normalization (AToE).
+        Additive composition with per-level PoU normalization (AToE).
 
         u(X) = u_0(X) + Σ_{ℓ=1..L} Σ_{i: level(i)=ℓ} w_i(X) · u_i(X)
         
         where:
-            w_i(X) = Ψ_i(X) / (1 + Σ_{k: level(k)=ℓ(i)} Ψ_k(X))
+            w_i(X) = Ψ_i(X) / Σ_{k: level(k)=ℓ(i)} Ψ_k(X)
         
         Key properties:
             - Base/root contributes with coefficient exactly 1 (not normalized)
-            - Each level has its own denominator Z_ℓ = 1 + Σ_{level ℓ} Ψ
-            - The constant 1 is the background slot (handles partial coverage)
+            - Each level has its own denominator Z_ℓ = Σ_{level ℓ} Ψ (clean PoU)
+            - With retain_siblings=True, each level forms a complete domain tiling
             - Composition grows incrementally as levels are spawned
 
         Args:
@@ -633,8 +649,7 @@ class AToE(nn.Module):
         K = len(self.experts)
         device = inputs.device
         
-        # Compute per-level normalized weights
-        # For each level ℓ: w_i = Ψ_i / (1 + Σ_{k: level(k)=ℓ} Ψ_k)
+        # Compute per-level normalized weights (clean PoU: w_i = Ψ_i / Σ_{level} Ψ)
         psi_experts_norm = torch.zeros_like(psi_experts)  # (N, K)
         
         for depth in range(1, self._max_depth + 1):
@@ -643,9 +658,9 @@ class AToE(nn.Module):
             if not depth_mask.any():
                 continue
             
-            # Sum of Ψ at this level
+            # Sum of Ψ at this level (complete tiling with retain_siblings=True)
             psi_at_level = psi_experts[:, depth_mask]  # (N, num_at_depth)
-            Z_level = 1.0 + psi_at_level.sum(dim=1, keepdim=True)  # (N, 1)
+            Z_level = psi_at_level.sum(dim=1, keepdim=True)  # (N, 1)
             
             # Normalized weights for this level
             psi_experts_norm[:, depth_mask] = psi_at_level / Z_level
@@ -657,6 +672,125 @@ class AToE(nn.Module):
         if _t: _t.stop('fwd.blend')
 
         return u_total
+
+    def forward_single_expert(self, expert_idx: int, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through a single expert (raw output, no PoU blending).
+        
+        Used by split_loss for per-expert training.
+        
+        Args:
+            expert_idx: Index of the expert in self.experts
+            inputs: (N, n_dims) input coordinates
+            
+        Returns:
+            (N, output_dim) raw expert output
+        """
+        return self.experts[expert_idx](inputs)
+
+    def forward_frozen_composition(self, inputs: torch.Tensor, max_depth: Optional[int] = None) -> torch.Tensor:
+        """
+        Forward pass through frozen composition up to a given depth.
+        
+        Computes u_0 + Σ_{ℓ=1..max_depth} PoU_ℓ(experts_at_ℓ) for additive AToE split_loss.
+        When training level L, this gives the frozen background from levels 0..(L-1).
+        
+        Args:
+            inputs: (N, n_dims) input coordinates
+            max_depth: Maximum depth to include (None = use active_max_depth - 1)
+            
+        Returns:
+            (N, output_dim) composed output up to max_depth
+        """
+        if max_depth is None:
+            max_depth = (self.active_max_depth - 1) if self.active_max_depth else 0
+        
+        u_base = self.base_model(inputs)
+        
+        if max_depth <= 0 or len(self.experts) == 0:
+            return u_base
+        
+        _, psi_experts = self.batched_indicators(inputs)
+        
+        # Evaluate all experts
+        u_experts = torch.stack([exp(inputs) for exp in self.experts], dim=1)  # (N, K, out_dim)
+        
+        # Compute per-level PoU for levels 1..max_depth
+        psi_experts_norm = torch.zeros_like(psi_experts)
+        
+        for depth in range(1, max_depth + 1):
+            depth_mask = (self._expert_depths == depth)
+            if not depth_mask.any():
+                continue
+            
+            psi_at_level = psi_experts[:, depth_mask]
+            Z_level = psi_at_level.sum(dim=1, keepdim=True)
+            psi_experts_norm[:, depth_mask] = psi_at_level / Z_level
+        
+        weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts
+        return u_base + weighted_experts.sum(dim=1)
+
+    def _forward_soft_additive_single_level(self, inputs: torch.Tensor, target_depth: int) -> torch.Tensor:
+        """
+        Soft forward pass using only experts at a single depth level (non-additive mode).
+        
+        u(X) = Σ_{i: depth(i)=target_depth} [Ψ_i / Σ_{k: depth(k)=target_depth} Ψ_k] · u_i(X)
+        
+        Args:
+            inputs: (N, n_dims) input coordinates
+            target_depth: The depth level to use for composition
+            
+        Returns:
+            (N, output_dim) composed output from single level
+        """
+        _, psi_experts = self.batched_indicators(inputs)
+        
+        # Get experts at target depth
+        depth_mask = (self._expert_depths == target_depth)
+        if not depth_mask.any():
+            return self.base_model(inputs)
+        
+        # Evaluate only experts at target depth
+        expert_indices = torch.nonzero(depth_mask, as_tuple=True)[0]
+        u_experts = torch.stack([self.experts[i](inputs) for i in expert_indices], dim=1)
+        
+        # PoU over target depth only
+        psi_at_level = psi_experts[:, depth_mask]
+        Z_level = psi_at_level.sum(dim=1, keepdim=True)
+        psi_norm = psi_at_level / Z_level
+        
+        weighted = psi_norm.unsqueeze(-1) * u_experts
+        return weighted.sum(dim=1)
+
+    def _forward_hard_single_level(self, inputs: torch.Tensor, target_depth: int) -> torch.Tensor:
+        """
+        Hard forward pass using only experts at a single depth level (non-additive mode).
+        
+        u(X) = Σ_{i: depth(i)=target_depth} 1_{Ω_i}(X) · u_i(X)
+        
+        Args:
+            inputs: (N, n_dims) input coordinates
+            target_depth: The depth level to use for composition
+            
+        Returns:
+            (N, output_dim) composed output from single level with hard masks
+        """
+        masks, _ = self.batched_indicators(inputs)
+        
+        # Get experts at target depth
+        depth_mask = (self._expert_depths == target_depth)
+        if not depth_mask.any():
+            return self.base_model(inputs)
+        
+        # Evaluate only experts at target depth
+        expert_indices = torch.nonzero(depth_mask, as_tuple=True)[0]
+        u_experts = torch.stack([self.experts[i](inputs) for i in expert_indices], dim=1)
+        
+        # Hard masks for level (no normalization)
+        masks_at_level = masks[:, depth_mask]  # (N, num_at_depth)
+        
+        weighted = masks_at_level.unsqueeze(-1) * u_experts
+        return weighted.sum(dim=1)
 
     def _forward_hard_sparse(self, inputs: torch.Tensor, threshold: float) -> torch.Tensor:
         """
@@ -754,8 +888,8 @@ class AToE(nn.Module):
         if _t: _t.start('fwd.blend')
         
         # Handle composition mode
-        if self.composition_mode == 'additive':
-            # Additive: base contributes at weight 1, experts get per-level normalization
+        if self.composition_mode == 'additive' or self.additive:
+            # Additive: base contributes at weight 1, experts get per-level clean PoU
             psi_experts_norm = torch.zeros_like(psi_experts)  # (N, K)
             
             for depth in range(1, self._max_depth + 1):
@@ -763,7 +897,7 @@ class AToE(nn.Module):
                 if not depth_mask.any():
                     continue
                 psi_at_level = psi_experts[:, depth_mask]  # (N, num_at_depth)
-                Z_level = 1.0 + psi_at_level.sum(dim=1, keepdim=True)  # (N, 1)
+                Z_level = psi_at_level.sum(dim=1, keepdim=True)  # (N, 1) - clean PoU, no 1+
                 psi_experts_norm[:, depth_mask] = psi_at_level / Z_level
             
             weighted_experts = psi_experts_norm.unsqueeze(-1) * u_experts_sparse  # (N, K, out_dim)
@@ -838,8 +972,8 @@ class AToE(nn.Module):
         if _t: _t.stop('fwd.sparse_selection')
 
         # Compute normalized weights based on composition mode
-        if self.composition_mode == 'additive' and K > 0:
-            # Additive: base gets weight 1, experts get per-level normalization
+        if (self.composition_mode == 'additive' or self.additive) and K > 0:
+            # Additive: base gets weight 1, experts get per-level clean PoU
             psi_norm_base = torch.ones(N, 1, device=device, dtype=inputs.dtype)
             psi_norm_experts = torch.zeros_like(psi_experts)  # (N, K)
             
@@ -848,7 +982,7 @@ class AToE(nn.Module):
                 if not depth_mask.any():
                     continue
                 psi_at_level = psi_experts[:, depth_mask]  # (N, num_at_depth)
-                Z_level = 1.0 + psi_at_level.sum(dim=1, keepdim=True)  # (N, 1)
+                Z_level = psi_at_level.sum(dim=1, keepdim=True)  # (N, 1) - clean PoU, no 1+
                 psi_norm_experts[:, depth_mask] = psi_at_level / Z_level
         else:
             # Legacy PoU: global normalization
@@ -863,7 +997,7 @@ class AToE(nn.Module):
         u_base = self.base_model(inputs_base)  # (N, output_dim)
         
         # For additive mode, base has constant weight = 1 (no gradient through weight)
-        base_constant_psi = (self.composition_mode == 'additive')
+        base_constant_psi = (self.composition_mode == 'additive' or self.additive)
         components.append({
             'u': u_base,
             'inputs': inputs_base,
@@ -970,8 +1104,8 @@ class AToE(nn.Module):
             result['masks'][f'expert_{i}'] = psi_experts[:, i:i+1]  # (N, 1)
 
         # Compute normalized weights based on composition mode
-        if self.composition_mode == 'additive' and K > 0:
-            # Additive: base = 1, experts get per-level normalization
+        if (self.composition_mode == 'additive' or self.additive) and K > 0:
+            # Additive: base = 1, experts get per-level clean PoU
             psi_base_norm = torch.ones(N, 1, device=device, dtype=inputs.dtype)
             psi_experts_norm = torch.zeros_like(psi_experts)
             for depth in range(1, self._max_depth + 1):
@@ -979,7 +1113,7 @@ class AToE(nn.Module):
                 if not depth_mask.any():
                     continue
                 psi_at_level = psi_experts[:, depth_mask]
-                Z_level = 1.0 + psi_at_level.sum(dim=1, keepdim=True)
+                Z_level = psi_at_level.sum(dim=1, keepdim=True)  # clean PoU, no 1+
                 psi_experts_norm[:, depth_mask] = psi_at_level / Z_level
             result['blending_mode_info'] = 'additive_per_level'
         else:

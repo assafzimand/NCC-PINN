@@ -158,29 +158,51 @@ def apply_output_init(
     # output_mode == 'default' → no-op
 
 
-def apply_expert_init(expert: nn.Module, cfg: dict) -> None:
+def apply_expert_init(expert: nn.Module, cfg: dict, zero_output: bool = True) -> None:
     """Initialize a newly spawned expert network.
 
-    Always applies:
-    - Glorot hidden init (if init.hidden == 'glorot')
-    - Zero output layer (residual learning: expert starts at u=0 contribution)
+    Applies:
+    - Glorot hidden init (if init.hidden == 'glorot'), else PyTorch default
+    - Output layer based on zero_output:
+      - zero_output=True (additive mode): Zero output so expert starts at u=0
+      - zero_output=False (non-additive mode): Same init as hidden layers
       When spectral_norm is enabled, uses tiny random (std=1e-6) instead of
       strict zero to avoid sigma=0 → NaN in the spectral norm wrapper.
 
     LS-init is NEVER applied to experts (only the base model gets it).
+    
+    Args:
+        expert: The expert network to initialize
+        cfg: Config dict containing 'init' and 'activation' settings
+        zero_output: If True, zero the output layer (additive/residual mode).
+                     If False, use same init as hidden (non-additive mode).
     """
     apply_hidden_init(expert, cfg)
 
     out_layer = _get_output_layer(expert)
+    init_cfg = cfg.get('init', {})
+    use_spectral = init_cfg.get('spectral_norm', False)
+    hidden_mode = init_cfg.get('hidden', 'default')
+    
     with torch.no_grad():
-        init_cfg = cfg.get('init', {})
-        if init_cfg.get('spectral_norm', False):
-            std = init_cfg['spectral_norm_init_std']
-            nn.init.normal_(out_layer.weight, mean=0.0, std=std)
+        if zero_output:
+            # Additive mode: zero output for residual learning
+            if use_spectral:
+                std = init_cfg['spectral_norm_init_std']
+                nn.init.normal_(out_layer.weight, mean=0.0, std=std)
+            else:
+                nn.init.zeros_(out_layer.weight)
+            if out_layer.bias is not None:
+                nn.init.zeros_(out_layer.bias)
         else:
-            nn.init.zeros_(out_layer.weight)
-        if out_layer.bias is not None:
-            nn.init.zeros_(out_layer.bias)
+            # Non-additive mode: same init as hidden layers
+            if hidden_mode == 'glorot':
+                activation = cfg.get('activation', 'tanh')
+                gain = nn.init.calculate_gain(activation)
+                nn.init.xavier_uniform_(out_layer.weight, gain=gain)
+                if out_layer.bias is not None:
+                    nn.init.zeros_(out_layer.bias)
+            # else: keep PyTorch default (Kaiming uniform)
 
 
 def apply_parent_copy_init(

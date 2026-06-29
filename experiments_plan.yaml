@@ -13,7 +13,7 @@
 # Architecture sizing (param-balanced, 7 hidden layers):
 #   M=10: [2,30,30,30,30,30,30,1]
 
-experiment_name: "allen_cahn_additive_split_m10_fine_tune"
+experiment_name: "allen_cahn_bigger_root_creation"
 
 base_config:
   problem: allen_cahn
@@ -68,7 +68,7 @@ base_config:
   # ALLEN_CAHN — clean Kiyani config (no extra features)
   # ══════════════════════════════════════════════════════════════════════════
   allen_cahn:
-    pretrained_base_checkpoint: "roots_checkpoints/allen_cahn_root.pt"   # path to a base checkpoint to skip Phase-1 training; null = train Phase 1
+    pretrained_base_checkpoint: null  # path to a base checkpoint to skip Phase-1 training; null = train Phase 1
     spatial_dim: 1
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
@@ -97,7 +97,7 @@ base_config:
       scale: 3.0
       periodic: false
     init:
-      hidden: parent_weights
+      hidden: default
       output: default
       ls_use_bias: false
       spectral_norm: false
@@ -274,80 +274,30 @@ base_config:
     # ── Staged per-level (AToE / ANT) ──
     new_expert_lr_decay: 1.0
     min_epochs_per_level: 1
-    max_epochs_per_level: 35000        # ceiling; patience terminates earlier
+    max_epochs_per_level: 0        # ceiling; patience terminates earlier
 
     # ── Final joint fine-tune (AToE / ANT) ──
+    # Cautious learning: low-LR Adam warmup → SSBroyden polish + L2-SP anchoring
     fine_tune:
-      epochs: 30000                        # disabled
-      optimizer_1: soap
-      optimizer_2: null
-      optimizer_switch_epoch: 99999
-      lr: 0.0001                        
+      epochs: 0
+      optimizer_1: adam                     # gentle warmup (5k epochs)
+      optimizer_2: ssbroyden                # curvature-aware polish (25k epochs)
+      optimizer_switch_epoch: 5000
+      lr: 0.0001                            # 50x below Phase 1's 0.005
       lr_schedule: exponential
       lr_decay_rate: 0.98
       lr_decay_steps: 1000
-      lr_warmup_steps: 0
+      lr_warmup_steps: 500                  # ramp LR from near-zero
+      l2sp_lambda: 0.01                     # anchor weights to pre-fine-tune values
 
 
 experiments:
-  # ── AToE ──────────────────────────────────────────────────────────────────
-  # - name: allen_cahn_atoe_m5
-  #   problem: allen_cahn
-  #   model: AToE
-  #   base_architecture: [2, 30, 30, 30, 1]
-  #   adaptive_pinn:
-  #     M_experts_num: 5
-
-  # ── AToELeaves: 4 combinations (additive x split_icbc) ────────────────────
-  # # Combination 1: additive=false, split_icbc=false (baseline, soft PoU)
-  # - name: allen_cahn_leaves_m5_nonadd_nosplit
-  #   problem: allen_cahn
-  #   model: AToELeaves
-  #   base_architecture: [2, 30, 30, 30, 1]
-  #   adaptive_pinn:
-  #     M_experts_num: 5
-  #     additive: false
-  #     blending_mode: soft
-  #     split_icbc: { enabled: false }
-
-  # Combination 2: additive=true, split_icbc=false (additive soft PoU)
   - name: allen_cahn_leaves_m10_add_nosplit
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 1]
+    base_architecture: [2, 50, 50, 50, 50, 50, 1]
     adaptive_pinn:
-      M_experts_num: 10
-      additive: true
-      blending_mode: soft
-      split_icbc: { enabled: false }
-
-  # Combination 3: additive=false, split_icbc=true (non-additive hard split)
-  - name: allen_cahn_leaves_m10_nonadd_split
-    problem: allen_cahn
-    model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      M_experts_num: 10
+      M_experts_num: 0
       additive: false
-      blending_mode: hard
+      blending_mode: soft
       split_icbc: { enabled: true }
-
-  # # Combination 4: additive=true, split_icbc=true (additive hard split)
-  # - name: allen_cahn_leaves_m5_add_split
-  #   problem: allen_cahn
-  #   model: AToELeaves
-  #   base_architecture: [2, 30, 30, 30, 1]
-  #   adaptive_pinn:
-  #     M_experts_num: 20
-  #     additive: true
-  #     blending_mode: hard
-  #     split_icbc: { enabled: true }
-
-  # ── ANT ───────────────────────────────────────────────────────────────────
-  # - name: allen_cahn_ant_m5
-  #   problem: allen_cahn
-  #   model: ANT
-  #   base_architecture: [2, 30, 30, 30, 1]
-  #   adaptive_pinn:
-  #     M_experts_num: 5
-  #     ANT_default_hidden_layers: 30

@@ -40,6 +40,7 @@ def build_split_loss(
     variant: str,
     orig_loss_fn: Callable = None,
     additive: bool = False,
+    current_level: int = None,
 ) -> Callable:
     """Build a split loss for per-expert subdomain training.
 
@@ -51,8 +52,13 @@ def build_split_loss(
     (used for eval batches).
     
     When additive=True:
-    - Residual is computed on root + u_j (root frozen but differentiable)
+    - Residual is computed on frozen_composition + u_j
+    - For AToE: frozen_composition = u_0 + Σ_{ℓ<current_level} PoU_ℓ
     - Interface/IC/BC targets are 0 (handled by subdomain data builder)
+    
+    Args:
+        current_level: For AToE per-level training, the depth being trained.
+            Used to compute frozen composition up to level-1.
     """
     problem = cfg['problem']
     pc = cfg[problem]
@@ -118,6 +124,7 @@ def build_split_loss(
                 w_res, w_ic, w_bc, is_allen_cahn,
                 variant, device,
                 additive=additive,
+                current_level=current_level,
                 residual_cache=(
                     residual_cache
                     if split_loss_fn._cache_residuals else None
@@ -175,6 +182,7 @@ def _compute_expert_loss(
     pde_res_fn, deriv_fn, pde_params,
     w_res, w_ic, w_bc, is_allen_cahn, variant, device,
     additive: bool = False,
+    current_level: int = None,
     residual_cache=None,
 ):
     """Per-expert local loss (no PoU).
@@ -201,10 +209,16 @@ def _compute_expert_loss(
         u_j = model.forward_single_expert(expert_idx, xt)
         
         if additive:
-            # In additive mode, compute residual on root + u_j
-            # Root is frozen but differentiable wrt inputs
-            u_root = model.base_model(xt)
-            u_field = u_root + u_j
+            # In additive mode, compute residual on frozen_composition + u_j
+            # For AToE: frozen composition = u_0 + Σ_{ℓ<current_level} PoU_ℓ
+            # For AToELeaves: just base_model (leaves are a single level)
+            if variant == 'AToE' and hasattr(model, 'forward_frozen_composition'):
+                # Pass current_level - 1 to get composition up to (but not including) current level
+                frozen_depth = (current_level - 1) if current_level else 0
+                u_frozen = model.forward_frozen_composition(xt, max_depth=frozen_depth)
+            else:
+                u_frozen = model.base_model(xt)
+            u_field = u_frozen + u_j
         else:
             u_field = u_j
         
@@ -285,23 +299,63 @@ def _compute_periodic_bc_loss(
     model, x, t, expert_ids, kinds, bc_face_ids, deriv_fn, device,
     additive: bool = False,
 ):
-    """Compute periodic BC loss for Allen-Cahn (cross-expert pairing).
+    """Compute periodic BC loss for Allen-Cahn.
     
-    Pairs left/right boundary points by sorting on t-value,
-    penalizes (u_left - u_right)² + (∂u/∂x_left - ∂u/∂x_right)².
+    Non-additive mode: Cross-expert pairing
+    - Pairs left/right boundary points by sorting on t-value
+    - Penalizes (u_left - u_right)² + (∂u/∂x_left - ∂u/∂x_right)²
     
-    Since left and right sides share the same t-samples (per dimension),
-    sorting by t ensures we pair points at matching times.
-    
-    Vectorized by grouping points by (expert_left, expert_right) pairs
-    to minimize forward passes and autograd calls.
-    
-    Note: In additive mode, we still compare local u_j values (not root+u_j)
-    since the root already satisfies periodic BC and leaves should output 0.
+    Additive mode: Leaves output 0 at boundaries
+    - Root already satisfies periodic BC
+    - Each leaf expert u_j is penalized: u_j² + (∂u_j/∂x)²
     """
     bc_mask = (kinds == KIND_BC_TRUE)
     if bc_mask.sum() == 0:
         return torch.tensor(0.0, device=device)
+    
+    # ── Additive mode: penalize leaves to be 0 at boundaries ──
+    if additive:
+        x_bc = x[bc_mask]
+        t_bc = t[bc_mask]
+        eid_bc = expert_ids[bc_mask]
+        fid_bc = bc_face_ids[bc_mask]
+        
+        dims = fid_bc // 2
+        unique_eids = eid_bc.unique().tolist()
+        
+        total_bc_loss = torch.tensor(0.0, device=device)
+        
+        for eid in unique_eids:
+            eid_mask = (eid_bc == eid)
+            x_e = x_bc[eid_mask].clone().detach().requires_grad_(True)
+            t_e = t_bc[eid_mask].clone().detach()
+            dim_e = dims[eid_mask]
+            
+            xt_e = torch.cat([x_e, t_e], dim=1)
+            u_e = model.forward_single_expert(eid, xt_e)[:, 0]
+            
+            # Penalize value to be 0
+            total_bc_loss = total_bc_loss + torch.sum(u_e ** 2)
+            
+            # Penalize spatial derivative to be 0 (per dimension)
+            for d in dim_e.unique().tolist():
+                d_mask = (dim_e == d)
+                if d_mask.sum() == 0:
+                    continue
+                u_d = u_e[d_mask]
+                x_d = x_e[d_mask]
+                
+                ux_d = torch.autograd.grad(
+                    u_d, x_d,
+                    grad_outputs=torch.ones_like(u_d),
+                    create_graph=True, retain_graph=True,
+                )[0][:, d]
+                
+                total_bc_loss = total_bc_loss + torch.sum(ux_d ** 2)
+        
+        return total_bc_loss
+    
+    # ── Non-additive mode: cross-expert pairing ──
     
     x_bc = x[bc_mask]
     t_bc = t[bc_mask]
