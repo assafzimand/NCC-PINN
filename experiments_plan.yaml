@@ -13,13 +13,13 @@
 # Architecture sizing (param-balanced, 7 hidden layers):
 #   M=10: [2,30,30,30,30,30,30,1]
 
-experiment_name: "allen_cahn_additive_split_m10_resnet_batch4096_float32"
+experiment_name: "allen_cahn_additive_split_m10_fine_tune"
 
 base_config:
   problem: allen_cahn
   model: AToE                          # overridden per experiment
   activation: tanh
-  precision: float32
+  precision: float64
 
   # ── Phase 3: full Kiyani schedule — adam(5k) → ssbroyden(30k) = 35k ──────────
   epochs: 35000
@@ -29,7 +29,7 @@ base_config:
   patience_rel_delta: 0.01            # min relative train-loss improvement to reset patience
 
   optimizer_1: adam
-  optimizer_2: lbfgs
+  optimizer_2: ssbroyden
   optimizer_switch_epoch: 5000
   lr: 0.005
   soap_betas: [0.95, 0.95]
@@ -68,7 +68,7 @@ base_config:
   # ALLEN_CAHN — clean Kiyani config (no extra features)
   # ══════════════════════════════════════════════════════════════════════════
   allen_cahn:
-    pretrained_base_checkpoint: null   # path to a base checkpoint to skip Phase-1 training; null = train Phase 1
+    pretrained_base_checkpoint: "roots_checkpoints/allen_cahn_root.pt"   # path to a base checkpoint to skip Phase-1 training; null = train Phase 1
     spatial_dim: 1
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
@@ -237,7 +237,7 @@ base_config:
     AToE_threshold_capacity: null
     ANT_threshold_architecture: null
     ANT_default_hidden_layers: 30      # for M=10
-    expert_type: resnet                   # Kiyani-exact (resnet evaluated in 01_training)
+    expert_type: mlp                   # Kiyani-exact (resnet evaluated in 01_training)
     blending_mode: soft
     sigma_fraction: 0.2
     base_weight: 1.0
@@ -263,7 +263,7 @@ base_config:
     initial_train:
       epochs: 35000
       optimizer_1: adam
-      optimizer_2: lbfgs
+      optimizer_2: ssbroyden
       optimizer_switch_epoch: 5000
       lr: 0.005
       lr_schedule: exponential
@@ -282,7 +282,7 @@ base_config:
       optimizer_1: soap
       optimizer_2: null
       optimizer_switch_epoch: 99999
-      lr: 0.001                        
+      lr: 0.0001                        
       lr_schedule: exponential
       lr_decay_rate: 0.98
       lr_decay_steps: 1000
@@ -314,7 +314,7 @@ experiments:
   - name: allen_cahn_leaves_m10_add_nosplit
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       M_experts_num: 10
       additive: true
@@ -325,7 +325,7 @@ experiments:
   - name: allen_cahn_leaves_m10_nonadd_split
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 30, 30, 30, 1]
+    base_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       M_experts_num: 10
       additive: false

@@ -2681,7 +2681,8 @@ def train_orchestrator(ctx: TrainingContext) -> None:
 
     Per-variant dispatch:
       * non-adaptive          → one ``main`` segment.
-      * AToE-Leaves           → root → spawn all leaves → joint ``phase3``.
+      * AToE-Leaves           → root → spawn all leaves → joint ``phase3`` →
+                                optional ``fine_tune`` (if additive=true).
       * AToE / ANT (staged)   → root → per-level spawn+train (coarse→fine) →
                                 final joint ``fine_tune``.
 
@@ -2794,6 +2795,19 @@ def train_orchestrator(ctx: TrainingContext) -> None:
             _run_split_segment(ctx, 'phase3', cfg['epochs'], cfg, variant='AToE-Leaves')
         else:
             res = _train_segment(ctx, 'phase3', cfg['epochs'], cfg)
+        
+        # ── Optional fine-tune for additive AToELeaves ──
+        additive = ctx.adaptive_cfg.get('additive', False)
+        fine_tune_cfg = adaptive_cfg.get('fine_tune', None)
+        if additive and fine_tune_cfg:
+            logger.info("[AToELeaves-Additive] Unfreezing ALL params (base+leaves) for final joint fine-tune.")
+            _set_trainable(model, 'all')
+            ft_cfg = dict(cfg)
+            ft_cfg.update(fine_tune_cfg)
+            ft_min = fine_tune_cfg.get('min_epochs', ctx.min_epochs)
+            res = _train_segment(ctx, 'fine_tune', fine_tune_cfg['epochs'], ft_cfg,
+                           min_epochs_override=ft_min)
+        
         ctx.total_epochs = ctx.epoch
         return
 
