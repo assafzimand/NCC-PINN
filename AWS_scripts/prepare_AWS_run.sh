@@ -14,9 +14,13 @@ REPO_URL="https://github.com/assafzimand/NCC-PINN.git"
 REPO_DIR="$HOME/NCC-PINN"
 VENV_DIR="$HOME/.venv_ncc_pinn"
 
-echo "=== Updating apt and installing dependencies (python3, venv, git, screen) ==="
+echo "=== Updating apt and installing dependencies (python3, venv, git, git-lfs, screen) ==="
 sudo apt update
-sudo apt install -y python3 python3-venv git screen
+sudo apt install -y python3 python3-venv git git-lfs screen
+
+echo
+echo "=== Initializing Git LFS ==="
+git lfs install
 
 echo
 echo "=== Creating Python virtual environment (if missing) ==="
