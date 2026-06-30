@@ -20,6 +20,9 @@ base_config:
   model: AToE                          # overridden per experiment
   activation: tanh
   precision: float64
+  # base_architecture: root / Phase-1 network (also used when experts_architecture omitted)
+  # experts_architecture: optional; spawned experts use this instead of base_architecture
+  #   e.g. base [2,70,70,70,1] + experts [2,30,30,30,1] with pretrained_base_checkpoint
 
   # ── Phase 3: full Kiyani schedule — adam(5k) → ssbroyden(30k) = 35k ──────────
   epochs: 35000
@@ -296,12 +299,14 @@ experiments:
   - name: AToE-Leaves_M5_fine_tune_no_l2sp
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 1]
+    base_architecture: [2, 70, 70, 70, 1]
+    experts_architecture: [2, 30, 30, 30, 1]
 
   - name: AToE-Leaves_M5_fine_tune_l2sp
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 1]
+    base_architecture: [2, 70, 70, 70, 1]
+    experts_architecture: [2, 30, 30, 30, 1]
     fine_tune:
       epochs: 20000
       optimizer_1: adam                   
@@ -317,7 +322,8 @@ experiments:
   - name: AToE-Leaves_M5_fine_tune_soap
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 30, 30, 30, 1]
+    base_architecture: [2, 70, 70, 70, 1]
+    experts_architecture: [2, 30, 30, 30, 1]
     fine_tune:
       epochs: 30000
       optimizer_1: soap                   

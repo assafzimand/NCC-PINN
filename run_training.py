@@ -87,15 +87,22 @@ def main():
     model_type = config.get('model', 'AToE')
     
     if is_adaptive:
+        experts_arch = config.get('experts_architecture', architecture)
         if model_type == 'ANT':
             from models.ant import ANT
             model = ANT(architecture, activation, config, adaptive_cfg)
         elif model_type == 'AToELeaves':
             from models.atoe_leaves import AToELeaves
-            model = AToELeaves(architecture, activation, config, adaptive_cfg)
+            model = AToELeaves(
+                architecture, activation, config, adaptive_cfg,
+                experts_architecture=experts_arch,
+            )
         else:
             from models.atoe import AToE
-            model = AToE(architecture, activation, config, adaptive_cfg)
+            model = AToE(
+                architecture, activation, config, adaptive_cfg,
+                experts_architecture=experts_arch,
+            )
         logger.info(f"  Model type: {type(model).__name__}")
         logger.info(f"  Base layers: {len(model.get_layer_names())}")
         logger.info(f"    Max experts: {adaptive_cfg.get('max_experts', 5)}")

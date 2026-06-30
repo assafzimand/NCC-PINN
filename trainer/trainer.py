@@ -3728,10 +3728,8 @@ def _load_pretrained_base(model: nn.Module, ckpt_path: str, cfg: Dict) -> None:
     ignoring its experts) or a plain base checkpoint (uses ``model_state_dict``).
 
     If the checkpoint's base architecture differs from the run's, the base is rebuilt
-    to the checkpoint's architecture and that architecture is written back into ``cfg``
-    (and ``model.config_base_architecture``) so that experts spawned later — in
-    particular ``init.hidden == 'parent_weights'``, which copies the parent's layers —
-    are shape-compatible with the loaded base.
+    to the checkpoint's architecture so weights load correctly. Expert architecture
+    (``experts_architecture`` / config) is not changed.
     """
     from pathlib import Path as _Path
     p = _Path(ckpt_path)
@@ -3782,12 +3780,6 @@ def _load_pretrained_base(model: nn.Module, ckpt_path: str, cfg: Dict) -> None:
             list(saved_arch), activation, cfg, is_base=True, expert_type=expert_type
         ).to(device=device, dtype=dtype)
         model.base_architecture = list(saved_arch)
-        if hasattr(model, 'config_base_architecture'):
-            # Drives the architecture of experts spawned later (incl. parent_weights copy).
-            model.config_base_architecture = list(saved_arch)
-        cfg['base_architecture'] = list(saved_arch)
-        logger.info(f"  [PretrainedBase] Updated config base_architecture to {list(saved_arch)} "
-              f"so spawned experts match the loaded base.")
 
     model.base_model.load_state_dict(base_sd)
     n_params = sum(q.numel() for q in model.base_model.parameters())

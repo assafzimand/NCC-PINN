@@ -42,7 +42,8 @@ class AToELeaves(nn.Module):
         base_architecture: List[int],
         activation: str,
         config: Dict,
-        adaptive_config: Dict
+        adaptive_config: Dict,
+        experts_architecture: Optional[List[int]] = None,
     ):
         super().__init__()
 
@@ -88,6 +89,9 @@ class AToELeaves(nn.Module):
         self.leaf_indices: Set[int] = {-1}
 
         self.config_base_architecture = base_architecture
+        self.experts_architecture = list(
+            experts_architecture if experts_architecture is not None else base_architecture
+        )
 
         self.base_model = create_network(
             base_architecture, activation, config,
@@ -231,7 +235,7 @@ class AToELeaves(nn.Module):
 
     def get_expert_architecture(self, region: RegionDescriptor) -> List[int]:
         if self.atoe_threshold_capacity is None:
-            return self.config_base_architecture
+            return self.experts_architecture
 
         from models.architecture_bank import get_architecture_for_capacity
         
@@ -639,6 +643,7 @@ class AToELeaves(nn.Module):
             'num_experts': len(self.experts),
             'base_architecture': self.base_architecture,
             'config_base_architecture': self.config_base_architecture,
+            'experts_architecture': self.experts_architecture,
             'activation': self.activation,
             'adaptive_config': self.adaptive_config,
             'leaf_indices': sorted(self.leaf_indices),
@@ -662,6 +667,10 @@ class AToELeaves(nn.Module):
             )
             self.base_model = self.base_model.to(device)
             self.base_architecture = saved_base_arch
+
+        saved_experts_arch_cfg = state_dict.get('experts_architecture')
+        if saved_experts_arch_cfg is not None:
+            self.experts_architecture = list(saved_experts_arch_cfg)
 
         self.base_model.load_state_dict(state_dict['base_model'])
 
