@@ -19,18 +19,18 @@ base_config:
   problem: allen_cahn
   model: AToE                          # overridden per experiment
   activation: tanh
-  precision: float32
+  precision: float64
 
   # ── Phase 3: full Kiyani schedule — adam(5k) → ssbroyden(30k) = 35k ──────────
-  epochs: 10000
+  epochs: 35000
   batch_size: 99999
-  patience_epochs: 9999                # ~14% of budget; rides through optimizer transitions
+  patience_epochs: 5000                # ~14% of budget; rides through optimizer transitions
   min_epochs: 1
   patience_rel_delta: 0.01            # min relative train-loss improvement to reset patience
 
-  optimizer_1: soap
-  optimizer_2: null
-  optimizer_switch_epoch: 99999
+  optimizer_1: adam
+  optimizer_2: ssbroyden
+  optimizer_switch_epoch: 5000
   lr: 0.005
   soap_betas: [0.95, 0.95]
   soap_precondition_frequency: 10
@@ -261,11 +261,11 @@ base_config:
 
     # ── Phase 1: full Kiyani base pretrain — adam(5k) → ssbroyden(30k) = 35k ──
     initial_train:
-      epochs: 10000
-      optimizer_1: soap
-      optimizer_2: null
-      optimizer_switch_epoch: 99999
-      lr: 0.001
+      epochs: 35000
+      optimizer_1: adam
+      optimizer_2: ssbroyden
+      optimizer_switch_epoch: 5000
+      lr: 0.005
       lr_schedule: exponential
       lr_decay_rate: 0.98
       lr_decay_steps: 1000
@@ -292,30 +292,30 @@ base_config:
 
 
 experiments:
-  - name: base_architecture_100_100_100_100_100_100_1
+  - name: base_architecture_120_120_120_1
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 100, 100, 100, 100, 100, 1]
+    base_architecture: [2, 120, 120, 120, 1]
     adaptive_pinn:
       M_experts_num: 0
       additive: false
       blending_mode: soft
       split_icbc: { enabled: true }
 
-  - name: base_architecture_70_70_70_70_70_70_1
+  - name: base_architecture_100_100_100_1
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 70, 70, 70, 70, 70, 1]
+    base_architecture: [2, 100, 100, 100, 1]
     adaptive_pinn:
       M_experts_num: 0
       additive: false
       blending_mode: soft
       split_icbc: { enabled: true }
 
-  - name: base_architecture_50_50_50_50_50_50_1
+  - name: base_architecture_70_70_70_1
     problem: allen_cahn
     model: AToELeaves
-    base_architecture: [2, 50, 50, 50, 50, 50, 1]
+    base_architecture: [2, 70, 70, 70, 1]
     adaptive_pinn:
       M_experts_num: 0
       additive: false
