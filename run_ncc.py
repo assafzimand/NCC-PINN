@@ -15,7 +15,7 @@ try:
 except Exception:
     pass
 
-from utils.io import load_config, make_run_dir
+from utils.io import load_config, make_run_dir, resolve_experts_architecture, log_architectures
 from utils.config_validation import (
     validate_problem_config,
     merge_problem_features_to_toplevel,
@@ -223,7 +223,7 @@ def main():
     is_multi_eval = isinstance(resume_from, dict)
 
     print(f"  Problem: {problem}")
-    print(f"  Architecture: {architecture}")
+    log_architectures(config)
     print(f"  Activation: {activation}")
     print(f"  Eval only: {eval_only}")
     if is_multi_eval:
@@ -243,7 +243,10 @@ def main():
         run_dir.mkdir(parents=True, exist_ok=True)
     else:
         # Single model mode - standard naming
-        run_dir = make_run_dir(problem, architecture, activation)
+        run_dir = make_run_dir(
+            problem, architecture, activation,
+            experts_layers=resolve_experts_architecture(config),
+        )
         # Record run_dir for run_experiments.py to find without mtime search
         _run_dir_record = Path("outputs") / ".last_run_dir.txt"
         _run_dir_record.parent.mkdir(parents=True, exist_ok=True)
@@ -384,15 +387,22 @@ def main():
             
             if is_adaptive:
                 model_type = config.get('model', 'AToE')
+                experts_arch = resolve_experts_architecture(config)
                 if model_type == 'ANT':
                     from models.ant import ANT
                     model = ANT(architecture, activation, config, adaptive_cfg)
                 elif model_type == 'AToELeaves':
                     from models.atoe_leaves import AToELeaves
-                    model = AToELeaves(architecture, activation, config, adaptive_cfg)
+                    model = AToELeaves(
+                        architecture, activation, config, adaptive_cfg,
+                        experts_architecture=experts_arch,
+                    )
                 else:
                     from models.atoe import AToE
-                    model = AToE(architecture, activation, config, adaptive_cfg)
+                    model = AToE(
+                        architecture, activation, config, adaptive_cfg,
+                        experts_architecture=experts_arch,
+                    )
                 logger.info(f"  {type(model).__name__} created: {len(model.get_layer_names())} base layers")
             else:
                 expert_type = adaptive_cfg.get('expert_type', 'mlp')
@@ -537,15 +547,22 @@ def main():
             is_adaptive = adaptive_cfg.get('enabled', False) or checkpoint.get('is_adaptive', False)
             if is_adaptive:
                 model_type = config.get('model', 'AToE')
+                experts_arch = resolve_experts_architecture(config)
                 if model_type == 'ANT':
                     from models.ant import ANT
                     model = ANT(architecture, activation, config, adaptive_cfg)
                 elif model_type == 'AToELeaves':
                     from models.atoe_leaves import AToELeaves
-                    model = AToELeaves(architecture, activation, config, adaptive_cfg)
+                    model = AToELeaves(
+                        architecture, activation, config, adaptive_cfg,
+                        experts_architecture=experts_arch,
+                    )
                 else:
                     from models.atoe import AToE
-                    model = AToE(architecture, activation, config, adaptive_cfg)
+                    model = AToE(
+                        architecture, activation, config, adaptive_cfg,
+                        experts_architecture=experts_arch,
+                    )
             else:
                 et = adaptive_cfg.get('expert_type', 'mlp')
                 model = create_network(architecture, activation, config,

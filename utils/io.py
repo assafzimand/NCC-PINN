@@ -1,10 +1,11 @@
 """IO utilities for configuration and directory management."""
 
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 import subprocess
 import yaml
+import logging
 
 
 def load_config(path: str = "config/config.yaml") -> Dict[str, Any]:
@@ -52,21 +53,61 @@ def get_git_info() -> Dict[str, Any]:
     return info
 
 
-def make_run_dir(problem: str, layers: list, act: str) -> Path:
+def resolve_experts_architecture(config: Dict[str, Any]) -> List[int]:
+    """Expert spawn architecture; defaults to base_architecture when omitted."""
+    base = config['base_architecture']
+    return config.get('experts_architecture', base)
+
+
+def architecture_dir_layers_str(
+    base_layers: List[int],
+    experts_layers: Optional[List[int]] = None,
+) -> str:
+    """Folder label: base only, or base-{b}-experts-{e} when they differ."""
+    base_str = "-".join(map(str, base_layers))
+    if experts_layers is not None and list(experts_layers) != list(base_layers):
+        exp_str = "-".join(map(str, experts_layers))
+        return f"base-{base_str}-experts-{exp_str}"
+    return base_str
+
+
+def log_architectures(
+    config: Dict[str, Any],
+    logger: Optional[Union[logging.Logger, Any]] = None,
+    prefix: str = "  ",
+) -> None:
+    """Log base vs experts architecture (when they differ)."""
+    base = config['base_architecture']
+    experts = resolve_experts_architecture(config)
+    log_fn = logger.info if logger is not None and hasattr(logger, 'info') else print
+    log_fn(f"{prefix}Base architecture: {list(base)}")
+    if list(experts) != list(base):
+        log_fn(f"{prefix}Experts architecture: {list(experts)}")
+    else:
+        log_fn(f"{prefix}Experts architecture: (same as base)")
+
+
+def make_run_dir(
+    problem: str,
+    layers: list,
+    act: str,
+    experts_layers: Optional[list] = None,
+) -> Path:
     """
     Create a run directory with standardized naming and timestamp.
 
     Args:
         problem: Problem name (e.g., "schrodinger")
-        layers: List of layer sizes (e.g., [2, 50, 100, 50, 2])
+        layers: List of layer sizes for base (e.g., [2, 50, 100, 50, 2])
         act: Activation function name (e.g., "tanh")
+        experts_layers: Optional expert architecture; when different from layers,
+            folder name includes both base and experts sizes.
 
     Returns:
         Path object to the created run directory
         Structure: outputs/<problem>_layers-<...>_act-<act>/<timestamp>/
     """
-    # Format layers as string: "2-50-100-50-2"
-    layers_str = "-".join(map(str, layers))
+    layers_str = architecture_dir_layers_str(layers, experts_layers)
 
     # Create architecture directory name: <problem>-<...>-<activation>
     arch_dir_name = f"{problem}-{layers_str}-{act}"

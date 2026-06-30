@@ -13,7 +13,7 @@ try:
 except Exception:
     pass
 
-from utils.io import load_config, make_run_dir
+from utils.io import load_config, make_run_dir, resolve_experts_architecture, log_architectures
 from utils.dataset_gen import generate_and_save_datasets
 from models.fc_model import FCNet
 from models.network_factory import create_network
@@ -41,14 +41,17 @@ def main():
     resume_from = config['resume_from']
 
     logger.info(f"  Problem: {problem}")
-    logger.info(f"  Architecture: {architecture}")
+    log_architectures(config, logger=logger)
     logger.info(f"  Activation: {activation}")
     logger.info(f"  Eval only: {eval_only}")
     logger.info(f"  Resume from: {resume_from}")
 
     # Create run directory
     logger.info("2. Creating run directory...")
-    run_dir = make_run_dir(problem, architecture, activation)
+    run_dir = make_run_dir(
+        problem, architecture, activation,
+        experts_layers=resolve_experts_architecture(config),
+    )
     logger.info(f"  Run directory: {run_dir}")
     
     # Now set up logging to write to the run directory

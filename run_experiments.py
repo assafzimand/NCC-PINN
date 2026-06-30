@@ -20,6 +20,7 @@ except Exception:
     pass
 
 from utils.logging_config import setup_logging, get_logger, update_log_file
+from utils.io import architecture_dir_layers_str, log_architectures, resolve_experts_architecture
 
 logger = get_logger(__name__)
 
@@ -58,14 +59,17 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
     """Run one experiment."""
     logger.info(f"{'='*70}")
     logger.info(f"Running Experiment: {exp_name}")
-    logger.info(f"Architecture: {exp_config['base_architecture']}")
+    log_architectures(exp_config, logger=logger, prefix="")
     logger.info(f"{'='*70}")
     
     # Deep-merge so nested dicts (adaptive_pinn, etc.) are merged, not replaced
     config = _deep_merge(base_config, exp_config)
     
     # Generate architecture-based folder name (aligned with make_run_dir)
-    layers_str = "-".join(map(str, config['base_architecture']))
+    layers_str = architecture_dir_layers_str(
+        config['base_architecture'],
+        resolve_experts_architecture(config),
+    )
     arch_folder_name = f"{config['problem']}-{layers_str}-{config['activation']}"
     exp_output_dir = parent_dir / arch_folder_name
     
@@ -173,7 +177,10 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
         
         # Move outputs to experiment directory
         outputs_root = Path("outputs")
-        layers_str = "-".join(map(str, config['base_architecture']))
+        layers_str = architecture_dir_layers_str(
+            config['base_architecture'],
+            resolve_experts_architecture(config),
+        )
         arch_folder_name = f"{config['problem']}-{layers_str}-{config['activation']}"
 
         if skip_inner_metrics:

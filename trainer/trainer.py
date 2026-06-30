@@ -241,11 +241,17 @@ def _debug_print_model_state(model: nn.Module, segment_name: str,
     logger.info(f"  Total params: {total_params:,}, Trainable: {trainable_params:,}")
     
     # Base model state
+    base_arch = getattr(model, 'base_architecture', None)
     if base is not None:
         base_params = sum(p.numel() for p in base.parameters())
         base_trainable = sum(p.numel() for p in base.parameters() if p.requires_grad)
         base_grad_status = "TRAINABLE" if base_trainable > 0 else "FROZEN"
-        logger.info(f"  Base: {base_params:,} params, {base_grad_status}")
+        logger.info(f"  Base: {base_params:,} params, {base_grad_status}"
+                    + (f", arch={list(base_arch)}" if base_arch else ""))
+    if hasattr(model, 'experts_architecture'):
+        exp_arch = model.experts_architecture
+        if base_arch is None or list(exp_arch) != list(base_arch):
+            logger.info(f"  Experts architecture (spawn): {list(exp_arch)}")
     
     # Expert states
     for idx, expert in enumerate(experts):
@@ -3499,7 +3505,9 @@ def _finalize_training(ctx: TrainingContext) -> Path:
         f.write("Training Summary\n")
         f.write("=" * 60 + "\n\n")
         f.write(f"Problem: {cfg['problem']}\n")
-        f.write(f"Architecture: {cfg['base_architecture']}\n")
+        f.write(f"Base architecture: {cfg['base_architecture']}\n")
+        exp_arch = cfg.get('experts_architecture', cfg['base_architecture'])
+        f.write(f"Experts architecture: {exp_arch}\n")
         f.write(f"Activation: {cfg['activation']}\n")
         f.write(f"Epochs: {epochs}\n")
         f.write(f"Batch size: {cfg['batch_size']}\n")
@@ -3784,6 +3792,9 @@ def _load_pretrained_base(model: nn.Module, ckpt_path: str, cfg: Dict) -> None:
     model.base_model.load_state_dict(base_sd)
     n_params = sum(q.numel() for q in model.base_model.parameters())
     logger.info(f"  [PretrainedBase] Loaded base weights from {ckpt_path} ({n_params} params)")
+    if hasattr(model, 'experts_architecture'):
+        logger.info(f"  [PretrainedBase] Base architecture: {list(model.base_architecture)}; "
+              f"experts architecture unchanged: {list(model.experts_architecture)}")
     # Re-sync AToE's batched container so the forward pass sees the loaded base.
     if hasattr(model, 'batched_models'):
         model.batched_models.sync_from_models(model.base_model, model.experts)

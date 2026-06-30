@@ -296,7 +296,7 @@ class AToELeaves(nn.Module):
 
         parent_info = f"Base Model" if region.parent_idx == -1 else f"E{region.parent_idx + 1}"
         logger.info(f"  Spawned Expert {expert_idx + 1} (depth={region.depth}, parent={parent_info}):")
-        logger.info(f"    Architecture: {architecture}")
+        logger.info(f"    Expert architecture: {architecture}")
         logger.info(f"    Region bounds: {region.bounds_lower} -> {region.bounds_upper}")
         logger.info(f"    Wavelet norm: {region.wavelet_norm_squared:.6f}")
         logger.info(f"    Spawn epoch: {region.spawn_epoch}")
