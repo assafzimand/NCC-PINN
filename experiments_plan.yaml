@@ -223,7 +223,7 @@ base_config:
     boundary_train_ratio: 0.026
     eval_train_ratio: 0.25
     ncc_train_ratio: 0.25
-    resample_every_epochs: 100
+    resample_every_epochs: 500
     plot_samples_every: 1000
     min_points_per_leaf: 50
 
