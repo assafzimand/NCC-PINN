@@ -317,7 +317,7 @@ experiments:
       lr_decay_rate: 0.98
       lr_decay_steps: 1000
       lr_warmup_steps: 500               
-      l2sp_lambda: 0.00
+      l2sp_lambda: 0.01
 
   - name: AToE-Leaves_M5_fine_tune_soap
     problem: allen_cahn
