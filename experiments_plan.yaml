@@ -302,6 +302,16 @@ experiments:
     base_architecture: [2, 70, 70, 70, 1]
     experts_architecture: [2, 30, 30, 30, 1]
 
+  - name: AToE-Leaves_M5_fine_tune_no_l2sp_glorot
+    problem: allen_cahn
+    model: AToELeaves
+    base_architecture: [2, 70, 70, 70, 1]
+    experts_architecture: [2, 30, 30, 30, 1]
+    allen_cahn:
+      init:
+        hidden: glorot
+        output: glorot
+
   - name: AToE-Leaves_M5_fine_tune_l2sp
     problem: allen_cahn
     model: AToELeaves
