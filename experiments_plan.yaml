@@ -13,7 +13,7 @@
 # Architecture sizing (param-balanced, 7 hidden layers):
 #   M=10: [2,30,30,30,30,30,30,1]
 
-experiment_name: "allen_cahn_tests_continuity_and_hard_blending"
+experiment_name: "allen_cahn_tests"
 
 base_config:
   problem: allen_cahn
@@ -84,7 +84,7 @@ base_config:
       residual: 1.0
       ic: 1.0
       bc: 1.0
-      continuity: 1.0    # weight for neighbor-continuity loss in split_icbc
+      continuity: 0.0    # weight for neighbor-continuity loss in split_icbc
     causal_training:
       enabled: false
       num_chunks: 32
@@ -302,16 +302,6 @@ experiments:
     base_architecture: [2, 70, 70, 70, 1]
     experts_architecture: [2, 30, 30, 30, 1]
 
-  - name: AToE-Leaves_M5_fine_tune_no_l2sp_glorot
-    problem: allen_cahn
-    model: AToELeaves
-    base_architecture: [2, 70, 70, 70, 1]
-    experts_architecture: [2, 30, 30, 30, 1]
-    allen_cahn:
-      init:
-        hidden: glorot
-        output: glorot
-
   - name: AToE-Leaves_M5_fine_tune_l2sp
     problem: allen_cahn
     model: AToELeaves
@@ -329,7 +319,7 @@ experiments:
       lr_warmup_steps: 500               
       l2sp_lambda: 0.01
 
-  - name: AToE-Leaves_M5_fine_tune_soap
+  - name: AToE-Leaves_M5_fine_tune_soap_no_l2sp
     problem: allen_cahn
     model: AToELeaves
     base_architecture: [2, 70, 70, 70, 1]
@@ -346,10 +336,13 @@ experiments:
       lr_warmup_steps: 500               
       l2sp_lambda: 0.00
 
-  - name: AToE-Leaves_M5_hard_blending_fine_tune_no_l2sp
+  - name: AToE-Leaves_M5_hard_blending_with_continuity
     problem: allen_cahn
     model: AToELeaves
     base_architecture: [2, 70, 70, 70, 1]
     experts_architecture: [2, 30, 30, 30, 1]
     adaptive_pinn:
       blending_mode: hard
+    allen_cahn:
+      loss_weights:
+        continuity: 1.0

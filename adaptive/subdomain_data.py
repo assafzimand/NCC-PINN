@@ -48,6 +48,7 @@ def build_subdomain_data(
     device: torch.device,
     seed: int = 0,
     additive: bool = False,
+    interface_model: torch.nn.Module = None,
 ) -> Dict[str, torch.Tensor]:
     """Build per-expert dataset for split-loss training.
 
@@ -178,8 +179,13 @@ def build_subdomain_data(
     cont_neighbor_main = torch.full((n_main,), -1, dtype=torch.long, device=device)
     cont_dim_main = torch.full((n_main,), -1, dtype=torch.long, device=device)
 
-    # ── Mint interface targets from frozen composed model (skip if additive) ──
+    # ── Mint interface targets (skip if additive) ──
+    # interface_model overrides which frozen field defines the interface targets.
+    # For non-additive AToELeaves it is the base (root), so targets are good root
+    # predictions even when experts cannot inherit the root; None falls back to
+    # `model` (composed snapshot) for legacy behaviour.
     if not additive:
+        iface_src = interface_model if interface_model is not None else model
         # t-face interfaces (KIND_INTERFACE, weighted by w_ic)
         iface_mask = (kind_cat == KIND_INTERFACE)
         if iface_mask.sum() > 0:
@@ -187,7 +193,7 @@ def build_subdomain_data(
                 xt_if = torch.cat(
                     [x_cat[iface_mask], t_cat[iface_mask]], dim=1
                 )
-                h_gt_cat[iface_mask] = model(xt_if)
+                h_gt_cat[iface_mask] = iface_src(xt_if)
 
         # x-face interfaces (KIND_INTERFACE_BC, weighted by w_bc)
         iface_bc_mask = (kind_cat == KIND_INTERFACE_BC)
@@ -196,7 +202,9 @@ def build_subdomain_data(
                 xt_if_bc = torch.cat(
                     [x_cat[iface_bc_mask], t_cat[iface_bc_mask]], dim=1
                 )
-                h_gt_cat[iface_bc_mask] = model(xt_if_bc)
+                h_gt_cat[iface_bc_mask] = iface_src(xt_if_bc)
+        _src = 'base(root)' if interface_model is not None else 'composed'
+        logger.info(f"[SplitData] interface targets minted from {_src} model")
     else:
         logger.info("[SplitData] additive=True: interface/ic/bc targets are 0")
 

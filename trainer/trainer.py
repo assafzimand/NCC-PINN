@@ -1257,6 +1257,7 @@ def _train_segment(
                     _split_ctx['model_snapshot'], _split_ctx['new_expert_indices'],
                     _split_ctx['regions'], cfg, device, seed=resample_seed,
                     additive=_split_additive,
+                    interface_model=_split_ctx.get('interface_model'),
                 )
                 ctx.train_data = train_data
                 torch.set_default_device(None)
@@ -3033,10 +3034,21 @@ def _run_split_segment(
     logger.info(f"[SplitLoss] Building subdomain data for {len(new_expert_indices)} "
                 f"new expert(s): {new_expert_indices} (additive={additive}, level={current_level})")
 
+    # For non-additive AToELeaves the leaves tile the domain and share the base
+    # (root) as their common parent, so mint interface targets from the frozen
+    # base — good root predictions regardless of expert architecture. (Composed
+    # minting only equals the root when leaves copy it, which is impossible when
+    # experts differ in shape from the base.)
+    interface_model = None
+    if variant == 'AToE-Leaves' and not additive and hasattr(model_snapshot, 'base_model'):
+        interface_model = model_snapshot.base_model
+        logger.info("[SplitLoss] Interface targets minted from frozen base (root).")
+
     # Use snapshot for interface target minting (Fix 5)
     split_data = build_subdomain_data(
         model_snapshot, new_expert_indices, regions_list, cfg,
         ctx.device, seed=ctx.epoch, additive=additive,
+        interface_model=interface_model,
     )
 
     _log_subdomain_summary(new_expert_indices, regions_list, split_data, additive=additive)
@@ -3079,6 +3091,7 @@ def _run_split_segment(
         'regions': regions_list,
         'variant': variant,
         'additive': additive,
+        'interface_model': interface_model,  # frozen base for AToELeaves seams
     }
 
     res = _train_segment(ctx, segment_name, epoch_budget, segment_cfg,
