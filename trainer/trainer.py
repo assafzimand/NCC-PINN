@@ -2828,7 +2828,7 @@ def train_orchestrator(ctx: TrainingContext) -> None:
         
         # ── Optional fine-tune for AToELeaves (both additive and non-additive) ──
         additive = ctx.adaptive_cfg.get('additive', True)  # default matches model
-        fine_tune_cfg = adaptive_cfg.get('fine_tune', None)
+        fine_tune_cfg = ctx.adaptive_cfg.get('fine_tune', None)
         if fine_tune_cfg:
             mode_str = "Additive" if additive else "Non-Additive"
             blending = model.blending_mode if hasattr(model, 'blending_mode') else 'soft'
