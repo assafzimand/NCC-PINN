@@ -283,11 +283,11 @@ base_config:
     # ── Final joint fine-tune (AToE / ANT) ──
     # Cautious learning: low-LR Adam warmup → SSBroyden polish + L2-SP anchoring
     fine_tune:
-      epochs: 20000
+      epochs: 35000
       optimizer_1: adam                     # gentle warmup (5k epochs)
       optimizer_2: ssbroyden                # curvature-aware polish (30k epochs)
       optimizer_switch_epoch: 5000
-      lr: 0.0001                            # 50x below Phase 1's 0.005
+      lr: 0.001                            # 5x below Phase 1's 0.005
       lr_schedule: exponential
       lr_decay_rate: 0.98
       lr_decay_steps: 1000
@@ -302,47 +302,19 @@ experiments:
     base_architecture: [2, 70, 70, 70, 1]
     experts_architecture: [2, 30, 30, 30, 1]
 
-  - name: AToE-Leaves_M5_fine_tune_l2sp
-    problem: allen_cahn
-    model: AToELeaves
-    base_architecture: [2, 70, 70, 70, 1]
-    experts_architecture: [2, 30, 30, 30, 1]
-    fine_tune:
-      epochs: 20000
-      optimizer_1: adam                   
-      optimizer_2: ssbroyden
-      optimizer_switch_epoch: 5000
-      lr: 0.0001                           
-      lr_schedule: exponential
-      lr_decay_rate: 0.98
-      lr_decay_steps: 1000
-      lr_warmup_steps: 500               
-      l2sp_lambda: 0.01
-
   - name: AToE-Leaves_M5_fine_tune_soap_no_l2sp
     problem: allen_cahn
     model: AToELeaves
     base_architecture: [2, 70, 70, 70, 1]
     experts_architecture: [2, 30, 30, 30, 1]
     fine_tune:
-      epochs: 30000
+      epochs: 100000
       optimizer_1: soap                   
       optimizer_2: null
       optimizer_switch_epoch: 99999
-      lr: 0.0001                           
+      lr: 0.001                           
       lr_schedule: exponential
       lr_decay_rate: 0.98
       lr_decay_steps: 1000
       lr_warmup_steps: 500               
       l2sp_lambda: 0.00
-
-  - name: AToE-Leaves_M5_hard_blending_with_continuity
-    problem: allen_cahn
-    model: AToELeaves
-    base_architecture: [2, 70, 70, 70, 1]
-    experts_architecture: [2, 30, 30, 30, 1]
-    adaptive_pinn:
-      blending_mode: hard
-    allen_cahn:
-      loss_weights:
-        continuity: 1.0

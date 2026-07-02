@@ -101,7 +101,14 @@ def plot_training_curves(
     ax = axes[1]
     ax.plot(eval_epochs, metrics['eval_rel_l2'], 'r-', label='Eval Rel. L2',
             linewidth=2, alpha=0.8)
-    
+
+    # Root rel-L2 baseline (horizontal black line), if available
+    root_rel_l2 = metrics.get('root_rel_l2')
+    if root_rel_l2 is not None and root_rel_l2 > 0:
+        ax.axhline(y=root_rel_l2, color='black', linestyle='-',
+                   linewidth=1.5, alpha=0.8,
+                   label=f'Root rel-L2 ({root_rel_l2:.2e})')
+
     # Add optimizer switch markers (green dashed)
     for i, epoch in enumerate(optimizer_switch_epochs):
         label = 'Optimizer Switch' if i == 0 else None
@@ -122,7 +129,10 @@ def plot_training_curves(
     ax.set_ylabel('Relative L2 Error', fontsize=12)
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
-    is_log_l2 = _safe_log_scale(ax, [metrics['eval_rel_l2']])
+    _l2_series = [metrics['eval_rel_l2']]
+    if root_rel_l2 is not None and root_rel_l2 > 0:
+        _l2_series.append([root_rel_l2])
+    is_log_l2 = _safe_log_scale(ax, _l2_series)
     scale_str_l2 = "[log]" if is_log_l2 else "[linear]"
     ax.set_title(f'Relative L2 Error {scale_str_l2}', fontsize=14, fontweight='bold')
 

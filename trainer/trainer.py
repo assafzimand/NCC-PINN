@@ -1772,14 +1772,8 @@ def _train_segment(
             eval_inf_norm = 0.0  # Track max across all batches
             n_eval_batches = 0
 
-            # During split_icbc training, use hard blending for eval to match training
-            # (training uses per-expert loss without composition, hard blending is closest)
-            _split_ctx = getattr(ctx, '_split_context', None)
-            _orig_blending = None
-            if _split_ctx is not None and hasattr(model, 'blending_mode'):
-                _orig_blending = model.blending_mode
-                model.blending_mode = 'hard'
-            
+            # Eval metric uses the configured blending_mode (composed forward),
+            # so the rel-L2 curve reflects the actual inference-time composition.
             for batch in eval_loader:
                 # Note: For physics-informed losses, we need gradients w.r.t. inputs
                 # even during evaluation (for computing derivatives in PDE residuals).
@@ -1807,10 +1801,6 @@ def _train_segment(
             eval_loss /= n_eval_batches
             # Compute global rel-L2: ||pred - gt||_2 / ||gt||_2
             eval_rel_l2 = math.sqrt(total_diff_sq) / (math.sqrt(total_gt_sq) + 1e-10)
-            
-            # Restore original blending mode after split_icbc eval
-            if _orig_blending is not None:
-                model.blending_mode = _orig_blending
 
             # Store evaluation metrics (train_loss already stored above for all epochs)
             metrics['epochs'].append(epoch)
@@ -2772,6 +2762,23 @@ def train_orchestrator(ctx: TrainingContext) -> None:
         res = _train_segment(ctx, 'root', root_budget, root_cfg)
         if res.nan_detected or res.oom_stopped:
             return
+
+    # ── Root rel-L2 baseline for the training-curve reference line ──
+    # base_model holds the root (loaded or Phase-1 trained), no experts yet.
+    try:
+        _root_net = getattr(model, 'base_model', model)
+        if ctx.eval_data is not None:
+            model.eval()
+            with torch.no_grad():
+                _ev = ctx.eval_data
+                _pred = _root_net(torch.cat([_ev['x'], _ev['t']], dim=1))
+                _num = torch.sqrt(((_pred - _ev['h_gt']) ** 2).sum())
+                _den = torch.sqrt((_ev['h_gt'] ** 2).sum()) + 1e-10
+                ctx.metrics['root_rel_l2'] = (_num / _den).item()
+            logger.info(f"[Orchestrator] Root rel-L2 = "
+                        f"{ctx.metrics['root_rel_l2']:.6e} (training-curve baseline)")
+    except Exception as _e:
+        logger.info(f"[Orchestrator] Could not compute root rel-L2: {_e}")
 
     # ── Tree build (once) + level selection ──
     retain_siblings = True  # all variants use full binary tiling for complete PoU

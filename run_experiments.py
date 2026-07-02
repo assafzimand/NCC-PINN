@@ -102,7 +102,9 @@ def run_single_experiment(exp_config, base_config, exp_name, parent_dir):
                 key=lambda x: x.stat().st_mtime)
             if ts_dirs:
                 run_ckpt_dir = ts_dirs[-1] / "checkpoints"
-                for name in ['best_model.pt', 'final_model.pt']:
+                # Prefer final_model.pt (end-of-training weights) over best_model.pt
+                # so eval/probe plots reflect the same model as pred_after_fine_tune.
+                for name in ['final_model.pt', 'best_model.pt']:
                     c = run_ckpt_dir / name
                     if c.exists():
                         best_checkpoint = c
