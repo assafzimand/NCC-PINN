@@ -1,4 +1,4 @@
-experiment_name: "burgers_root_creation"
+experiment_name: "burgers_M10"
 
 base_config:
   problem: burgers1d
@@ -202,7 +202,7 @@ base_config:
 
   # ── Dataset sampling ───────────────────────────────────────────────────────
   sampling:
-    n_residual_train: 10000
+    n_residual_train: 4096
     sample_volume_ratio: 35
     n_initial_train: 256                 # explicit count (was initial_train_ratio)
     n_boundary_train: 256                # explicit count (was boundary_train_ratio)
@@ -281,7 +281,7 @@ experiments:
     problem: burgers1d
     model: AToELeaves
     base_architecture: [2, 60, 60, 60, 60, 1]
-    experts_architecture: [2, 20, 20, 20, 20, 1]
+    experts_architecture: [2, 30, 30, 30, 1]
 
   # - name: Root_50
   #   problem: burgers1d

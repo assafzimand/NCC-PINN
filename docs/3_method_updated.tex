@@ -81,16 +81,15 @@ decomposition aims to recover during training.
 
 \noindent In practice, we consider two approaches for constructing the tree:
 
-\begin{itemize}
 \noindent {\bf === Assaf: Should the incremental splitting be moved to the future work / discussion?}\\
-    \item \textbf{Incremental splitting:} training is performed for a fixed number
-    of epochs (or until a convergence criterion), after which a single split is
-    introduced by fitting a shallow decision tree (depth 1). The split is accepted
-    if it satisfies a norm-based criterion motivated by the theory. This approach may be advantageous when an initial vanilla PINN is unable to
-    capture sufficient structure of the solution to reliably estimate a complete
-    tree.
+\subsubsection{Incremental splitting:} training is performed for a fixed number
+of epochs (or until a convergence criterion), after which a single split is
+introduced by fitting a shallow decision tree (depth 1). The split is accepted
+if it satisfies a norm-based criterion motivated by the theory. This approach may be advantageous when an initial vanilla PINN is unable to
+capture sufficient structure of the solution to reliably estimate a complete
+tree.
 
-    \item \textbf{$M$-term tree construction:} following MoE
+\subsubsection{$M$-term tree construction:} following MoE
 training practices that advocate training components
 separately, the root model is first
 trained to convergence using a standard PINN formulation. This root model
@@ -103,7 +102,6 @@ To preserve a clean hierarchical structure, both the ancestors and the
 siblings of the selected nodes are always retained, so that the accepted
 regions form a complete binary tree.
 When time-window training is employed, the global budget $M$ is distributed across the windows according to a prescribed allocation strategy (e.g., uniform, linear, or quadratic). An independent $M_i$-term tree is then constructed within each window, with $\sum_i M_i = M$.
-\end{itemize}
 
 \noindent The $M$-term construction avoids the need to manually select a wavelet-norm
 threshold and is generally more robust to such choices. Furthermore, it
