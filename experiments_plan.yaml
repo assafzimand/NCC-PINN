@@ -130,6 +130,7 @@ base_config:
     time_marching: {enabled: false, num_windows: 5, freeze_previous_windows: true, m_distribution: quadratic}
 
   burgers1d:
+    pretrained_base_checkpoint: "roots_checkpoints/burgers_root.pt"
     spatial_dim: 1
     output_dim: 1
     spatial_domain: [[-1.0, 1.0]]
@@ -234,7 +235,7 @@ base_config:
     expert_activation_threshold: 0
     relevant_samples_to_activate_expert: 0
     spawning_method: M_term_tree_by_norm
-    M_experts_num: 0                  # overridden per experiment
+    M_experts_num: 10                  
     spawn_require_plateau: false
     spawn_plateau_epochs: 50
     spawn_plateau_delta: 0.05
@@ -244,7 +245,6 @@ base_config:
     split_icbc: { enabled: true }
     additive: false
 
-    # ── Phase 1: full Kiyani base pretrain — adam(5k) → ssbroyden(30k) = 35k ──
     initial_train:
       epochs: 40000
       optimizer_1: adam
@@ -258,17 +258,17 @@ base_config:
 
     # ── Staged per-level (AToE / ANT) ──
     new_expert_lr_decay: 1.0
-    min_epochs_per_level: 0
-    max_epochs_per_level: 0        # ceiling; patience terminates earlier
+    min_epochs_per_level: 1
+    max_epochs_per_level: 40000        # ceiling; patience terminates earlier
 
     # ── Final joint fine-tune (AToE / ANT) ──
     # Cautious learning: low-LR Adam warmup → SSBroyden polish + L2-SP anchoring
     fine_tune:
-      epochs: 0
+      epochs: 40000
       optimizer_1: adam                     # gentle warmup (5k epochs)
       optimizer_2: ssbroyden                # curvature-aware polish (30k epochs)
       optimizer_switch_epoch: 1000
-      lr: 0.0001                            # 5x below Phase 1's 0.005
+      lr: 0.0001                            
       lr_schedule: none
       lr_decay_rate: 0.98
       lr_decay_steps: 1000
@@ -277,17 +277,11 @@ base_config:
 
 
 experiments:
-  - name: Root_20
-    problem: burgers1d
-    model: AToELeaves
-    base_architecture: [2, 20, 20, 20, 20, 1]
-    experts_architecture: [2, 20, 20, 20, 20, 1]
-
-  - name: Root_60
+  - name: M_10
     problem: burgers1d
     model: AToELeaves
     base_architecture: [2, 60, 60, 60, 60, 1]
-    experts_architecture: [2, 60, 60, 60, 60, 1]
+    experts_architecture: [2, 20, 20, 20, 20, 1]
 
   # - name: Root_50
   #   problem: burgers1d
