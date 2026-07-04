@@ -47,7 +47,7 @@ def calculate_dataset_sizes(config: Dict) -> Dict[str, int]:
     ratio = sampling['sample_volume_ratio']
     # Allow explicit override via sampling.n_residual_train; default 10000.
     # n_residual_train = int(round((ratio * (V ** (1/d))) ** d))
-    n_residual_train = sampling.get('n_residual_train', 4096)
+    n_residual_train = sampling.get('n_residual_train', 10000)
     # Calculate other sizes from ratios
     sizes = {
         'n_residual_train': n_residual_train,
