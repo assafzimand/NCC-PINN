@@ -81,10 +81,18 @@ def build_subdomain_data(
 
     sampling = cfg.get('sampling', {})
     n_res_total = sampling.get('n_residual_train', 10000)
-    ic_ratio = sampling.get('initial_train_ratio', 0.026)
-    bc_ratio = sampling.get('boundary_train_ratio', 0.026)
-    n_ic_per_face = max(1, int(round(n_res_total * ic_ratio)))
-    n_bc_per_face = max(1, int(round(n_res_total * bc_ratio)))
+    # Allow explicit override via sampling.n_initial_train / n_boundary_train
+    # (absolute counts); falls back to the ratio-based calculation otherwise.
+    n_ic_per_face = sampling.get('n_initial_train')
+    if n_ic_per_face is None:
+        ic_ratio = sampling.get('initial_train_ratio', 0.026)
+        n_ic_per_face = round(n_res_total * ic_ratio)
+    n_bc_per_face = sampling.get('n_boundary_train')
+    if n_bc_per_face is None:
+        bc_ratio = sampling.get('boundary_train_ratio', 0.026)
+        n_bc_per_face = round(n_res_total * bc_ratio)
+    n_ic_per_face = max(1, int(n_ic_per_face))
+    n_bc_per_face = max(1, int(n_bc_per_face))
 
     num_experts = len(new_expert_indices)
     if num_experts == 0:

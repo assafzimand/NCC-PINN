@@ -534,8 +534,8 @@ base_config:
   # ── Dataset sampling ratios (global) ──
   sampling:
     sample_volume_ratio: 35          # Target: S^(1/d) / V^(1/d) = 35
-    initial_train_ratio: 0.026       # ~260 IC points (with n_residual=20000). Papers use 256-512.
-    boundary_train_ratio: 0.026      # ~260 BC points (with n_residual=20000). Papers use 200+.
+    n_initial_train: 256              # explicit count (was initial_train_ratio 0.026). Papers use 256-512.
+    n_boundary_train: 256             # explicit count (was boundary_train_ratio 0.026). Papers use 200+.
     eval_train_ratio: 0.25           # eval = 25% of train (all types)
     ncc_train_ratio: 0.25            # ncc = 25% of residual_train
     resample_every_epochs: 500       # Kiyani: resample every 500 iterations (only during Adam phase)

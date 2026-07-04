@@ -118,7 +118,7 @@ def apply_output_init(
             raise ValueError(
                 f"[Init] LS-init requires ≥{required} IC points "
                 f"(hidden_dim={hidden_dim}, use_bias={use_bias}), got {n_ic}. "
-                f"Increase sampling.initial_train_ratio or disable ls_init."
+                f"Increase sampling.n_initial_train (or initial_train_ratio) or disable ls_init."
             )
 
         x_ic = train_data['x'][mask_ic].to(device)

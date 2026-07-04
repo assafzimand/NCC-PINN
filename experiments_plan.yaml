@@ -204,8 +204,8 @@ base_config:
   sampling:
     n_residual_train: 10000
     sample_volume_ratio: 35
-    initial_train_ratio: 0.026
-    boundary_train_ratio: 0.026
+    n_initial_train: 256                 # explicit count (was initial_train_ratio)
+    n_boundary_train: 256                # explicit count (was boundary_train_ratio)
     eval_train_ratio: 0.25
     ncc_train_ratio: 0.25
     resample_every_epochs: 100

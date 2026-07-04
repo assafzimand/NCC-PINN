@@ -48,14 +48,22 @@ def calculate_dataset_sizes(config: Dict) -> Dict[str, int]:
     # Allow explicit override via sampling.n_residual_train; default 10000.
     # n_residual_train = int(round((ratio * (V ** (1/d))) ** d))
     n_residual_train = sampling.get('n_residual_train', 10000)
+    # Allow explicit override via sampling.n_initial_train / n_boundary_train
+    # (absolute counts); falls back to the ratio-based calculation otherwise.
+    n_initial_train = sampling.get('n_initial_train')
+    if n_initial_train is None:
+        n_initial_train = int(round(n_residual_train * sampling['initial_train_ratio']))
+    n_boundary_train = sampling.get('n_boundary_train')
+    if n_boundary_train is None:
+        n_boundary_train = int(round(n_residual_train * sampling['boundary_train_ratio']))
     # Calculate other sizes from ratios
     sizes = {
         'n_residual_train': n_residual_train,
-        'n_initial_train': int(round(n_residual_train * sampling['initial_train_ratio'])),
-        'n_boundary_train': int(round(n_residual_train * sampling['boundary_train_ratio'])),
+        'n_initial_train': n_initial_train,
+        'n_boundary_train': n_boundary_train,
         'n_residual_eval': int(round(n_residual_train * sampling['eval_train_ratio'])),
-        'n_initial_eval': int(round(n_residual_train * sampling['initial_train_ratio'] * sampling['eval_train_ratio'])),
-        'n_boundary_eval': int(round(n_residual_train * sampling['boundary_train_ratio'] * sampling['eval_train_ratio'])),
+        'n_initial_eval': int(round(n_initial_train * sampling['eval_train_ratio'])),
+        'n_boundary_eval': int(round(n_boundary_train * sampling['eval_train_ratio'])),
         'n_samples_ncc': int(round(n_residual_train * sampling['ncc_train_ratio'])),
     }
     
