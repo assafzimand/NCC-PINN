@@ -281,7 +281,7 @@ experiments:
     problem: burgers1d
     model: AToELeaves
     base_architecture: [2, 60, 60, 60, 60, 1]
-    experts_architecture: [2, 30, 30, 30, 1]
+    experts_architecture: [2, 20, 20, 20, 1]
 
   # - name: Root_50
   #   problem: burgers1d
