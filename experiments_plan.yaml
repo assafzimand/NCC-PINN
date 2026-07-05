@@ -18,11 +18,15 @@ experiment_name: "kdv_root_creation"
 #    t=0 IC points (trainer/init.py), not "all t" as the JAX-PI paper does —
 #    this repo doesn't implement the all-t variant, so it's an approximation.
 #  - sampling.n_initial_train / n_boundary_train: set as explicit absolute
-#    counts (256 each) rather than ratios, per your request — utils/dataset_gen.py
-#    and adaptive/subdomain_data.py now support these as overrides (falling
-#    back to the old ratio-based calc when absent, so other configs are
-#    unaffected). 256 clears the ls-init requirement (>=256 for hidden_dim=256,
-#    ls_use_bias=false) with no margin — bump if init errors out.
+#    counts (512 each) rather than ratios — utils/dataset_gen.py and
+#    adaptive/subdomain_data.py support these as overrides (falling back to
+#    the old ratio-based calc when absent, so other configs are unaffected).
+#    512 gives the LS output init a 2x-overdetermined system (257 unknowns
+#    with ls_use_bias=true for hidden_dim=256); a square/near-square system
+#    interpolates the IC points with huge weights and explodes the initial
+#    loss (root cause of the first failed run, together with the CUDA lstsq
+#    full-rank 'gels' driver — the solve now runs on CPU in float64 with the
+#    SVD 'gelsd' driver).
 #  - epochs: 200000 = the paper's 2x10^5 Adam steps, mapped 1:1 to epochs
 #    since batch_size=99999 (full-batch) + resample_every_epochs=1 already
 #    gives "one fresh mini-batch gradient step per epoch". Patience is left
@@ -113,7 +117,7 @@ base_config:
     init:
       hidden: glorot                  # Glorot hidden init (+ identity-like start for ResNet)
       output: ls                      # least-squares PI init of output layer (IC points only — see note)
-      ls_use_bias: false
+      ls_use_bias: true
       spectral_norm: false
       spectral_norm_init_std: 1.0e-6
     lra:
@@ -265,8 +269,8 @@ base_config:
   sampling:
     n_residual_train: 4096              # JAX-PI batch size
     sample_volume_ratio: 35             # unused when n_residual_train is set explicitly
-    n_initial_train: 256                # explicit count (overrides initial_train_ratio)
-    n_boundary_train: 256               # explicit count (overrides boundary_train_ratio); unused: periodic BC has no BC loss term
+    n_initial_train: 512                # explicit count (overrides initial_train_ratio); 2x hidden_dim so LS-init is overdetermined
+    n_boundary_train: 512               # explicit count (overrides boundary_train_ratio); unused: periodic BC has no BC loss term
     eval_train_ratio: 0.25
     ncc_train_ratio: 0.25
     resample_every_epochs: 1            # fresh random collocation points every step (JAX-PI)
