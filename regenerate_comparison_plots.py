@@ -148,6 +148,42 @@ def _eval_checkpoint_rel_l2(result_path: Path, helpers) -> Dict:
             'epoch': epoch, 'gt_source': gt_source}
 
 
+def _regen_segment_plots(result_path: Path, helpers) -> None:
+    """Re-render pred_after_<segment>.png in adaptive_plots/ from the
+    checkpoint_after_<segment>.pt checkpoints (root, phase3, fine_tune, ...),
+    replacing the in-training plots with the unified native-grid renderer."""
+    import yaml
+
+    cfg_path = result_path / 'config_used.yaml'
+    ckpt_dir = result_path / 'checkpoints'
+    if not cfg_path.exists() or not ckpt_dir.exists():
+        return
+    with open(cfg_path) as f:
+        cfg = yaml.safe_load(f)
+    problem = cfg.get('problem', '')
+    is_adaptive = cfg.get('adaptive_pinn', {}).get('enabled', False)
+    out_dir = result_path / 'adaptive_plots'
+
+    from utils.problem_specific.generic_viz import plot_predictions_and_error_maps
+
+    for ckpt_path in sorted(ckpt_dir.glob('checkpoint_after_*.pt')):
+        segment = ckpt_path.stem.replace('checkpoint_after_', '')
+        try:
+            model = helpers._build_model(cfg)
+            epoch = helpers._load_checkpoint(model, ckpt_path, is_adaptive)
+            model.eval()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            plot_predictions_and_error_maps(
+                model, out_dir, cfg,
+                filename=f'pred_after_{segment}.png',
+                title=f'{problem} — after {segment} '
+                      f'({ckpt_path.name} @ epoch {epoch})')
+            print(f"  [SegmentPlots] regenerated pred_after_{segment}.png "
+                  f"(epoch {epoch})")
+        except Exception as _seg_err:
+            print(f"  [SegmentPlots] {segment}: failed — {_seg_err}")
+
+
 def _is_timestamp_dir(d: Path) -> bool:
     return d.is_dir() and bool(_TIMESTAMP_RE.match(d.name))
 
@@ -595,6 +631,9 @@ def generate_comparison_for_batch(batch_dir: Path, label: str = None):
                           f"= {ckpt_rel_l2:.6e}")
             except Exception as _ck_err:
                 print(f"  [CkptEval] {exp_name}: failed — {_ck_err}")
+
+            # Re-render the per-segment prediction plots from their checkpoints
+            _regen_segment_plots(result_path, _ckpt_helpers)
 
         # Build metrics row
         metrics_row = {
