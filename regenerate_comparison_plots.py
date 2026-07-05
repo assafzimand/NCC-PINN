@@ -134,6 +134,16 @@ def _eval_checkpoint_rel_l2(result_path: Path, helpers) -> Dict:
     h_gt = np.asarray(h_gt, dtype=np.float64).reshape(h_pred.shape)
     rel_l2 = (np.linalg.norm(h_pred - h_gt)
               / (np.linalg.norm(h_gt) + 1e-12))
+
+    # Re-render predictions_and_error_maps.png from the loaded checkpoint
+    try:
+        from utils.problem_specific.generic_viz import plot_predictions_and_error_maps
+        plot_predictions_and_error_maps(
+            model, result_path, cfg,
+            title=f'{problem} — {ckpt_path.name} @ epoch {epoch}')
+    except Exception as _plot_err:
+        print(f"    [CkptEval] error-map regeneration failed: {_plot_err}")
+
     return {'rel_l2': float(rel_l2), 'ckpt': ckpt_path.name,
             'epoch': epoch, 'gt_source': gt_source}
 
