@@ -510,22 +510,31 @@ def process_run(label, ts_dir):
     output_dim = problem_cfg.get('output_dim', 1)
     
     if spatial_dim == 1:
-        x_min, x_max = problem_cfg['spatial_domain'][0]
-        t_min, t_max = problem_cfg['temporal_domain']
-        
-        # Dense grid (200x200 like in-run plots)
-        resolution = 200
-        x_grid = np.linspace(x_min, x_max, resolution)
-        t_grid = np.linspace(t_min, t_max, resolution)
-        X, T = np.meshgrid(x_grid, t_grid, indexing='ij')
-        x_flat = X.ravel()
-        t_flat = T.ravel()
-        
-        # Get ground truth from solver interpolator (high accuracy)
-        gt_channels = _get_gt_from_solver(cfg, x_flat, t_flat, output_dim)
-        
-        # Fallback to eval_data if solver interpolator unavailable
-        if gt_channels is None:
+        # Ground truth on the solver's NATIVE grid (no interpolation —
+        # off-node GT queries invent large fake errors across steep fronts).
+        h_gt_np = None
+        try:
+            import importlib
+            solver_mod = importlib.import_module(f"solvers.{problem}_solver")
+            xg, tg, h_sol = solver_mod._get_solution_cached(cfg)
+            t_min, t_max = problem_cfg['temporal_domain']
+            t_mask = ((np.asarray(tg) >= t_min - 1e-12)
+                      & (np.asarray(tg) <= t_max + 1e-12))
+            tg = np.asarray(tg)[t_mask]
+            h_sol = np.asarray(h_sol)[t_mask]      # (n_t, n_x)
+            T, X = np.meshgrid(tg, np.asarray(xg), indexing='ij')
+            x_np = X.ravel().reshape(-1, 1)
+            t_np = T.ravel().reshape(-1, 1)
+            if np.iscomplexobj(h_sol):
+                h_gt_np = np.column_stack(
+                    [h_sol.real.ravel(), h_sol.imag.ravel()])[:, :output_dim]
+            else:
+                h_gt_np = h_sol.reshape(-1, 1)
+        except Exception as _grid_err:
+            print(f"  [{label}] Native solver grid unavailable ({_grid_err}); "
+                  f"falling back to eval_data.pt")
+
+        if h_gt_np is None:
             eval_path = Path('datasets') / problem / 'eval_data.pt'
             if not eval_path.exists():
                 print(f"  [{label}] No eval data and no solver, skipping")
@@ -534,19 +543,14 @@ def process_run(label, ts_dir):
             x_np = eval_data['x'].numpy()
             t_np = eval_data['t'].numpy()
             h_gt_np = eval_data['h_gt'].numpy()
-        else:
-            # Convert solver GT to numpy array
-            h_gt_np = np.column_stack(gt_channels) if output_dim > 1 else gt_channels[0].reshape(-1, 1)
-            x_np = x_flat.reshape(-1, 1)
-            t_np = t_flat.reshape(-1, 1)
-        
-        # Evaluate model on dense grid
+
+        # Evaluate model on the grid points
         device = next(model.parameters()).device
         model_dtype = next(model.parameters()).dtype
-        x_tensor = torch.from_numpy(x_np.astype(np.float32)).to(device=device, dtype=model_dtype)
-        t_tensor = torch.from_numpy(t_np.astype(np.float32)).to(device=device, dtype=model_dtype)
+        x_tensor = torch.from_numpy(np.asarray(x_np, dtype=np.float64)).to(device=device, dtype=model_dtype)
+        t_tensor = torch.from_numpy(np.asarray(t_np, dtype=np.float64)).to(device=device, dtype=model_dtype)
         inputs = torch.cat([x_tensor, t_tensor], dim=1)
-        
+
         with torch.no_grad():
             h_composed = model(inputs).cpu().numpy()
     else:
@@ -569,11 +573,17 @@ def process_run(label, ts_dir):
     x_arg = x_np[:, 0] if spatial_dim == 1 else x_np
     t_arg = t_np[:, 0] if spatial_dim == 1 else t_np
 
-    # --- 1. Composed (full model) vs GT ---
+    # --- 1. Composed (full model) vs GT — unified renderer (native grid) ---
     composed_path = ts_dir / "composed_pred_vs_gt.png"
-    plot_fn(x_arg, t_arg, h_composed, h_gt_np,
-            'Composed (full model)', tag, composed_path)
-    print(f"    Saved {composed_path.name}")
+    if spatial_dim == 1:
+        from utils.problem_specific.generic_viz import plot_predictions_and_error_maps
+        plot_predictions_and_error_maps(
+            model, ts_dir, cfg,
+            filename=composed_path.name, title=tag)
+    else:
+        plot_fn(x_arg, t_arg, h_composed, h_gt_np,
+                'Composed (full model)', tag, composed_path)
+        print(f"    Saved {composed_path.name}")
 
     # --- 2 & 3. Decomposed: base-only vs GT + expert grid ---
     has_experts = (

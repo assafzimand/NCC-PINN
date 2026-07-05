@@ -16,10 +16,10 @@ from utils.logging_config import get_logger
 logger = get_logger(__name__)
 
 from trainer.plotting import (
-    plot_training_curves, plot_final_comparison,
+    plot_training_curves,
     plot_per_expert_curves,
 )
-from trainer.utils import compute_infinity_norm_error
+from trainer.utils import compute_infinity_norm_error, compute_native_grid_metrics
 from trainer.timing import EpochTimer
 from trainer.training_context import TrainingContext, SegmentResult
 from models.atoe import AToE
@@ -1169,6 +1169,7 @@ def _train_segment(
     # optimizer_1 is watched from the segment start; reset to switch_epoch at the switch.
     patience_start_epoch = segment_start_epoch
     _nan_detected = False
+    _native_fallback_logged = False  # log the native-grid fallback once per segment
     _stopped_early = False
     _stop_reason = 'budget'
 
@@ -1760,17 +1761,28 @@ def _train_segment(
         should_evaluate = (epoch % eval_every == 0 or epoch == 1 or epoch == total_epochs)
         
         if should_evaluate:
-            # Compute train rel-L2 and infinity norm errors
-
-            # Eval phase
+            # Eval phase: physics loss on eval_data (drives patience, stays
+            # GT-free) plus rel-L2 / inf-norm on the solver's NATIVE grid
+            # (paper-comparable; interpolating GT off-grid across steep fronts
+            # invents large fake errors). Subsample fallback for problems
+            # without a cached solver grid (e.g. 2D spatial).
             model.eval()
             eval_loss = 0.0
-            # Accumulate squared sums for correct global rel-L2 computation
-            # (averaging per-batch rel-L2 is mathematically incorrect)
+            n_eval_batches = 0
+
+            timer.start('eval.native_grid')
+            _native = (compute_native_grid_metrics(model, cfg, device)
+                       if problem_cfg.get('spatial_dim', 1) == 1 else None)
+            timer.stop('eval.native_grid')
+            if _native is None and not _native_fallback_logged:
+                logger.warning("  [Eval] Solver native grid unavailable — "
+                               "rel-L2/inf-norm fall back to the random eval subsample.")
+                _native_fallback_logged = True
+
+            # Subsample accumulators (fallback only)
             total_diff_sq = 0.0
             total_gt_sq = 0.0
-            eval_inf_norm = 0.0  # Track max across all batches
-            n_eval_batches = 0
+            eval_inf_norm = 0.0
 
             # Eval metric uses the configured blending_mode (composed forward),
             # so the rel-L2 curve reflects the actual inference-time composition.
@@ -1782,25 +1794,28 @@ def _train_segment(
                 loss = loss_fn(model, batch, update_causal_state=False)
                 timer.stop('eval.loss_fn')
 
-                with torch.no_grad():
-                    inputs = torch.cat([batch['x'], batch['t']], dim=1)
-                    timer.start('eval.h_pred')
-                    h_pred = model(inputs)
-                    timer.stop('eval.h_pred')
-                    # Accumulate squared differences and GT norms for global rel-L2
-                    diff = h_pred - batch['h_gt']
-                    total_diff_sq += (diff ** 2).sum().item()
-                    total_gt_sq += (batch['h_gt'] ** 2).sum().item()
-                    # Track max inf_norm across all batches
-                    inf_norm = compute_infinity_norm_error(h_pred, batch['h_gt'])
-                    eval_inf_norm = max(eval_inf_norm, inf_norm.item())
+                if _native is None:
+                    with torch.no_grad():
+                        inputs = torch.cat([batch['x'], batch['t']], dim=1)
+                        h_pred = model(inputs)
+                        # Accumulate squared differences and GT norms for global rel-L2
+                        diff = h_pred - batch['h_gt']
+                        total_diff_sq += (diff ** 2).sum().item()
+                        total_gt_sq += (batch['h_gt'] ** 2).sum().item()
+                        # Track max inf_norm across all batches
+                        inf_norm = compute_infinity_norm_error(h_pred, batch['h_gt'])
+                        eval_inf_norm = max(eval_inf_norm, inf_norm.item())
 
                 eval_loss += loss.item()
                 n_eval_batches += 1
 
             eval_loss /= n_eval_batches
-            # Compute global rel-L2: ||pred - gt||_2 / ||gt||_2
-            eval_rel_l2 = math.sqrt(total_diff_sq) / (math.sqrt(total_gt_sq) + 1e-10)
+            if _native is not None:
+                eval_rel_l2 = _native['rel_l2']
+                eval_inf_norm = _native['inf_norm']
+            else:
+                # Global subsample rel-L2: ||pred - gt||_2 / ||gt||_2
+                eval_rel_l2 = math.sqrt(total_diff_sq) / (math.sqrt(total_gt_sq) + 1e-10)
 
             # Store evaluation metrics (train_loss already stored above for all epochs)
             metrics['epochs'].append(epoch)
@@ -3326,20 +3341,6 @@ def _finalize_training(ctx: TrainingContext) -> Path:
                          optimizer_switch_epochs=optimizer_switch_epochs,
                          segment_start_epochs=segment_start_epochs)
 
-    # Plot final predictions
-    model.eval()
-    with torch.no_grad():
-        inputs_eval = torch.cat([eval_data['x'], eval_data['t']], dim=1)
-        h_pred_eval = model(inputs_eval)
-
-    plot_final_comparison(
-        h_pred_eval.cpu().numpy(),
-        eval_data['h_gt'].cpu().numpy(),
-        eval_data['x'].detach().cpu().numpy(),
-        eval_data['t'].detach().cpu().numpy(),
-        training_plots_dir
-    )
-
     # Run final probes, derivatives, and frequency analysis (without epoch_suffix for main directory)
     # Skip if adaptive PINN with inner_metrics_calculation disabled
     skip_final_inner_metrics = is_adaptive and not adaptive_inner_metrics
@@ -3535,7 +3536,7 @@ def _finalize_training(ctx: TrainingContext) -> Path:
         f.write(f"Device: {device}\n\n")
         f.write(f"Final train loss: {train_loss:.6e}\n")
         f.write(f"Final eval loss: {eval_loss:.6e}\n" if eval_loss is not None else "Final eval loss: N/A\n")
-        f.write(f"Final eval rel-L2: {eval_rel_l2:.6e}\n" if eval_rel_l2 is not None else "Final eval rel-L2: N/A\n")
+        f.write(f"Final eval rel-L2 (solver grid): {eval_rel_l2:.6e}\n" if eval_rel_l2 is not None else "Final eval rel-L2 (solver grid): N/A\n")
         f.write(f"Final eval inf-norm: {eval_inf_norm:.6e}\n" if eval_inf_norm is not None else "Final eval inf-norm: N/A\n")
         f.write(f"Best eval loss: {best_eval_loss:.6e}\n\n")
         f.write(f"Best checkpoint: {best_checkpoint_path}\n")
