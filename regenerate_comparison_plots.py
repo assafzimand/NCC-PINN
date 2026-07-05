@@ -42,10 +42,13 @@ def _load_ckpt_helpers():
 def _eval_checkpoint_rel_l2(result_path: Path, helpers) -> Dict:
     """Load the run's final checkpoint and evaluate rel-L2 against ground truth.
 
-    Ground truth comes from the solver interpolator on a dense 200x200 grid
-    (same as the in-run prediction plots), falling back to eval_data.pt.
-    Returns {'rel_l2', 'ckpt', 'epoch', 'gt_source'} or None on failure.
+    Ground truth comes from the solver's NATIVE solution grid (no
+    interpolation — off-node queries pick up large artificial errors across
+    steep fronts), falling back to the interpolator on a dense grid and then
+    to eval_data.pt. Returns {'rel_l2', 'ckpt', 'epoch', 'gt_source'} or
+    None on failure.
     """
+    import importlib
     import numpy as np
     import torch
     import yaml
@@ -71,27 +74,45 @@ def _eval_checkpoint_rel_l2(result_path: Path, helpers) -> Dict:
 
     spatial_dim = problem_cfg.get('spatial_dim', 1)
     output_dim = problem_cfg.get('output_dim', 1)
-    gt_source = 'solver'
+    gt_source = 'solver-native-grid'
+    h_gt = None
 
     if spatial_dim == 1:
-        x_min, x_max = problem_cfg['spatial_domain'][0]
-        t_min, t_max = problem_cfg['temporal_domain']
-        resolution = 200
-        X, T = np.meshgrid(
-            np.linspace(x_min, x_max, resolution),
-            np.linspace(t_min, t_max, resolution), indexing='ij')
-        x_flat, t_flat = X.ravel(), T.ravel()
-        gt_channels = helpers._get_gt_from_solver(cfg, x_flat, t_flat, output_dim)
-        if gt_channels is not None:
-            h_gt = (np.column_stack(gt_channels) if output_dim > 1
-                    else gt_channels[0].reshape(-1, 1))
-            x_np, t_np = x_flat.reshape(-1, 1), t_flat.reshape(-1, 1)
-        else:
-            gt_channels = None
-    else:
-        gt_channels = None
+        # Preferred: the solver's native solution grid, no interpolation.
+        try:
+            solver_mod = importlib.import_module(f'solvers.{problem}_solver')
+            x_grid, t_grid, h_sol = solver_mod._get_solution_cached(cfg)
+            t_min, t_max = problem_cfg['temporal_domain']
+            t_mask = ((np.asarray(t_grid) >= t_min - 1e-12)
+                      & (np.asarray(t_grid) <= t_max + 1e-12))
+            t_grid = np.asarray(t_grid)[t_mask]
+            h_sol = np.asarray(h_sol)[t_mask]      # (n_t, n_x)
+            X, T = np.meshgrid(np.asarray(x_grid), t_grid)
+            x_np, t_np = X.ravel().reshape(-1, 1), T.ravel().reshape(-1, 1)
+            if np.iscomplexobj(h_sol):
+                h_gt = np.column_stack([h_sol.real.ravel(), h_sol.imag.ravel()])
+            else:
+                h_gt = h_sol.reshape(-1, 1)
+        except Exception as _grid_err:
+            print(f"    [CkptEval] native solver grid unavailable ({_grid_err}); "
+                  f"trying interpolator")
 
-    if spatial_dim != 1 or gt_channels is None:
+        if h_gt is None:
+            x_min, x_max = problem_cfg['spatial_domain'][0]
+            t_min, t_max = problem_cfg['temporal_domain']
+            resolution = 200
+            X, T = np.meshgrid(
+                np.linspace(x_min, x_max, resolution),
+                np.linspace(t_min, t_max, resolution), indexing='ij')
+            x_flat, t_flat = X.ravel(), T.ravel()
+            gt_channels = helpers._get_gt_from_solver(cfg, x_flat, t_flat, output_dim)
+            if gt_channels is not None:
+                h_gt = (np.column_stack(gt_channels) if output_dim > 1
+                        else gt_channels[0].reshape(-1, 1))
+                x_np, t_np = x_flat.reshape(-1, 1), t_flat.reshape(-1, 1)
+                gt_source = 'solver-interp'
+
+    if h_gt is None:
         eval_path = Path('datasets') / problem / 'eval_data.pt'
         if not eval_path.exists():
             print(f"    [CkptEval] no solver GT and no {eval_path}")
