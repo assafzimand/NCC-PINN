@@ -1450,8 +1450,8 @@ def _train_segment(
                             final_layer = expert.network[layer_names[-1]]
                             first_grad = first_layer.weight.grad
                             final_grad = final_layer.weight.grad
-                            logger.info(f"  Expert {i}: first_layer.grad={'None' if first_grad is None else f'norm={first_grad.norm().item():.6f}'}, "
-                                  f"final_layer.grad={'None' if final_grad is None else f'norm={final_grad.norm().item():.6f}'}")
+                            logger.info(f"  Expert {i}: first_layer.grad={'None' if first_grad is None else f'norm={first_grad.norm().item():.3e}'}, "
+                                  f"final_layer.grad={'None' if final_grad is None else f'norm={final_grad.norm().item():.3e}'}")
 
                 # Split clip: experts at expert_grad_clip_norm (tighter), base at grad_clip_norm.
                 # When no experts exist (base-only phase), falls back to grad_clip_norm for all.
@@ -1709,7 +1709,7 @@ def _train_segment(
                 batch_for_lra = next(iter(train_loader))
                 lra_weights.update(model, loss_fn, batch_for_lra)
                 if epoch % print_every == 0:
-                    w_str = ', '.join(f'{k}={v:.4f}' for k, v in lra_weights.weights.items())
+                    w_str = ', '.join(f'{k}={v:.4e}' for k, v in lra_weights.weights.items())
                     logger.info(f"  [LRA] weights: {w_str}")
             except Exception as e:
                 logger.info(f"  [LRA] Weight update failed at epoch {epoch}: {e}")
@@ -1822,7 +1822,7 @@ def _train_segment(
                     metrics['loss_components'][term].append(val)
                 
                 # Log components at evaluation epochs
-                _comp_str = ', '.join(f'{k}={v:.6f}' for k, v in _comp_dict.items())
+                _comp_str = ', '.join(f'{k}={v:.6e}' for k, v in _comp_dict.items())
                 logger.info(f"  [LossTerms] {_comp_str}")
                 
                 # Store in history with full details
@@ -1841,7 +1841,7 @@ def _train_segment(
                     _eh = _peh[_eidx]
                     _last = {k: v[-1] for k, v in _eh.items() if v}
                     _s = ', '.join(
-                        f'{k}={v:.6f}' for k, v in _last.items()
+                        f'{k}={v:.6e}' for k, v in _last.items()
                     )
                     logger.info(
                         f"  [SplitTerms] expert={_eidx} {_s}"
@@ -1855,10 +1855,10 @@ def _train_segment(
             elapsed = time.time() - start_time
             batch_mode = "mini" if current_optimizer_name in ('Adam', 'SOAP') else "full"
             logger.info(f"Epoch [{epoch}/{total_epochs}] ({elapsed:.1f}s) [{current_optimizer_name}/{batch_mode}] | "
-                  f"Train Loss: {train_loss:.6f} | "
-                  f"Eval Loss: {eval_loss:.6f} | "
-                  f"Eval Rel-L2: {eval_rel_l2:.6f} | "
-                  f"Eval Inf: {eval_inf_norm:.6f}")
+                  f"Train Loss: {train_loss:.6e} | "
+                  f"Eval Loss: {eval_loss:.6e} | "
+                  f"Eval Rel-L2: {eval_rel_l2:.6e} | "
+                  f"Eval Inf: {eval_inf_norm:.6e}")
 
             # DIAGNOSTIC: Causal weight progression
             if causal_state is not None and causal_epoch_min_weight is not None:
@@ -1878,8 +1878,8 @@ def _train_segment(
             if lra_weights is not None:
                 w = lra_weights.weights
                 g = lra_weights.last_grad_norms
-                w_str = ', '.join(f'{k}={v:.4f}' for k, v in w.items())
-                g_str = ', '.join(f'{k}={g.get(k, 0):.6f}' for k in w)
+                w_str = ', '.join(f'{k}={v:.4e}' for k, v in w.items())
+                g_str = ', '.join(f'{k}={g.get(k, 0):.6e}' for k in w)
                 logger.info(f"  [LRA] weights: {w_str} | grads: {g_str}")
                 # Save to metrics
                 metrics['lra_history'].append({
@@ -1945,7 +1945,7 @@ def _train_segment(
                     logger.info("  [LossDiag] raw grad norms: " +
                           ', '.join(f'{k}={_raw_gn[k]:.4e}' for k in _keys))
                     logger.info("  [LossDiag] LRA weights:    " +
-                          ', '.join(f'{k}={_w.get(k, 1.0):.4f}' for k in _keys))
+                          ', '.join(f'{k}={_w.get(k, 1.0):.4e}' for k in _keys))
                     logger.info("  [LossDiag] weighted terms: " +
                           ', '.join(f'{k}={_w.get(k, 1.0) * _raw_vals[k]:.4e}' for k in _keys))
                     logger.info("  [LossDiag] weighted grads: " +
@@ -2024,7 +2024,7 @@ def _train_segment(
                 # Actually, just call with return_components=True which the wrapper forwards
                 with torch.no_grad():
                     components = loss_fn(model, sample_batch, return_components=True)
-                    comps_str = ', '.join(f'{k}={v:.6f}' for k, v in components.items())
+                    comps_str = ', '.join(f'{k}={v:.6e}' for k, v in components.items())
                     logger.info(f"  [Loss] components: {comps_str} (unweighted)")
                     metrics['loss_components_history'].append({
                         'epoch': epoch,
@@ -2048,7 +2048,7 @@ def _train_segment(
                 logger.info(f"  [DIAG] Base norm: {base_norm:.6f} | Expert contrib: {total_expert:.6f} | Ratio: {total_expert/base_norm if base_norm > 0 else 0:.4f}")
                 logger.info(f"  [DIAG] Expert norms: {[f'{x:.4f}' for x in expert_norms[:5]]}" + ("..." if len(expert_norms) > 5 else ""))
                 if expert_grads:
-                    logger.info(f"  [DIAG] Expert grad norms: {[f'{x:.6f}' for x in expert_grads[:5]]}" + ("..." if len(expert_grads) > 5 else ""))
+                    logger.info(f"  [DIAG] Expert grad norms: {[f'{x:.3e}' for x in expert_grads[:5]]}" + ("..." if len(expert_grads) > 5 else ""))
 
         # Save checkpoint periodically (only when we have eval metrics)
         if epoch % save_every == 0 and eval_loss is not None:
@@ -2103,7 +2103,7 @@ def _train_segment(
                     logger.info(f"\n  [EarlyStop] No train loss improvement "
                           f">{patience_rel_delta:.1%} for "
                           f"{epochs_without_improvement} epochs "
-                          f"(best={best_train_loss:.6f}). "
+                          f"(best={best_train_loss:.6e}). "
                           f"Stopping segment at epoch {epoch}.")
                     _stopped_early = True
                     _stop_reason = 'early_stop'
@@ -2173,7 +2173,7 @@ def _train_segment(
     
     logger.info(f"[Segment:{segment_name}] done | ran {epoch - segment_start_epoch} "
           f"epochs (stop={_stop_reason}) | "
-          f"train_loss={_final_tl:.6f} eval_loss={_final_el:.6f}")
+          f"train_loss={_final_tl:.6e} eval_loss={_final_el:.6e}")
     return SegmentResult(
         nan_detected=_nan_detected,
         stopped_early=_stopped_early,
@@ -2543,7 +2543,7 @@ def _spawn_nodes(ctx: TrainingContext, level_nodes, copy_output: bool,
         out_layer = _get_output_layer(new_exp)
         out_weight_norm = out_layer.weight.data.norm().item()
         out_bias_val = out_layer.bias.data.mean().item() if out_layer.bias is not None else None
-        logger.info(f"    After init: output_weight_norm={out_weight_norm:.6f}, output_bias_mean={out_bias_val}")
+        logger.info(f"    After init: output_weight_norm={out_weight_norm:.4e}, output_bias_mean={out_bias_val}")
 
     return len(new_expert_indices), new_expert_indices
 
@@ -3282,7 +3282,7 @@ def _finalize_training(ctx: TrainingContext) -> Path:
                     train_loss, eval_loss, cfg, metrics)
 
     logger.info(f"\nTraining completed in {time.time() - start_time:.1f}s")
-    logger.info(f"  Best eval loss: {best_eval_loss:.6f}")
+    logger.info(f"  Best eval loss: {best_eval_loss:.6e}")
     logger.info(f"  Best checkpoint: {best_checkpoint_path}")
     logger.info(f"  Final checkpoint: {final_checkpoint_path}")
     
@@ -3533,11 +3533,11 @@ def _finalize_training(ctx: TrainingContext) -> Path:
         f.write(f"Batch size: {cfg['batch_size']}\n")
         f.write(f"Learning rate: {cfg['lr']}\n")
         f.write(f"Device: {device}\n\n")
-        f.write(f"Final train loss: {train_loss:.6f}\n")
-        f.write(f"Final eval loss: {eval_loss:.6f}\n" if eval_loss is not None else "Final eval loss: N/A\n")
-        f.write(f"Final eval rel-L2: {eval_rel_l2:.6f}\n" if eval_rel_l2 is not None else "Final eval rel-L2: N/A\n")
-        f.write(f"Final eval inf-norm: {eval_inf_norm:.6f}\n" if eval_inf_norm is not None else "Final eval inf-norm: N/A\n")
-        f.write(f"Best eval loss: {best_eval_loss:.6f}\n\n")
+        f.write(f"Final train loss: {train_loss:.6e}\n")
+        f.write(f"Final eval loss: {eval_loss:.6e}\n" if eval_loss is not None else "Final eval loss: N/A\n")
+        f.write(f"Final eval rel-L2: {eval_rel_l2:.6e}\n" if eval_rel_l2 is not None else "Final eval rel-L2: N/A\n")
+        f.write(f"Final eval inf-norm: {eval_inf_norm:.6e}\n" if eval_inf_norm is not None else "Final eval inf-norm: N/A\n")
+        f.write(f"Best eval loss: {best_eval_loss:.6e}\n\n")
         f.write(f"Best checkpoint: {best_checkpoint_path}\n")
         f.write(f"Final checkpoint: {final_checkpoint_path}\n")
     logger.info(f"  Summary saved to {summary_path}")

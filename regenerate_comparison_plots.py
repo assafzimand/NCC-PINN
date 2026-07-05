@@ -27,6 +27,96 @@ from utils.comparison_plots import (
 _TIMESTAMP_RE = re.compile(r'\d{8}_\d{6}$')
 
 
+def _load_ckpt_helpers():
+    """Import model-build/checkpoint-load helpers from the plot script
+    (scripts/ is not a package, so load it by file path)."""
+    import importlib.util
+    helper_path = Path(__file__).parent / 'scripts' / 'plot_experts_predictions.py'
+    spec = importlib.util.spec_from_file_location(
+        'plot_experts_predictions', helper_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _eval_checkpoint_rel_l2(result_path: Path, helpers) -> Dict:
+    """Load the run's final checkpoint and evaluate rel-L2 against ground truth.
+
+    Ground truth comes from the solver interpolator on a dense 200x200 grid
+    (same as the in-run prediction plots), falling back to eval_data.pt.
+    Returns {'rel_l2', 'ckpt', 'epoch', 'gt_source'} or None on failure.
+    """
+    import numpy as np
+    import torch
+    import yaml
+
+    cfg_path = result_path / 'config_used.yaml'
+    if not cfg_path.exists():
+        return None
+    with open(cfg_path) as f:
+        cfg = yaml.safe_load(f)
+
+    problem = cfg['problem']
+    problem_cfg = cfg.get(problem, {})
+    is_adaptive = cfg.get('adaptive_pinn', {}).get('enabled', False)
+
+    ckpt_path = helpers._find_checkpoint(result_path, cfg)
+    if ckpt_path is None:
+        print(f"    [CkptEval] no checkpoint found in {result_path.name}")
+        return None
+
+    model = helpers._build_model(cfg)
+    epoch = helpers._load_checkpoint(model, ckpt_path, is_adaptive)
+    model.eval()
+
+    spatial_dim = problem_cfg.get('spatial_dim', 1)
+    output_dim = problem_cfg.get('output_dim', 1)
+    gt_source = 'solver'
+
+    if spatial_dim == 1:
+        x_min, x_max = problem_cfg['spatial_domain'][0]
+        t_min, t_max = problem_cfg['temporal_domain']
+        resolution = 200
+        X, T = np.meshgrid(
+            np.linspace(x_min, x_max, resolution),
+            np.linspace(t_min, t_max, resolution), indexing='ij')
+        x_flat, t_flat = X.ravel(), T.ravel()
+        gt_channels = helpers._get_gt_from_solver(cfg, x_flat, t_flat, output_dim)
+        if gt_channels is not None:
+            h_gt = (np.column_stack(gt_channels) if output_dim > 1
+                    else gt_channels[0].reshape(-1, 1))
+            x_np, t_np = x_flat.reshape(-1, 1), t_flat.reshape(-1, 1)
+        else:
+            gt_channels = None
+    else:
+        gt_channels = None
+
+    if spatial_dim != 1 or gt_channels is None:
+        eval_path = Path('datasets') / problem / 'eval_data.pt'
+        if not eval_path.exists():
+            print(f"    [CkptEval] no solver GT and no {eval_path}")
+            return None
+        eval_data = torch.load(eval_path, map_location='cpu', weights_only=False)
+        x_np = eval_data['x'].numpy()
+        t_np = eval_data['t'].numpy()
+        h_gt = eval_data['h_gt'].numpy()
+        gt_source = 'eval_data'
+
+    dtype = next(model.parameters()).dtype
+    inputs = torch.cat([
+        torch.from_numpy(np.asarray(x_np, dtype=np.float64)).to(dtype),
+        torch.from_numpy(np.asarray(t_np, dtype=np.float64)).to(dtype),
+    ], dim=1)
+    with torch.no_grad():
+        h_pred = model(inputs).cpu().numpy()
+
+    h_gt = np.asarray(h_gt, dtype=np.float64).reshape(h_pred.shape)
+    rel_l2 = (np.linalg.norm(h_pred - h_gt)
+              / (np.linalg.norm(h_gt) + 1e-12))
+    return {'rel_l2': float(rel_l2), 'ckpt': ckpt_path.name,
+            'epoch': epoch, 'gt_source': gt_source}
+
+
 def _is_timestamp_dir(d: Path) -> bool:
     return d.is_dir() and bool(_TIMESTAMP_RE.match(d.name))
 
@@ -212,7 +302,7 @@ def _generate_training_results_plot(parent_dir, df,
         'LR / Sched', 'Spawning']
     result_cols = [
         'Train\nLoss', 'Eval\nLoss',
-        'Eval\nRel-L2', 'Eval\nInf']
+        'Eval\nRel-L2', 'Eval\nInf', 'Ckpt\nRel-L2']
     col_labels = ['Experiment'] + info_cols + result_cols
     n_info = len(info_cols)
     first_result_col = 1 + n_info
@@ -221,7 +311,7 @@ def _generate_training_results_plot(parent_dir, df,
         import math
         if v is None or (isinstance(v, float) and math.isnan(v)):
             return 'N/A'
-        return f'{v:.6f}'
+        return f'{v:.4e}'
 
     table_data = []
     for _, row in df.iterrows():
@@ -245,6 +335,7 @@ def _generate_training_results_plot(parent_dir, df,
             _fmt(row['final_eval_loss']),
             _fmt(row['final_eval_rel_l2']),
             _fmt(row['final_eval_inf_norm']),
+            _fmt(row.get('checkpoint_rel_l2')),
         ]
         table_data.append(row_data)
 
@@ -274,7 +365,8 @@ def _generate_training_results_plot(parent_dir, df,
 
     result_keys = [
         'final_train_loss', 'final_eval_loss',
-        'final_eval_rel_l2', 'final_eval_inf_norm']
+        'final_eval_rel_l2', 'final_eval_inf_norm',
+        'checkpoint_rel_l2']
     for ri, key in enumerate(result_keys):
         ci = first_result_col + ri
         if key not in df.columns:
@@ -371,6 +463,14 @@ def generate_comparison_for_batch(batch_dir: Path, label: str = None):
                     exp_name = f"{exp_name}_{ts_dir.name[-6:]}"
                 results[exp_name] = ts_dir
 
+    # Helpers for loading checkpoints (model build + solver GT); optional —
+    # comparison still works without them.
+    try:
+        _ckpt_helpers = _load_ckpt_helpers()
+    except Exception as _h_err:
+        print(f"  [CkptEval] helpers unavailable ({_h_err}); skipping checkpoint eval")
+        _ckpt_helpers = None
+
     # Collect training metrics (same logic as run_experiments.py)
     metrics_data = []
     ncc_data = {}
@@ -452,6 +552,19 @@ def generate_comparison_for_batch(batch_dir: Path, label: str = None):
         def _last(lst):
             return lst[-1] if lst else float('nan')
 
+        # Evaluate the saved checkpoint against ground truth (dense grid)
+        ckpt_rel_l2 = float('nan')
+        if _ckpt_helpers is not None:
+            try:
+                _ck = _eval_checkpoint_rel_l2(result_path, _ckpt_helpers)
+                if _ck is not None:
+                    ckpt_rel_l2 = _ck['rel_l2']
+                    print(f"  [CkptEval] {exp_name}: {_ck['ckpt']} @ epoch "
+                          f"{_ck['epoch']} | rel-L2 vs GT ({_ck['gt_source']}) "
+                          f"= {ckpt_rel_l2:.6e}")
+            except Exception as _ck_err:
+                print(f"  [CkptEval] {exp_name}: failed — {_ck_err}")
+
         # Build metrics row
         metrics_row = {
             'experiment': exp_name,
@@ -459,6 +572,7 @@ def generate_comparison_for_batch(batch_dir: Path, label: str = None):
             'final_eval_loss': _last(train_metrics.get('eval_loss', [])),
             'final_eval_rel_l2': _last(train_metrics.get('eval_rel_l2', [])),
             'final_eval_inf_norm': _last(train_metrics.get('eval_inf_norm', [])),
+            'checkpoint_rel_l2': ckpt_rel_l2,
         }
 
         metrics_data.append(metrics_row)
